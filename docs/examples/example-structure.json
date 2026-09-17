@@ -1,0 +1,64 @@
+{
+  "version": "1.0",
+  "tenantAlias": "omnicit",
+  "groups": [
+    {
+      "displayName": "role_sec_identity_administrator",
+      "roleAssignable": true,
+      "description": "Identity admins (Phase 5b demo)",
+      "members": [ "person8@example.com" ],
+      "eligibility": [ { "principal": "person8@example.com", "durationDays": 365 } ],
+      "pimPolicy": { "allowPermanentEligibility": true, "activationMaxHours": 8 }
+    }
+  ],
+  "administrativeUnits": [
+    {
+      "displayName": "OER-AU-Demo",
+      "description": "Phase 5b demo administrative unit",
+      "members": [ "role_sec_identity_administrator" ],
+      "scopedRoles": [ { "role": "User Administrator", "principal": "role_sec_identity_administrator" } ]
+    }
+  ],
+  "catalogs": [
+    {
+      "displayName": "CAT-OER-Demo",
+      "description": "Phase 5b demo catalog",
+      "resources": [ { "type": "Group", "name": "role_sec_identity_administrator" } ]
+    }
+  ],
+  "accessPackages": [
+    {
+      "displayName": "AP-OER-Demo",
+      "catalog": "CAT-OER-Demo",
+      "description": "Phase 5b demo access package",
+      "resourceRoles": [ { "resource": "role_sec_identity_administrator", "role": "Member" } ],
+      "assignmentPolicies": [
+        {
+          "displayName": "Default",
+          "requestorScope": { "scope": "AllMemberUsers" },
+          "approvalStages": [ { "durationDays": 7, "manager": true } ],
+          "durationInDays": 30
+        }
+      ]
+    }
+  ],
+  "accessReviews": [
+    {
+      "displayName": "AR-OER-Demo",
+      "accessPackage": "AP-OER-Demo",
+      "assignmentPolicy": "Default",
+      "reviewers": [ "manager" ],
+      "fallbackReviewers": [ "person8@example.com" ],
+      "recurrence": "Quarterly",
+      "durationInDays": 14
+    }
+  ],
+  "roleAssignments": [
+    {
+      "scope": "/subscriptions/00000000-0000-0000-0000-000000000046",
+      "role": "Reader",
+      "principal": "00000000-0000-0000-0000-000000000047",
+      "principalType": "ServicePrincipal"
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+mode: ContinuousDelivery
+next-version: 1.0.0
+# The first public release is 1.0.0 (Philip's decision, 2026-09-13, issue #62). This lifts issue
+# #55's sub-1.0.0 cap. tests/QA/module.tests.ps1 independently holds the built version at or above
+# 1.0.0 and below 2.0.0 -- lift both together, never the assertion alone. The 0.x milestones are
+# archived in CHANGELOG.md, the last as '## [0.10.0] - 2026-09-13'.
+#
+# The major bump matches BOTH forms: an explicit '+semver: breaking|major' token, and a
+# conventional-commit '!:' subject. The second half was disabled for the duration of the private
+# pre-1.0.0 development history, where two reachable commits carried a '!:' subject and, with no
+# version tag in the repository, sat inside the increment window -- so the full pattern built 2.0.0
+# there (measured with GitVersion 5.12.0). This repository is seeded from a clean tree without that
+# history and carries a v1.0.0 tag from its first commit, so neither condition can apply and the
+# full pattern is safe here.
+#
+# GitVersion reads every reachable commit message, and a squash merge copies a pull request title
+# and body into main. Never quote one of these tokens in a commit message, a pull request title or
+# a pull request body -- name it in words instead. File content is never read and may quote freely.
+# tests/QA/module.tests.ps1 independently holds the built version below 2.0.0, so an accidental
+# major bump fails the gate rather than shipping.
+# See docs/development/rationale.md#version-cap.
+major-version-bump-message: '(\+semver:\s?(breaking|major))|(^[a-z]+(\(.+\))?!:)'
+minor-version-bump-message: '\+semver:\s?(feature|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
+no-bump-message: '\+semver:\s?(none|skip)'
+assembly-informational-format: '{NuGetVersionV2}+Sha.{Sha}.Date.{CommitDate}'
+branches:
+  master:
+    tag: preview
+    regex: ^main$
+  pull-request:
+    tag: PR
+  feature:
+    tag: useBranchName
+    increment: Minor
+    regex: f(eature(s)?)?[\/-]
+    source-branches: ['master']
+  hotfix:
+    tag: fix
+    increment: Patch
+    regex: (hot)?fix(es)?[\/-]
+    source-branches: ['master']
+
+ignore:
+  sha: []
+merge-message-formats: {}
+
+
+# feature:
+#   tag: useBranchName
+#   increment: Minor
+#   regex: f(eature(s)?)?[/-]
+#   source-branches: ['master']
+# hotfix:
+#   tag: fix
+#   increment: Patch
+#   regex: (hot)?fix(es)?[/-]
+#   source-branches: ['master']
+

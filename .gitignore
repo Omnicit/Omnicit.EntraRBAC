@@ -1,0 +1,53 @@
+output/
+
+**.bak
+*.local.*
+!**/README.md
+.kitchen/
+
+*.nupkg
+*.suo
+*.user
+*.coverage
+.vs
+.psproj
+.sln
+markdownissues.txt
+node_modules
+package-lock.json
+
+# Real tenant data must never be staged. docs/examples/ is allowlisted: add an explicit
+# negation below for each example that is genuinely meant to be tracked.
+docs/examples/*
+!docs/examples/example-structure.json
+!docs/examples/README.md
+
+# Internal planning and design material: session plans, design specs and audit reports. These are
+# working notes, not documentation -- some record what was verified against a live tenant, and all
+# of them describe the module as it was mid-development rather than as it ships. They were left out
+# of this repository when it was seeded and stay on the maintainer's disk, ignored. The reasoning
+# they carry is not lost: where a house rule exists because something failed, the explanation lives
+# in docs/development/rationale.md. Add an explicit negation below for a file genuinely meant to be
+# tracked.
+docs/superpowers/
+
+# Export-OERInventory run bundles, wherever they land in a clone.
+# The folder is named oer-inventory-<tenant>-<stamp> (Export-OERInventory.ps1:194).
+oer-inventory-*/
+inventory.json
+
+# docs/live-verification/ is where live tenant console output gets pasted in on purpose, and no
+# rule above has ever reached it. Redaction happens on the way INTO a checklist (see
+# docs/live-verification/README.md, gated by tests/QA/dochygiene.tests.ps1); these two rules cover
+# the raw material that redaction is done FROM, so an unredacted transcript cannot be staged by a
+# stray `git add docs/`.
+docs/live-verification/raw/
+docs/live-verification/*.log
+
+# Claude Code's per-clone session state -- machine-local session ids and absolute temp paths, of no
+# value to anyone else and stale the moment it is shared.
+.claude/
+
+# Neither block untracks anything: .gitignore never does. The checklists under
+# docs/live-verification/ stay tracked deliberately -- they are the verification record, and only
+# the raw material beside them is ignored.

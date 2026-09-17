@@ -1,0 +1,427 @@
+TOPIC
+    about_Omnicit.EntraRBAC
+
+SHORT DESCRIPTION
+    Manage Entra ID and Azure RBAC building blocks across tenants.
+
+LONG DESCRIPTION
+    Omnicit.EntraRBAC manages Entra ID groups and PIM, Administrative Units,
+    Entitlement Management, Access Reviews, Azure resources and RBAC, and Azure PIM
+    across multiple tenants, plus a JSON inventory and a declarative apply engine.
+    Authenticate with Connect-OER, then use the OER cmdlets. Configuration per tenant
+    is stored in Tenant Profile files managed by New/Get/Set/Remove-OERConfiguration.
+
+    Calling Connect-OER is optional. Every cmdlet that reaches Graph or Azure
+    authenticates on first use, reusing a cached token for the same tenant and identity.
+    Cmdlets that reach Azure Resource Manager need an ARM token; pass -IncludeARM to
+    Connect-OER to acquire one up front.
+
+    All state-changing cmdlets support -WhatIf and -Confirm. Deletions of high-value
+    objects use ConfirmImpact High and warn before the destructive call.
+
+    Use Get-Command -Module Omnicit.EntraRBAC to list all 90 cmdlets, and
+    Get-Help <cmdlet> -Full for parameters and examples. Use Get-OERRequiredScope for
+    the permissions any of them needs; see PERMISSIONS below.
+
+COMMAND COHORTS
+
+    The cohorts below are for orientation only. They are NOT permission boundaries, so
+    none of them carries a scope line -- ask Get-OERRequiredScope instead.
+
+    Authentication and Tenant Profiles
+        Connect-OER, Disconnect-OER
+        New-OERConfiguration, Get-OERConfiguration, Set-OERConfiguration,
+        Remove-OERConfiguration
+
+    Groups and PIM for Groups
+        New-OERGroup, Get-OERGroup, Set-OERGroup, Remove-OERGroup
+        Add-OERGroupMember, Get-OERGroupMember, Remove-OERGroupMember
+        Add-OERGroupEligibility, Get-OERGroupEligibility, Remove-OERGroupEligibility
+        Get-OERGroupPimPolicy, Set-OERGroupPimPolicy
+
+    Administrative Units
+        New-OERAdministrativeUnit, Get-OERAdministrativeUnit,
+        Set-OERAdministrativeUnit, Remove-OERAdministrativeUnit
+        Add-OERAdministrativeUnitMember, Remove-OERAdministrativeUnitMember
+        Add-OERAdministrativeUnitScopedRole, Get-OERAdministrativeUnitScopedRole,
+        Remove-OERAdministrativeUnitScopedRole
+        New-OERGroup -AdministrativeUnit places a new group into an AU at creation time.
+
+    Entitlement Management
+        Catalogs:          New-OERCatalog, Get-OERCatalog, Set-OERCatalog,
+                           Remove-OERCatalog
+        Catalog resources: Add-OERCatalogResource, Get-OERCatalogResource,
+                           Remove-OERCatalogResource
+        Access packages:   New-OERAccessPackage, Get-OERAccessPackage,
+                           Set-OERAccessPackage, Remove-OERAccessPackage
+        Resource roles:    Add-OERAccessPackageResourceRole,
+                           Get-OERAccessPackageResourceRole,
+                           Remove-OERAccessPackageResourceRole
+        Policy builders:   New-OERAccessPackageApprovalStage,
+                           New-OERAccessPackageRequestorScope,
+                           New-OERAccessPackageRequestorSettings
+        Policies:          New-OERAccessPackageAssignmentPolicy,
+                           Get-OERAccessPackageAssignmentPolicy,
+                           Set-OERAccessPackageAssignmentPolicy,
+                           Remove-OERAccessPackageAssignmentPolicy
+        Assignments:       New-OERAccessPackageAssignment,
+                           Get-OERAccessPackageAssignment,
+                           Remove-OERAccessPackageAssignment
+
+    Access Reviews
+        New-OERAccessReviewDefinition, Get-OERAccessReviewDefinition,
+        Set-OERAccessReviewDefinition, Remove-OERAccessReviewDefinition
+        New-OERAccessReviewStage composes one stage of a multi-stage review.
+        Get-OERAccessReviewInstance, Get-OERAccessReviewInstanceDecision,
+        Stop-OERAccessReviewInstance, Invoke-OERAccessReviewInstanceDecision,
+        Send-OERAccessReviewReminder
+
+    Azure inventory, RBAC, resource groups and resources
+        Get-OERManagementGroup, Get-OERSubscription, Get-OERRoleDefinition
+        Get-OERRoleAssignment, New-OERRoleAssignment, Set-OERRoleAssignment,
+        Remove-OERRoleAssignment
+        New-OERResourceGroup, Get-OERResourceGroup, Set-OERResourceGroup,
+        Remove-OERResourceGroup, Get-OERResource
+
+    Azure PIM
+        Eligibility:  New-OEREligibleRoleAssignment, Get-OEREligibleRoleAssignment,
+                      Remove-OEREligibleRoleAssignment
+        Active:       New-OERActiveRoleAssignment, Get-OERActiveRoleAssignment,
+                      Remove-OERActiveRoleAssignment
+        Activation:   Enable-OEREligibleRoleAssignment, Disable-OEREligibleRoleAssignment
+        Policy:       Get-OERRoleManagementPolicy, Set-OERRoleManagementPolicy,
+                      New-OERPolicyNotificationRule
+
+    Inventory and JSON orchestration
+        Get-OERInventory reads tenant state into a round-trippable inventory object.
+        Export-OERInventory writes that state to a bundle folder (JSON, schema, LLM
+        prompt, README). Test-OERStructure validates a structure document offline with
+        no tenant call. Invoke-OERStructure applies one idempotently in dependency
+        order, with -WhatIf plan mode and opt-in child-scope -Prune.
+
+    Permissions
+        Get-OERRequiredScope reports the Graph permissions and Azure RBAC roles one or
+        more cmdlets need. See PERMISSIONS below.
+
+    Conditional Access
+        Get-OERAuthenticationContext
+
+PERMISSIONS
+
+    Ask the module rather than reading a table kept in step by hand:
+
+        Get-OERRequiredScope -Cmdlet New-OERGroup
+        Get-OERRequiredScope -Cmdlet Get-OERGroup* -Unique
+        Get-OERRequiredScope -Unique
+
+    It reads a static table, so it needs no tenant and no sign-in and answers before
+    Connect-OER. Three things worth knowing about the answers:
+
+    - The area a cmdlet belongs to is not its permission boundary. Microsoft Graph
+      grants permissions by the resource a call touches, so one scope line covering a
+      whole cohort is wrong by construction. The three *AdministrativeUnitScopedRole
+      cmdlets write directory role memberships rather than unit memberships and need a
+      role-management write permission; Get-OERGroupPimPolicy and Set-OERGroupPimPolicy
+      hit roleManagementPolicies and need the RoleManagementPolicy permissions, not the
+      eligibility permissions the other PIM-for-Groups cmdlets use.
+
+    - Each answer is transitive. It covers the cmdlet's own calls plus every call its
+      internal helpers make, including the directory reads behind friendly-name
+      parameters such as -User, -Group and -ServicePrincipal. Consenting to what is
+      listed is enough for every parameter form; the Note property says so where a
+      permission is needed for only one of them.
+
+    - The Transport property disambiguates an empty list: Graph, Arm, GraphAndArm, or
+      None for a cmdlet that touches no tenant at all. An empty GraphScope on an
+      ARM-only cmdlet means "none needed", never "unknown".
+
+    Where an entry lists User.ReadBasic.All, Group.Read.All and Application.Read.All, a
+    single Directory.Read.All covers all three; the narrower permissions are listed
+    because the module prefers least privilege. Where an entry lists Directory.Read.All
+    instead, that cmdlet reads directoryObjects, which accepts nothing narrower, so the
+    covered permissions are deliberately NOT also listed and the Note property says
+    which parameter makes the call. Azure cmdlets additionally need an ARM token: pass
+    -IncludeARM to Connect-OER, or let the cmdlet acquire one.
+
+TENANT PROFILE
+
+    A Tenant Profile is a PSD1 file holding per-tenant configuration, stored under
+    <home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1 and managed with
+    New-OERConfiguration, Get-OERConfiguration, Set-OERConfiguration and
+    Remove-OERConfiguration. <home> is the current user's profile folder as .NET
+    reports it, falling back to $HOME: the same directory as $env:USERPROFILE on
+    Windows, and the user's home directory on Linux and macOS. Connect-OER
+    -TenantAlias <alias> resolves the TenantId from it. Only TenantId is required;
+    every other section is optional.
+
+        @{
+            TenantId = '00000000-0000-0000-0000-000000000000'
+            Naming   = @{
+                Group   = 'role_sec_{area}_{tier}'
+                AU      = '{prefix}_au_{name}'
+                Catalog = 'CAT-{org}-{scope}'
+            }
+            Defaults = @{
+                PrimaryApprovers        = @('<guid>', '<guid>')
+                EscalationApprovers     = @('<guid>')
+                Catalog                 = 'CAT-IT-PRG-Core'
+                AuthenticationContextId = 'c1'
+                ActivationMaxHours      = 8
+            }
+        }
+
+    Naming templates substitute {token} placeholders case-insensitively. An unresolved
+    placeholder is an error, so a malformed name is never produced. Set-OERConfiguration
+    preserves sections you do not supply; New-OERConfiguration is create-only and errors
+    if the alias already exists.
+
+    A profile may also carry an optional Environment key naming the sovereign cloud that
+    tenant lives in: Global, USGov, USGovDoD or China. See SOVEREIGN CLOUDS below.
+
+SWITCHING TENANTS
+
+    One PowerShell session works in one tenant at a time. Whether a later
+    Connect-OER call naming a different tenant actually switches depends on
+    the sign-in type:
+
+        Client secret      Reuses the credential built for the earlier tenant, so the
+                            switching sign-in fails by default -- or, with
+                            AZURE_IDENTITY_DISABLE_MULTITENANTAUTH set, silently reaches
+                            the earlier tenant instead -- until you run Connect-OER ...
+                            -Force
+        Device code         Does not send the tenant you name; its token may
+                            come from the signed-in account's own tenant when
+                            that account cannot obtain one in the tenant you
+                            name -- and the switching call may not return at
+                            all: see the known limitation below
+        Managed identity    Does not send the tenant you name; its token
+                            normally comes from the identity's own tenant
+        Interactive         Signs in to the tenant you name
+        Certificate         Signs in to the tenant you name
+
+    KNOWN LIMITATION -- a device code tenant switch can stop responding. In a
+    PowerShell process where a device code sign-in has already completed, a
+    further device code sign-in naming a different tenant, with no -Force,
+    never returns: no device code is printed, no error is raised, and the call
+    does not come back. Ctrl+C is the only escape, and it leaves the credential
+    AzAuth keeps for the process in an unknown state, so exit the PowerShell
+    session afterwards rather than retrying in it. Pass Connect-OER ... -Force
+    on the switching call -- measured to cure it every time it was used -- or
+    start a new PowerShell session, which begins from a fresh credential. Not
+    every device code tenant switch is affected: the first device code sign-in
+    in a process is fine, and so is a switch made straight after a sign-in with
+    -IncludeARM, whose Azure Resource Manager token is acquired under a
+    different application and so leaves AzAuth holding a freshly built
+    credential.
+
+    The module warns in two cases. It warns before a client secret sign-in
+    for the same application when the tenant you name differs from the one
+    the credential AzAuth is currently holding for that application was built
+    for, and no Force is on the call: you did not pass -Force, and the module
+    did not add Force itself for a sovereign-cloud switch. AzAuth only
+    rebuilds that credential for -Force, for a different application, or for
+    a different kind of sign-in -- a plain retry of the same switch, with none
+    of those, reuses the same credential and keeps warning every time, whether
+    the earlier attempt was silently answered from the old tenant or refused
+    outright. This is the module's own view: a Get-AzToken call made outside
+    the module does not update it, and it resets only when Omnicit.EntraRBAC
+    itself is re-imported.
+
+    It also warns after a sign-in of any type that names a tenant by domain,
+    when that tenant differs from the one named by the last session this
+    module established in the process and the token was issued by the same
+    tenant that issued that session's token. That comparison survives
+    Disconnect-OER, so disconnecting and reconnecting to another tenant is
+    still checked, but it does not fire for a sign-in that names no tenant,
+    and it cannot check the very first sign-in in a process or the first one
+    after Omnicit.EntraRBAC is re-imported.
+
+    Neither warning stops the sign-in, but under -WarningAction Stop (or
+    $WarningPreference = 'Stop') either one does -- the pre-call warning before
+    any token is requested, the post-call warning before the session is created
+    -- the same safe direction as the module's existing ambient
+    AZURE_AUTHORITY_HOST warning.
+
+    Disconnect-OER clears only this module's own session state; it does not
+    clear the credential AzAuth keeps for the process, and the tenant-switch
+    check above does not depend on that state -- it keeps its own record, so
+    disconnecting and reconnecting to another tenant is still checked.
+    Connect-OER -Force is the supported way, inside the same PowerShell
+    process, to move a client secret sign-in to a new tenant.
+
+    Name tenants by their tenant ID (a GUID) -- including a Tenant
+    Profile's TenantId -- rather than by domain: with a GUID the module
+    refuses a token issued for another tenant outright, where a
+    domain-named request can only be warned about.
+
+        # Move a client secret sign-in for the same application to
+        # another tenant
+        Connect-OER -TenantId '00000000-0000-0000-0000-000000000000' `
+            -ClientId $AppId -ClientSecret $Secret -Force
+
+SOVEREIGN CLOUDS
+
+    Connect-OER -Environment selects the sovereign cloud a session signs in to and
+    calls. Four values are supported:
+
+        Global (default)  Worldwide commercial cloud
+                           graph.microsoft.com / management.azure.com
+        USGov              GCC High
+                           graph.microsoft.us / management.usgovcloudapi.net
+        USGovDoD           DoD
+                           dod-graph.microsoft.us / management.usgovcloudapi.net
+        China              21Vianet
+                           microsoftgraph.chinacloudapi.cn / management.chinacloudapi.cn
+
+    Microsoft 365 GCC uses the commercial (Global) endpoints and needs no -Environment
+    at all. Only GCC High, DoD and a 21Vianet tenant are separate cloud boundaries; GCC
+    itself is not.
+
+    The chosen cloud becomes part of the session: every later cmdlet calls the cloud the
+    session was established in, and switching clouds re-authenticates instead of reusing
+    a token minted at the previous cloud's authority.
+
+        Connect-OER -TenantId 'contoso.onmicrosoft.us' -Environment USGov -IncludeARM
+
+    A Tenant Profile's optional Environment key stores the cloud for that tenant, so
+    Connect-OER -TenantAlias picks it up automatically without repeating -Environment on
+    every call; an explicit -Environment on the command line still overrides it.
+
+    Name the tenant explicitly and consistently. The session is keyed on the tenant
+    exactly as you spell it, so a later call naming a tenant the session was not
+    established for inherits nothing from it -- including the same tenant written as a
+    GUID one time and as a domain the next, and a Connect-OER -Environment USGov with no
+    -TenantId at all, which records the tenant as 'organizations' rather than as yours.
+    The cloud then resets to Global and that call signs in at the commercial authority.
+    Its token and its endpoints stay consistent with each other, so nothing crosses a
+    cloud boundary, but the sign-in fails at the authority with an error that names the
+    tenant and never the cloud, which makes it easy to misread. Pass the same -TenantId
+    spelling on every call, or use a Tenant Profile whose Environment key carries the
+    cloud for you.
+
+    Known limitation: PIM-for-Groups is pinned to the Microsoft Graph beta endpoint (see
+    PERMISSIONS above), and beta endpoint availability in US Government and China clouds
+    is not established. A sovereign tenant that needs PIM-for-Groups may find that pinned
+    beta path behaves differently, or not at all, from the commercial cloud this module is
+    built and tested against.
+
+AZURE RESOURCE TARGETING
+
+    Azure RBAC and PIM assignment cmdlets (New/Get-OERRoleAssignment,
+    New/Get/Remove-OEREligibleRoleAssignment, New/Get/Remove-OERActiveRoleAssignment,
+    Enable/Disable-OEREligibleRoleAssignment) accept a resource scope in three forms:
+
+    - Raw scope id: -Scope '<full ARM resource id>'
+    - Friendly decomposition: -Subscription <s> -ResourceGroup <rg>
+      -ResourceType <type> -ResourceName <name>
+    - Management group: -ManagementGroup <name-or-id>
+
+    Get-OERRoleManagementPolicy and Set-OERRoleManagementPolicy accept the same scope
+    forms minus -ResourceType and -ResourceName, because a role management policy is
+    assigned at a management group, subscription or resource group scope. By contrast
+    Set-OERRoleAssignment and Remove-OERRoleAssignment take -Id only: they act on one
+    existing assignment, which already carries its own scope.
+
+    Get-OERResource lists Azure resources within a subscription or resource group
+    (client-side -Name/-ResourceType filters) and, with -IncludeRoleAssignments
+    (optionally -ResolveNames), reports the role-assignment delegations on each resource.
+    Output is tagged Omnicit.EntraRBAC.Resource and binds directly into the assignment
+    cmdlets by property name -- for example:
+
+        Get-OERResource -Subscription Prod -ResourceGroup rg-app -Name stgfoo |
+            New-OERRoleAssignment -Role Reader -Group role_sec_readers
+
+ARM OBJECT IDS
+
+    Get-OERResource, Get-OERResourceGroup, Get-OERSubscription and Get-OERManagementGroup expose
+    the full ARM resource path as ResourceId, never as a bare Id. This is deliberate: -PolicyId on
+    Get-OERRoleManagementPolicy/Set-OERRoleManagementPolicy and -RoleEligibilityScheduleId on
+    Enable-OEREligibleRoleAssignment both carry an Id alias and bind from the pipeline by property
+    name, so a bare Id on an ARM-resource object would silently mis-route as a policy id or an
+    eligibility schedule id instead of the resource path it actually is.
+
+    Get-OERRoleDefinition follows the same no-bare-Id rule but stores the ARM role definition path
+    the other way round: RoleDefinitionId is the one STORED value (so a piped role definition still
+    binds -Role on New-OERRoleAssignment, and its PIM siblings, through that alias), and ResourceId
+    is exposed as an AliasProperty of it rather than a second stored copy. Either property reads
+    the same value; there is deliberately no bare Id that could mis-bind downstream.
+
+    Role-ASSIGNMENT-shaped objects (RoleAssignment, EligibleRoleAssignment, ActiveRoleAssignment)
+    are a different case: they identify an assignment INSTANCE, not an ARM resource, so their own
+    domain-specific id (RoleAssignmentId, RoleEligibilityScheduleId, RoleAssignmentScheduleId) is
+    the right property to carry, not ResourceId. Set-OERRoleAssignment and Remove-OERRoleAssignment
+    act on -Id alone (the RoleAssignmentId, which already embeds the scope) rather than on the
+    friendly -Subscription/-ResourceGroup/-ManagementGroup decomposition above.
+
+ACCESS PACKAGE ASSIGNMENT POLICY -- GRANULAR SETTINGS
+
+    New-OERAccessPackageRequestorSettings builds a requestor-settings object that
+    controls how users and managers may submit requests:
+
+        $Rs = New-OERAccessPackageRequestorSettings -AllowSelfRequest `
+                  -AllowManagerRequest -ManagerLevel 1 -AllowSelfExtend
+
+    All -Allow* parameters are switches. Pass the result to
+    New-OERAccessPackageAssignmentPolicy or Set-OERAccessPackageAssignmentPolicy
+    via -RequestorSettings.
+
+    Both policy cmdlets also accept (the toggles are switches):
+
+    -RequireApproval                    -- enable the approval workflow
+    -RequireRequestorJustification      -- require a justification from the requestor
+    -RequireApprovalForUpdate           -- require approval for extension requests
+    -DurationInHours <int>              -- assignment lifetime in hours (PT{n}H)
+    -DisableAssignmentNotifications     -- suppress built-in assignment emails
+
+    New-OERAccessPackageApprovalStage accepts -ApproverInfoVisibility
+    (Default / Visible / NotVisible) to control whether approver identity is
+    shown to the requestor.
+
+    Set-OERAccessPackageAssignmentPolicy is a read-modify-write (GET then PUT):
+    fields you do not supply are preserved from the live policy (including the
+    out-of-scope reviewSettings and custom questions). On both
+    New- and Set-OERAccessPackageAssignmentPolicy the Description parameter
+    defaults to the policy display name when omitted.
+
+    Limitations: policy-embedded access reviews (reviewSettings) and custom
+    requestor questions cannot be expressed in an apply document -- they are
+    preserved by the read-modify-write. Fallback approvers are preserved when
+    their stage is unchanged but are dropped when the stage is rebuilt.
+
+DURATION VOCABULARY
+
+    Most cmdlets that accept a lifetime or expiration share the same duration
+    vocabulary. (A few narrowly-scoped parameters, such as
+    Set-OERRoleManagementPolicy -ActivationMaxHours and
+    New-OERAccessPackageApprovalStage -EscalationDays, keep their own
+    already-unit-specific name instead.)
+
+    -Duration <string>                  -- raw ISO 8601 duration (P365D, PT8H)
+    -DurationDays <int>                 -- whole days, converted to P{n}D
+    -DurationHours <int>                -- whole hours, converted to PT{n}H
+
+    -DurationInDays / -DurationInHours (access packages, access reviews) and
+    -EligibleDuration / -ActiveDuration (PIM policies) are the canonical
+    parameter names; -DurationDays / -DurationHours and
+    -EligibleDurationDays / -ActiveDurationDays are the module-standard
+    aliases this unification added.
+
+    Exception: Add-OERGroupEligibility -Duration also accepts a bare whole
+    day count (-Duration 365 means 365 days) for back-compat with its
+    original shipped signature. This is deliberate and scoped to that one
+    cmdlet -- New-OEREligibleRoleAssignment -Duration, by contrast, validates
+    strictly against the ISO 8601 pattern and rejects a bare number such as
+    365 outright.
+
+SEE ALSO
+    Connect-OER
+    Get-OERConfiguration
+    Get-OERGroup
+    Get-OERAdministrativeUnit
+    Get-OERAccessPackage
+    Get-OERAccessReviewDefinition
+    Get-OERRoleAssignment
+    Get-OEREligibleRoleAssignment
+    Get-OERRoleManagementPolicy
+    Get-OERInventory
+    Invoke-OERStructure

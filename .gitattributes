@@ -1,0 +1,38 @@
+# Line-ending policy.
+#
+# `text=auto` normalizes to LF in the index for anything git detects as text, and leaves
+# everything else alone. The previous line was `* text eol=autocrlf`. Its `text` half worked --
+# which is why the index is already 100% LF -- but the `eol` half was inert: `eol` accepts only
+# `lf` or `crlf`, so git stored the literal string, could not act on it, and the WORKING-TREE
+# ending fell back to the per-machine `core.autocrlf`. The explicit rules below pin that per file
+# type, so a contributor with a different `core.autocrlf`, or a container build, gets the same
+# bytes. `text=auto` is used rather than a bare `* text` so a future binary file is not
+# force-converted.
+* text=auto
+
+*.ps1    text eol=lf
+*.psd1   text eol=lf
+*.psm1   text eol=lf
+*.ps1xml text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.txt    text eol=lf
+*.sh     text eol=lf
+*.svg    text eol=lf
+*.mof    text eol=crlf
+
+# Ensure binary files are never line-ending converted. `text=auto` already auto-detects, but
+# these are declared so a future addition cannot be misdetected and mangled.
+*.exe   binary
+*.jpg   binary
+*.xl*   binary
+*.pfx   binary
+*.png   binary
+*.dll   binary
+*.so    binary
+*.cer   binary
+*.ico   binary
+*.zip   binary
+*.nupkg binary

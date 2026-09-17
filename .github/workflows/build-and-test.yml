@@ -1,0 +1,97 @@
+# Build and test on every platform the module supports, so that pull requests are validated on
+# GitHub itself. The test call is the one azure-pipelines.yml runs; its build stage runs `pack`
+# (build plus a .nupkg), which this workflow does not need, so it runs `build` alone.
+#
+# There is deliberately NO publish job, here or in build.yaml. 1.0.0 is published to the
+# PowerShell Gallery by hand.
+#
+# Every action is pinned to a full commit SHA, with the release it was verified against in the
+# trailing comment; a tag can be moved, a SHA cannot. Bump the SHA and the comment together, after
+# reading that commit's action.yml.
+#
+# `shell: pwsh` runs each step under $ErrorActionPreference = 'stop' in the global scope, and that
+# is kept on purpose: it is what operator profiles and Azure Pipelines' PowerShell@2 run under, and
+# module code reads the GLOBAL preference. See docs/development/rationale.md#bearer-scrub-tests.
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # A superseded pull-request run is cancelled; a run on main is never cut short, so every merged
+  # commit keeps a completed check.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }}
+    # Standard runners are free and unmetered only on PUBLIC repositories. On a private one every
+    # push to a pull request would bill three runners, macOS at a 10x multiplier, so the job is
+    # skipped there unless someone starts it on purpose with workflow_dispatch.
+    if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Check out the full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # GitVersion walks the whole history and every tag; a shallow clone computes a wrong version.
+          fetch-depth: 0
+
+      - name: Provision .NET for GitVersion
+        # GitVersion is a .NET global tool, and its apphost must be able to find a .NET install. The
+        # macOS arm64 image ships dotnet under ~/.dotnet behind a /usr/local/bin symlink with
+        # DOTNET_ROOT unset, so the apphost found no runtime there. setup-dotnet provisions .NET
+        # explicitly and exports DOTNET_ROOT on every image. Deriving DOTNET_ROOT from the image's
+        # own `dotnet --list-sdks` also works (measured on all three images) and costs no time, but
+        # it keeps this job dependent on where each image happens to put .NET, which is what broke.
+        # 10.0 is the LTS line; GitVersion.Tool 5.12.0 declares rollForward LatestMajor and runs on it.
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Calculate ModuleVersion (GitVersion 5)
+        shell: pwsh
+        # GitVersion 5, not 6: GitVersion.yml uses the v5 schema. Pinned to the release measured
+        # locally. The version is exported the way azure-pipelines.yml does it, so the build
+        # stamps exactly what this step prints. A native command's nonzero exit code does not stop a
+        # pwsh step on its own, so each one is checked, and nothing reaches GITHUB_ENV unless the
+        # version is non-empty: an empty ModuleVersion must stop the job, never reach the build.
+        run: |
+          dotnet tool install --global GitVersion.Tool --version 5.12.0
+          if ($LASTEXITCODE -ne 0) { throw "dotnet tool install GitVersion.Tool failed with exit code $LASTEXITCODE." }
+          $GitVersionJson = dotnet-gitversion
+          if ($LASTEXITCODE -ne 0) { throw "dotnet-gitversion failed with exit code $LASTEXITCODE." }
+          $GitVersion = ($GitVersionJson -join "`n") | ConvertFrom-Json
+          $ModuleVersion = [string]$GitVersion.NuGetVersionV2
+          if ([string]::IsNullOrWhiteSpace($ModuleVersion)) { throw 'GitVersion returned no NuGetVersionV2, so no ModuleVersion is exported.' }
+          "ModuleVersion=$ModuleVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "ModuleVersion $ModuleVersion (FullSemVer $($GitVersion.FullSemVer))"
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1 -ResolveDependency -Tasks build
+
+      - name: Test
+        shell: pwsh
+        run: ./build.ps1 -Tasks test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: test-results-${{ matrix.os }}
+          path: output/testResults/
+          if-no-files-found: ignore
