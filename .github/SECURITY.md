@@ -18,14 +18,7 @@ Report it privately using one of:
 - GitHub's private vulnerability reporting on this repository (the repository's Security tab ->
   "Report a vulnerability"). This is the intended channel for this repository.
 - Contact the maintainer, [@PhilipHaglund](https://github.com/PhilipHaglund), directly through
-  GitHub. Until private vulnerability reporting is enabled (see the maintainer note below), this
-  is the route a reporter can actually use today. No response-time commitment is made for either
-  channel.
-
-**Maintainer action item:** private vulnerability reporting is a public-repository feature --
-GitHub does not offer it on a private repository. Turn it on (repository Settings -> Code
-security -> Private vulnerability reporting) as soon as the repository is public, and remove this
-note once it is on.
+  GitHub. No response-time commitment is made for either channel.
 
 ## What to include
 

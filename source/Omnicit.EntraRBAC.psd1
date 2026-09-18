@@ -124,9 +124,10 @@
 
     PrivateData = @{
         PSData = @{
-            Tags                     = @('EntraID', 'Azure', 'RBAC', 'PIM', 'Identity', 'Governance')
-            ProjectUri               = 'https://github.com/PhilipHaglund/Omnicit.EntraRBAC'
-            LicenseUri               = 'https://github.com/PhilipHaglund/Omnicit.EntraRBAC/blob/main/LICENSE'
+            Tags                     = @('EntraID', 'Azure', 'RBAC', 'PIM', 'Identity', 'Governance',
+                                          'PSEdition_Core', 'Windows', 'Linux', 'MacOS')
+            ProjectUri               = 'https://github.com/Omnicit/Omnicit.EntraRBAC'
+            LicenseUri               = 'https://github.com/Omnicit/Omnicit.EntraRBAC/blob/main/LICENSE'
             RequireLicenseAcceptance = $false
             ReleaseNotes             = ''
             Prerelease               = ''

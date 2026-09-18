@@ -772,6 +772,8 @@ version -- but a `0.x` build behaves differently:
   value named an `Omnicit` organisation: `GET /orgs/Omnicit` does not resolve (`Omnicit` is a user
   account, not an organisation), and `Omnicit/Omnicit.EntraRBAC` does not resolve for the
   repository owner's own credentials, so a consumer following the link from a feed got a 404.
+  Reversed for 1.0.0: the module is published from `Omnicit/Omnicit.EntraRBAC`, and `ProjectUri`
+  and `LicenseUri` point there.
 - README no longer claims the module is internal and never published to the public Gallery. It is
   MIT licensed and destined for the PowerShell Gallery once 1.0.0 is cut; the same correction is
   applied to the trailing note in `azure-pipelines.yml`.
