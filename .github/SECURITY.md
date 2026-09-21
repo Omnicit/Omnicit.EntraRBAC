@@ -13,12 +13,9 @@ a tenant-compromise vulnerability, not an ordinary bug.
 
 **Do not open a public GitHub issue for a security vulnerability.**
 
-Report it privately using one of:
-
-- GitHub's private vulnerability reporting on this repository (the repository's Security tab ->
-  "Report a vulnerability"). This is the intended channel for this repository.
-- Contact the maintainer, [@PhilipHaglund](https://github.com/PhilipHaglund), directly through
-  GitHub. No response-time commitment is made for either channel.
+Report it privately through GitHub's private vulnerability reporting on this repository: the
+repository's Security tab -> "Report a vulnerability". That is the channel for this repository, and
+it is enabled. No response-time commitment is made.
 
 ## What to include
 
@@ -41,6 +38,7 @@ Report it privately using one of:
 
 ## Supported versions
 
-The first public release is `1.0.0`, and the built version is held in the `1.x` line (see
+The first public release, `1.0.0`, was published on 2026-09-18, and the built version is held in
+the `1.x` line (see
 `CLAUDE.md` "CHANGELOG and Version"). Only the current `main` branch is supported; there are no
 maintained release branches to backport a fix to.
