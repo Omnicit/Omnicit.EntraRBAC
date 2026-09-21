@@ -92,6 +92,22 @@ jobs:
         # failure too (`if: always()`), since a build that broke on a dependency is exactly the run
         # whose versions are worth reading. It only reports: it must never fail the job, so a
         # missing directory prints a line instead of throwing under this step's 'stop' preference.
+        #
+        # A module folder holds one directory per installed version, but it can hold more. The
+        # bootstrapper unpacks a .nupkg into the module folder ITSELF, alongside the version
+        # subfolder, leaving the package's own internal directories behind: _manifest, _rels,
+        # dependencies and package, seen next to Microsoft.PowerShell.PSResourceGet's 1.0.1. These
+        # are NOT runner artefacts -- the same four sit in a local output/RequiredModules resolved
+        # the same way. A tree resolved with -UseModuleFast, a different resolver, appears not to
+        # have them.
+        #
+        # Those directories are not versions, so they are reported SEPARATELY rather than dropped.
+        # A diagnostic step that silently hides rows is the same shape as the defect this step
+        # exists to expose, so everything under the root is accounted for on one line or the other.
+        # The version test is deliberately loose -- first character a digit -- so a four-part
+        # version such as 1.2.3.4, or a prerelease folder such as 2.0.0-preview1, is reported as a
+        # version rather than swallowed. Being loose errs toward listing, which is the safe
+        # direction here.
         if: always()
         shell: pwsh
         run: |
@@ -100,22 +116,26 @@ jobs:
               Write-Host "No $Root -- dependency resolution did not get that far."
               return
           }
-          Get-ChildItem -Path $Root -Directory |
-              ForEach-Object {
-                  $ModuleName = $_.Name
-                  Get-ChildItem -Path $_.FullName -Directory |
-                      # A module folder holds one directory per installed version, but PSResourceGet
-                      # also leaves NuGet extraction artefacts beside them on the runners (_rels,
-                      # package, _manifest, dependencies -- measured on ubuntu-latest). Reporting
-                      # those as versions is exactly the confusion this step exists to remove, so
-                      # only version-shaped names are listed.
-                      Where-Object { $_.Name -match '^[0-9]' } |
-                      ForEach-Object { [PSCustomObject]@{ Module = $ModuleName; Version = $_.Name } }
-              } |
+          $Skipped = [System.Collections.Generic.List[string]]::new()
+          $Resolved = Get-ChildItem -Path $Root -Directory | ForEach-Object {
+              $ModuleName = $_.Name
+              Get-ChildItem -Path $_.FullName -Directory | ForEach-Object {
+                  if ($_.Name -match '^[0-9]') {
+                      [PSCustomObject]@{ Module = $ModuleName; Version = $_.Name }
+                  }
+                  else {
+                      $Skipped.Add("$ModuleName/$($_.Name)")
+                  }
+              }
+          }
+          $Resolved |
               Sort-Object -Property Module, Version |
               Format-Table -AutoSize |
               Out-String -Width 120 |
               Write-Host
+          foreach ($Entry in ($Skipped | Sort-Object)) {
+              Write-Host "skipped, not a version folder: $Entry"
+          }
 
       - name: Test
         shell: pwsh

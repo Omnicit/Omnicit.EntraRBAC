@@ -1476,6 +1476,16 @@ a red build is only quick to diagnose if the run says which module moved, so
 `output/RequiredModules` immediately after the build resolves dependencies. That step is the reason
 the decision is affordable; do not remove it as noise.
 
+It **accounts for every directory** under that root: each one is either a version row or a
+`skipped, not a version folder:` line, and nothing is filtered away in silence. The skipped lines
+are real -- the bootstrapper unpacks a `.nupkg` into the module folder itself, leaving the package's
+own `_manifest`, `_rels`, `dependencies` and `package` directories beside the version subfolder
+(seen next to `Microsoft.PowerShell.PSResourceGet`'s `1.0.1`; a tree resolved with `-UseModuleFast`
+appears not to have them). The first version of this step dropped them quietly, which made
+PSResourceGet look like it had four versions and then, once filtered, made the filter itself a place
+where a real module could vanish. A diagnostic that hides rows is the same shape as the defect it
+exists to expose, which is why the accounting is stated here as a property to keep.
+
 **`PowerShellForGitHub` is declared explicitly** even though `Sampler.GitHubTasks` already brings it
 in transitively. Sampler's `Publish_Release_To_GitHub` task is declared
 `-if ($GitHubToken -and (Get-Module -Name PowerShellForGitHub -ListAvailable))` and therefore SKIPS
