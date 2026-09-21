@@ -9,7 +9,9 @@ Describe 'Resolve-OERAccessPackageId' {
         InModuleScope $script:moduleName {
             Mock Invoke-OERGraphRequest {}
             Resolve-OERAccessPackageId -Id 'ap-1' | Should -Be 'ap-1'
-            # -Exactly matters: a bare -Times 0 is "at least 0" and passes against any call count.
+            # -Exactly is redundant at -Times 0 -- Pester implies it at zero (verified against
+            # 5.7.1 and 6.2.0) -- and is kept only for explicitness. The at-least trap is real,
+            # but only for -Times N where N >= 1.
             Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly
         }
     }

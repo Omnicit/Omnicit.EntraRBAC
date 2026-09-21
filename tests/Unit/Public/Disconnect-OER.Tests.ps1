@@ -43,9 +43,12 @@ Describe 'Disconnect-OER' {
             on the machine belongs to the operator. Signing it out here cleared their own sign-in and
             their on-disk Az token cache as a side effect of ending an unrelated session.
 
-            -Exactly is deliberate: 'Should -Invoke -Times 0' without it reads as "at least 0", which
-            is vacuously true and would pass with the call still in place. That shape is one of this
-            repository's recorded traps -- see docs/development/rationale.md#bearer-scrub-tests.
+            -Exactly is REDUNDANT here and kept only for explicitness. Pester already treats
+            -Times 0 as exact: its help for Should -Invoke says "If the value passed to the Times
+            parameter is zero, the Exactly switch is implied", and the implementation agrees --
+            Pester.psm1 decides with ($Exactly -or ($Times -eq 0)). Verified by execution against
+            both Pester 5.7.1 and 6.2.0: a bare -Times 0 FAILS when the command was called. The
+            at-least trap CLAUDE.md warns about is real, but only for -Times N where N >= 1.
         #>
         InModuleScope $script:moduleName { $script:_OERAuthState = @{ TenantId = 'x' } }
         Disconnect-OER -Confirm:$false

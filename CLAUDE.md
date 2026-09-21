@@ -717,7 +717,12 @@ bug.
   does not. `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A bearer-scrub regression test needs a different proof depending on how the catch re-throws**,
   and the wrong proof passes with the scrub deleted. Same for `-ErrorVariable` assertions and
-  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`).
+  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`). **That trap applies for
+  `N >= 1` only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero
+  (its own help says so, and `Pester.psm1` decides with `($Exactly -or ($Times -eq 0))`; verified by
+  execution against 5.7.1 and 6.2.0). Roughly 400 bare `-Times 0` assertions in this suite are
+  therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
+  by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **Six rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
   encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole

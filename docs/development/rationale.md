@@ -59,6 +59,17 @@ Related test shapes that look like guards but are not, found by audit PR9 (#34) 
 variable (child scope), and `Should -Invoke ... -Times N` is *at-least* semantics unless you add
 `-Exactly`.
 
+**That last one holds for `N >= 1` only, and the exception matters because this suite leans on it.**
+`-Times 0` already means EXACTLY zero. Pester's own help for `Should -Invoke` states "If the value
+passed to the Times parameter is zero, the Exactly switch is implied", and the implementation agrees
+-- `Pester.psm1` gates the failure on `($Exactly -or ($Times -eq 0))`. Verified by execution against
+both Pester 5.7.1 and 6.2.0 (the version this repository resolves at `latest`): a bare `-Times 0`
+FAILS when the command was called, while a bare `-Times 1` passes when it was called twice. So the
+roughly 400 bare `-Times 0` assertions under `tests/` are sound negative proofs, not inert guards.
+Adding `-Exactly` at zero is harmless and clearer, but justifying it by calling the bare form
+vacuously true is simply wrong -- that false justification was written into two test comments before
+being caught on 2026-09-21, which is why it is recorded here rather than just deleted.
+
 **A `-Because` string containing the word "because"** is the same family with a different mechanism:
 the assertion works, the explanation it prints does not.
 `output/RequiredModules/Pester/5.7.1/Pester.psm1` line 8285 formats the reason as
