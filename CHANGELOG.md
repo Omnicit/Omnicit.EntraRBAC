@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:
+Azure Resource Manager requests are made directly with a token acquired through AzAuth, and always
+have been. Installing or updating the module therefore pulls a smaller dependency tree, and an
+environment that carried Az.Resources only for this module can drop it.
+
+No cmdlet, parameter, output shape or behaviour changes with this release, and `-IncludeARM` works
+exactly as before.
+
+A long-standing documentation error is corrected alongside it. `Connect-OER` stated that
+`-IncludeARM` made Az.Resources cmdlets usable in the same session. It never did: the module
+acquires an Azure Resource Manager token for its own Azure cmdlets and deliberately does not call
+`Connect-AzAccount`, so no Az PowerShell context is created. If you relied on that, sign in to Az
+separately. `Disconnect-OER` still signs an Az session out when Az.Accounts is loaded, unchanged.
+
+## [1.0.0] - 2026-09-18
+
 Omnicit.EntraRBAC 1.0.0 is the first public release. It manages Entra ID and Azure RBAC from
 PowerShell 7.2+ on Windows, Linux and macOS, in the tenants you administer: groups and PIM for
 Groups, Administrative Units, Entitlement Management, Access Reviews, Azure resources and role
@@ -36,10 +52,6 @@ and a new PowerShell session starts from a fresh credential.
 Start with `README.md`, `Get-Help about_Omnicit.EntraRBAC`, and `Get-OERRequiredScope`, which
 reports the Microsoft Graph permissions and Azure roles each cmdlet needs. Versions before 1.0.0
 were never published; their history is kept in `CHANGELOG.md` in the project repository.
-
-Since 1.0.0, internal maintenance only: a code-analysis suppression that no longer suppressed
-anything was removed from the access package apply handler. No cmdlet, parameter, output shape or
-behaviour changed.
 
 ## [0.10.0] - 2026-09-13
 
