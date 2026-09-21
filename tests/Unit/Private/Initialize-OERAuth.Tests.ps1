@@ -2317,8 +2317,11 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                       $Scope, $Force, $Claim)
                 [pscustomobject]@{ Token = "token-for-$Tenant"; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp' }
             }
-            # Both mocked: Disconnect-AzAccount resolves for real in the test environment and would
-            # clear the operator's own Az context.
+            # Disconnect-MgGraph is mocked because Disconnect-OER calls it. Disconnect-AzAccount is
+            # mocked defensively: Disconnect-OER no longer calls it (Philip's decision, 2026-09-21 --
+            # the module establishes no Az context, so the call could only ever reach the operator's
+            # own session), but the cmdlet still resolves for real in the test environment, so the
+            # mock keeps a reintroduced call from clearing the operator's Az context in a local run.
             Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
             Mock -ModuleName $script:moduleName Disconnect-AzAccount { }
 
@@ -2912,8 +2915,11 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                     TenantId  = '11111111-1111-1111-1111-111111111111'
                 }
             }
-            # Both mocked: Disconnect-AzAccount resolves for real in the test environment and would
-            # clear the operator's own Az context.
+            # Disconnect-MgGraph is mocked because Disconnect-OER calls it. Disconnect-AzAccount is
+            # mocked defensively: Disconnect-OER no longer calls it (Philip's decision, 2026-09-21 --
+            # the module establishes no Az context, so the call could only ever reach the operator's
+            # own session), but the cmdlet still resolves for real in the test environment, so the
+            # mock keeps a reintroduced call from clearing the operator's Az context in a local run.
             Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
             Mock -ModuleName $script:moduleName Disconnect-AzAccount { }
 
@@ -2957,6 +2963,8 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
                     TenantId  = '11111111-1111-1111-1111-111111111111'
                 }
             }
+            # Same as the two sites above: Disconnect-MgGraph because Disconnect-OER calls it,
+            # Disconnect-AzAccount defensively only, since Disconnect-OER no longer calls that one.
             Mock -ModuleName $script:moduleName Disconnect-MgGraph { }
             Mock -ModuleName $script:moduleName Disconnect-AzAccount { }
 

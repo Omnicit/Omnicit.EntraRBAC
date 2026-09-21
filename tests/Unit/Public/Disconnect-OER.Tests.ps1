@@ -5,17 +5,20 @@ BeforeAll {
 }
 
 Describe 'Disconnect-OER' {
-    # Disconnect-AzAccount MUST be mocked in every It. It resolves for real in the test environment:
-    # RequiredModules.psd1 resolves Az.Accounts into output/RequiredModules partly for this reason,
-    # since Pester's Mock requires the command to exist and every It here would otherwise fail in
-    # BeforeEach. It is not the only reason, and not the weightier one -- see that file's comment
-    # and docs/development/rationale.md#dependencies before concluding the entry is unused.
-    # Az.Accounts is deliberately NOT a manifest dependency -- the module calls no Az
-    # cmdlet at run time except this one guarded Disconnect-AzAccount. Without the mock,
-    # source/Public/Disconnect-OER.ps1:22-23 executes the real cmdlet and clears the operator's local
-    # Az context and on-disk token cache -- the same context used for manual live verification.
-    # Mocking it also makes the Get-Command guard resolve inside the module, which keeps the branch
-    # reachable and assertable.
+    # Disconnect-AzAccount is still mocked in every It, even though Disconnect-OER no longer calls
+    # it. Two reasons, and neither is obsolete:
+    #
+    #   1. The NEGATIVE assertion below needs it. Pester's Mock resolves the command it is given and
+    #      throws when it cannot, so 'Should -Invoke ... -Times 0' cannot even be written without a
+    #      mock in place. Removing the mock would not simplify this file; it would delete the proof.
+    #   2. It is the safety net if the call ever comes back. Without the mock, a reintroduced call
+    #      would execute the REAL cmdlet during a local run and clear the operator's Az context and
+    #      on-disk token cache -- the same context used for manual live verification.
+    #
+    # Az.Accounts is resolved into output/RequiredModules for this and for the Connect-AzAccount
+    # -Times 0 assertion in Initialize-OERAuth.Tests.ps1; it is deliberately NOT a manifest
+    # dependency. See RequiredModules.psd1's own comment and
+    # docs/development/rationale.md#dependencies before concluding the entry is unused.
     BeforeEach {
         Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
         Mock -ModuleName $script:moduleName Disconnect-AzAccount {}
@@ -33,10 +36,20 @@ Describe 'Disconnect-OER' {
         Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1
     }
 
-    It 'calls Disconnect-AzAccount when the Az cmdlet is available' {
+    It 'leaves an Az PowerShell session the operator started alone' {
+        <#
+            Philip's decision, 2026-09-21. The module never establishes an Az context -- -IncludeARM
+            only acquires an ARM token, which Invoke-OERArmRequest sends itself -- so any Az context
+            on the machine belongs to the operator. Signing it out here cleared their own sign-in and
+            their on-disk Az token cache as a side effect of ending an unrelated session.
+
+            -Exactly is deliberate: 'Should -Invoke -Times 0' without it reads as "at least 0", which
+            is vacuously true and would pass with the call still in place. That shape is one of this
+            repository's recorded traps -- see docs/development/rationale.md#bearer-scrub-tests.
+        #>
         InModuleScope $script:moduleName { $script:_OERAuthState = @{ TenantId = 'x' } }
         Disconnect-OER -Confirm:$false
-        Should -Invoke -ModuleName $script:moduleName Disconnect-AzAccount -Times 1
+        Should -Invoke -ModuleName $script:moduleName Disconnect-AzAccount -Times 0 -Exactly
     }
 }
 

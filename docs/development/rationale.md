@@ -1320,7 +1320,8 @@ instead of refreshing.
 references to `TokenManager` at all -- it only ever touches the on-disk MSAL token cache, never the
 static credential field. MEASURED: removing and re-importing the AzAuth module leaves the same
 credential instance in place. `Disconnect-OER` clears only `$script:_OERAuthState` (this module's
-own session state) and calls `Disconnect-MgGraph`/`Disconnect-AzAccount`; reading its source shows
+own session state) and calls `Disconnect-MgGraph` (it called `Disconnect-AzAccount` too until
+2026-09-21); reading its source shows
 it never touches AzAuth's credential at all, so it was never capable of clearing it. Decompiling
 AzAuth shows the only call site that clears the static credential is `Get-AzToken`'s own `-Force`
 handling.
@@ -1529,9 +1530,11 @@ reasons, and the second is the weightier one.
    site in the same file mocks `Connect-AzAccount` defensively inside an ARM-failure test, and needs
    the command to resolve just as much.
 
-**So do not remove `Az.Accounts` the day `Disconnect-OER` changes.** Reason 1 is the one that is
-easy to notice and easy to make obsolete: if that cmdlet ever stops calling `Disconnect-AzAccount`,
-its mock goes away and `Az.Accounts` looks unused. Reason 2 is untouched by that change and would
+**So do not remove `Az.Accounts` now that `Disconnect-OER` has changed.** Reason 1 was the one that
+was easy to notice and easy to make obsolete, and on 2026-09-21 it partly WAS: `Disconnect-OER` no
+longer calls `Disconnect-AzAccount`, so anyone skimming would conclude the mock, and then the entry,
+is dead. It is not -- the assertion inverted to `-Times 0 -Exactly`, and a negative assertion still
+needs the command to resolve. Reason 2 is untouched by that change and would
 be silently destroyed. Worse, the destruction has a green-looking repair: removing `Az.Accounts`
 makes the `Mock Connect-AzAccount` line throw, and "fixing" that by deleting the mock and its
 `-Times 0` assertion leaves a passing suite with the proof gone -- the guard-shaped-but-inert shape
@@ -1540,13 +1543,27 @@ fails to resolve, the answer is to restore `Az.Accounts`, never to delete the as
 
 It is deliberately NOT added to the manifest: a test-environment need is not a consumer's need.
 
-**Left alone deliberately:** `Disconnect-OER` still calls `Disconnect-AzAccount` when the command
-resolves, even though the module never created that session. Signing out a session you did not
-establish is arguably wrong, and it is a separate question from this one -- raised, not decided,
-and not changed here.
+**DECIDED (Philip, 2026-09-21): `Disconnect-OER` no longer calls `Disconnect-AzAccount`.** This was
+recorded here as raised-but-not-decided when `Az.Resources` was removed; it is now settled, and the
+call is gone.
 
-Nothing in `RequiredModules.psd1` is bundled into a build artefact.
- The built module under
+The reasoning is the same fact the removal rested on. The module never establishes an Az context --
+`-IncludeARM` only acquires an ARM token, which `Invoke-OERArmRequest` sends itself -- so there is no
+session of the module's own for `Disconnect-AzAccount` to end. The only thing the call could reach
+was the OPERATOR's own Az session and their on-disk Az token cache, cleared as a side effect of
+ending an unrelated one. That is the context used for this module's manual live verification, which
+its security rules require, so the side effect landed on exactly the session an operator could least
+afford to lose silently.
+
+It is a user-visible behaviour change and is carried in `CHANGELOG.md` as one. The version is a
+PATCH deliberately (Philip): nothing a caller invokes changes shape, and the removed behaviour was
+never this module's to perform.
+
+`Az.Accounts` stays in `RequiredModules.psd1`. Both reasons above survive the change -- the negative
+`Connect-AzAccount` assertion is untouched, and `Disconnect-OER.Tests.ps1`'s assertion merely
+inverts to `-Times 0 -Exactly`, which still needs the command to resolve before it can be written.
+
+Nothing in `RequiredModules.psd1` is bundled into a build artefact. The built module under
 `output/module/` contains only this module's own files, and `package_module_nupkg` packs that tree;
 dependencies reach a consumer through the manifest's floors, which is what the file's own comment
 now says.

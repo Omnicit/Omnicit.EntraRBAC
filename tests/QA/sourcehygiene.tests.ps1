@@ -1180,28 +1180,24 @@ BeforeAll {
         [System.StringComparer]::OrdinalIgnoreCase)
 
     <#
-        One exemption, pinned to a FILE and a COMMAND rather than allowed module-wide.
+        NO EXEMPTIONS. There was one, briefly, and its removal is worth recording.
 
-        source/Public/Disconnect-OER.ps1 calls Disconnect-AzAccount behind a Get-Command guard. It
-        is a real Az call and it is deliberate, so a gate that failed on it would be permanently
-        red -- but it does not weaken the property this gate exists to prove: Disconnect-AzAccount
-        TEARS DOWN a context, it cannot establish one. Whether Disconnect-OER should sign out a
-        session the module never created is a separate, open question, raised in
-        docs/development/rationale.md#dependencies and deliberately not decided there.
+        source/Public/Disconnect-OER.ps1 used to call Disconnect-AzAccount behind a Get-Command
+        guard, so this gate was first written with that one call exempted, pinned to the file, plus
+        an assertion that the exemption still matched exactly one live site. That assertion is what
+        made the exemption self-retiring, and it did its job: when the call was removed (Philip's
+        decision, 2026-09-21 -- the module never establishes an Az context, so the call could only
+        ever reach the operator's OWN Az session and on-disk token cache) the gate went red asking
+        for the exemption to be retired rather than silently leaving that file exempt. It was
+        retired in the same pull request, so the exemption never reached main.
 
-        Pinned to the file so that a SECOND Disconnect-AzAccount call, anywhere else, still fails
-        this gate. The exemption is itself asserted below to match exactly one site, so if
-        Disconnect-OER ever stops making this call the gate goes RED asking for the exemption to be
-        retired, rather than quietly leaving a hole open for a future call to slip through.
+        The allowlist below is therefore the whole of it. Do not reintroduce a per-file exemption:
+        the module now calls no Az cmdlet at all outside AzAuth's token surface.
     #>
-    $script:azContextPinnedExemptions = @{
-        'source\Public\Disconnect-OER.ps1' = 'Disconnect-AzAccount'
-    }
 
     $script:azContextParsedFileCount = 0
     $script:azContextCommandAstCount = 0
     $script:azContextAzCallCount     = 0
-    $script:azContextExemptionHits   = 0
     $script:azContextParseFailures   = @()
     $script:azContextViolations      = @()
 
@@ -1236,12 +1232,6 @@ BeforeAll {
             $script:azContextAzCallCount++
 
             if ($script:azContextAllowedCommands.Contains($CommandName)) { continue }
-
-            if ($script:azContextPinnedExemptions.ContainsKey($RelativePath) -and
-                $script:azContextPinnedExemptions[$RelativePath] -eq $CommandName) {
-                $script:azContextExemptionHits++
-                continue
-            }
 
             $script:azContextViolations += '{0}:{1} -- calls {2}: {3}' -f
                 $RelativePath, $CommandNode.Extent.StartLineNumber, $CommandName,
@@ -1751,7 +1741,7 @@ Describe 'Az context hygiene' -Tags 'SourceHygiene' {
             Non-vacuity guard, the same shape dochygiene.tests.ps1 and the Cmdlet reference gate
             above use. A scan that parsed nothing, or that walked no command nodes, would report no
             violations and pass -- green while proving nothing at all. These thresholds sit just
-            under the values measured on 2026-09-22 (210 files parsed, 2,919 CommandAst nodes).
+            under the values measured on 2026-09-21 (210 files parsed, 2,919 CommandAst nodes).
         #>
         $script:azContextParseFailures | Should -BeNullOrEmpty -Because (
             'a source file that no longer parses silently drops out of this scan; fix the file rather than letting the gate measure less than the tree')
@@ -1767,24 +1757,12 @@ Describe 'Az context hygiene' -Tags 'SourceHygiene' {
             assertions above prove files were parsed and commands were walked; neither would notice
             if the '-Az' matcher itself stopped matching. A broken matcher yields zero violations
             AND zero recognised Az calls, which is indistinguishable from a clean tree unless the
-            positive count is asserted too. Measured on 2026-09-22: 5 calls -- Get-AzToken twice
-            and the internal Invoke-AzTokenCall twice in Initialize-OERAuth.ps1, plus the one
-            exempted Disconnect-AzAccount in Disconnect-OER.ps1.
+            positive count is asserted too. Measured on 2026-09-21 after Disconnect-OER stopped
+            calling Disconnect-AzAccount: 4 calls -- Get-AzToken twice and the module's own
+            internal Invoke-AzTokenCall twice, all four in Initialize-OERAuth.ps1.
         #>
         $script:azContextAzCallCount | Should -BeGreaterThan 0 -Because (
             'the scan must be able to SEE an Az-shaped command name at all; zero recognised calls means the matcher is broken, not that the module stopped calling AzAuth')
-    }
-
-    It 'keeps the Disconnect-AzAccount exemption pinned to exactly one live call site' {
-        <#
-            An exemption that outlives the call it was written for is a hole waiting for a future
-            call to fall into. This asserts the pinned exemption is still earning its place: if
-            Disconnect-OER ever stops calling Disconnect-AzAccount, this goes red and asks for the
-            exemption to be REMOVED from $script:azContextPinnedExemptions -- it does not quietly
-            keep sheltering that file.
-        #>
-        $script:azContextExemptionHits | Should -Be 1 -Because (
-            'source/Public/Disconnect-OER.ps1 makes exactly one guarded Disconnect-AzAccount call; if that call is gone, retire the pinned exemption instead of leaving the file exempt')
     }
 
     It 'never calls an Az cmdlet that could establish an Az context' {
@@ -1798,11 +1776,10 @@ creates no Az context. That promise, and the removal of Az.Resources from the ma
 on this property.
 
 This is the direct proof of it. Do NOT satisfy this gate by adding the offending command to
-$script:azContextAllowedCommands or $script:azContextPinnedExemptions -- the allowlist covers
-AzAuth's token surface and the module's own internal helper, and the single pinned exemption
-covers a call that tears a context DOWN and cannot create one. A new Az call is a design change
-that needs a decision recorded in docs/development/rationale.md, a manifest dependency, and new
-help text, not an entry here.
+$script:azContextAllowedCommands, and do not reintroduce a per-file exemption -- the allowlist
+covers AzAuth's token surface and the module's own internal helper, and nothing else in this
+module calls an Az cmdlet at all. A new Az call is a design change that needs a decision recorded
+in docs/development/rationale.md, a manifest dependency, and new help text, not an entry here.
 '@
     }
 }

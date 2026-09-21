@@ -12,14 +12,18 @@ Azure Resource Manager requests are made directly with a token acquired through 
 have been. Installing or updating the module therefore pulls a smaller dependency tree, and an
 environment that carried Az.Resources only for this module can drop it.
 
-No cmdlet, parameter, output shape or behaviour changes with this release, and `-IncludeARM` works
-exactly as before.
+`Disconnect-OER` no longer signs out an Az PowerShell session that you started yourself. It clears
+this module's cached tokens and session state and disconnects Microsoft Graph, and now leaves your
+Az context and its on-disk Az token cache untouched; run `Disconnect-AzAccount` yourself when you
+want to end that one too. The module never establishes an Az context, so that sign-out could only
+ever have reached a session of your own. No other cmdlet, parameter or output shape changes, and
+`-IncludeARM` works exactly as before.
 
 A long-standing documentation error is corrected alongside it. `Connect-OER` stated that
 `-IncludeARM` made Az.Resources cmdlets usable in the same session. It never did: the module
 acquires an Azure Resource Manager token for its own Azure cmdlets and deliberately does not call
 `Connect-AzAccount`, so no Az PowerShell context is created. If you relied on that, sign in to Az
-separately. `Disconnect-OER` still signs an Az session out when Az.Accounts is loaded, unchanged.
+separately.
 
 ## [1.0.0] - 2026-09-18
 
