@@ -1126,6 +1126,128 @@ BeforeAll {
                 $RelativePath, $MemberNode.Extent.StartLineNumber, $MemberNode.Parent.Extent.Text.Trim()
         }
     }
+
+    <#
+        =====================================================================================
+        Pass 8: Az-context hygiene. The module acquires an ARM bearer token through AzAuth and
+        sends it itself (Invoke-OERArmRequest); it deliberately never calls Connect-AzAccount or
+        Set-AzContext, so it never establishes an Az PowerShell context. That property is the
+        premise Az.Resources was removed from the manifest on (PR #2, 2026-09-21), and it is what
+        source/Public/Connect-OER.ps1's help now promises a caller.
+
+        Until now the property was proven only by MOCK-BASED tests -- the
+        'Should -Invoke ... Connect-AzAccount -Times 0' assertion in
+        tests/Unit/Private/Initialize-OERAuth.Tests.ps1. Those assertions are sound, but they are
+        load-bearing on something they do not control: Pester's Mock resolves the command it is
+        given and throws when it cannot, so they only run while Az.Accounts is resolved into
+        output/RequiredModules. A session that removed Az.Accounts and then deleted the failing
+        Mock and its -Times 0 assertion to get back to green would delete the proof, and nothing
+        would say so. That gap was flagged on PR #2 and this pass closes it.
+
+        This gate proves the PROPERTY directly and is independent of what is installed: it reads
+        the source text and asks the PowerShell parser what is CALLED there. No Az module needs to
+        be present for it to run, and no mock can weaken it.
+
+        DETECTION SHAPE. One AST pass over every source/**/*.ps1, collecting every CommandAst and
+        rejecting any whose command name matches '-Az' unless it is explicitly allowed. The AST is
+        used rather than a text scan for the reason the bearer-scrub gate gives: a parser does not
+        see comments or comment-based help, and source/ is full of prose that names
+        Connect-AzAccount and Invoke-AzRestMethod precisely to say the module does NOT call them.
+        A grep would drown in those; the parser never offers them.
+
+        KNOWN LIMIT, stated rather than papered over. A command name built at run time is invisible
+        here: GetCommandName() returns $null for '& $Variable', so a call assembled into a variable
+        would not be detected. Measured on this tree, 26 CommandAst nodes have no static name --
+        25 whose first element is a VariableExpressionAst ('& $Fail', '& $CollectIds', '& $Describe',
+        '& $ValidatePimBlock') and one MemberExpressionAst ('& $Section.Handler' in
+        Invoke-OERStructure.ps1). PR #2 verified by hand that every one of them invokes a LOCAL
+        SCRIPTBLOCK, never a command name, and that the module contains no Invoke-Expression, no
+        [scriptblock]::Create and no string-built command name. If a dynamic dispatch on a real
+        command name is ever introduced, this gate cannot see it and the review must.
+    #>
+    $script:azContextAllowedCommands = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]]@(
+            # AzAuth's own token surface. Acquiring a token is the whole design; it establishes no
+            # context. Get-AzTokenCache and Clear-AzTokenCache are named here for completeness --
+            # measured on this tree they appear only in comments, never as a call.
+            'Get-AzToken'
+            'Get-AzTokenCache'
+            'Clear-AzTokenCache'
+            # The module's OWN internal helper, defined inside Initialize-OERAuth.ps1. It wraps
+            # Get-AzToken; the name merely matches the pattern.
+            'Invoke-AzTokenCall'
+        ),
+        [System.StringComparer]::OrdinalIgnoreCase)
+
+    <#
+        One exemption, pinned to a FILE and a COMMAND rather than allowed module-wide.
+
+        source/Public/Disconnect-OER.ps1 calls Disconnect-AzAccount behind a Get-Command guard. It
+        is a real Az call and it is deliberate, so a gate that failed on it would be permanently
+        red -- but it does not weaken the property this gate exists to prove: Disconnect-AzAccount
+        TEARS DOWN a context, it cannot establish one. Whether Disconnect-OER should sign out a
+        session the module never created is a separate, open question, raised in
+        docs/development/rationale.md#dependencies and deliberately not decided there.
+
+        Pinned to the file so that a SECOND Disconnect-AzAccount call, anywhere else, still fails
+        this gate. The exemption is itself asserted below to match exactly one site, so if
+        Disconnect-OER ever stops making this call the gate goes RED asking for the exemption to be
+        retired, rather than quietly leaving a hole open for a future call to slip through.
+    #>
+    $script:azContextPinnedExemptions = @{
+        'source\Public\Disconnect-OER.ps1' = 'Disconnect-AzAccount'
+    }
+
+    $script:azContextParsedFileCount = 0
+    $script:azContextCommandAstCount = 0
+    $script:azContextAzCallCount     = 0
+    $script:azContextExemptionHits   = 0
+    $script:azContextParseFailures   = @()
+    $script:azContextViolations      = @()
+
+    foreach ($File in $script:cmdletRefFiles) {
+        $RelativePath = ($File.RelativePath -replace '/', '\')
+
+        $FileTokens = $null
+        $FileErrors = $null
+        $FileAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $File.Text, $File.Path, [ref]$FileTokens, [ref]$FileErrors)
+
+        if ($FileErrors.Count -gt 0) {
+            # Recorded, not skipped silently: a file that stopped parsing would otherwise thin this
+            # gate's non-vacuity counts without anything noticing.
+            $script:azContextParseFailures += $RelativePath
+            continue
+        }
+        $script:azContextParsedFileCount++
+
+        $CommandNodes = @($FileAst.FindAll({
+                    $args[0] -is [System.Management.Automation.Language.CommandAst]
+                }, $true))
+        $script:azContextCommandAstCount += $CommandNodes.Count
+
+        foreach ($CommandNode in $CommandNodes) {
+            $CommandName = $CommandNode.GetCommandName()
+
+            # $null for a dynamically dispatched call -- see KNOWN LIMIT above.
+            if ([string]::IsNullOrEmpty($CommandName)) { continue }
+            if ($CommandName -notmatch '-Az') { continue }
+
+            $script:azContextAzCallCount++
+
+            if ($script:azContextAllowedCommands.Contains($CommandName)) { continue }
+
+            if ($script:azContextPinnedExemptions.ContainsKey($RelativePath) -and
+                $script:azContextPinnedExemptions[$RelativePath] -eq $CommandName) {
+                $script:azContextExemptionHits++
+                continue
+            }
+
+            $script:azContextViolations += '{0}:{1} -- calls {2}: {3}' -f
+                $RelativePath, $CommandNode.Extent.StartLineNumber, $CommandName,
+                (($CommandNode.Extent.Text -split "`n")[0].Trim())
+        }
+    }
 }
 
 Describe 'Source encoding' -Tags 'SourceHygiene' {
@@ -1618,6 +1740,69 @@ variable was enough to hide the first version of this very gate. Migrate the sit
 Test-OERDeclaredProperty (or Test-OERDeclaredNull for the explicit-null-only case), or -- if the read
 genuinely inspects something other than an apply-document node -- add it to
 $script:declaredValueAllowlist with a written reason. Do not delete this assertion to get past it.
+'@
+    }
+}
+
+Describe 'Az context hygiene' -Tags 'SourceHygiene' {
+
+    It 'parses a meaningful number of source files and command nodes' {
+        <#
+            Non-vacuity guard, the same shape dochygiene.tests.ps1 and the Cmdlet reference gate
+            above use. A scan that parsed nothing, or that walked no command nodes, would report no
+            violations and pass -- green while proving nothing at all. These thresholds sit just
+            under the values measured on 2026-09-22 (210 files parsed, 2,919 CommandAst nodes).
+        #>
+        $script:azContextParseFailures | Should -BeNullOrEmpty -Because (
+            'a source file that no longer parses silently drops out of this scan; fix the file rather than letting the gate measure less than the tree')
+        $script:azContextParsedFileCount | Should -BeGreaterThan 195 -Because (
+            'source/ held 210 parseable .ps1 files when this gate was written; below 195 the scan has lost a directory, not shrunk')
+        $script:azContextCommandAstCount | Should -BeGreaterThan 2700 -Because (
+            'source/**/*.ps1 carried 2919 CommandAst nodes when this gate was written; below 2700 the AST walk has broken, not found less code')
+    }
+
+    It 'still recognises the Az command shape it is written to detect' {
+        <#
+            The sharper half of the non-vacuity guard, and the one specific to THIS gate. The two
+            assertions above prove files were parsed and commands were walked; neither would notice
+            if the '-Az' matcher itself stopped matching. A broken matcher yields zero violations
+            AND zero recognised Az calls, which is indistinguishable from a clean tree unless the
+            positive count is asserted too. Measured on 2026-09-22: 5 calls -- Get-AzToken twice
+            and the internal Invoke-AzTokenCall twice in Initialize-OERAuth.ps1, plus the one
+            exempted Disconnect-AzAccount in Disconnect-OER.ps1.
+        #>
+        $script:azContextAzCallCount | Should -BeGreaterThan 0 -Because (
+            'the scan must be able to SEE an Az-shaped command name at all; zero recognised calls means the matcher is broken, not that the module stopped calling AzAuth')
+    }
+
+    It 'keeps the Disconnect-AzAccount exemption pinned to exactly one live call site' {
+        <#
+            An exemption that outlives the call it was written for is a hole waiting for a future
+            call to fall into. This asserts the pinned exemption is still earning its place: if
+            Disconnect-OER ever stops calling Disconnect-AzAccount, this goes red and asks for the
+            exemption to be REMOVED from $script:azContextPinnedExemptions -- it does not quietly
+            keep sheltering that file.
+        #>
+        $script:azContextExemptionHits | Should -Be 1 -Because (
+            'source/Public/Disconnect-OER.ps1 makes exactly one guarded Disconnect-AzAccount call; if that call is gone, retire the pinned exemption instead of leaving the file exempt')
+    }
+
+    It 'never calls an Az cmdlet that could establish an Az context' {
+        $script:azContextViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+Omnicit.EntraRBAC acquires an ARM bearer token through AzAuth and sends it itself from
+Invoke-OERArmRequest. It must never call Connect-AzAccount, Set-AzContext or any other Az cmdlet
+that establishes or mutates an Az PowerShell context: Az.Accounts cannot reliably reuse an
+externally acquired token (docs/development/rationale.md#arm-transport), the module is not
+listed as depending on any Az module, and Connect-OER's help promises a caller that -IncludeARM
+creates no Az context. That promise, and the removal of Az.Resources from the manifest, both rest
+on this property.
+
+This is the direct proof of it. Do NOT satisfy this gate by adding the offending command to
+$script:azContextAllowedCommands or $script:azContextPinnedExemptions -- the allowlist covers
+AzAuth's token surface and the module's own internal helper, and the single pinned exemption
+covers a call that tears a context DOWN and cannot create one. A new Az call is a design change
+that needs a decision recorded in docs/development/rationale.md, a manifest dependency, and new
+help text, not an entry here.
 '@
     }
 }
