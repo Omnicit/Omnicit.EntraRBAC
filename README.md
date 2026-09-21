@@ -22,8 +22,9 @@ README summarises. `Get-OERRequiredScope` is authoritative for permissions -- se
 - **Microsoft.Graph.Authentication** >= 2.36.0 (`Connect-MgGraph`)
 
 No Az PowerShell module is required. Azure Resource Manager calls are made directly with a token
-from AzAuth, so `-IncludeARM` needs nothing beyond the two modules above. If `Az.Accounts` happens
-to be loaded, `Disconnect-OER` will also sign that session out.
+from AzAuth, so `-IncludeARM` needs nothing beyond the two modules above. An Az PowerShell session
+you started yourself is left alone: this module never establishes an Az context, and
+`Disconnect-OER` does not sign one out.
 
 ---
 
@@ -144,6 +145,10 @@ automatically on first use.
 ```powershell
 Disconnect-OER
 ```
+
+Clears this module's cached tokens and session state and disconnects Microsoft Graph. An Az
+PowerShell session you started yourself is left connected -- run `Disconnect-AzAccount` yourself if
+you want to end that one too.
 
 ### Switching tenants
 

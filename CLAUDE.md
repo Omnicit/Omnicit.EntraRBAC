@@ -380,7 +380,9 @@ auth identity in the `$script:_OERAuthState` cache key, so naming a different cl
 re-authenticates rather than reusing a token minted at the previous cloud's authority. **Microsoft
 365 GCC runs on the commercial (`Global`) endpoints and needs no `-Environment` at all** -- only GCC
 High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`) are separate cloud boundaries.
-`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph` / `Disconnect-AzAccount`.
+`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`. It deliberately does
+NOT call `Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the
+machine is the operator's own (Philip's decision, 2026-09-21).
 `Why: docs/development/rationale.md#sovereign-clouds`
 
 **IMPORTANT:** `-ClientSecret` is a `[securestring]`. Never accept or store client secrets as plain
@@ -715,7 +717,12 @@ bug.
   does not. `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A bearer-scrub regression test needs a different proof depending on how the catch re-throws**,
   and the wrong proof passes with the scrub deleted. Same for `-ErrorVariable` assertions and
-  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`).
+  `Should -Invoke -Times N` (at-least semantics -- add `-Exactly`). **That trap applies for
+  `N >= 1` only: `-Times 0` already means EXACTLY zero**, since Pester implies `-Exactly` at zero
+  (its own help says so, and `Pester.psm1` decides with `($Exactly -or ($Times -eq 0))`; verified by
+  execution against 5.7.1 and 6.2.0). Roughly 400 bare `-Times 0` assertions in this suite are
+  therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
+  by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **Six rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
   encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
@@ -783,13 +790,19 @@ the newest combination -- what a new consumer actually gets -- while **nothing t
 floors any more**.
 `Why: docs/development/rationale.md#dependencies`
 
-**No Az module is a dependency of this module.** ARM is called directly with an AzAuth token
-(`Invoke-OERArmRequest`), and no Az cmdlet is invoked anywhere at run time except the guarded
-`Disconnect-AzAccount` in `Disconnect-OER`. `Az.Resources` was declared in the manifest until
-2026-09-21 and was never used; it is gone. `RequiredModules.psd1` resolves `Az.Accounts` purely so
-that `tests/Unit/Public/Disconnect-OER.Tests.ps1` can mock `Disconnect-AzAccount` -- Pester's `Mock`
-requires the command to exist -- and that is a TEST-environment dependency, not a runtime one, which
-is why it is absent from the table above.
+**No Az module is a dependency of this module, and no Az cmdlet is invoked at run time at all.**
+ARM is called directly with an AzAuth token (`Invoke-OERArmRequest`). `Az.Resources` was declared in
+the manifest until 2026-09-21 and was never used; it is gone. `Disconnect-OER` called
+`Disconnect-AzAccount` behind a `Get-Command` guard until the same date, when that call was removed
+too -- the module establishes no Az context, so it could only ever have reached the operator's own
+session. `tests/QA/sourcehygiene.tests.ps1` now proves this from the source with an AST walk,
+independently of what is installed.
+
+`RequiredModules.psd1` still resolves `Az.Accounts`, for the TEST environment only: Pester's `Mock`
+requires a command to exist, and two negative assertions depend on it -- `Connect-AzAccount`
+`-Times 0` in `Initialize-OERAuth.Tests.ps1` and `Disconnect-AzAccount` `-Times 0` in
+`Disconnect-OER.Tests.ps1`. That is not a runtime need, which is why it is absent from the table
+above.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
