@@ -1437,13 +1437,56 @@ paths.
 
 ## dependencies
 
-The Version column in CLAUDE.md is the **runtime** pin from `source/Omnicit.EntraRBAC.psd1`
-(`RequiredModules`), which is what ships to consumers.
+Two files name this module's dependencies, they say deliberately different KINDS of thing, and
+neither is a copy of the other.
 
-`RequiredModules.psd1` -- the build-time dependency resolver -- pins `Az.Resources` and
-`Microsoft.Graph.Authentication` to the same versions but leaves `AzAuth` at `latest`. That is a
-build-tooling convenience, not a second runtime contract. **Do not "fix" either file to match the
-other** without first checking which one the discrepancy is intentional in.
+**`source/Omnicit.EntraRBAC.psd1` declares FLOORS.** Its `RequiredModules` entries are
+`ModuleVersion` values, and a manifest `ModuleVersion` is always a minimum, never an exact pin and
+never `latest` -- there is no manifest syntax for "newest". A floor already gives a consumer the
+newest version they happen to have or install; what it fixes is the oldest version the module claims
+to work against. This is what ships, and the Version column in CLAUDE.md's Dependencies table
+reproduces it.
+
+**`RequiredModules.psd1` resolves the BUILD AND TEST environment, and every entry in it is
+`latest`.** Decision on record (Philip, 2026-09-21): the build and test environment runs the newest
+release of every module, with nothing pinned anywhere in that file. The risk that a newly released
+version breaks the build is accepted deliberately and is repaired when it happens, in its own commit
+naming the module and the version that moved -- not pre-empted by a pin. Before this decision the
+file pinned `Az.Resources` and `Microsoft.Graph.Authentication` to the manifest's floor values and
+left `AzAuth` at `latest`; that mixture is gone.
+
+So the two files still differ, and still should, but **they now differ in kind rather than in
+value**, which is a different rule from the one this section used to state. Do not reconcile them by
+writing a version number into `RequiredModules.psd1`, and do not reconcile them by trying to write
+`latest` into the manifest.
+
+**The cost, stated plainly, because it is real and nothing in the repository compensates for it.**
+CI now tests the combination a NEW consumer gets -- newest AzAuth, newest
+Microsoft.Graph.Authentication, newest everything -- which is the combination most consumers will
+actually run, and which nothing tested before. In exchange, **the declared floors are no longer
+exercised by anything.** A consumer sitting at exactly `AzAuth 2.9.0` or
+`Microsoft.Graph.Authentication 2.36.0` is running a combination no test in this repository has ever
+executed. The floors are now a claim, not a tested claim. Raising a floor to whatever CI last proved
+green would make the claim true again at the cost of forcing an upgrade on those consumers; that
+trade has not been made, and making it is a decision, not a cleanup.
+
+**Drift has to stay visible for "repair it when it breaks" to be cheap.** With `latest` everywhere,
+a red build is only quick to diagnose if the run says which module moved, so
+`.github/workflows/build-and-test.yml` prints the name and version of everything under
+`output/RequiredModules` immediately after the build resolves dependencies. That step is the reason
+the decision is affordable; do not remove it as noise.
+
+**`PowerShellForGitHub` is declared explicitly** even though `Sampler.GitHubTasks` already brings it
+in transitively. Sampler's `Publish_Release_To_GitHub` task is declared
+`-if ($GitHubToken -and (Get-Module -Name PowerShellForGitHub -ListAvailable))` and therefore SKIPS
+SILENTLY when the module is absent -- see the reasoning kept in `build.yaml` next to the removed
+`publish` workflow. A transitive dependency that silently decides whether a release step runs at all
+is worth being able to see in the file that resolves it.
+
+Nothing in `RequiredModules.psd1` is bundled into a build artefact. The built module under
+`output/module/` contains only this module's own files, and `package_module_nupkg` packs that tree;
+dependencies reach a consumer through the manifest's floors, which is what the file's own comment
+now says.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
@@ -1452,22 +1495,33 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
 
 `CHANGELOG.md`'s `[Unreleased]` section is not a working log. It is the literal text that ships as
 the module's release notes. Sampler's `Create_changelog_release_output` task does three things, all
-in `output/RequiredModules/Sampler/0.119.1/tasks/release.module.build.ps1`:
+within that one task body.
 
-- **line 118** -- `Update-Changelog -Path $ChangeLogPath -OutputPath $ChangeLogOutputPath
-  -ReleaseVersion $ModuleVersion -LinkMode none` rewrites the `## [Unreleased]` heading to
-  `## [<version>] - <date>` in the OUTPUT copy. **The source `CHANGELOG.md` is never modified by a
-  build**, which is why converting the heading by hand is a defect rather than a shortcut: it leaves
-  the source section empty and the next build then publishes nothing.
-- **lines 133-140** -- if that section's `RawData` exceeds 10,000 characters it is cut with
-  `.Substring(0, 10000)`. No warning, no error; the note simply stops mid-sentence. Since the cut is
-  a fixed-length `Substring`, a truncated value is always EXACTLY 10,000 characters, which is what
-  makes `Length -lt 10000` a sound "was not truncated" proof.
-- **line 182** -- the value lands in the built manifest's `PrivateData.PSData.ReleaseNotes`.
+**This section deliberately cites no line numbers.** `RequiredModules.psd1` resolves Sampler at
+`latest` ([#dependencies](#dependencies)), so both the line numbers and the FILE drift underneath
+any citation: the task used to live in `tasks/release.module.build.ps1` and now lives in
+`tasks/Changelog.changelogmanagement.build.ps1`. Cite the task and the call instead, and re-verify
+by reading the task body. **Verified against Sampler 0.120.1, 2026-09-21: the task had moved file,
+and every behaviour below was unchanged.**
 
-`output/ReleaseNotes.md` is a red herring. Line 150 sets `$ReleaseNotes` from THAT file, falling back
-to the whole `output/CHANGELOG.md` if it is empty or absent, and `$ReleaseNotes` is then used only as
-a truthiness guard on the `if` that gates the manifest update. The value actually written is
+- **The `Update-Changelog` call** -- `Update-Changelog -Path $ChangeLogPath -OutputPath
+  $ChangeLogOutputPath -ErrorAction Stop -ReleaseVersion $ModuleVersion -LinkMode none` rewrites the
+  `## [Unreleased]` heading to `## [<version>] - <date>` in the OUTPUT copy. **The source
+  `CHANGELOG.md` is never modified by a build**, which is why converting the heading by hand is a
+  defect rather than a shortcut: it leaves the source section empty and the next build then
+  publishes nothing.
+- **The `$moduleManifestReleaseNotes` length branch** -- if the latest release section's `RawData`
+  exceeds 10,000 characters it is cut with `.Substring(0, 10000)`, and otherwise passes through
+  whole. No warning, no error; the note simply stops mid-sentence. Since the cut is a fixed-length
+  `Substring`, a truncated value is always EXACTLY 10,000 characters, which is what makes
+  `Length -lt 10000` a sound "was not truncated" proof.
+- **The `Update-Manifest` splat** -- `PropertyName = 'PrivateData.PSData.ReleaseNotes'` with
+  `Value = $moduleManifestReleaseNotes` is where the value lands in the built manifest.
+
+`output/ReleaseNotes.md` is a red herring. The task sets `$ReleaseNotes` from THAT file (written
+just above by `ConvertFrom-Changelog ... -Format Release -NoHeader`), falling back to the whole
+`output/CHANGELOG.md` if it is empty or absent, and `$ReleaseNotes` is then used only as a
+truthiness guard on the `if` that gates the manifest update. The value actually written is
 `$moduleManifestReleaseNotes`, computed above from the latest release section alone, so nothing in
 `output/ReleaseNotes.md` ever reaches the manifest.
 
@@ -1528,7 +1582,7 @@ the `1.x` line.
 
 **Why option B was measured and NOT taken.** Option B was to feed `PrivateData.PSData.ReleaseNotes`
 from a purpose-written file instead of from the changelog. Sampler hardcodes
-`Value = $moduleManifestReleaseNotes` at line 182 with no configuration hook, so B requires a
+`Value = $moduleManifestReleaseNotes` in the task body with no configuration hook, so B requires a
 repo-owned task in a `.build/` folder (`build.ps1:323-324` loads `.build/**/*.ps1` and lets it
 override Sampler's own tasks) wired into `build.yaml`'s `build:` workflow. That is new machinery with
 no precedent in this repo, running on every build, whose failure mode is an empty or wrong
@@ -1838,7 +1892,8 @@ there.
 
 **Why the 0.x detail was archived as `[0.10.0]`, not `[1.0.0]`.** `Update-Changelog` never checks
 for an existing heading, and Sampler's `Create_changelog_release_output` selects every released
-section whose version equals the build's (`release.module.build.ps1:124-126`). Measured with
+section whose version equals the build's (its `Where-Object { $_.Version -eq $ModuleVersion }`
+filter; no line number, for the reason given in [#changelog-budget](#changelog-budget)). Measured with
 ChangelogManagement 3.1.0: with an archived `## [1.0.0]` and an exact `1.0.0` build, the output
 changelog carries two `## [1.0.0]` headings, two sections match, and `ReleaseNotes` becomes an
 `Object[]` holding the summary and the archived detail together. A prerelease build does not

@@ -723,14 +723,20 @@ with the team may be in Swedish.
 
 ## Dependencies
 
-| Module | Version | Purpose |
+| Module | Floor | Purpose |
 |---|---|---|
 | `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
 | `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken` and `Invoke-MgGraphRequest` (inside wrapper) |
 | `Az.Resources` | 9.0.3 | Azure RBAC; `Connect-AzAccount -AccessToken` |
 
-That column is the **runtime** pin from `source/Omnicit.EntraRBAC.psd1`. `RequiredModules.psd1` is
-the build-time resolver and deliberately differs -- do not "fix" either file to match the other.
+That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
+`ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
+"newest". `RequiredModules.psd1` is the build-time resolver, and by decision (2026-09-21) every
+entry in it is `latest` -- **nothing there is pinned**. The two files therefore differ in KIND, not
+in value, so do not reconcile them in either direction: no version number goes into
+`RequiredModules.psd1`, and no `latest` goes into the manifest. The accepted cost is that CI tests
+the newest combination -- what a new consumer actually gets -- while **nothing tests the declared
+floors any more**.
 `Why: docs/development/rationale.md#dependencies`
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw

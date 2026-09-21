@@ -84,6 +84,39 @@ jobs:
         shell: pwsh
         run: ./build.ps1 -ResolveDependency -Tasks build
 
+      - name: Report resolved dependency versions
+        # RequiredModules.psd1 asks for 'latest' on every module, by decision -- see
+        # docs/development/rationale.md#dependencies. That makes a newly released version of any
+        # dependency a possible cause of a red build, so the run has to say which versions it
+        # actually resolved; without this the only way to find out is to guess and re-run. Runs on
+        # failure too (`if: always()`), since a build that broke on a dependency is exactly the run
+        # whose versions are worth reading. It only reports: it must never fail the job, so a
+        # missing directory prints a line instead of throwing under this step's 'stop' preference.
+        if: always()
+        shell: pwsh
+        run: |
+          $Root = Join-Path $PWD 'output/RequiredModules'
+          if (-not (Test-Path -Path $Root)) {
+              Write-Host "No $Root -- dependency resolution did not get that far."
+              return
+          }
+          Get-ChildItem -Path $Root -Directory |
+              ForEach-Object {
+                  $ModuleName = $_.Name
+                  Get-ChildItem -Path $_.FullName -Directory |
+                      # A module folder holds one directory per installed version, but PSResourceGet
+                      # also leaves NuGet extraction artefacts beside them on the runners (_rels,
+                      # package, _manifest, dependencies -- measured on ubuntu-latest). Reporting
+                      # those as versions is exactly the confusion this step exists to remove, so
+                      # only version-shaped names are listed.
+                      Where-Object { $_.Name -match '^[0-9]' } |
+                      ForEach-Object { [PSCustomObject]@{ Module = $ModuleName; Version = $_.Name } }
+              } |
+              Sort-Object -Property Module, Version |
+              Format-Table -AutoSize |
+              Out-String -Width 120 |
+              Write-Host
+
       - name: Test
         shell: pwsh
         run: ./build.ps1 -Tasks test
