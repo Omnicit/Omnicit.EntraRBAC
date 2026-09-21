@@ -267,11 +267,15 @@ verbatim into the built manifest's `PrivateData.PSData.ReleaseNotes`.
 issue #62 lifted the cap to `1.0.0` on 2026-09-13 for the first public release. The two levers are
 both in `GitVersion.yml`: `next-version` (`1.0.0`), which supplies the base version when no tag
 outranks it (a `release/x.y.z` branch name is a third candidate -- see below), and
-`major-version-bump-message`, which is live again for `+semver: breaking|major` but deliberately
-WITHOUT the conventional-commit `!:` half of its original pattern: two reachable commits (`5816e87`,
-`715fb6d`) carry a `!:` subject, and with no tag in the history the original pattern builds `2.0.0`
-(measured). `minor-version-bump-message` and `patch-version-bump-message` are working, so intent
-stays recorded in history.
+`major-version-bump-message`, which carries BOTH halves of its original pattern: the explicit
+`+semver: breaking|major` token AND the conventional-commit `^[a-z]+(\(.+\))?!:` subject form. The
+`!:` half was disabled only for the duration of the private pre-1.0.0 history, where two reachable
+commits (`5816e87`, `715fb6d`) carried a `!:` subject and, with no tag to bound the increment
+window, made the original pattern build `2.0.0` (measured). **This repository is seeded from a clean
+tree without those commits and carries `v1.0.0` from its first commit, so neither condition can
+apply and P5 restored the original pattern deliberately.** `GitVersion.yml` is the truth here;
+`minor-version-bump-message` and `patch-version-bump-message` are working, so intent stays recorded
+in history.
 
 **How the version is computed.** The base is the greatest of three candidates: the highest reachable
 version tag, `next-version`, and the `x.y.z` of a `release/x.y.z` branch name -- either the branch
@@ -296,15 +300,29 @@ and a branch named `release/2.0.0` builds `2.0.0` on its own with no tag involve
 `release/` is not one of the prefixes in the branch-naming table above. Bump messages now move the
 version: with no reachable tag the base is `1.0.0` and at most one increment applies, so one
 `+semver: fix` builds `1.0.1`, one `+semver: minor` builds `1.1.0`, one `+semver: major` builds
-`2.0.0`, and a `!:` subject bumps nothing. `tests/QA/module.tests.ps1` holds the built version at or
+`2.0.0` -- and so does a `!:` subject, through the other half of the same pattern.
+`tests/QA/module.tests.ps1` holds the built version at or
 above `1.0.0` and below `2.0.0`, independently of `GitVersion.yml` -- lift both together when
 `2.0.0` is called, and never raise that assertion just to make a build pass.
 
-**Never quote a bump token in a commit message, a PR title or a PR body** -- name it in words
-("the semver major token"). GitVersion reads every reachable commit message, and a squash merge
-copies the PR title and body into `main`, so a message that merely quotes the major token builds
-`2.0.0` (the assertion above catches it) and one that quotes the minor or fix token moves the version
-silently. File content is never read and may quote them freely.
+**Two different shapes move the version from a message, and both must be kept out of commit
+messages, PR titles and PR bodies.**
+
+1. **Never quote a bump token** -- name it in words ("the semver major token"). A message that
+   merely quotes the major token builds `2.0.0`, and one that quotes the minor or fix token moves
+   the version silently.
+2. **Never write a conventional-commit `!:` subject.** `fix!: ...`, `feat(x)!: ...` and every other
+   `<verb>!:` or `<verb>(<scope>)!:` form matches the second half of `major-version-bump-message`
+   and builds `2.0.0`. This half is LIVE -- see the paragraph above, and do not rely on any older
+   note saying it is disabled.
+
+GitVersion reads every reachable commit message, and a squash merge copies the PR title and body
+into `main`, so a squash title of `fix!: ...` is enough on its own to do it. What follows is not a
+bad version quietly shipping: `tests/QA/module.tests.ps1` caps the built version below `2.0.0`
+independently of `GitVersion.yml`, so `main` goes RED after the merge and nothing is published. But
+the repair then happens on `main`, under a broken required check, instead of in an open PR -- which
+is why this is a rule about what you type, not a risk the gate makes harmless. File content is never
+read and may quote either shape freely.
 
 `Why: docs/development/rationale.md#version-cap`
 
