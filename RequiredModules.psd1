@@ -26,9 +26,20 @@
 
     # Az.Accounts is here for the TEST environment, not for run time: the module never calls an
     # Az cmdlet except the guarded Disconnect-AzAccount in Disconnect-OER, and it is absent from
-    # the manifest's RequiredModules for that reason. But Pester's Mock requires the command to
-    # exist, so without Az.Accounts resolved here every It in
-    # tests/Unit/Public/Disconnect-OER.Tests.ps1 fails in BeforeEach. The mock is also what keeps a
-    # local run from tearing down the operator's real Az context.
+    # the manifest's RequiredModules for that reason. Pester's Mock resolves the command it is
+    # given and throws when it cannot, so TWO separate test needs depend on this entry:
+    #
+    #   1. tests/Unit/Public/Disconnect-OER.Tests.ps1 mocks Disconnect-AzAccount in BeforeEach
+    #      (as does Initialize-OERAuth.Tests.ps1 in three places). That mock also keeps a local
+    #      run from tearing down the operator's real Az context.
+    #   2. tests/Unit/Private/Initialize-OERAuth.Tests.ps1 mocks Connect-AzAccount and asserts
+    #      Should -Invoke ... -Times 0. That negative assertion is the test-level PROOF that
+    #      -IncludeARM never establishes an Az context -- the premise Az.Resources was removed on.
+    #
+    # DO NOT remove this entry if Disconnect-OER ever stops calling Disconnect-AzAccount. Reason 1
+    # is the visible one and that change would retire it; reason 2 survives untouched. Removing
+    # Az.Accounts makes the Mock Connect-AzAccount line throw, and "fixing" that by deleting the
+    # mock and its -Times 0 assertion leaves a GREEN suite with the proof gone.
+    # See docs/development/rationale.md#dependencies.
     'Az.Accounts'                    = 'latest'
 }

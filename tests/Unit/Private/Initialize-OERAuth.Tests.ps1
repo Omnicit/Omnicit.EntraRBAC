@@ -137,6 +137,12 @@ Describe 'Initialize-OERAuth' {
         }
         Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2
         # The module no longer establishes an Az context; it sends the bearer token directly.
+        # This negative assertion is the test-level proof of the premise Az.Resources was removed
+        # on (2026-09-21). It depends on Az.Accounts being resolved into output/RequiredModules so
+        # that the Mock above can resolve Connect-AzAccount at all. If that Mock ever fails to
+        # resolve, restore the Az.Accounts entry in RequiredModules.psd1 -- never delete this
+        # assertion to make the error go away, which would leave the suite green and the proof
+        # gone. See docs/development/rationale.md#dependencies.
         Should -Invoke -ModuleName $script:moduleName Connect-AzAccount -Times 0
     }
 

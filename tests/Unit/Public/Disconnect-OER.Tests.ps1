@@ -6,9 +6,11 @@ BeforeAll {
 
 Describe 'Disconnect-OER' {
     # Disconnect-AzAccount MUST be mocked in every It. It resolves for real in the test environment:
-    # RequiredModules.psd1 resolves Az.Accounts into output/RequiredModules for exactly this reason,
+    # RequiredModules.psd1 resolves Az.Accounts into output/RequiredModules partly for this reason,
     # since Pester's Mock requires the command to exist and every It here would otherwise fail in
-    # BeforeEach. Az.Accounts is deliberately NOT a manifest dependency -- the module calls no Az
+    # BeforeEach. It is not the only reason, and not the weightier one -- see that file's comment
+    # and docs/development/rationale.md#dependencies before concluding the entry is unused.
+    # Az.Accounts is deliberately NOT a manifest dependency -- the module calls no Az
     # cmdlet at run time except this one guarded Disconnect-AzAccount. Without the mock,
     # source/Public/Disconnect-OER.ps1:22-23 executes the real cmdlet and clears the operator's local
     # Az context and on-disk token cache -- the same context used for manual live verification.

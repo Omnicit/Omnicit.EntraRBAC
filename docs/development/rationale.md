@@ -1508,13 +1508,37 @@ a module the manifest never named, which arrived transitively behind the `Az.Res
 So a consumer was being made to install `Az.Resources` and its dependency tree for nothing. Removing
 it makes the install smaller and the Gallery's dependency list honest.
 
-**`Az.Accounts` took its place in `RequiredModules.psd1` for a TEST reason, not a runtime one.**
-`tests/Unit/Public/Disconnect-OER.Tests.ps1` mocks `Disconnect-AzAccount`, and Pester's `Mock`
-requires the command to exist: with `Az.Resources` gone and nothing else pulling `Az.Accounts` in,
-every `It` in that file would fail in `BeforeEach`. The mock does second duty locally, since without
-it the test would tear down the operator's real Az context and on-disk token cache -- the context
-used for the manual live verification this module's security rules require. It is deliberately NOT
-added to the manifest: a test-environment need is not a consumer's need.
+**`Az.Accounts` took its place in `RequiredModules.psd1` for TEST reasons, not a runtime one.**
+Pester's `Mock` resolves the command it is given and throws when it cannot, so a test that mocks an
+Az cmdlet cannot run at all unless `Az.Accounts` is on `PSModulePath`. There are **two** such
+reasons, and the second is the weightier one.
+
+1. `tests/Unit/Public/Disconnect-OER.Tests.ps1` mocks `Disconnect-AzAccount` in `BeforeEach`, so
+   with `Az.Resources` gone and nothing else pulling `Az.Accounts` in, every `It` in that file would
+   fail before reaching its body. That mock does second duty locally: without it the test tears down
+   the operator's real Az context and on-disk token cache -- the context used for the manual live
+   verification this module's security rules require. `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`
+   mocks `Disconnect-AzAccount` in three further places for the same protection.
+
+2. **`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` holds the test-level PROOF of the premise
+   this whole removal rests on.** The `It` named *"acquires and caches an ARM bearer token (no
+   Connect-AzAccount) when -IncludeARM is set"* (lines 126-140 as of 2026-09-21) mocks
+   `Connect-AzAccount` and then asserts `Should -Invoke ... Connect-AzAccount -Times 0`. That
+   negative assertion is what demonstrates, in the suite rather than by reading the source, that
+   `-IncludeARM` never establishes an Az context -- the fact `Az.Resources` was removed on. A second
+   site in the same file mocks `Connect-AzAccount` defensively inside an ARM-failure test, and needs
+   the command to resolve just as much.
+
+**So do not remove `Az.Accounts` the day `Disconnect-OER` changes.** Reason 1 is the one that is
+easy to notice and easy to make obsolete: if that cmdlet ever stops calling `Disconnect-AzAccount`,
+its mock goes away and `Az.Accounts` looks unused. Reason 2 is untouched by that change and would
+be silently destroyed. Worse, the destruction has a green-looking repair: removing `Az.Accounts`
+makes the `Mock Connect-AzAccount` line throw, and "fixing" that by deleting the mock and its
+`-Times 0` assertion leaves a passing suite with the proof gone -- the guard-shaped-but-inert shape
+this repository already tracks in [#bearer-scrub-tests](#bearer-scrub-tests). If that mock ever
+fails to resolve, the answer is to restore `Az.Accounts`, never to delete the assertion.
+
+It is deliberately NOT added to the manifest: a test-environment need is not a consumer's need.
 
 **Left alone deliberately:** `Disconnect-OER` still calls `Disconnect-AzAccount` when the command
 resolves, even though the module never created that session. Signing out a session you did not
