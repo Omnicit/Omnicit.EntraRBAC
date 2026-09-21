@@ -108,14 +108,28 @@ There is **no `source/Classes` directory**. The loader iterates one, but argumen
 scriptblock-based instead. `Why: docs/development/rationale.md#completers`
 
 **The build-and-test job's `if:` condition is now wired to the merge gate -- do not read it as a
-billing guard alone.** The job is declared
+billing guard alone, and do not reason about it from GitHub's general rule for skipped jobs.** The
+job is declared
 `if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`, because
-standard runners are free and unmetered only on a PUBLIC repository. Now that `ubuntu-latest`,
-`windows-latest` and `macos-latest` are REQUIRED checks on `main`, that condition decides whether
-the required checks exist at all: **make this repository private again and all three jobs are
-skipped, a skipped job never reports its required check, and every pull request blocks forever** --
-including the pull request that would fix it. Turning the repository private is therefore a change
-to this condition, or to the protection rule, made in the SAME change and never afterwards.
+standard runners are free and unmetered only on a PUBLIC repository. `ubuntu-latest`,
+`windows-latest` and `macos-latest` are REQUIRED checks on `main`, and that condition decides
+whether those three checks ever come into existence.
+
+**The mechanism is the MATRIX, not the skip.** GitHub documents the opposite of what happens here:
+a job skipped by a condition reports Success and does NOT block a pull request ("Troubleshooting
+required status checks"). That rule does not rescue this workflow, because `build-and-test` is a
+matrix job and a job-level `if:` is evaluated BEFORE the matrix expands. The three legs are
+therefore never created, so nothing ever reports the three check names -- and a required check that
+never reports stays pending forever instead of passing (community discussion #9141). Make this
+repository private again and every pull request blocks permanently, including the pull request that
+would fix it. Turning the repository private is therefore a change to this condition, or to the
+protection rule, made in the SAME change and never afterwards.
+
+**Rewriting this workflow as three separate jobs without a matrix INVERTS the failure, into the
+worse one.** Without a matrix there is nothing to expand: the job-level `if:` would then skip three
+jobs that do exist, each would report Success under the documented rule, and the merge gate would
+go GREEN having run not one test. The matrix is what makes a skip fail loudly here, so keep it --
+or, if the jobs are ever split, make the required checks something a skipped job cannot satisfy.
 
 **Do not maintain a function roster in this file.** Read it from the tree instead:
 
