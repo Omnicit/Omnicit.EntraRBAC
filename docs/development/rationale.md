@@ -1483,7 +1483,36 @@ SILENTLY when the module is absent -- see the reasoning kept in `build.yaml` nex
 `publish` workflow. A transitive dependency that silently decides whether a release step runs at all
 is worth being able to see in the file that resolves it.
 
-Nothing in `RequiredModules.psd1` is bundled into a build artefact. The built module under
+**`Az.Resources` was removed from the manifest on 2026-09-21, as vestigial.** It had been declared
+`>= 9.0.3` since the ARM work landed, and the module never called a single cmdlet from it. Measured
+in the source before removal: every `*-Az*` token under `source/` is either AzAuth's `Get-AzToken` /
+`Clear-AzTokenCache`, the module's own local `Invoke-AzTokenCall` helper, or prose inside a comment
+or a help block. There is no dynamic call either -- no `Invoke-Expression`, no string-built command
+name, no `Get-Command 'Get-Az*'`, and every `& $x` in the module invokes a local scriptblock. The
+`-IncludeARM` path never establishes an Az context: it caches an ARM bearer token as a SecureString
+and `Invoke-OERArmRequest` sends it directly, which is the whole design recorded in
+[#arm-transport](#arm-transport). The one real Az call in the module is the `Get-Command`-guarded
+`Disconnect-AzAccount` in `Disconnect-OER`, and that is **`Az.Accounts`, not `Az.Resources`** --
+a module the manifest never named, which arrived transitively behind the `Az.Resources` pin.
+
+So a consumer was being made to install `Az.Resources` and its dependency tree for nothing. Removing
+it makes the install smaller and the Gallery's dependency list honest.
+
+**`Az.Accounts` took its place in `RequiredModules.psd1` for a TEST reason, not a runtime one.**
+`tests/Unit/Public/Disconnect-OER.Tests.ps1` mocks `Disconnect-AzAccount`, and Pester's `Mock`
+requires the command to exist: with `Az.Resources` gone and nothing else pulling `Az.Accounts` in,
+every `It` in that file would fail in `BeforeEach`. The mock does second duty locally, since without
+it the test would tear down the operator's real Az context and on-disk token cache -- the context
+used for the manual live verification this module's security rules require. It is deliberately NOT
+added to the manifest: a test-environment need is not a consumer's need.
+
+**Left alone deliberately:** `Disconnect-OER` still calls `Disconnect-AzAccount` when the command
+resolves, even though the module never created that session. Signing out a session you did not
+establish is arguably wrong, and it is a separate question from this one -- raised, not decided,
+and not changed here.
+
+Nothing in `RequiredModules.psd1` is bundled into a build artefact.
+ The built module under
 `output/module/` contains only this module's own files, and `package_module_nupkg` packs that tree;
 dependencies reach a consumer through the manifest's floors, which is what the file's own comment
 now says.

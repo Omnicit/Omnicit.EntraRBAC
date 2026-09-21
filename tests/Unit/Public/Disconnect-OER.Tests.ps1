@@ -5,12 +5,15 @@ BeforeAll {
 }
 
 Describe 'Disconnect-OER' {
-    # Disconnect-AzAccount MUST be mocked in every It. It resolves for real in the test environment
-    # (Az.Accounts arrives transitively with the pinned Az.Resources under output/RequiredModules), so
-    # without the mock source/Public/Disconnect-OER.ps1:22-23 executes the real cmdlet and clears the
-    # operator's local Az context and on-disk token cache -- the same context used for manual live
-    # verification. Mocking it also makes the Get-Command guard resolve inside the module, which keeps
-    # the branch reachable and assertable.
+    # Disconnect-AzAccount MUST be mocked in every It. It resolves for real in the test environment:
+    # RequiredModules.psd1 resolves Az.Accounts into output/RequiredModules for exactly this reason,
+    # since Pester's Mock requires the command to exist and every It here would otherwise fail in
+    # BeforeEach. Az.Accounts is deliberately NOT a manifest dependency -- the module calls no Az
+    # cmdlet at run time except this one guarded Disconnect-AzAccount. Without the mock,
+    # source/Public/Disconnect-OER.ps1:22-23 executes the real cmdlet and clears the operator's local
+    # Az context and on-disk token cache -- the same context used for manual live verification.
+    # Mocking it also makes the Get-Command guard resolve inside the module, which keeps the branch
+    # reachable and assertable.
     BeforeEach {
         Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
         Mock -ModuleName $script:moduleName Disconnect-AzAccount {}

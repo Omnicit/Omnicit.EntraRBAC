@@ -11,7 +11,8 @@ function Connect-OER {
     from a stored Tenant Profile via -TenantAlias; -TenantAlias combines with any credential
     selector (interactive, device code, managed identity, client secret, or client certificate) and
     is mutually exclusive with -TenantId. With -IncludeARM an Azure Resource Manager token is also
-    acquired so Az.Resources cmdlets can be used in the same session. Calling Connect-OER explicitly
+    acquired, which is what the module's own Azure cmdlets use; it does NOT establish an Az
+    PowerShell context, so Az module cmdlets are not signed in by it. Calling Connect-OER explicitly
     is optional because OER cmdlets initialize authentication automatically on first use.
 
     -Environment selects the sovereign cloud to sign in to and to call. It defaults to the worldwide
@@ -79,7 +80,9 @@ function Connect-OER {
     A path to a certificate file used for certificate-based app-registration sign-in.
 
     .PARAMETER IncludeARM
-    Also acquire an Azure Resource Manager token and connect to Azure for Az.Resources cmdlets.
+    Also acquire an Azure Resource Manager token, so the module's Azure cmdlets can call ARM without
+    a second sign-in. The module sends that token itself and never calls Connect-AzAccount, so this
+    does not create an Az PowerShell context and does not sign in any Az module cmdlet.
 
     .PARAMETER BasePath
     Directory holding the Tenant Profile PSD1 files, matching the -BasePath parameter on all four

@@ -22,6 +22,13 @@
     # under output/module/ holds only this module's own files, and a consumer installs these from
     # the manifest's own RequiredModules floors instead.
     'AzAuth'                         = 'latest'
-    'Az.Resources'                   = 'latest'
     'Microsoft.Graph.Authentication' = 'latest'
+
+    # Az.Accounts is here for the TEST environment, not for run time: the module never calls an
+    # Az cmdlet except the guarded Disconnect-AzAccount in Disconnect-OER, and it is absent from
+    # the manifest's RequiredModules for that reason. But Pester's Mock requires the command to
+    # exist, so without Az.Accounts resolved here every It in
+    # tests/Unit/Public/Disconnect-OER.Tests.ps1 fails in BeforeEach. The mock is also what keeps a
+    # local run from tearing down the operator's real Az context.
+    'Az.Accounts'                    = 'latest'
 }

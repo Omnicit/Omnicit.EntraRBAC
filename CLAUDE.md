@@ -213,7 +213,7 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development
-# (needs AzAuth, Microsoft.Graph.Authentication, Az.Resources on PSModulePath;
+# (needs AzAuth, Microsoft.Graph.Authentication on PSModulePath;
 #  prepend output/RequiredModules if needed)
 Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
 
@@ -727,7 +727,6 @@ with the team may be in Swedish.
 |---|---|---|
 | `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
 | `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken` and `Invoke-MgGraphRequest` (inside wrapper) |
-| `Az.Resources` | 9.0.3 | Azure RBAC; `Connect-AzAccount -AccessToken` |
 
 That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
 `ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
@@ -738,6 +737,14 @@ in value, so do not reconcile them in either direction: no version number goes i
 the newest combination -- what a new consumer actually gets -- while **nothing tests the declared
 floors any more**.
 `Why: docs/development/rationale.md#dependencies`
+
+**No Az module is a dependency of this module.** ARM is called directly with an AzAuth token
+(`Invoke-OERArmRequest`), and no Az cmdlet is invoked anywhere at run time except the guarded
+`Disconnect-AzAccount` in `Disconnect-OER`. `Az.Resources` was declared in the manifest until
+2026-09-21 and was never used; it is gone. `RequiredModules.psd1` resolves `Az.Accounts` purely so
+that `tests/Unit/Public/Disconnect-OER.Tests.ps1` can mock `Disconnect-AzAccount` -- Pester's `Mock`
+requires the command to exist -- and that is a TEST-environment dependency, not a runtime one, which
+is why it is absent from the table above.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
@@ -750,7 +757,7 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
    name exactly.
 2. **If public:** add to `FunctionsToExport` in `source/Omnicit.EntraRBAC.psd1`.
 3. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
-   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call Az.Resources.
+   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM.
 4. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
    directly.
 5. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`
