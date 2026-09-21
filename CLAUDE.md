@@ -12,14 +12,32 @@ Do not restate project status, roster or release history here: `README.md` owns 
 
 ## Branch Policy -- ALWAYS CHECK FIRST
 
+**`main` is protected on GitHub and a direct push to it is REJECTED BY THE SERVER.** That is
+deliberate. It is not a lock to be worked around, and "continue on the current branch" is no longer
+an option a user can consent to on `main` -- consent does not move a server-side rule. Every change
+reaches `main` through a pull request.
+
 **Before making any code change, Claude must:**
 
 1. Determine the current branch (`git branch --show-current`).
-2. If the current branch is `main` (or any other protected/shared branch), **stop and ask the user** whether to:
-   - Create a new branch -- propose a name based on the change (e.g. `fix/graph-retry-logic`, `feat/add-group-cmdlets`, `chore/update-tests`).
-   - Continue on the current branch (explicit user consent required).
-3. Only proceed after the user has confirmed the target branch.
-4. If a new branch is requested, create it with `git checkout -b <branch-name>` before touching any files.
+2. If the current branch is `main`, create a feature branch before touching any files:
+   `git checkout -b <branch-name>`, named from the table below. Propose the name and say what it is
+   for; do not stop and wait for permission to leave `main`, since staying there cannot produce a
+   push.
+3. If the current branch is some OTHER shared branch, stop and ask the user which branch to use --
+   there the old rule still holds, because the push would succeed.
+4. Open a pull request against `main` when the work is ready. Never merge it without being asked to.
+
+**Merge requirements, enforced by GitHub on `main`:**
+
+- **Three status checks are required: `ubuntu-latest`, `windows-latest` and `macos-latest`.** Those
+  names come from the build-and-test matrix's `name: ${{ matrix.os }}`, so the job name IS the
+  required check name -- renaming the job, or changing the matrix, orphans the protection rule and
+  blocks every open PR until the rule is renamed to match. Change both together.
+- **The branch must be up to date with `main` before it can merge.** A branch that has fallen
+  behind is rebased onto `main` and force-pushed; the checks then re-run against the rebased tip.
+- **Linear history is required**, so a merge commit is refused. Squash merge is the convention here.
+- **Every conversation on the PR must be resolved** before merge.
 
 **Branch naming convention:**
 
@@ -36,13 +54,24 @@ Do not restate project status, roster or release history here: `README.md` owns 
 ## Project Overview
 
 `Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built by Omnicit AB for its own and its
-customers' tenants. MIT licensed and destined for the **public PowerShell Gallery**, published by
-hand starting with 1.0.0; `build.yaml` deliberately defines no `publish` workflow, so no build or CI
-path can publish.
+customers' tenants. MIT licensed and **published on the public PowerShell Gallery**: 1.0.0 went out
+by hand on 2026-09-18. `build.yaml` still deliberately defines no `publish` workflow, so no build or
+CI path can publish today.
 
 It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
 inventory and a declarative apply engine. Command prefix is `OER`.
+
+**Treat the hand publication of 1.0.0 as a one-off, not as the model.** The decision on record:
+from 1.1.0 onward every merge to `main` publishes a new version to the Gallery, and a full release
+is cut by pushing a `v` tag. So the absence of a `publish` workflow is a gap to be closed
+deliberately, not an invariant to be defended -- but until that work is done and reviewed, the rule
+above stands as written and nothing in this repo publishes on its own.
+
+**The canonical working tree is `C:\Git\Omnicit.EntraRBAC.public`, tracking
+`github.com/Omnicit/Omnicit.EntraRBAC`.** The older clone is the private repository's working copy
+and is to be archived; do not commit to it, and do not treat a change made there as made. Two live
+clones of one module is how a fix lands in the wrong repository -- that has already happened here.
 
 The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
 for what each release delivered.
@@ -63,7 +92,7 @@ source/
   Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
   en-US/                      # about_Omnicit.EntraRBAC.help.txt
 tests/
-  QA/                         # Five gate files (below), all run by ./build.ps1 -Tasks test
+  QA/                         # Six gate files (below), all run by ./build.ps1 -Tasks test
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
   Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
   Unit/TestHelpers/           # Not a Pester directory. OERConfirmHost.ps1 hosts a runspace whose
@@ -77,6 +106,16 @@ azure-pipelines.yml           # Build + Test only, no Deploy stage
 
 There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
 scriptblock-based instead. `Why: docs/development/rationale.md#completers`
+
+**The build-and-test job's `if:` condition is now wired to the merge gate -- do not read it as a
+billing guard alone.** The job is declared
+`if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`, because
+standard runners are free and unmetered only on a PUBLIC repository. Now that `ubuntu-latest`,
+`windows-latest` and `macos-latest` are REQUIRED checks on `main`, that condition decides whether
+the required checks exist at all: **make this repository private again and all three jobs are
+skipped, a skipped job never reports its required check, and every pull request blocks forever** --
+including the pull request that would fix it. Turning the repository private is therefore a change
+to this condition, or to the protection rule, made in the SAME change and never afterwards.
 
 **Do not maintain a function roster in this file.** Read it from the tree instead:
 
@@ -154,7 +193,9 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 ./build.ps1 -Tasks build
 
 # Full test suite -- the authoritative CI gate.
-# QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement (currently ~91.5%)
+# QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement
+# (measured 91.97% over 13,757 commands on a clean tree -- identical locally and on all three
+#  CI runners)
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development

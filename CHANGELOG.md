@@ -37,6 +37,10 @@ Start with `README.md`, `Get-Help about_Omnicit.EntraRBAC`, and `Get-OERRequired
 reports the Microsoft Graph permissions and Azure roles each cmdlet needs. Versions before 1.0.0
 were never published; their history is kept in `CHANGELOG.md` in the project repository.
 
+Since 1.0.0, internal maintenance only: a code-analysis suppression that no longer suppressed
+anything was removed from the access package apply handler. No cmdlet, parameter, output shape or
+behaviour changed.
+
 ## [0.10.0] - 2026-09-13
 
 Unpublished pre-release milestone: a rejected token is refreshed whatever shape the 401 arrives in,

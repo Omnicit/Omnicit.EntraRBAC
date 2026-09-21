@@ -106,10 +106,6 @@ function Sync-OERStructureAccessPackage {
         Justification = 'ShouldProcess is delegated to $Caller (the engine PSCmdlet) via $Caller.ShouldProcess(); this private handler does not carry its own SupportsShouldProcess because it never creates its own $PSCmdlet.'
     )]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
-        'PSReviewUnusedParameter', 'TenantAlias',
-        Justification = 'TenantAlias is forwarded to Resolve-OERStructureDefault for policy approver defaults; it is used in the assignmentPolicies section even though it is not referenced directly in the AP object/resourceRole sections.'
-    )]
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSUseSingularNouns', 'Build-OERPolicyParts',
         Justification = 'Build-OERPolicyParts is a private nested helper whose plural noun accurately describes the composite parts object it returns; renaming would obscure intent.'
     )]
