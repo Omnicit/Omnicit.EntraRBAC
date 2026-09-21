@@ -225,6 +225,33 @@ The Sampler test task measures coverage against the **built** module output, not
 run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
 gate is running.
 
+**Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
+`RequiredModules.psd1` asks for the newest release of every module
+(`Why: docs/development/rationale.md#dependencies`), but a local tree is resolved once and then left
+alone, while every CI run resolves afresh on a clean runner. Measured on 2026-09-21: a local tree
+held `Microsoft.Graph.Authentication 2.36.0` while CI resolved `2.40.0` on the same commit. So a
+full local pass proves the suite against whatever happens to be on disk, not against what the merge
+gate will run. Refresh before trusting a local run, especially before opening or updating a PR:
+
+```powershell
+./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
+```
+
+`-UseModuleFast` is the same flag the V2 note above prescribes, and it is the resolver that works
+here. Note that it is a DIFFERENT resolver from CI's, so the two trees can still differ in shape --
+a tree resolved without it also carries the unpacked `.nupkg` directories (`_manifest`, `_rels`,
+`dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
+step prints the versions each run actually resolved, and is the authority on what the gate tested.
+
+**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
+`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
+that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
+loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
+one -- but it means the directory is a growing record of every version ever resolved, not a picture
+of what is currently requested. Confirm the version under test with
+`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
+directory outright if a genuinely clean resolve is needed.
+
 ---
 
 ## CHANGELOG and Version
