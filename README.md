@@ -20,7 +20,10 @@ README summarises. `Get-OERRequiredScope` is authoritative for permissions -- se
 - **PowerShell 7.2 or later** (Core only; Windows PowerShell 5.x is not supported)
 - **AzAuth** >= 2.9.0 (`Get-AzToken` -- token acquisition for all credential types)
 - **Microsoft.Graph.Authentication** >= 2.36.0 (`Connect-MgGraph`)
-- **Az.Resources** >= 9.0.3 (Azure RBAC; required for `-IncludeARM` features)
+
+No Az PowerShell module is required. Azure Resource Manager calls are made directly with a token
+from AzAuth, so `-IncludeARM` needs nothing beyond the two modules above. If `Az.Accounts` happens
+to be loaded, `Disconnect-OER` will also sign that session out.
 
 ---
 
@@ -77,7 +80,7 @@ Import-Module ./output/module/Omnicit.EntraRBAC/<ver>/Omnicit.EntraRBAC.psd1
 ### For contributors -- import from source
 
 ```powershell
-# Ensure AzAuth, Microsoft.Graph.Authentication, and Az.Resources are on $env:PSModulePath
+# Ensure AzAuth and Microsoft.Graph.Authentication are on $env:PSModulePath
 # (tip: prepend output/RequiredModules after a bootstrap build)
 $env:PSModulePath = (Resolve-Path ./output/RequiredModules).Path + [IO.Path]::PathSeparator + $env:PSModulePath
 

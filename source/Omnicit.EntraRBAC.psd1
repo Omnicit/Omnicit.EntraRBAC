@@ -12,7 +12,6 @@
     RequiredModules = @(
         @{ ModuleName = 'AzAuth'; ModuleVersion = '2.9.0' }
         @{ ModuleName = 'Microsoft.Graph.Authentication'; ModuleVersion = '2.36.0' }
-        @{ ModuleName = 'Az.Resources'; ModuleVersion = '9.0.3' }
     )
 
     # Loaded via Update-TypeData in suffix.ps1 (Remove-Module does not clean type data).

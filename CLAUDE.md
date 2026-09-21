@@ -213,7 +213,7 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development
-# (needs AzAuth, Microsoft.Graph.Authentication, Az.Resources on PSModulePath;
+# (needs AzAuth, Microsoft.Graph.Authentication on PSModulePath;
 #  prepend output/RequiredModules if needed)
 Import-Module ./source/Omnicit.EntraRBAC.psd1 -Force
 
@@ -224,6 +224,33 @@ Import-Module ./output/module/Omnicit.EntraRBAC/<ver>/Omnicit.EntraRBAC.psd1 -Fo
 The Sampler test task measures coverage against the **built** module output, not `source/`. Always
 run `-Tasks build` before `-Tasks test` after changing source files -- and never build while the
 gate is running.
+
+**Under `latest`, a local `output/RequiredModules` goes stale and LOCAL GREEN IS NOT CI GREEN.**
+`RequiredModules.psd1` asks for the newest release of every module
+(`Why: docs/development/rationale.md#dependencies`), but a local tree is resolved once and then left
+alone, while every CI run resolves afresh on a clean runner. Measured on 2026-09-21: a local tree
+held `Microsoft.Graph.Authentication 2.36.0` while CI resolved `2.40.0` on the same commit. So a
+full local pass proves the suite against whatever happens to be on disk, not against what the merge
+gate will run. Refresh before trusting a local run, especially before opening or updating a PR:
+
+```powershell
+./build.ps1 -ResolveDependency -Tasks noop -UseModuleFast
+```
+
+`-UseModuleFast` is the same flag the V2 note above prescribes, and it is the resolver that works
+here. Note that it is a DIFFERENT resolver from CI's, so the two trees can still differ in shape --
+a tree resolved without it also carries the unpacked `.nupkg` directories (`_manifest`, `_rels`,
+`dependencies`, `package`) beside a module's version folder. The CI workflow's dependency-report
+step prints the versions each run actually resolved, and is the authority on what the gate tested.
+
+**A refresh ADDS versions and removes nothing.** After the 2026-09-21 refresh the local tree held
+`Microsoft.Graph.Authentication` at both `2.36.0` and `2.40.0`, and still held an `Az.Resources`
+that `RequiredModules.psd1` no longer asks for at all. That is usually harmless, since PowerShell
+loads the HIGHEST version available when importing by name, so a refreshed tree does test the new
+one -- but it means the directory is a growing record of every version ever resolved, not a picture
+of what is currently requested. Confirm the version under test with
+`Get-Module <name> -ListAvailable` rather than by reading the folder listing, and delete the
+directory outright if a genuinely clean resolve is needed.
 
 ---
 
@@ -267,11 +294,15 @@ verbatim into the built manifest's `PrivateData.PSData.ReleaseNotes`.
 issue #62 lifted the cap to `1.0.0` on 2026-09-13 for the first public release. The two levers are
 both in `GitVersion.yml`: `next-version` (`1.0.0`), which supplies the base version when no tag
 outranks it (a `release/x.y.z` branch name is a third candidate -- see below), and
-`major-version-bump-message`, which is live again for `+semver: breaking|major` but deliberately
-WITHOUT the conventional-commit `!:` half of its original pattern: two reachable commits (`5816e87`,
-`715fb6d`) carry a `!:` subject, and with no tag in the history the original pattern builds `2.0.0`
-(measured). `minor-version-bump-message` and `patch-version-bump-message` are working, so intent
-stays recorded in history.
+`major-version-bump-message`, which carries BOTH halves of its original pattern: the explicit
+`+semver: breaking|major` token AND the conventional-commit `^[a-z]+(\(.+\))?!:` subject form. The
+`!:` half was disabled only for the duration of the private pre-1.0.0 history, where two reachable
+commits (`5816e87`, `715fb6d`) carried a `!:` subject and, with no tag to bound the increment
+window, made the original pattern build `2.0.0` (measured). **This repository is seeded from a clean
+tree without those commits and carries `v1.0.0` from its first commit, so neither condition can
+apply and P5 restored the original pattern deliberately.** `GitVersion.yml` is the truth here;
+`minor-version-bump-message` and `patch-version-bump-message` are working, so intent stays recorded
+in history.
 
 **How the version is computed.** The base is the greatest of three candidates: the highest reachable
 version tag, `next-version`, and the `x.y.z` of a `release/x.y.z` branch name -- either the branch
@@ -296,15 +327,29 @@ and a branch named `release/2.0.0` builds `2.0.0` on its own with no tag involve
 `release/` is not one of the prefixes in the branch-naming table above. Bump messages now move the
 version: with no reachable tag the base is `1.0.0` and at most one increment applies, so one
 `+semver: fix` builds `1.0.1`, one `+semver: minor` builds `1.1.0`, one `+semver: major` builds
-`2.0.0`, and a `!:` subject bumps nothing. `tests/QA/module.tests.ps1` holds the built version at or
+`2.0.0` -- and so does a `!:` subject, through the other half of the same pattern.
+`tests/QA/module.tests.ps1` holds the built version at or
 above `1.0.0` and below `2.0.0`, independently of `GitVersion.yml` -- lift both together when
 `2.0.0` is called, and never raise that assertion just to make a build pass.
 
-**Never quote a bump token in a commit message, a PR title or a PR body** -- name it in words
-("the semver major token"). GitVersion reads every reachable commit message, and a squash merge
-copies the PR title and body into `main`, so a message that merely quotes the major token builds
-`2.0.0` (the assertion above catches it) and one that quotes the minor or fix token moves the version
-silently. File content is never read and may quote them freely.
+**Two different shapes move the version from a message, and both must be kept out of commit
+messages, PR titles and PR bodies.**
+
+1. **Never quote a bump token** -- name it in words ("the semver major token"). A message that
+   merely quotes the major token builds `2.0.0`, and one that quotes the minor or fix token moves
+   the version silently.
+2. **Never write a conventional-commit `!:` subject.** `fix!: ...`, `feat(x)!: ...` and every other
+   `<verb>!:` or `<verb>(<scope>)!:` form matches the second half of `major-version-bump-message`
+   and builds `2.0.0`. This half is LIVE -- see the paragraph above, and do not rely on any older
+   note saying it is disabled.
+
+GitVersion reads every reachable commit message, and a squash merge copies the PR title and body
+into `main`, so a squash title of `fix!: ...` is enough on its own to do it. What follows is not a
+bad version quietly shipping: `tests/QA/module.tests.ps1` caps the built version below `2.0.0`
+independently of `GitVersion.yml`, so `main` goes RED after the merge and nothing is published. But
+the repair then happens on `main`, under a broken required check, instead of in an open PR -- which
+is why this is a rule about what you type, not a risk the gate makes harmless. File content is never
+read and may quote either shape freely.
 
 `Why: docs/development/rationale.md#version-cap`
 
@@ -723,15 +768,28 @@ with the team may be in Swedish.
 
 ## Dependencies
 
-| Module | Version | Purpose |
+| Module | Floor | Purpose |
 |---|---|---|
 | `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
 | `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken` and `Invoke-MgGraphRequest` (inside wrapper) |
-| `Az.Resources` | 9.0.3 | Azure RBAC; `Connect-AzAccount -AccessToken` |
 
-That column is the **runtime** pin from `source/Omnicit.EntraRBAC.psd1`. `RequiredModules.psd1` is
-the build-time resolver and deliberately differs -- do not "fix" either file to match the other.
+That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
+`ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
+"newest". `RequiredModules.psd1` is the build-time resolver, and by decision (2026-09-21) every
+entry in it is `latest` -- **nothing there is pinned**. The two files therefore differ in KIND, not
+in value, so do not reconcile them in either direction: no version number goes into
+`RequiredModules.psd1`, and no `latest` goes into the manifest. The accepted cost is that CI tests
+the newest combination -- what a new consumer actually gets -- while **nothing tests the declared
+floors any more**.
 `Why: docs/development/rationale.md#dependencies`
+
+**No Az module is a dependency of this module.** ARM is called directly with an AzAuth token
+(`Invoke-OERArmRequest`), and no Az cmdlet is invoked anywhere at run time except the guarded
+`Disconnect-AzAccount` in `Disconnect-OER`. `Az.Resources` was declared in the manifest until
+2026-09-21 and was never used; it is gone. `RequiredModules.psd1` resolves `Az.Accounts` purely so
+that `tests/Unit/Public/Disconnect-OER.Tests.ps1` can mock `Disconnect-AzAccount` -- Pester's `Mock`
+requires the command to exist -- and that is a TEST-environment dependency, not a runtime one, which
+is why it is absent from the table above.
 
 Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses raw
 `Invoke-MgGraphRequest` (via `Invoke-OERGraphRequest`) to avoid typed SDK coupling and version drift.
@@ -744,7 +802,7 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
    name exactly.
 2. **If public:** add to `FunctionsToExport` in `source/Omnicit.EntraRBAC.psd1`.
 3. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
-   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call Az.Resources.
+   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM.
 4. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
    directly.
 5. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`
