@@ -75,34 +75,47 @@ BuildWorkflow:
     - Merge_CodeCoverage_Files
 
   # ---------------------------------------------------------------------------------------------
-  # PUBLISH IS DELIBERATELY NOT DEFINED. This is the brake, and it is the ONLY brake that lives in
-  # the repository.
+  # PUBLISH IS DELIBERATELY NOT DEFINED HERE, AND IS NOT COMING BACK.
   #
-  # This module holds Global-Admin-class privilege across customer tenants. Its intended
-  # destination IS the public PowerShell Gallery, but only once 1.0.0 is actually ready. Until
-  # then `./build.ps1 -Tasks publish` must not resolve to anything.
+  # Publishing lives in .github/workflows/build-and-test.yml, in its `publish` job: every push to
+  # main publishes a preview to the PowerShell Gallery, and a `v<X.Y.Z>` tag publishes the full
+  # release. Both call Publish-PSResource against the built VERSION FOLDER, which is the route the
+  # 1.0.0 hand publication actually used and proved.
   #
-  # Why the workflow is removed rather than guarded by a config key: Sampler's publish task reads
-  # its settings through InvokeBuild's `property` function, and `Get-BuildProperty`
-  # (Invoke-Build.ps1:148-156) resolves ONLY a PowerShell variable in scope, then an environment
-  # variable, then the literal default. It never consults build.yaml -- `release.module.build.ps1`
-  # contains zero references to $BuildInfo. So `SkipPublish:`, `PublishModuleWhatIf:` and
-  # `PSModuleFeed:` keys placed here are INERT: they read as guards and enforce nothing. The keys
-  # that do work from build.yaml (BuiltModuleSubdirectory, VersionedOutputDirectory, ...) work
-  # because Sampler reads them from $BuildInfo by name, one hardcoded key at a time.
+  # `./build.ps1 -Tasks publish` therefore stays unresolvable on purpose. There is NO local
+  # publishing path at all: a publish happens on a runner, from an artefact whose per-file SHA-256
+  # matches what the three required checks tested, or it does not happen.
   #
-  # Do not rely on Publish_Release_To_GitHub as an early failure either: it is declared
-  # `-if ($GitHubToken -and (Get-Module PowerShellForGitHub -ListAvailable))`
-  # (New-Release.GitHub.build.ps1:61) and SKIPS SILENTLY without a token, so
-  # publish_module_to_gallery would run entirely on its own.
+  # RESTORING Publish_Release_To_GitHub AND publish_module_to_gallery INSTEAD WAS CONSIDERED AND
+  # REJECTED. Every reason below is measured behaviour, not a reading of the documentation:
   #
-  # TO CUT A RELEASE: restore the two lines below, then set $env:GalleryApiToken in that shell.
-  # Sampler's PSModuleFeed default is already 'PSGallery' (release.module.build.ps1:89), which
-  # matches the intended destination; override it with $env:PSModuleFeed if that ever changes.
+  #   * BOTH TASKS SKIP SILENTLY. They are declared `-if ($GitHubToken -and ...)`
+  #     (New-Release.GitHub.build.ps1:61) and `-if ($GalleryApiToken -and ...)`. A missing token
+  #     publishes the package with no tag, or publishes nothing at all, and the build reports
+  #     success either way. The workflow's publish job FAILS on an empty GALLERYAPITOKEN.
+  #   * publish_module_to_gallery WRITES "Package Published to PSGallery." EVEN WHEN $SkipPublish
+  #     IS SET, so its own log is not evidence that anything was published. The workflow asks the
+  #     GALLERY instead, with Find-PSResource on the exact version, and goes red if it cannot see
+  #     it.
+  #   * publish_module_to_gallery REWRITES THE BUILT MANIFEST as it publishes, so the published
+  #     bytes are not provably the tested bytes. The workflow publishes the artefact untouched,
+  #     after verifying every file against the SHA-256 recorded when the tests passed.
+  #   * A publish job running `./build.ps1 -ResolveDependency` RESOLVES 'latest' AGAIN. Every entry
+  #     in RequiredModules.psd1 is `latest` by decision (docs/development/rationale.md#dependencies),
+  #     so re-resolving at publish time can ship a build made against dependencies that no test run
+  #     ever saw.
   #
-  # publish:
-  #   - Publish_Release_To_GitHub
-  #   - publish_module_to_gallery
+  # Guarding those tasks with config keys would not have worked either, which is worth keeping on
+  # record. Sampler's publish task reads its settings through InvokeBuild's `property` function,
+  # and `Get-BuildProperty` (Invoke-Build.ps1:148-156) resolves ONLY a PowerShell variable in
+  # scope, then an environment variable, then the literal default. It never consults build.yaml --
+  # `release.module.build.ps1` contains zero references to $BuildInfo. So `SkipPublish:`,
+  # `PublishModuleWhatIf:` and `PSModuleFeed:` keys placed here are INERT: they read as guards and
+  # enforce nothing. The keys that do work from build.yaml (BuiltModuleSubdirectory,
+  # VersionedOutputDirectory, ...) work because Sampler reads them from $BuildInfo by name, one
+  # hardcoded key at a time.
+  #
+  # See docs/development/rationale.md#publish-on-merge.
   # ---------------------------------------------------------------------------------------------
 
 ####################################################

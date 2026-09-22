@@ -48,6 +48,7 @@ reaches `main` through a pull request.
 | Tests / QA | `test/` | `test/fix-auth-mocks` |
 | Docs / chore | `chore/` | `chore/update-readme` |
 | Refactor | `refactor/` | `refactor/simplify-error-handling` |
+| Build / CI pipeline | `ci/` | `ci/publish-on-merge` |
 
 ---
 
@@ -55,18 +56,11 @@ reaches `main` through a pull request.
 
 `Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built by Omnicit AB for its own and its
 customers' tenants. MIT licensed and **published on the public PowerShell Gallery**: 1.0.0 went out
-by hand on 2026-09-18. `build.yaml` still deliberately defines no `publish` workflow, so no build or
-CI path can publish today.
+by hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
 
 It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
 inventory and a declarative apply engine. Command prefix is `OER`.
-
-**Treat the hand publication of 1.0.0 as a one-off, not as the model.** The decision on record:
-from 1.1.0 onward every merge to `main` publishes a new version to the Gallery, and a full release
-is cut by pushing a `v` tag. So the absence of a `publish` workflow is a gap to be closed
-deliberately, not an invariant to be defended -- but until that work is done and reviewed, the rule
-above stands as written and nothing in this repo publishes on its own.
 
 **The canonical working tree is `C:\Git\Omnicit.EntraRBAC.public`, tracking
 `github.com/Omnicit/Omnicit.EntraRBAC`.** The older clone is the private repository's working copy
@@ -100,8 +94,11 @@ tests/
                               #   genuine DECLINE or to read the prompt/target text.
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
 RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin -- see Dependencies)
-azure-pipelines.yml           # Build + Test only, no Deploy stage
-.github/workflows/build-and-test.yml  # Build + Test on Linux, Windows, macOS, on push and PR
+azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never publishes
+.github/workflows/build-and-test.yml  # Build + Test on Linux, Windows, macOS, then package and
+                              #   publish. The ONLY path that publishes -- see Publishing.
+.github/scripts/PublishArtefact.ps1   # -Record / -Verify: proves the published bytes are the
+                              #   tested bytes. Single owner of both halves; do not split it.
 ```
 
 There is **no `source/Classes` directory**. The loader iterates one, but argument completion is
@@ -254,6 +251,49 @@ directory outright if a genuinely clean resolve is needed.
 
 ---
 
+## Publishing
+
+**Every merge to `main` publishes a new preview to the public PowerShell Gallery, and that is
+PERMANENT.** The Gallery can unlist a version but cannot delete one. There is no staging step
+between merge and publish: approving the pull request is the decision to publish it.
+
+- **Publishing lives in `.github/workflows/build-and-test.yml`, in its `publish` job.** That job
+  is the only thing in this repository that can publish. `./build.ps1 -Tasks publish` is
+  deliberately undefined and must stay that way, so there is no local publishing path at all. Do
+  NOT restore Sampler's `Publish_Release_To_GitHub` / `publish_module_to_gallery` tasks in
+  `build.yaml`; the measured reasons are in that file's comment and in
+  `Why: docs/development/rationale.md#publish-on-merge`.
+- **A merge that changes only documentation publishes a new preview too.** The workflow has no
+  path filter and must not be given one. Accepted in Decision 4 -- a preview per merge is the
+  price of the merge-to-main trigger, not a defect to be filtered away.
+- **`paths-ignore` must never be added to the `pull_request` trigger**, for the reason the matrix
+  exists: a run that never happens never reports the three required checks, and a required check
+  that never reports stays Pending forever.
+- **The publish job tags every publish, and the tag is load-bearing.** `GitVersion.yml` runs
+  `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
+  measured, two merges with no tag between them build the SAME version and the second publish is
+  refused by the Gallery. If a publish succeeds but the tag step fails, the next merge publishes
+  nothing (the idempotence check skips it); push the missing tag by hand onto the commit that was
+  published. `Why: docs/development/rationale.md#publish-on-merge`
+- **Never create a version tag by hand outside that repair or a deliberate release.** The existing
+  rule under **CHANGELOG and Version** still holds, and now has teeth: a stray tag changes what
+  gets PUBLISHED.
+
+**To cut a full release:**
+
+1. Push `v<X.Y.Z>` on the `main` tip, once that commit's three checks are green.
+2. Approve the deployment on the `Entra RBAC` environment.
+3. In the NEXT pull request, close `[Unreleased]` out to `## [X.Y.Z] - <date>`, per the rules under
+   **CHANGELOG and Version**. The invariant to check that against is
+   `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.
+
+**OPEN QUESTION, deliberately not solved here.** The 500-character floor in
+`tests/QA/module.tests.ps1` fails a close-out pull request that has no 500 characters of genuinely
+new `[Unreleased]` content to write. Do not pad the section with filler to get past it; raise it as
+its own change. `Why: docs/development/rationale.md#publish-on-merge`
+
+---
+
 ## CHANGELOG and Version
 
 `CHANGELOG.md`'s `[Unreleased]` section **is** the next release's published `ReleaseNotes`, not a
@@ -344,14 +384,23 @@ messages, PR titles and PR bodies.**
    note saying it is disabled.
 
 GitVersion reads every reachable commit message, and a squash merge copies the PR title and body
-into `main`, so a squash title of `fix!: ...` is enough on its own to do it. What follows is not a
-bad version quietly shipping: `tests/QA/module.tests.ps1` caps the built version below `2.0.0`
-independently of `GitVersion.yml`, so `main` goes RED after the merge and nothing is published. But
-the repair then happens on `main`, under a broken required check, instead of in an open PR -- which
-is why this is a rule about what you type, not a risk the gate makes harmless. File content is never
+into `main`, so a squash title of `fix!: ...` is enough on its own to do it. File content is never
 read and may quote either shape freely.
 
-`Why: docs/development/rationale.md#version-cap`
+**Since every merge to `main` publishes, this is no longer a rule about a number in a build log.**
+What one of those shapes does now splits by level, and only one level is caught:
+
+- **Major** (`!:`, or the quoted major token). `tests/QA/module.tests.ps1` caps the built version
+  below `2.0.0` independently of `GitVersion.yml`, so the merge turns `main` RED, `package` and
+  `publish` never run, and nothing is published. The repair then happens on `main` under a broken
+  required check instead of in an open PR, which is bad enough on its own.
+- **Minor or fix.** Nothing caps these. `main` carries `tag: preview`, so the merge publishes, for
+  example, `1.1.0-preview0001` in place of `1.0.1-preview0001` -- a real version, on the public
+  Gallery, that cannot be deleted, and a version line that was never chosen. There is no gate
+  behind this one: the rule about what you type IS the control.
+
+`Why: docs/development/rationale.md#version-cap`,
+`docs/development/rationale.md#publish-on-merge`
 
 ---
 
