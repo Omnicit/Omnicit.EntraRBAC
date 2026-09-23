@@ -415,6 +415,10 @@ function Sync-OERStructureAdministrativeUnit {
                     -Detail "the $($CurrentMembers.Count) current member(s) were not reconciled: administrative unit '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be removed manually, so -Prune does not apply to them"
             }
         } else {
+            # A declared member that cannot be resolved carries no id, so it cannot protect its live
+            # counterpart from the Extra/prune loop below; while this list is non-empty that loop
+            # withholds every candidate (ConvertTo-OERPruneWithheldResult owns the rule).
+            $MemberUnresolved = [System.Collections.Generic.List[string]]::new()
             foreach ($MRef in $DeclaredMembers) {
                 $Mid = Resolve-OERStructurePrincipal -Reference $MRef
                 if (-not $Mid) {
@@ -426,6 +430,7 @@ function Sync-OERStructureAdministrativeUnit {
                     )
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Failed' -Detail "could not resolve member '$MRef'" -ErrorRecord $ErrRec
+                    $MemberUnresolved.Add($MRef)
                     continue
                 }
                 $DeclaredMemberIds.Add($Mid)
@@ -458,6 +463,8 @@ function Sync-OERStructureAdministrativeUnit {
                 foreach ($CurMember in $CurrentMembers) {
                     $CurId = $CurMember.Id
                     if ($DeclaredMemberIds -notcontains $CurId) {
+                        $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
+                        if ($Withheld) { $Withheld; continue }
                         if ($Prune) {
                             $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                             Write-Warning "Sync-OERStructureAdministrativeUnit: $PruneVerb undeclared member '$CurId' from unit '$Name'."
@@ -488,6 +495,9 @@ function Sync-OERStructureAdministrativeUnit {
         # not be resolved on read, a role id GUID -- so it is matched against both the live RoleName
         # and the live RoleId below.
         $DeclaredScopedRoles = [System.Collections.Generic.List[PSCustomObject]]::new()
+        # Same rule as $MemberUnresolved above: a declared scopedRole whose principal cannot be
+        # resolved withholds every scopedRole candidate in the Extra/prune loop below.
+        $ScopedRoleUnresolved = [System.Collections.Generic.List[string]]::new()
         # Same rule as $MembersDeclaredNull above: an omitted 'scopedRoles' key still reconciles
         # against an empty declared set (existing, tested behavior), while an explicit null is a
         # distinct "leave scoped roles alone" signal. The add loop below is already gated on
@@ -510,6 +520,7 @@ function Sync-OERStructureAdministrativeUnit {
                     )
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Failed' -Detail "could not resolve scopedRole principal '$SrRef'" -ErrorRecord $ErrRec
+                    $ScopedRoleUnresolved.Add($SrRef)
                     continue
                 }
 
@@ -557,6 +568,8 @@ function Sync-OERStructureAdministrativeUnit {
                     (($_.Role -eq $CurSr.RoleName) -or ($CurSr.RoleId -and $_.Role -eq [string]$CurSr.RoleId))
                 }
                 if (-not $IsDeclared) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Unresolved $ScopedRoleUnresolved -Candidate "undeclared scopedRole '$($CurSr.RoleName)' for '$($CurSr.PrincipalId)'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                         Write-Warning "Sync-OERStructureAdministrativeUnit: $PruneVerb undeclared scopedRole '$($CurSr.RoleName)' (principal '$($CurSr.PrincipalId)') from unit '$Name'."

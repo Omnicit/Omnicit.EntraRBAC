@@ -332,6 +332,10 @@ function Sync-OERStructureAccessPackage {
         # -- Step 2: resourceRoles ---------------------------------------------------------
         # Track declared (originId, roleDisplayName) pairs for prune comparison.
         $DeclaredBindingKeys = [System.Collections.Generic.List[string]]::new()
+        # Declared resources that could not be resolved to an origin id carry no binding key, so they
+        # cannot protect their live bindings; while this list is non-empty the Extra/prune loop below
+        # withholds every candidate (ConvertTo-OERPruneWithheldResult owns the rule).
+        $ResourceRoleUnresolved = [System.Collections.Generic.List[string]]::new()
         # An omitted 'resourceRoles' key has always meant "no add-list, but the prune/Extra loop
         # below still runs against whatever it finds" -- that is intentional, existing, tested
         # behavior (an absent collection is not an instruction to leave live state alone; only an
@@ -386,6 +390,7 @@ function Sync-OERStructureAccessPackage {
 
                 if (-not $OriginId) {
                     ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail "could not resolve resource '$ResName' to an origin id in catalog '$($Item.catalog)'"
+                    $ResourceRoleUnresolved.Add($ResName)
                     continue
                 }
 
@@ -429,6 +434,8 @@ function Sync-OERStructureAccessPackage {
             foreach ($CurBinding in $CurrentBindings) {
                 $CurKey = "$($CurBinding.role.displayName)|$($CurBinding.scope.originId)"
                 if ($DeclaredBindingKeys -notcontains $CurKey) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'accessPackages' -Item $Name -Unresolved $ResourceRoleUnresolved -Candidate "undeclared resourceRole binding '$CurKey'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                         Write-Warning "Sync-OERStructureAccessPackage: $PruneVerb undeclared resourceRole binding '$CurKey' from access package '$Name'."

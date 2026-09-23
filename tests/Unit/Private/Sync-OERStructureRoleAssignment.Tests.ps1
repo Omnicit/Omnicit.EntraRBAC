@@ -891,4 +891,121 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
         }
     }
+
+    Context 'prune withheld when a declared sibling cannot be resolved' {
+        # The handler item (main_group) resolves; the SECOND sibling in -DeclaredAtScope
+        # (missing_group) does not. It carries no key, so the live undeclared assignment at the scope
+        # may be its counterpart: the scope-wide pass must report that candidate Skipped with the
+        # withheld reason instead of Extra or Removed. The sibling's own invocation (the engine gives
+        # every item one) then reports the sibling itself as Failed under the label the reason names.
+        It 'withholds the prune of an undeclared at-scope assignment when a second sibling resolves to null' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERScope { '/subscriptions/sub-1' }
+                Mock Resolve-OERStructurePrincipal {
+                    param($Reference, $Type)
+                    if ($Reference -eq 'main_group') { 'p-main' } else { $null }
+                }
+                Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader' }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-main'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-main' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-live'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-live' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
+                $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
+                $SiblingLabel = 'Reader -> missing_group @ subscription:Prod'
+                $Warnings = @()
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+                        -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match ('^prune withheld: declared entry ''{0}'' could not be resolved' -f [regex]::Escape($SiblingLabel))
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+                @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'p-live'
+                # The sibling's own invocation reports it Failed under the label the reason names.
+                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
+                @($SiblingRows | Where-Object { $_.Action -eq 'Failed' -and $_.Item -eq $SiblingLabel }).Count | Should -Be 1
+            }
+        }
+
+        It 'withholds the prune of an undeclared at-scope assignment when a second sibling lookup throws' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERScope { '/subscriptions/sub-1' }
+                Mock Resolve-OERStructurePrincipal {
+                    param($Reference, $Type)
+                    if ($Reference -eq 'main_group') { 'p-main' } else { throw 'Graph 503 while resolving missing_group' }
+                }
+                Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader' }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-main'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-main' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-live'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-live' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
+                $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
+                $SiblingLabel = 'Reader -> missing_group @ subscription:Prod'
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+                        -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match ('^prune withheld: declared entry ''{0}'' could not be resolved' -f [regex]::Escape($SiblingLabel))
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+                # The swallowed sibling throw writes no error of its own in the scope-wide pass.
+                @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
+                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
+                @($SiblingRows | Where-Object { $_.Action -eq 'Failed' -and $_.Item -eq $SiblingLabel }).Count | Should -Be 1
+            }
+        }
+
+        It 'reports the candidate Skipped with the withheld reason, not Extra, when -Prune is not set' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERScope { '/subscriptions/sub-1' }
+                Mock Resolve-OERStructurePrincipal {
+                    param($Reference, $Type)
+                    if ($Reference -eq 'main_group') { 'p-main' } else { $null }
+                }
+                Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader' }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-main'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-main' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-live'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'; RoleAssignmentId = 'ra-live' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
+                $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''Reader -> missing_group @ subscription:Prod'' could not be resolved'
+            }
+        }
+    }
 }

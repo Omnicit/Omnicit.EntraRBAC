@@ -1346,4 +1346,93 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
     }
+
+    Context 'prune withheld when a declared entry cannot be resolved' {
+        # A declared entry whose principal lookup gives no id carries no key, so the live entry it
+        # was meant to name looks undeclared. The pass must report its live candidates Skipped with
+        # the withheld reason instead of Extra or Removed, while the unresolved entry keeps its own
+        # Failed row. person15@example.com is the unresolvable reference throughout.
+        It 'withholds the member prune when a declared member cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAdministrativeUnitId { 'au-1' }
+                $LiveMember = [PSCustomObject]@{ Id = 'u-live'; DisplayName = 'Live'; Type = 'user' }
+                $LiveMember.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AdministrativeUnitMember')
+                Mock Get-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-1'; Description = $null; Members = @($LiveMember); ScopedRoles = @() } }
+                Mock Add-OERAdministrativeUnitMember { }
+                Mock Remove-OERAdministrativeUnitMember { }
+                Mock Resolve-OERStructurePrincipal { $null }
+                Mock Initialize-OERAuth {}
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @('person15@example.com') }
+                $Warnings = @()
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared member 'u-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve member 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'u-live'
+            }
+        }
+
+        It 'withholds the scopedRole prune when a declared scopedRole principal cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAdministrativeUnitId { 'au-1' }
+                $LiveRole = [PSCustomObject]@{
+                    ScopedRoleMembershipId = 'srm-live'
+                    RoleName               = 'User Administrator'
+                    PrincipalId            = 'p-live'
+                }
+                $LiveRole.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AdministrativeUnitScopedRole')
+                Mock Get-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-1'; Description = $null; Members = @(); ScopedRoles = @($LiveRole) } }
+                Mock Add-OERAdministrativeUnitScopedRole { }
+                Mock Remove-OERAdministrativeUnitScopedRole { }
+                Mock Resolve-OERStructurePrincipal { $null }
+                Mock Initialize-OERAuth {}
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    scopedRoles = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person15@example.com' })
+                }
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared scopedRole 'User Administrator' for 'p-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve scopedRole principal 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+            }
+        }
+
+        It 'still aborts the item, and removes nothing, when a member lookup throws under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAdministrativeUnitId { 'au-1' }
+                $LiveMember = [PSCustomObject]@{ Id = 'u-live'; DisplayName = 'Live'; Type = 'user' }
+                $LiveMember.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AdministrativeUnitMember')
+                Mock Get-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-1'; Description = $null; Members = @($LiveMember); ScopedRoles = @() } }
+                Mock Remove-OERAdministrativeUnitMember { }
+                Mock Resolve-OERStructurePrincipal { throw 'Graph 503 while resolving the member' }
+                Mock Initialize-OERAuth {}
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @('person15@example.com') }
+                { Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
+                    Should -Throw -ExpectedMessage '*Graph 503*'
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+            }
+        }
+    }
 }

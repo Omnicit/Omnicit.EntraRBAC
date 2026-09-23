@@ -337,9 +337,16 @@ function Sync-OERStructureRoleAssignment {
         # -- Scope-wide prune/extra pass (only when -ReconcileScope) ----------------------
         if (-not $ReconcileScope) { return }
 
-        # Build the declared key set from all $DeclaredAtScope siblings.
+        # Build the declared key set from all $DeclaredAtScope siblings. A sibling whose principal or
+        # role cannot be resolved carries no key, so it cannot protect its own live assignment from
+        # the candidate loop below. It is recorded in $SiblingUnresolved instead, under the sibling's
+        # own result label, and while that list is non-empty every candidate at this scope is
+        # withheld (ConvertTo-OERPruneWithheldResult owns that rule) rather than reported Extra or
+        # removed.
         $DeclaredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $SiblingUnresolved = [System.Collections.Generic.List[string]]::new()
         foreach ($Sibling in @($DeclaredAtScope)) {
+            $SiblingLabel = "$($Sibling.role) -> $($Sibling.principal) @ $($Sibling.scope)"
             try {
                 $SibParams = @{ Reference = $Sibling.principal }
                 if (Test-OERDeclaredProperty -Node $Sibling -Name 'principalType') { $SibParams.Type = $Sibling.principalType }
@@ -347,10 +354,15 @@ function Sync-OERStructureRoleAssignment {
                 $SiblingRole = Resolve-OERRoleDefinitionId -Role $Sibling.role -Scope $RawScope
                 if ($SiblingPid -and $SiblingRole) {
                     $null = $DeclaredKeys.Add("$SiblingPid|$SiblingRole")
+                } else {
+                    $SiblingUnresolved.Add($SiblingLabel)
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                # A single unresolvable sibling does not abort the pass.
+                # A sibling whose lookup throws does not abort the pass, but it is unresolved all the
+                # same and withholds the prune at this scope. No error is written here: the sibling's
+                # own invocation writes its own error and Failed record.
+                $SiblingUnresolved.Add($SiblingLabel)
             }
         }
 
@@ -370,6 +382,8 @@ function Sync-OERStructureRoleAssignment {
             $CurRoleLeaf = ($Cur.RoleDefinitionId -split '/')[-1]
             $ExtraItem   = "$CurRoleLeaf -> $($Cur.PrincipalId) @ $($Cur.Scope)"
             $CurLabel    = "undeclared assignment '$($Cur.RoleDefinitionId)' for principal '$($Cur.PrincipalId)'"
+            $Withheld = ConvertTo-OERPruneWithheldResult -Section $Section -Item $ExtraItem -Unresolved $SiblingUnresolved -Candidate $CurLabel
+            if ($Withheld) { $Withheld; continue }
             if ($Prune) {
                 $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                 Write-Warning "Sync-OERStructureRoleAssignment: $PruneVerb $CurLabel at scope '$RawScope'."

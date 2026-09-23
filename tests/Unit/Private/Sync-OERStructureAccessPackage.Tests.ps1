@@ -3152,4 +3152,94 @@ Describe 'Sync-OERStructureAccessPackage' {
             }
         }
     }
+
+    Context 'prune withheld when a declared resourceRole resource cannot be resolved' {
+        # A declared resource that matches no catalog resource and no group carries no origin id, so
+        # the live binding it was meant to name looks undeclared. The pass must report that binding
+        # Skipped with the withheld reason instead of Extra or Removed, while the unresolved entry
+        # keeps its own Failed row.
+        It 'withholds the resourceRole binding prune when a declared resource cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource { @() }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{
+                                id    = 'b-live'
+                                role  = [PSCustomObject]@{ displayName = 'Member' }
+                                scope = [PSCustomObject]@{ originId = 'grp-live' }
+                            }
+                        )
+                    }
+                }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole {}
+                Mock Remove-OERAccessPackageResourceRole {}
+                Mock Initialize-OERAuth {}
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP-Sales'
+                    catalog       = 'CAT-IT'
+                    resourceRoles = @(
+                        [PSCustomObject]@{ resource = 'no-such-group'; role = 'Member' }
+                    )
+                }
+                $Warnings = @()
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail.Contains("undeclared resourceRole binding 'Member|grp-live'") })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''no-such-group'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve resource 'no-such-group' to an origin id in catalog 'CAT-IT'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'grp-live'
+            }
+        }
+
+        It 'still aborts the item, and removes nothing, when a resource lookup throws under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource { @() }
+                Mock Resolve-OERGroupId { throw 'Graph 503 while resolving the resource' }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{
+                                id    = 'b-live'
+                                role  = [PSCustomObject]@{ displayName = 'Member' }
+                                scope = [PSCustomObject]@{ originId = 'grp-live' }
+                            }
+                        )
+                    }
+                }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Remove-OERAccessPackageResourceRole {}
+                Mock Initialize-OERAuth {}
+                $Item = [PSCustomObject]@{
+                    displayName   = 'AP-Sales'
+                    catalog       = 'CAT-IT'
+                    resourceRoles = @(
+                        [PSCustomObject]@{ resource = 'no-such-group'; role = 'Member' }
+                    )
+                }
+                { Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
+                    Should -Throw -ExpectedMessage '*Graph 503*'
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+    }
 }

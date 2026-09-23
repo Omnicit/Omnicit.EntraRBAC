@@ -356,6 +356,10 @@ function Sync-OERStructureGroup {
                     -Detail "the $($CurrentMembers.Count) current member(s) were not reconciled: group '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be removed manually, so -Prune does not apply to them"
             }
         } else {
+            # A declared member that cannot be resolved carries no id, so it cannot protect its live
+            # counterpart from the Extra/prune loop below; while this list is non-empty that loop
+            # withholds every candidate (ConvertTo-OERPruneWithheldResult owns the rule).
+            $MemberUnresolved = [System.Collections.Generic.List[string]]::new()
             if (Test-OERDeclaredProperty -Node $Item -Name 'members') {
                 foreach ($MRef in @($Item.members)) {
                     $Mid = Resolve-OERStructurePrincipal -Reference $MRef
@@ -368,6 +372,7 @@ function Sync-OERStructureGroup {
                         )
                         $Caller.WriteError($ErrRec)
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve member '$MRef'" -ErrorRecord $ErrRec
+                        $MemberUnresolved.Add($MRef)
                         continue
                     }
                     $DeclaredMemberIds.Add($Mid)
@@ -401,6 +406,8 @@ function Sync-OERStructureGroup {
                 foreach ($CurMember in $CurrentMembers) {
                     $CurId = $CurMember.id
                     if ($DeclaredMemberIds -notcontains $CurId) {
+                        $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
+                        if ($Withheld) { $Withheld; continue }
                         if ($Prune) {
                             $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                             Write-Warning "Sync-OERStructureGroup: $PruneVerb undeclared member '$CurId' from group '$Name'."
@@ -434,6 +441,9 @@ function Sync-OERStructureGroup {
         # off every group in an already-written document on its next -Prune run.
         if (Test-OERDeclaredProperty -Node $Item -Name 'owners') {
             $DeclaredOwnerIds = [System.Collections.Generic.List[string]]::new()
+            # Same rule as $MemberUnresolved: an unresolved declared owner withholds every owner
+            # candidate in the Extra/prune loop below.
+            $OwnerUnresolved = [System.Collections.Generic.List[string]]::new()
             foreach ($ORef in @($Item.owners)) {
                 $Oid = Resolve-OERStructurePrincipal -Reference $ORef
                 if (-not $Oid) {
@@ -445,6 +455,7 @@ function Sync-OERStructureGroup {
                     )
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve owner '$ORef'" -ErrorRecord $ErrRec
+                    $OwnerUnresolved.Add($ORef)
                     continue
                 }
                 $DeclaredOwnerIds.Add($Oid)
@@ -484,6 +495,8 @@ function Sync-OERStructureGroup {
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $OwnerUnresolved -Candidate "undeclared owner '$CurId'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         if ($RemainingOwnerCount -le 1) {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
@@ -522,6 +535,10 @@ function Sync-OERStructureGroup {
         # Declared (principalId, accessType) keys, populated as both eligibility loops below resolve
         # each entry's principal and access type. Consumed by the Extra/prune pass after Step 5.
         $DeclaredEligibilityKeys = [System.Collections.Generic.List[string]]::new()
+        # Declared eligibility principals that could not be resolved, fed by BOTH loops below. While
+        # it is non-empty the Extra/prune pass withholds every eligibility candidate, since an
+        # unresolved entry carries no key to protect its live counterpart with.
+        $EligibilityUnresolved = [System.Collections.Generic.List[string]]::new()
         if ($HasEligibility) {
             foreach ($EEntry in @($Item.eligibility)) {
                 if (Test-OERDeclaredProperty -Node $EEntry -Name 'durationDays') {
@@ -559,6 +576,7 @@ function Sync-OERStructureGroup {
                 )
                 $Caller.WriteError($ErrRec)
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve eligibility principal '$EPrinRef'" -ErrorRecord $ErrRec
+                $EligibilityUnresolved.Add($EPrinRef)
                 continue
             }
 
@@ -664,6 +682,7 @@ function Sync-OERStructureGroup {
                 )
                 $Caller.WriteError($ErrRec)
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve eligibility principal '$EPrinRef'" -ErrorRecord $ErrRec
+                $EligibilityUnresolved.Add($EPrinRef)
                 continue
             }
 
@@ -706,6 +725,8 @@ function Sync-OERStructureGroup {
                 $CurKey = ('{0}|{1}' -f $CurPrincipal, $CurAccess).ToLowerInvariant()
                 if ($DeclaredEligibilityKeys -contains $CurKey) { continue }
                 $Label = "undeclared $CurAccess eligibility for principal '$CurPrincipal'"
+                $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $EligibilityUnresolved -Candidate $Label
+                if ($Withheld) { $Withheld; continue }
                 if ($Prune) {
                     # Remove-OERGroupEligibility (ConfirmImpact = High) also emits its own generic
                     # Write-Warning inside its ShouldProcess gate on every real removal. A previous revision

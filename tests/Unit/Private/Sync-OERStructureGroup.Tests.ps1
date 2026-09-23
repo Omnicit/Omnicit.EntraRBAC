@@ -2486,4 +2486,226 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
     }
+
+    Context 'prune withheld when a declared entry cannot be resolved' {
+        # A declared entry whose principal lookup gives no id carries no key, so the live entry it
+        # was meant to name looks undeclared. Every such pass must report its live candidates
+        # Skipped with the withheld reason instead of Extra or Removed, while the unresolved entry
+        # keeps its own Failed row. person15@example.com is the unresolvable reference throughout.
+        It 'withholds the member prune when a declared member cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @([PSCustomObject]@{ id = 'id-person9@example.com' }, [PSCustomObject]@{ id = 'u-live' })
+                        PimEligibility = @()
+                    }
+                }
+                Mock Add-OERGroupMember { }
+                Mock Remove-OERGroupMember { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { param($Reference) if ($Reference -eq 'person15@example.com') { $null } else { "id-$Reference" } }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; members = @('person9@example.com', 'person15@example.com') }
+                $Warnings = @()
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupMember -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared member 'u-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve member 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'u-live'
+            }
+        }
+
+        It 'reports the member candidate Skipped with the withheld reason, not Extra, when -Prune is not set' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @([PSCustomObject]@{ id = 'u-live' }); PimEligibility = @()
+                    }
+                }
+                Mock Remove-OERGroupMember { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { $null }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; members = @('person15@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupMember -Times 0
+                @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared member 'u-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve member 'person15@example.com'" }).Count | Should -Be 1
+            }
+        }
+
+        It 'withholds the owner prune when a declared owner cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @(); Owners = @(@{ id = 'o-1' }, @{ id = 'o-live' }); PimEligibility = @()
+                    }
+                }
+                Mock Add-OERGroupMember { }
+                Mock Remove-OERGroupMember { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { param($Reference) if ($Reference -eq 'person15@example.com') { $null } else { 'o-1' } }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; members = $null; owners = @('person19@example.com', 'person15@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupMember -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared owner 'o-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve owner 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+            }
+        }
+
+        It 'withholds a lone undeclared owner with the unresolved-entry reason ahead of the last-owner guard' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @(); Owners = @(@{ id = 'o-live' }); PimEligibility = @()
+                    }
+                }
+                Mock Remove-OERGroupMember { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { $null }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; members = $null; owners = @('person15@example.com') }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupMember -Times 0
+                $Skipped = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "'o-live'" })
+                $Skipped.Count | Should -Be 1
+                $Skipped[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                $Skipped[0].Detail | Should -Not -Match 'last remaining owner'
+            }
+        }
+
+        It 'withholds the eligibility prune when a declared time-bound eligibility principal cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @()
+                        PimEligibility = @([PSCustomObject]@{ principalId = 'u-live'; accessId = 'member'; startDateTime = $null; endDateTime = $null })
+                    }
+                }
+                Mock Add-OERGroupEligibility { }
+                Mock Remove-OERGroupEligibility { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { $null }
+                $Item = '{ "displayName": "role_sec_x", "members": null, "eligibility": [ { "principal": "person15@example.com", "durationDays": 30 } ] }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupEligibility -Times 0
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared member eligibility for principal 'u-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve eligibility principal 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+            }
+        }
+
+        It 'withholds the eligibility prune when a declared permanent eligibility principal cannot be resolved' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @()
+                        PimEligibility = @([PSCustomObject]@{ principalId = 'u-live'; accessId = 'member'; startDateTime = $null; endDateTime = $null })
+                    }
+                }
+                Mock Add-OERGroupEligibility { }
+                Mock Remove-OERGroupEligibility { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { $null }
+                $Item = '{ "displayName": "role_sec_x", "members": null, "eligibility": [ { "principal": "person15@example.com" } ] }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                Should -Invoke Remove-OERGroupEligibility -Times 0
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match "undeclared member eligibility for principal 'u-live'" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''person15@example\.com'' could not be resolved'
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq "could not resolve eligibility principal 'person15@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
+            }
+        }
+
+        It 'still aborts the item, and removes nothing, when a member lookup throws under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                        Members = @([PSCustomObject]@{ id = 'u-live' }); PimEligibility = @()
+                    }
+                }
+                Mock Remove-OERGroupMember { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERStructurePrincipal { throw 'Graph 503 while resolving the member' }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; members = @('person15@example.com') }
+                { Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
+                    Should -Throw -ExpectedMessage '*Graph 503*'
+                Should -Invoke Remove-OERGroupMember -Times 0
+            }
+        }
+    }
 }
