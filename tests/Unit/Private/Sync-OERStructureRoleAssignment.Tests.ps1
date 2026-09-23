@@ -768,9 +768,11 @@ Describe 'Sync-OERStructureRoleAssignment' {
         # to a fixed value regardless of the splat, matching the convention used elsewhere in this file.
         # Two siblings share the scope: the primary item (main_group/Reader) and a second sibling
         # (sibling_group/Owner). Both have a matching CURRENT assignment. The declared key set built
-        # from the siblings loop must include BOTH, or the second one's current assignment is wrongly
-        # reported as Extra during the scope-wide reconcile pass -- that wrongness is exactly what a
-        # sibling principalType being coerced into a bad -Type argument at site 345 causes.
+        # from the siblings loop must include BOTH. A sibling that drops out of it -- exactly what a
+        # sibling principalType coerced into a bad -Type argument at site 345 causes -- is recorded as
+        # unresolved under the withheld rule, so the regression now surfaces as a Skipped row whose
+        # Detail starts 'prune withheld' rather than as Extra. Each It therefore also asserts that no
+        # prune-withheld row appears; that added assertion is the one that catches the regression.
         It 'passes the declared principalType to Resolve-OERStructurePrincipal for a sibling declared with a value, and its current assignment is not flagged Extra' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
@@ -807,6 +809,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                     $Reference -eq 'sibling_group' -and $Type -eq 'Group'
                 }
                 ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^prune withheld' }).Count | Should -Be 0
             }
         }
 
@@ -846,12 +849,15 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 # Resolve-OERStructurePrincipal's -Type carries [ValidateSet('User','Group',
                 # 'ServicePrincipal')], and Pester's Mock preserves that validation on the proxy it
                 # builds, so a null value there throws a ParameterBindingValidationException that the
-                # handler's own catch swallows -- silently dropping this sibling out of the declared
-                # key set. That makes ra-sibling (a live, correctly-declared assignment) show up as
-                # Extra. Revert the fix and this It fails on the Extra assertion below; see the task
-                # report for the quoted failing output.
+                # handler's own catch swallows -- dropping this sibling out of the declared key set.
+                # Under the withheld rule the dropped sibling is recorded as unresolved, so ra-sibling
+                # (a live, correctly-declared assignment) now surfaces as a Skipped row whose Detail
+                # starts 'prune withheld' -- no longer as Extra, which leaves the Extra assertion green
+                # on its own. Revert the fix and this It fails on the prune-withheld assertion below;
+                # see the task report for the quoted failing output.
                 $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
                 ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^prune withheld' }).Count | Should -Be 0
             }
         }
 
@@ -888,6 +894,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Owner'; principal = 'sibling_group' }
                 $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
                 ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^prune withheld' }).Count | Should -Be 0
             }
         }
     }

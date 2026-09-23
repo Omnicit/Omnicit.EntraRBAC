@@ -57,7 +57,7 @@ function ConvertTo-OERPruneWithheldResult {
     param(
         [Parameter(Mandatory)][string]$Section,
         [Parameter(Mandatory)][string]$Item,
-        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Unresolved,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
         [Parameter(Mandatory)][string]$Candidate
     )
 

@@ -42,6 +42,17 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
         }
     }
 
+    It 'still returns the Skipped record when an unresolved entry label is an empty string' {
+        InModuleScope $script:moduleName {
+            $WithEmpty = [System.Collections.Generic.List[string]]::new()
+            $WithEmpty.Add('')
+            $r = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved $WithEmpty -Candidate "undeclared member 'u-1'")
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Skipped'
+            $r[0].Detail | Should -Match '^prune withheld: declared entry '''' could not be resolved'
+        }
+    }
+
     It 'uses the plural form and names every unresolved entry in the given order' {
         InModuleScope $script:moduleName {
             $Two = [System.Collections.Generic.List[string]]::new()
