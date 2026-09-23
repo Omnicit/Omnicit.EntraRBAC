@@ -159,11 +159,18 @@ $Raw     = Join-Path $Repo 'docs/live-verification/raw/s61'
 Set-Location $Repo
 git remote get-url origin
 git branch --show-current
-./build.ps1 -Tasks build
+# Build in a process of its own. ModuleBuilder fills every Build-Module parameter build.yaml leaves
+# unset from a variable of the same name in the calling session, so the $Prefix above would be
+# written into the top of the built module, and importing it would run 'oer-s61' as a command.
+pwsh -NoProfile -File ./build.ps1 -Tasks build
+if ($LASTEXITCODE -ne 0) { throw 'The build failed.' }
 $Sep = [System.IO.Path]::PathSeparator
 $env:PSModulePath = (Resolve-Path ./output/module).Path + $Sep + (Resolve-Path ./output/RequiredModules).Path + $Sep + $env:PSModulePath
 $ModulePsd1 = (Get-ChildItem ./output/module/Omnicit.EntraRBAC/*/Omnicit.EntraRBAC.psd1 |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+if (Select-String -Path ($ModulePsd1 -replace '\.psd1$', '.psm1') -Pattern "^#Region 'PREFIX'" -Quiet) {
+    throw 'The built module carries a PREFIX region: rebuild with the line above, never with ./build.ps1 in this window.'
+}
 New-Item -ItemType Directory -Path $Raw -Force | Out-Null
 ```
 
