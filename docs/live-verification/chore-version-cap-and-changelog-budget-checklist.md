@@ -227,6 +227,14 @@ and is deliberately NOT run now.
 These read `output/module/Omnicit.EntraRBAC/0.8.0/` -- the artefact produced by check 1.3. Rebuild
 before running them if you have edited `CHANGELOG.md` since.
 
+**Superseded thresholds, noted 2026-09-23 (P14).** The 500-character floor and the 400-character
+tail comparison in 2.1-2.3 are the gates as this branch built and verified them, and the results
+below record exactly that; they are left as measured. The QA gate no longer uses either. It now
+holds the body after the heading line to at least 50 characters, in the source and in the built
+manifest, compares the whole published body with the source body exactly, and checks that the
+published heading names the built version. Re-running 2.1-2.3 as written tests the old thresholds,
+not the current gate. `Why: docs/development/rationale.md#changelog-budget`
+
 - [x] **2.1 Read the built manifest's version and release notes.**
 
   ```powershell
