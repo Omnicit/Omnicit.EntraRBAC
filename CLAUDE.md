@@ -46,7 +46,8 @@ reaches `main` through a pull request.
 | Bug fix | `fix/` | `fix/acrs-bearer-token-leak` |
 | New feature | `feat/` | `feat/phase1-group-cmdlets` |
 | Tests / QA | `test/` | `test/fix-auth-mocks` |
-| Docs / chore | `chore/` | `chore/update-readme` |
+| Documentation | `docs/` | `docs/publish-without-approval` |
+| Chore | `chore/` | `chore/dependency-cleanup` |
 | Refactor | `refactor/` | `refactor/simplify-error-handling` |
 | Build / CI pipeline | `ci/` | `ci/publish-on-merge` |
 
@@ -294,6 +295,14 @@ publish it.
   `GITHUB_TOKEN` all three, so a stable run that tried would fail in its last step, AFTER the
   publish. On a `v` tag run the release step attaches the release to the tag already there; the
   only tag the workflow ever writes is a hyphenated preview tag, which the ruleset excludes.
+- **The publish job refuses a version its ref does not call for**, straight after the artefact is
+  verified and before anything is published: on a `v` tag the built version must equal the tag
+  exactly and the tagged commit must be on `main`; on `main` the build must carry a prerelease
+  label; any other ref is refused. It guards against MISTAKES, not an adversary -- the gate stays in
+  the settings, since a changed workflow writes the step away. **A refused or misplaced stable tag
+  stays where it is**, and nothing removes it for you: someone on the bypass list deletes it with
+  `git push origin :refs/tags/v<X.Y.Z>` and, for a misplaced one, pushes it again on the `main`
+  commit it was meant for. `Why: docs/development/rationale.md#publish-on-merge`
 
 **To cut a full release:**
 

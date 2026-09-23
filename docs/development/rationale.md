@@ -2168,7 +2168,8 @@ tag against `main`, anything -- is therefore authored by whoever authors the com
 that abuses the secret simply writes the check away. The environment's deployment rules and the
 tag ruleset are evaluated by GitHub against the ref, outside anything a commit can change. The
 `publish` job's `if:` and the trigger's `!v*-*` exclusion stay, but they keep honest runs honest;
-they are not the control.
+they are not the control. The same holds for the version guard described
+[below](#the-publish-job-refuses-a-version-its-ref-does-not-call-for).
 
 **What that asks of the workflow.** Since the ruleset refuses `GITHUB_TOKEN` a stable tag, the
 release step must never create, move or delete one: a stable run that tried would fail in its last
@@ -2184,17 +2185,83 @@ step, after the Gallery publish. Verified on 2026-09-23 before this decision was
   `--target` is `GITHUB_SHA`, the tagged commit, in any case. The stable path therefore attaches a
   release to the existing tag and writes no ref.
 
-NOT yet measured, because no stable run has happened: the version GitVersion computes on a `v` tag
-whose commit ALSO carries a preview tag, which is the normal case, since every merge tags its own
-commit. The table above measured a stable tag alone on the tip (`1.1.0`); with two tags on HEAD the
-higher, stable one is expected to win. The release step names its tag from that computed version,
-so if it ever differed from the pushed tag, the step would try to create a different tag, and a
-stable one would be refused by the ruleset -- after the Gallery publish. The first full release is
-the measurement.
+**Measured on 2026-09-23: what GitVersion computes on a stable tag.** The case that matters is a
+`v` tag on a commit that ALSO carries a preview tag, which is the normal case, since every merge
+tags its own commit. The release step names its tag from the computed version, so a computed version
+that differed from the pushed tag would make it try to create a different tag -- refused by the
+ruleset, after the Gallery publish. Measured with GitVersion 5.12.0 in a fresh CI-like clone
+(`git init`, a fetch of `refs/heads/*` into `refs/remotes/origin/*` and of every tag, a detached
+checkout, `GITHUB_ACTIONS` and `GITHUB_REF` set) against a bare copy of the public repository:
+
+| State | `NuGetVersionV2` |
+|---|---|
+| `main` after the merge of #5, untagged | `1.0.1-preview0002` (confirmed live after that merge) |
+| `v1.0.1` on a commit that also carries `v1.0.1-preview0002` | `1.0.1` |
+| `v1.1.0` on that same commit | `1.1.0` |
+| the next `main` commit after `v1.0.1` | `1.0.2-preview0001` |
+| the next `main` commit after `v1.1.0` | `1.1.1-preview0001` |
+
+The stable tag wins over the preview tag on the same commit, the computed version IS the tag, and
+the release step therefore names the tag that already exists. After it, the preview line carries on
+one patch above the stable version.
+
+**Measure that in a fresh clone, never in a working copy.** With `GITHUB_ACTIONS` set, GitVersion's
+normalization creates a local branch named `tags/<tag>` and moves local branches to their remote
+counterparts. On a runner that is harmless, since the clone is thrown away, but in an ordinary
+working copy it changes the very branches being measured, so the answer it gives there is wrong.
 
 **Accepted residual.** Whoever can merge a pull request can publish a preview, since the merge is
 the publish and nobody else is asked. That holds until `Require approvals` is switched on for
 `main` with a second reviewer to give it.
+
+### The publish job refuses a version its ref does not call for
+
+The step `Refuse a version the triggering ref does not call for` runs in the `publish` job straight
+after the artefact is verified, before anything else, and it never sees `GALLERYAPITOKEN`. It reads
+`PublishVersion` and `PublishPrerelease` -- the version the built manifest carries, as the
+verification step exports it -- and requires:
+
+- **On `refs/tags/v*`:** that `v` plus `PublishVersion` equals the tag name exactly, case included,
+  and then that the tagged commit is in `main`'s history. The checkout is `fetch-depth: 1`, so git
+  cannot answer the second question; the step asks the compare API for `main...<commit>`, where
+  `identical` or `behind` means `main` contains the commit and `ahead` or `diverged` means it does
+  not. Any other answer, or a failed call, is a refusal as well.
+- **On `refs/heads/main`:** that `PublishPrerelease` is not empty.
+- **On any other ref:** a refusal. The job's `if:` already admits no other ref, so this is a second
+  lock -- one that keeps holding if that condition is ever edited.
+
+Every refusal says what was expected, what was found, and that NOTHING has been published. On a tag
+it also says that the tag is still there, and that someone on the `Stable Version` bypass list
+removes it with `git push origin :refs/tags/<tag>`. The workflow itself never deletes a stable tag,
+and the ruleset would refuse it if it tried.
+
+It catches three mistakes, each of which would otherwise put a permanent, unintended version on the
+Gallery before anything stopped it:
+
+1. **A tag run on which GitVersion computes something other than the tag.** The publish would go
+   through under the computed version, and only the release step would then fail, against the
+   ruleset, with the version already on the Gallery. The measurement above says an honest tag
+   computes itself, so this is the net under that measurement, not a correction of it.
+2. **A stable tag on a commit that is not on `main`** -- created in a checkout that sits on a
+   feature branch, say. The ruleset decides WHO may push a stable tag, not WHERE it may point, so
+   this would publish unreviewed code as a full release.
+3. **A `main` run that computes a stable version**, after a change to `GitVersion.yml` for example.
+   The decision is that a full release comes from a tag and from nothing else.
+
+Run locally on 2026-09-23 against the step's own text, extracted from the workflow and wrapped the
+way `shell: pwsh` wraps it: the two honest cases pass, and a wrong version, a prerelease build on a
+stable tag, a commit off `main`, a stable version on `main` and a foreign ref are all refused.
+Against the public repository the compare API answered `behind` for `2c7c7d7` (on `main`),
+`identical` for the `main` tip, and `diverged` for the head commit of a pull request branch that had
+been squash-merged.
+
+**This does not contradict the section above, which says a check in the workflow cannot be the
+control.** It still is not. The gate against an ADVERSARY stays in the environment's deployment rules
+and the tag ruleset, because a tag push runs the workflow file at the tagged commit, and a commit
+written to do harm simply deletes this step. A MISTAKE deletes nothing: whoever tags the wrong
+commit, or merges a `GitVersion.yml` that computes the wrong thing, is running the workflow as it
+stands, guard included. The settings decide who may publish; this step stops an honest publish that
+asked for the wrong thing.
 
 ### Known open question
 
