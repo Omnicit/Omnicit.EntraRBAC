@@ -221,6 +221,27 @@ Describe 'Get-OERRequiredScopeMap' {
         }
     }
 
+    Context 'Pinned entries' {
+        It 'Lists the role-management scope Set-OERGroup needs for a role-assignable group' {
+            InModuleScope Omnicit.EntraRBAC {
+                <#
+                    tests/QA/requiredscope.tests.ps1 only checks that the declared scopes COVER the
+                    endpoints reached, so it cannot notice this scope going missing: PATCH v1.0/groups
+                    is satisfied by Group.ReadWrite.All alone. Updating a role-assignable group needs
+                    RoleManagement.ReadWrite.Directory as well, so the value is pinned here.
+                #>
+                $Entry = @(Get-OERRequiredScopeMap | Where-Object Cmdlet -EQ 'Set-OERGroup')
+
+                $Entry.Count | Should -Be 1 -Because 'Set-OERGroup must have exactly one entry'
+                $Entry[0].GraphScope | Should -Contain 'Group.ReadWrite.All'
+                $Entry[0].GraphScope | Should -Contain 'RoleManagement.ReadWrite.Directory' -Because (
+                    'Group.ReadWrite.All alone cannot update a role-assignable group')
+                $Entry[0].Note | Should -Match 'role-assignable' -Because (
+                    'the Note must say the extra scope is needed only for a role-assignable group')
+            }
+        }
+    }
+
     Context 'Purity' {
         It 'Makes no tenant call' {
             Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { throw 'must not authenticate' }
