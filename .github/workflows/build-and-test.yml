@@ -539,7 +539,7 @@ jobs:
           $Notes = (@($Manifest.PrivateData.PSData.ReleaseNotes) -join [System.Environment]::NewLine).Trim()
 
           if ([string]::IsNullOrWhiteSpace($Notes)) {
-              Write-Warning "The built manifest carries no ReleaseNotes. CHANGELOG.md's Unreleased section is the source of that value and tests/QA/module.tests.ps1 holds it above 500 characters, so this should be unreachable."
+              Write-Warning "The built manifest carries no ReleaseNotes. CHANGELOG.md's Unreleased section is the source of that value and tests/QA/module.tests.ps1 holds the section's body after its heading line to at least one sentence, so this should be unreachable."
               $Notes = "$ModuleName $Version was published to the PowerShell Gallery from $env:GITHUB_SHA."
           }
 

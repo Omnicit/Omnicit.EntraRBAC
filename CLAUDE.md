@@ -63,10 +63,12 @@ It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
 inventory and a declarative apply engine. Command prefix is `OER`.
 
-**The canonical working tree is `C:\Git\Omnicit.EntraRBAC.public`, tracking
-`github.com/Omnicit/Omnicit.EntraRBAC`.** The older clone is the private repository's working copy
-and is to be archived; do not commit to it, and do not treat a change made there as made. Two live
-clones of one module is how a fix lands in the wrong repository -- that has already happened here.
+**The canonical working tree is the clone whose `origin` is
+`github.com/Omnicit/Omnicit.EntraRBAC`**, wherever it sits on disk. The local path differs from
+machine to machine, so identify it with `git remote get-url origin`, never by its directory. The
+older clone, whose `origin` is the private repository, is to be archived; do not commit to it, and
+do not treat a change made there as made. Two live clones of one module is how a fix lands in the
+wrong repository -- that has already happened here.
 
 The phase roadmap (phases 0-5) is **complete** -- the module is feature-complete. See `CHANGELOG.md`
 for what each release delivered.

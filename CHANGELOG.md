@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.0.1. A preview published from this point differs from 1.0.1 only
+in documentation, tests or the build.
+
+## [1.0.1] - 2026-09-23
+
 Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:
 Azure Resource Manager requests are made directly with a token acquired through AzAuth, and always
 have been. Installing or updating the module therefore pulls a smaller dependency tree, and an
