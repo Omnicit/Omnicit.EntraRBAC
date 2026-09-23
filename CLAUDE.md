@@ -254,8 +254,9 @@ directory outright if a genuinely clean resolve is needed.
 ## Publishing
 
 **Every merge to `main` publishes a new preview to the public PowerShell Gallery, and that is
-PERMANENT.** The Gallery can unlist a version but cannot delete one. There is no staging step
-between merge and publish: approving the pull request is the decision to publish it.
+PERMANENT.** The Gallery can unlist a version but cannot delete one. There is no staging step and
+no deployment approval between merge and publish: merging the pull request is the decision to
+publish it.
 
 - **Publishing lives in `.github/workflows/build-and-test.yml`, in its `publish` job.** That job
   is the only thing in this repository that can publish. `./build.ps1 -Tasks publish` is
@@ -278,12 +279,31 @@ between merge and publish: approving the pull request is the decision to publish
 - **Never create a version tag by hand outside that repair or a deliberate release.** The existing
   rule under **CHANGELOG and Version** still holds, and now has teeth: a stray tag changes what
   gets PUBLISHED.
+- **No approval stands between a merge or a `v` tag and the Gallery** (Philip's decision,
+  2026-09-23). The `Entra RBAC` environment has no required reviewers: it scopes `GALLERYAPITOKEN`
+  to the `publish` job and admits only branch `main` and the stable `v<X.Y.Z>` tag patterns. The
+  gate for a preview is the pull request and its required checks; the gate for a full release is
+  the tag, which only the `Stable Version` tag ruleset's bypass list can create, move or delete.
+  Both closures are repository SETTINGS on purpose: a tag push runs the workflow file at the tagged
+  commit, so a check in the workflow is removed by the same commit that abuses it. Never widen an
+  environment tag pattern past what the ruleset covers -- every pattern starts with `v` and admits
+  no hyphen, which is why `v*` was removed. Accepted residual: whoever can merge a pull request can
+  publish a preview, until `Require approvals` is switched on with a second reviewer.
+  `Why: docs/development/rationale.md#publish-on-merge`
+- **The workflow must never create, move or delete a stable tag.** The ruleset refuses
+  `GITHUB_TOKEN` all three, so a stable run that tried would fail in its last step, AFTER the
+  publish. On a `v` tag run the release step attaches the release to the tag already there; the
+  only tag the workflow ever writes is a hyphenated preview tag, which the ruleset excludes.
 
 **To cut a full release:**
 
-1. Push `v<X.Y.Z>` on the `main` tip, once that commit's three checks are green.
-2. Approve the deployment on the `Entra RBAC` environment.
-3. In the NEXT pull request, close `[Unreleased]` out to `## [X.Y.Z] - <date>`, per the rules under
+1. Push `v<X.Y.Z>` on the `main` tip, once that commit's three checks are green. Only the
+   `Stable Version` ruleset's bypass list can create that tag -- today the users PhilipHaglund and
+   M2ckan, plus the Repository admin role -- and the push IS the release decision: nothing asks for
+   an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of 10 or
+   more, or a minor or patch of 100 or more) is refused by the environment, visibly, and publishes
+   nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
+2. In the NEXT pull request, close `[Unreleased]` out to `## [X.Y.Z] - <date>`, per the rules under
    **CHANGELOG and Version**. The invariant to check that against is
    `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.
 
