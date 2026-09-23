@@ -349,6 +349,81 @@ jobs:
           "PublishVersion=$($Meta.ComposedVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PublishPrerelease=$($Meta.ManifestPrerelease)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Refuse a version the triggering ref does not call for
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # THIS GUARDS AGAINST MISTAKES, NOT AGAINST AN ADVERSARY. The gate stays in the repository
+        # settings described on this job: a tag push runs the workflow file at the tagged commit, so
+        # a changed workflow simply writes this step away. A mistake writes nothing away, though, and
+        # each of these three would otherwise put a permanent, unintended version on the Gallery
+        # before anything stopped it:
+        #
+        #   1. A tag run where GitVersion computes something other than the tag. The version would
+        #      be published, and only the release step would then fail, against the ruleset.
+        #   2. A stable tag on a commit that is not on main -- created in a checkout sitting on a
+        #      feature branch, say. That publishes unreviewed code as a full release.
+        #   3. A main run that computes a stable version, after a GitVersion.yml change for example.
+        #      A full release comes from a tag and from nothing else.
+        #
+        # It runs straight after the verification and before anything else, and it never sees
+        # GALLERYAPITOKEN: whatever it throws, nothing has been published yet. See
+        # docs/development/rationale.md#publish-on-merge.
+        run: |
+          # gh's exit code is checked explicitly, the way the release step does it, so that a failed
+          # call says what it means for this run instead of surfacing as a bare native-command error.
+          $PSNativeCommandUseErrorActionPreference = $false
+
+          $Ref = $env:GITHUB_REF
+          $Version = $env:PublishVersion
+          $Nothing = 'NOTHING has been published.'
+
+          # Every refusal on a tag leaves the tag where it is: this job may not move or delete one.
+          $Repair = ''
+          if ($Ref -clike 'refs/tags/*') {
+              $Tag = $env:GITHUB_REF_NAME
+              $Repair = " The tag $Tag is still there. Someone on the 'Stable Version' ruleset's bypass list removes it with: git push origin :refs/tags/$Tag"
+          }
+
+          # -clike and -ceq throughout: a git ref is case-sensitive, and V1.1.0 is not v1.1.0.
+          if ($Ref -clike 'refs/tags/v*') {
+              if ("v$Version" -cne $Tag) {
+                  throw "REFUSING TO PUBLISH. The tag $Tag calls for version '$($Tag.Substring(1))', but the tested build carries '$Version'. $Nothing$Repair"
+              }
+
+              # The checkout above is fetch-depth 1, so git cannot answer this; the compare API can.
+              # Its status describes GITHUB_SHA relative to main: identical or behind means main's
+              # history already contains the commit, ahead or diverged means it does not.
+              $Answer = @(gh api "repos/$env:GITHUB_REPOSITORY/compare/main...$env:GITHUB_SHA" --jq .status 2>&1)
+              $ExitCode = $LASTEXITCODE
+              if ($ExitCode -ne 0) {
+                  $Detail = (@($Answer | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+                  throw "REFUSING TO PUBLISH. Expected GitHub to say whether $env:GITHUB_SHA is on main; gh api exited with $ExitCode instead ($Detail). $Nothing If the failure was transient, re-run this job.$Repair"
+              }
+              $Status = (@($Answer | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] } | ForEach-Object { "$_".Trim() }) -join ' ').Trim()
+
+              if ($Status -cin @('ahead', 'diverged')) {
+                  throw "REFUSING TO PUBLISH. The tag $Tag must point at a commit on main, but $env:GITHUB_SHA is not in main's history (GitHub compares it to main as '$Status'). A full release ships reviewed code only. $Nothing$Repair"
+              }
+              if ($Status -cnotin @('identical', 'behind')) {
+                  throw "REFUSING TO PUBLISH. Expected GitHub to compare $env:GITHUB_SHA to main as identical, behind, ahead or diverged, and it answered '$Status'. $Nothing$Repair"
+              }
+
+              Write-Host "The tag $Tag calls for $Version, the tested build carries $Version, and $env:GITHUB_SHA is on main (compared to main: '$Status')."
+          }
+          elseif ($Ref -ceq 'refs/heads/main') {
+              if ([string]::IsNullOrEmpty($env:PublishPrerelease)) {
+                  throw "REFUSING TO PUBLISH. A run on main publishes a preview, so the tested build must carry a prerelease label, but it carries none and would publish '$Version' as a full release. A full release comes from a v<X.Y.Z> tag and from nothing else. $Nothing Look at GitVersion.yml and at the version tags on $env:GITHUB_SHA."
+              }
+
+              Write-Host "A run on main publishes a preview, and the tested build carries '$Version' (prerelease '$env:PublishPrerelease')."
+          }
+          else {
+              # The job's if: condition admits nothing else, so this is a second lock on that door.
+              # It matters when that condition is edited, since this step does not change with it.
+              throw "REFUSING TO PUBLISH. This job publishes from refs/heads/main or from a refs/tags/v<X.Y.Z> tag, but this run is for '$Ref'. The job's if: condition should not have let it in at all. $Nothing$Repair"
+          }
+
       - name: Install the module's runtime dependencies
         shell: pwsh
         # Required before Publish-PSResource, for the reason spelled out on the same step in the
