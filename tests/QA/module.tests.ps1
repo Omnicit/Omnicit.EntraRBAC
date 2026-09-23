@@ -72,29 +72,58 @@ BeforeAll {
 }
 
 Describe 'Changelog Management' -Tag 'Changelog' {
-    It 'Changelog has been updated' -Skip:(
-        -not ([bool](Get-Command git -ErrorAction SilentlyContinue) -and
-            [bool](&(Get-Process -Id $PID).Path -NoProfile -Command 'git rev-parse --is-inside-work-tree 2>$null'))
-    ) {
+    # Evaluated at discovery, so both diff-based checks below skip on exactly the same condition.
+    $gitWorkTreeUnavailable = -not ([bool](Get-Command git -ErrorAction SilentlyContinue) -and
+        [bool](&(Get-Process -Id $PID).Path -NoProfile -Command 'git rev-parse --is-inside-work-tree 2>$null'))
+
+    BeforeAll {
         <#
-            Get the list of changed files compared with branch main to verify
-            that required files are changed.
+            The floor on the release-note BODY -- the section after its heading line, trimmed.
+            About one sentence. It exists to catch a MECHANICAL failure, not a thin note: an
+            emptied or hand-converted Unreleased section publishes ReleaseNotes of length 0 while
+            the build reports success (measured 2026-09-17). Whether the text is any good is
+            decided in review, which no length floor can do: filler of any length passes one.
+            Why: docs/development/rationale.md#changelog-budget
         #>
+        $releaseNoteBodyMinimumLength = 50
 
-        $filesChanged = @()
-        # Only run if there is a remote called origin
-        if (((git remote) -match 'origin'))
+        <#
+            The whole of the Unreleased section between a stable release and the next change to
+            the module, with {0} the latest stable version. See "## CHANGELOG and Version" in
+            CLAUDE.md. Its opening clause is what makes it detectable: the claim "no changes to the
+            module" is the part that turns false the moment source/ changes.
+        #>
+        $closeOutSentenceTemplate = 'No changes to the module since {0}. A preview published from this point differs from {0} only in documentation, tests or the build.'
+        $closeOutOpeningClause = 'No changes to the module since'
+
+        <#
+            Get the list of changed files compared with branch main: the committed diff against
+            origin/main plus everything staged or unstaged. One function, so every check that asks
+            "did this PR change the module" reads the same diff.
+        #>
+        function Get-ChangedProjectFile
         {
-            $headCommit = &git rev-parse HEAD
-            $defaultBranchCommit = &git rev-parse origin/main
-            $filesChanged += (&git @('diff', "$defaultBranchCommit...$headCommit", '--name-only') |
+            $filesChanged = @()
+            # Only run if there is a remote called origin
+            if (((git remote) -match 'origin'))
+            {
+                $headCommit = &git rev-parse HEAD
+                $defaultBranchCommit = &git rev-parse origin/main
+                $filesChanged += (&git @('diff', "$defaultBranchCommit...$headCommit", '--name-only') |
+                    Where-Object { $_ -match "^$escapedGitRelatedModulePath" }) -replace "^$escapedGitRelatedModulePath", ""
+            }
+
+            $filesStagedAndUnstaged = (&git @('diff', 'HEAD', '--name-only') 2>&1 |
                 Where-Object { $_ -match "^$escapedGitRelatedModulePath" }) -replace "^$escapedGitRelatedModulePath", ""
+
+            $filesChanged += $filesStagedAndUnstaged
+
+            $filesChanged
         }
+    }
 
-        $filesStagedAndUnstaged = (&git @('diff', 'HEAD', '--name-only') 2>&1 |
-            Where-Object { $_ -match "^$escapedGitRelatedModulePath" }) -replace "^$escapedGitRelatedModulePath", ""
-
-        $filesChanged += $filesStagedAndUnstaged
+    It 'Changelog has been updated' -Skip:$gitWorkTreeUnavailable {
+        $filesChanged = @(Get-ChangedProjectFile)
 
         <#
             Only require a changelog entry when the SHIPPED module changed. The paths above have
@@ -136,6 +165,10 @@ Describe 'Changelog Management' -Tag 'Changelog' {
             the reverse -- an emptied Unreleased section publishes an empty release note, and a
             bare ceiling check cannot see that, because a short length is less than any ceiling.
             Neither assertion is redundant and neither is inert.
+
+            The floor measures the BODY, not RawData: an empty section still comes back as the
+            17-character string '## [Unreleased]' plus two newlines, so a floor on RawData has to
+            sit above the heading's own length before it can see the empty shape at all.
         #>
         $changelogPath = Join-Path -Path $ProjectPath -ChildPath 'CHANGELOG.md'
         $unreleased = (Get-ChangelogData -Path $changelogPath -ErrorAction Stop).Unreleased
@@ -143,13 +176,24 @@ Describe 'Changelog Management' -Tag 'Changelog' {
         $unreleased.RawData | Should -Not -BeNullOrEmpty -Because 'a null Unreleased section would make the length check below read 0 and pass silently: $null.Length is the integer 0, not $null'
 
         $unreleasedLength = $unreleased.RawData.Length
+        $headingLine, $body = $unreleased.RawData -split "`n", 2
 
-        $unreleasedLength | Should -BeGreaterOrEqual 500 -Because (
-            'the Unreleased section is published verbatim as the release notes, so it must always ' +
-            'carry a usable summary of what this version is. A near-empty section ships a release ' +
-            'with no usable notes -- the same outcome as the issue #39 truncation, reached from the ' +
-            'opposite direction -- and a ceiling check on its own cannot see it, since a short ' +
-            "length satisfies any upper bound. It is currently $unreleasedLength characters."
+        $headingLine | Should -BeExactly '## [Unreleased]' -Because (
+            'the body floor below measures everything after the FIRST line of the section, so that ' +
+            'line must be the Unreleased heading itself. If it is not, the split would measure the ' +
+            'wrong text; this stops the check instead of letting it cut at the wrong line.'
+        )
+
+        $bodyLength = ([string]$body).Trim().Length
+
+        $bodyLength | Should -BeGreaterOrEqual $releaseNoteBodyMinimumLength -Because (
+            'the Unreleased section is published verbatim as the release notes on every merge to ' +
+            'main, and an emptied or hand-converted section publishes ReleaseNotes of length 0 while ' +
+            'the build reports success. The floor is there to catch that mechanical failure, not to ' +
+            "judge the text: $releaseNoteBodyMinimumLength characters is about one sentence, and " +
+            'the quality of the note is decided in review. With nothing new to say after a stable ' +
+            'release, write the close-out sentence described in CLAUDE.md -- never filler. The body ' +
+            "after the heading line is currently $bodyLength characters."
         )
 
         $unreleasedLength | Should -BeLessOrEqual 4000 -Because (
@@ -216,12 +260,16 @@ Describe 'Changelog Management' -Tag 'Changelog' {
             'here is a real build failure, never a reason to skip.'
         )
 
-        $releaseNotes.Length | Should -BeGreaterOrEqual 500 -Because (
-            'the published release notes must carry a usable summary, matching the floor the ' +
-            "Unreleased section is held to above. They are currently $($releaseNotes.Length) " +
-            'characters. A stale artefact reaches this assertion too, so if the current ' +
-            'CHANGELOG.md Unreleased section is longer than that, run ./build.ps1 -Tasks build ' +
-            'first and re-measure.'
+        $publishedHeadingLine, $publishedBody = $releaseNotes -split "`n", 2
+        $publishedBodyLength = ([string]$publishedBody).Trim().Length
+
+        $publishedBodyLength | Should -BeGreaterOrEqual $releaseNoteBodyMinimumLength -Because (
+            'the published release notes must carry a body after their heading line, matching the ' +
+            'floor the Unreleased section is held to above. An emptied or hand-converted section ' +
+            'publishes a note with nothing in it while the build reports success. The body after ' +
+            "the heading line is currently $publishedBodyLength characters. A stale artefact " +
+            'reaches this assertion too, so if the current CHANGELOG.md Unreleased section is ' +
+            'longer than that, run ./build.ps1 -Tasks build first and re-measure.'
         )
 
         $releaseNotes.Length | Should -BeLessThan 10000 -Because (
@@ -231,34 +279,115 @@ Describe 'Changelog Management' -Tag 'Changelog' {
         )
 
         <#
+            Sampler's Create_changelog_release_output rewrites the heading with the version it
+            reads back from the BUILT manifest -- ModuleVersion, plus '-' and the Prerelease label
+            when there is one -- so the published heading must name exactly that version. The
+            closing bracket is part of the expected prefix, so '1.0.1' cannot pass for
+            '1.0.1-preview0001', nor the other way round.
+        #>
+        $builtVersion = [string]$builtManifest.ModuleVersion
+
+        if ($psData.Prerelease)
+        {
+            $builtVersion = "$builtVersion-$($psData.Prerelease)"
+        }
+
+        $expectedHeadingPrefix = "## [$builtVersion]"
+
+        $publishedHeadingLine | Should -MatchExactly ('^' + [regex]::Escape($expectedHeadingPrefix)) -Because (
+            "the published heading must start with '$expectedHeadingPrefix', the version this " +
+            'artefact was built as. Any other version means the heading was not rewritten for this ' +
+            'build, so the note is published under another release. If the heading names an ' +
+            'older build, output/module/ is stale: rebuild with ./build.ps1 -Tasks build.'
+        )
+
+        <#
             Length alone cannot see a cut that lands under 10,000 (a shorter cap, a different
-            Sampler, a hand-edited manifest), so prove the published note still ENDS where the
-            source section ends. Update-Changelog -LinkMode none rewrites only the heading, so
-            everything after it is byte-identical: measured on this branch the longest common
-            suffix is 1688 characters, which is the whole Unreleased body. 400 is a safe sample --
-            the 500-character floor above leaves at least 485 characters of body after the
-            15-character '## [Unreleased]' heading -- and the guards below turn a shorter section
-            into a readable assertion failure instead of a Substring exception.
+            Sampler, a hand-edited manifest), nor a change in the middle of the note. So compare
+            the WHOLE body after the heading line, published against source, exactly.
+            Update-Changelog -LinkMode none rewrites only the heading line, and measured on
+            2026-09-23 against a fresh build the two bodies were byte-identical -- 1,285 bytes each,
+            LF line endings on both sides, the same two trailing newlines -- so nothing is
+            normalized here. This replaced a comparison of the last 400 characters only, which a
+            character removed from the middle of the body passes.
         #>
         $sourceUnreleased = (Get-ChangelogData -Path (Join-Path -Path $ProjectPath -ChildPath 'CHANGELOG.md') -ErrorAction Stop).Unreleased.RawData
 
-        $sourceUnreleased | Should -Not -BeNullOrEmpty -Because 'the tail comparison below needs a source section to compare against'
+        $sourceUnreleased | Should -Not -BeNullOrEmpty -Because 'the body comparison below needs a source section to compare against'
 
-        $publishedTail = $releaseNotes.TrimEnd()
-        $sourceTail = $sourceUnreleased.TrimEnd()
-        $tailLength = 400
+        $sourceHeadingLine, $sourceBody = $sourceUnreleased -split "`n", 2
 
-        $publishedTail.Length | Should -BeGreaterOrEqual $tailLength -Because 'the published release notes are too short to sample a tail from; the floor assertion above explains why that is a defect'
-        $sourceTail.Length | Should -BeGreaterOrEqual $tailLength -Because 'the source Unreleased section is too short to sample a tail from; the floor assertion above explains why that is a defect'
+        $sourceHeadingLine | Should -BeExactly '## [Unreleased]' -Because (
+            'the comparison below drops the FIRST line of each side as its heading, so the first ' +
+            'line of the source section must be the Unreleased heading itself; this stops the check ' +
+            'instead of letting it compare from the wrong line.'
+        )
 
-        $publishedTail.Substring($publishedTail.Length - $tailLength) |
-            Should -BeExactly $sourceTail.Substring($sourceTail.Length - $tailLength) -Because (
-                'the published release notes must end where the CHANGELOG.md Unreleased section ' +
-                'ends. Update-Changelog -LinkMode none changes only the heading, so the last ' +
-                "$tailLength characters are identical unless the value was cut short -- which is " +
-                'the issue #39 defect. If this fails and the note looks complete, output/module/ ' +
-                'is stale: rebuild with ./build.ps1 -Tasks build.'
+        [string]$publishedBody | Should -BeExactly ([string]$sourceBody) -Because (
+            'the published release notes must be the CHANGELOG.md Unreleased section with only its ' +
+            'heading line rewritten. Update-Changelog -LinkMode none changes nothing else, so any ' +
+            'difference in the body is a note that was cut short -- the issue #39 defect -- or ' +
+            'altered on the way to the manifest. If this fails and the note looks complete, ' +
+            'output/module/ is stale: rebuild with ./build.ps1 -Tasks build.'
+        )
+    }
+
+    It 'Changelog close-out sentence names the latest released version' {
+        <#
+            After a stable release, the close-out pull request leaves Unreleased holding exactly
+            the close-out sentence for that release, and nothing else (CLAUDE.md, "## CHANGELOG and
+            Version"). Every merge publishes a preview with Unreleased as its ReleaseNotes, so a
+            sentence naming the wrong version tells a Gallery reader that the preview is based on
+            a release it is not. Whitespace is collapsed before comparing, since the sentence is
+            longer than one wrapped Markdown line.
+        #>
+        $changelogData = Get-ChangelogData -Path (Join-Path -Path $ProjectPath -ChildPath 'CHANGELOG.md') -ErrorAction Stop
+        $unreleasedBody = ($changelogData.Unreleased.RawData -split "`n", 2)[1]
+        $unreleasedText = (([string]$unreleasedBody) -replace '\s+', ' ').Trim()
+
+        if ($unreleasedText.Contains($closeOutOpeningClause))
+        {
+            $latestReleased = @($changelogData.Released)[0]
+
+            $latestReleased | Should -Not -BeNullOrEmpty -Because (
+                'the Unreleased section carries the close-out sentence, which names the latest ' +
+                'released version, but CHANGELOG.md has no dated release section for it to name.'
             )
+
+            $expectedSentence = $closeOutSentenceTemplate -f $latestReleased.Version
+
+            $unreleasedText | Should -BeExactly $expectedSentence -Because (
+                'the Unreleased section carries the close-out sentence, so it must be exactly that ' +
+                "sentence for the latest dated section in CHANGELOG.md, [$($latestReleased.Version)] " +
+                "-- the section the close-out moved the last release's notes into. Any other " +
+                'version, or any other text beside it, publishes a preview whose notes describe ' +
+                'the wrong release.'
+            )
+        }
+    }
+
+    It 'Changelog close-out sentence is replaced by the first change to the module' -Skip:$gitWorkTreeUnavailable {
+        <#
+            The close-out sentence claims there are no changes to the module since the last stable
+            release. The first pull request that changes source/ after a close-out makes that
+            false, so it REPLACES the sentence with a note of its own; it never adds its note after
+            it. Reads the same diff, and skips on the same condition, as 'Changelog has been
+            updated' above.
+        #>
+        $sourceFilesChanged = @(Get-ChangedProjectFile | Where-Object { $_ -match '^source/' })
+
+        if ($sourceFilesChanged)
+        {
+            $unreleasedRawData = (Get-ChangelogData -Path (Join-Path -Path $ProjectPath -ChildPath 'CHANGELOG.md') -ErrorAction Stop).Unreleased.RawData
+            $unreleasedText = (([string]$unreleasedRawData) -replace '\s+', ' ').Trim()
+
+            $unreleasedText.Contains($closeOutOpeningClause) | Should -BeFalse -Because (
+                "this change touches source/ ($($sourceFilesChanged -join ', ')), but the " +
+                "Unreleased section still says '$closeOutOpeningClause ...'. That is no longer " +
+                'true, and every merge publishes it as the release notes. Replace the close-out ' +
+                'sentence with a note describing this change; do not add the note after it.'
+            )
+        }
     }
 }
 

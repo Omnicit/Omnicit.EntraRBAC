@@ -312,14 +312,9 @@ publish it.
    an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of 10 or
    more, or a minor or patch of 100 or more) is refused by the environment, visibly, and publishes
    nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
-2. In the NEXT pull request, close `[Unreleased]` out to `## [X.Y.Z] - <date>`, per the rules under
-   **CHANGELOG and Version**. The invariant to check that against is
+2. Make the close-out the FIRST merge after the tag, exactly as the **close-out after a stable
+   release** rule under **CHANGELOG and Version** describes. The invariant to check it against is
    `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.
-
-**OPEN QUESTION, deliberately not solved here.** The 500-character floor in
-`tests/QA/module.tests.ps1` fails a close-out pull request that has no 500 characters of genuinely
-new `[Unreleased]` content to write. Do not pad the section with filler to get past it; raise it as
-its own change. `Why: docs/development/rationale.md#publish-on-merge`
 
 ---
 
@@ -330,10 +325,32 @@ per-PR log. The build rewrites its heading to `## [<version>] - <date>` and copi
 verbatim into the built manifest's `PrivateData.PSData.ReleaseNotes`.
 
 - **Write `[Unreleased]` in release-note voice** -- product-level and user-visible: what this
-  version is, and what changed for someone consuming the module. Budget **4,000 characters**, floor
-  **500**, both gated in `tests/QA/module.tests.ps1`. The gate measures the section's `RawData`,
-  which includes the `## [Unreleased]` heading and therefore reads slightly SHORT of what is
-  actually published -- do not spend the difference.
+  version is, and what changed for someone consuming the module. Budget **4,000 characters**,
+  gated in `tests/QA/module.tests.ps1` on the section's `RawData`, which includes the
+  `## [Unreleased]` heading and therefore reads slightly SHORT of what is actually published -- do
+  not spend the difference.
+- **The floor is on the BODY and is 50 characters -- about one sentence.** The section after its
+  heading line, trimmed, must reach it, in the source and in the built manifest alike. It is there
+  to catch a MECHANICAL failure, an emptied or hand-converted section that publishes `ReleaseNotes`
+  of length 0 while the build reports success, and it does not judge the text: whether a note says
+  enough is decided in review. Never pad the section to get past it -- every merge publishes the
+  padding to the Gallery for good.
+- **Close-out after a stable release.** The close-out is the FIRST merge after a `v<X.Y.Z>` tag. It
+  adds `## [X.Y.Z] - <date>` directly above the previous dated heading, moves the released notes
+  under it, and leaves `[Unreleased]` holding exactly this sentence and nothing else, with `X.Y.Z`
+  the version just released:
+
+  ```text
+  No changes to the module since X.Y.Z. A preview published from this point differs from X.Y.Z only in documentation, tests or the build.
+  ```
+
+  It has to come first because every merge publishes `[Unreleased]` as a preview's `ReleaseNotes`:
+  a merge landing between the tag and the close-out publishes a preview whose notes describe the
+  previous release's changes as new. **The first change under `source/` after a close-out REPLACES
+  the sentence** with a note of its own; it never adds the note after it. Wrapping the sentence
+  across lines is fine. `tests/QA/module.tests.ps1` holds both halves: while the sentence stands it
+  must be exactly that sentence for the latest dated section in `CHANGELOG.md`, and it must not
+  survive a diff that touches `source/`.
 - **Per-PR engineering detail belongs in the PR body and the commit message**, not in
   `CHANGELOG.md`. The published note is read by module consumers, not by reviewers.
 - **When `[Unreleased]` approaches the budget, close the detail out.** Add a NEW dated

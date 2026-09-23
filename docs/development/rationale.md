@@ -1635,17 +1635,26 @@ heading-length difference, and it grows with a longer version label.** So the so
 always reads short of the article that actually ships, and only the manifest gate measures what a
 consumer sees.
 
-**Why the floor exists, and why it is not redundant with the non-empty assertion.** For a completely
-empty `[Unreleased]` section `Get-ChangelogData` does NOT return `$null`: it returns the 17-character
-string `## [Unreleased]\n\n`. Verified by execution against a synthetic changelog, with these
-consequences, all confirmed by running them:
+**Why the floor exists: a mechanical failure, not a length.** The floor catches one thing: an emptied
+or hand-converted `[Unreleased]` section, which publishes `ReleaseNotes` of length 0 while the build
+reports success (measured 2026-09-17). Reproduced on 2026-09-23 with a heading-only `[Unreleased]`:
+Sampler logged `No changes detected in current release, exiting.` and `No Release notes found to
+insert.`, and the build still ended `Build succeeded. 7 tasks, 0 errors, 0 warnings` with the built
+`ReleaseNotes` empty. The floor does NOT measure whether a note is any good -- review does that -- and
+it never did: 500 characters of filler passed the old 500-character floor exactly as well as 500
+characters of release note.
+
+It is not redundant with the non-empty assertion. For a completely empty `[Unreleased]` section
+`Get-ChangelogData` does NOT return `$null`: it returns the 17-character string `## [Unreleased]\n\n`.
+Verified by execution against a synthetic changelog, with these consequences, all confirmed by
+running them:
 
 - the pre-existing `RawData | Should -Not -BeNullOrEmpty` **passes** on that section, so it does not
   see the empty shape at all;
 - the old ceiling-only `-BeLessOrEqual 8000` **passes** on it too -- it is blind to the empty shape,
   which is the OPPOSITE failure from the oversize section it was added for and which it catches
   correctly. It is not an inert guard, and it does not belong in this repo's ledger of those;
-- the `-BeGreaterOrEqual 500` floor **fails** on it.
+- the body floor **fails** on it: after the heading line, the body trims to 0 characters.
 
 `$null` comes back only when the `## [Unreleased]` heading is missing altogether, which the non-empty
 assertion does catch. The two assertions genuinely split the space; neither is redundant. The more
@@ -1653,15 +1662,52 @@ familiar framing -- `$null.Length` is the integer `0`, so a bare length check pa
 true in general and is what the in-code comment says, but it is not the mechanism here, and the
 17-character measurement is the sharper fact.
 
-**What `tests/QA/module.tests.ps1` asserts, as of this branch.** Source side: `[Unreleased]` is at
-least 500 and at most 4,000 characters. Artefact side: the built manifest carries a
-`PrivateData.PSData.ReleaseNotes` key, non-empty, at least 500, and strictly less than 10,000; plus a
-tail compare -- the last 400 characters of the published notes must equal the last 400 characters of
-the source `[Unreleased]` body, `-BeExactly`, after `TrimEnd()`. Truncation always removes the END,
-so a tail compare cannot be fooled by it; this was falsified against a value cut at 900 characters,
-comfortably inside every length bound and therefore invisible to all of them, and the tail compare
-caught it. Finally, the "changelog has been updated" diff rule fires only when a changed path matches
-`^source/`: a customer-facing document is not served by an entry forced out of a docs-only PR.
+**Why the floor is 50 characters of BODY, not 500 of `RawData`** (Philip, 2026-09-23). The reasons
+for dropping the 500 are recorded under
+[#publish-on-merge](#the-release-note-floor-after-a-stable-release): it failed pull requests that
+were not wrong, and the only way past it was padding that every merge would then publish. What
+stays is the part with a real job, and one sentence -- 50 characters -- is enough to tell an empty
+section from a written one. The floor now measures the body, the section after its heading line,
+trimmed, so the heading no longer counts towards it and an empty section measures 0 rather than 17.
+The first line must be exactly `## [Unreleased]` before the split is trusted; if it is not, the
+check fails there and says so instead of measuring from the wrong line.
+
+**What `tests/QA/module.tests.ps1` asserts, as of P14.** Source side: the first line of
+`[Unreleased]` is exactly `## [Unreleased]`, the body after it is at least 50 characters, and the
+whole `RawData` is at most 4,000. Artefact side: the built manifest carries a
+`PrivateData.PSData.ReleaseNotes` key, non-empty; its body after the heading line is at least 50
+characters; the whole value is strictly less than 10,000; its heading line starts with `## [`, the
+built version and `]`; and its body is `-BeExactly` the source body. The built version is
+`ModuleVersion` plus `-` and `Prerelease` when there is one -- the string Sampler's task reads back
+from the built manifest (`Get-BuiltModuleVersion`, through `Split-ModuleVersion`) and passes to
+`Update-Changelog -ReleaseVersion` -- and the closing bracket is part of the prefix, so `1.0.1`
+cannot pass for `1.0.1-preview0001`. Close-out: while the body of `[Unreleased]` contains `No changes
+to the module since`, it must be exactly the close-out sentence for the latest dated section, with
+whitespace collapsed since the sentence wraps; and a diff touching `source/` fails while that clause
+stands. Finally, the "changelog has been updated" diff rule fires only when a changed path matches
+`^source/`: a customer-facing document is not served by an entry forced out of a docs-only PR. The
+close-out check reads the same diff through the same function, and skips on the same condition.
+
+**Why the whole body is compared, not a 400-character tail.** Until P14 the artefact side compared
+the last 400 characters of the published notes with the last 400 of the source section, after
+`TrimEnd()`. Truncation always removes the END, so a tail compare cannot be fooled by a cut -- it
+was falsified against a value cut at 900 characters, comfortably inside every length bound, and
+caught it -- but it sees nothing earlier than its 400 characters. Measured on 2026-09-23: one
+character removed from the middle of the built body (index 642 of 1,285, so 643 characters from the
+end) passed the old test file unchanged and failed the exact comparison, which named the index. A
+comparison of the whole body is the stronger proof against a cut, and against any other change on
+the way to the manifest. It needs no normalization: measured the same day against a fresh build, the
+source and published bodies after the heading line were byte-identical -- 1,285 bytes each, LF only,
+the same two trailing newlines -- since `Update-Changelog -LinkMode none` rewrites the heading line
+and nothing else. The tail sample also needed a floor above 400 to have a tail to take; the exact
+comparison does not, which is part of what let the floor drop to 50. The heading check is new with
+it: every earlier check ignored the heading line, so a note published under another version's
+heading passed them all.
+
+That measurement, and the falsification of every changed check, ran on a local build whose version
+was supplied the way CI supplies it, through `$env:ModuleVersion` (`1.0.1-test-changelog-floor0001`,
+stamped as `1.0.1` with prerelease `test`). Without GitVersion on the machine, a local build falls
+back to `0.0.1`, and the version cap below then fails by design.
 
 Both artefact-side checks read the BUILT module, and `build.yaml`'s `test` workflow does not include
 `build`. The notes gate additionally compares that artefact against the CURRENT `CHANGELOG.md`, so a
@@ -2263,11 +2309,37 @@ commit, or merges a `GitVersion.yml` that computes the wrong thing, is running t
 stands, guard included. The settings decide who may publish; this step stops an honest publish that
 asked for the wrong thing.
 
-### Known open question
+### The release-note floor after a stable release
 
-`tests/QA/module.tests.ps1` holds `CHANGELOG.md`'s `[Unreleased]` section to a 500-character floor.
-A pull request whose only job is to close out `[Unreleased]` into a dated `## [X.Y.Z]` heading has
-to leave a new `[Unreleased]` behind, and it may have nothing genuine to say there yet. The floor
-fails such a pull request. Nothing in this change addresses that; it is recorded here so it is
-found when it bites, rather than repaired by padding the section with filler, which is the one
-repair that must not be made.
+This was recorded here as an open question until P14. Decision (Philip, 2026-09-23, option 1 of
+four): `tests/QA/module.tests.ps1` holds `[Unreleased]` to "not empty" -- a body of at least 50
+characters, about one sentence -- instead of a 500-character floor. The 4,000-character ceiling is
+unchanged.
+
+The 500-character floor failed two kinds of pull request that were not wrong:
+
+1. **The close-out after a stable tag.** It moves `[Unreleased]` under `## [X.Y.Z] - <date>` and
+   has to leave a new `[Unreleased]` behind, which has nothing true to say yet.
+2. **Any release whose honest note is shorter than 500 characters** -- a patch carrying one small
+   fix, say. The pull request that made the fix failed.
+
+The only way past was padding, and publishing on merge is what made padding unacceptable rather
+than merely untidy: every merge publishes a preview with `[Unreleased]` as its `ReleaseNotes`, so
+the padding would have reached the Gallery, which can unlist a version but never delete one. The
+floor's legitimate job was always a MECHANICAL one -- an emptied or hand-converted section publishes
+`ReleaseNotes` of length 0 while the build reports success (measured 2026-09-17) -- and the quality
+of a note is decided in review. 500 characters of filler passed the floor anyway.
+
+The close-out got a fixed sentence rather than free text, so that a gate can hold it (CLAUDE.md,
+"CHANGELOG and Version"):
+
+```text
+No changes to the module since X.Y.Z. A preview published from this point differs from X.Y.Z only in documentation, tests or the build.
+```
+
+The close-out is the FIRST merge after the tag: a merge landing between the tag and the close-out
+publishes a preview whose notes describe the previous release's changes as new. The first change
+under `source/` after the close-out then REPLACES the sentence, since its opening claim stops being
+true the moment the module changes; a note added after the sentence would publish both. The gate
+side of all this -- the body floor, the two close-out checks, and why the built notes are now
+compared whole instead of by a 400-character tail -- is under [#changelog-budget](#changelog-budget).
