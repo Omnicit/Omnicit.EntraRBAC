@@ -24,8 +24,8 @@ function Sync-OERStructureAdministrativeUnit {
        warning rather than silently ignored (or folded into a misleading Unchanged): the genuinely
        Graph-immutable isMemberManagementRestricted flag, for which recreating the unit is the only route.
     2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
-       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS
-       the unit is dynamic after this run (already dynamic, or converted by step 1). Microsoft Graph disables
+       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS the
+       unit is dynamic after this run (already dynamic, or converted by step 1). Microsoft Graph disables
        manual member management on a dynamic administrative unit: the membership rule owns the membership,
        Add/Remove member calls are rejected, and switching a unit to dynamic can change its existing
        membership on its own. Every declared member is then reported as a Skipped record explaining that,
@@ -55,14 +55,18 @@ function Sync-OERStructureAdministrativeUnit {
     Such an entry carries no id, so the pass cannot tell which live entry it names, and its live
     counterpart would otherwise look undeclared. Every undeclared live entry in that collection is
     then reported Skipped, with a Detail that starts "prune withheld: declared entry '<reference>'
-    could not be resolved", with or without -Prune; no warning is written, no ShouldProcess prompt
-    is issued, and nothing in that collection is removed until the entry is fixed or removed from
-    the document (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry
-    keeps its own error and Failed record. The rule is per collection: an unresolved scoped role
-    principal withholds the scopedRoles prune only, and the member pass runs as usual. A lookup that
-    THROWS, rather than giving no id, is not caught by this handler: it ends the item where it is
-    thrown, the engine reports the item Failed ("handler error"), and neither that collection's prune
-    pass nor any later step runs (a member prune that already completed stands).
+    could not be resolved" (several unresolved entries: "declared entries '<a>', '<b>' could not be
+    resolved"), with or without -Prune; no warning is written, no ShouldProcess prompt is issued, and
+    nothing in that collection is removed until the entry is fixed or removed from the document
+    (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry keeps its own
+    error and Failed record (the record is lost only when a later lookup in the same item throws, see
+    below). The rule is per collection: an unresolved scoped role principal withholds the scopedRoles
+    prune only, and the member pass runs as usual. A lookup that THROWS, rather than giving no id, is
+    not caught by this handler: it ends the item where it is thrown, and neither that collection's
+    prune pass nor any later step runs. The engine then reports the item as one Failed ("handler
+    error") record and discards every record the handler had already emitted for it, so a member
+    prune that already completed stands with no Removed row, and an unresolved entry's Failed row is
+    lost; warnings and errors already written remain.
 
     A scopedRoles[].role may be a directory-role display name or a role id (GUID); a GUID is passed
     to Add-OERAdministrativeUnitScopedRole -RoleId and matched against the live membership RoleId,

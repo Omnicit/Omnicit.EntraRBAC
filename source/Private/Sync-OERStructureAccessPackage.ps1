@@ -73,13 +73,16 @@ function Sync-OERStructureAccessPackage {
     either. Such an entry carries no origin id, so the pass cannot tell which live binding it names,
     and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
     every undeclared live binding of the package is reported Skipped, with a Detail that starts
-    "prune withheld: declared entry '<resource>' could not be resolved", with or without -Prune; no
-    warning is written, no ShouldProcess prompt is issued, and no binding is removed until the entry
-    is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and the
-    text). The unresolved entry keeps its own Failed record. A lookup that THROWS, rather than finding
-    nothing, is not caught by this handler: it ends the item where it is thrown, the engine reports
-    the item Failed ("handler error"), and neither the resource role prune nor the assignment policy
-    step runs.
+    "prune withheld: declared entry '<resource>' could not be resolved" (several unresolved entries:
+    "declared entries '<resource1>', '<resource2>' could not be resolved"), with or without -Prune;
+    no warning is written, no ShouldProcess prompt is issued, and no binding is removed until the
+    entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
+    the text). The unresolved entry keeps its own Failed record (the record is lost only when a later
+    lookup in the same item throws, see below). A Resolve-OERGroupId lookup that THROWS, rather than
+    finding nothing, is not caught by this handler: it ends the item where it is thrown, neither the
+    resource role prune nor the assignment policy step runs, and the engine reports the item as one
+    Failed ("handler error") record, discarding every record the handler had already emitted for it
+    (a Created package or an added binding stands with no row).
 
     A failed read of the package's live state -- the resource role bindings, the assignment policies,
     or the declared catalog's resources -- reports Failed with the underlying ErrorRecord and

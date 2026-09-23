@@ -70,12 +70,14 @@ function Sync-OERStructureRoleAssignment {
     key, so the pass cannot tell which live assignment it names -- its own live counterpart would look
     undeclared. Such a sibling therefore withholds the prune for the WHOLE scope: every undeclared
     candidate at this scope is reported Skipped, with a Detail that starts
-    "prune withheld: declared entry '<role> -> <principal> @ <scope>' could not be resolved", with or
-    without -Prune, and nothing at the scope is removed until that entry is fixed or removed from the
-    document (ConvertTo-OERPruneWithheldResult owns the rule and the text). A thrown sibling lookup is
-    scrubbed and does not abort the pass, and no error is written for it here: the sibling's own
-    invocation of this handler writes its error and reports its Failed record, under the same
-    '<role> -> <principal> @ <scope>' label the withheld Detail names, so the rows can be correlated.
+    "prune withheld: declared entry '<role> -> <principal> @ <scope>' could not be resolved"
+    (several: "declared entries '<a>', '<b>' could not be resolved", each in that label form), with
+    or without -Prune, and nothing at the scope is removed until that entry is fixed or removed from
+    the document (ConvertTo-OERPruneWithheldResult owns the rule and the text). A thrown sibling
+    lookup is scrubbed and does not abort the pass, and no error is written for it here: the
+    sibling's own invocation of this handler writes its error and reports its Failed record, under
+    the same '<role> -> <principal> @ <scope>' label the withheld Detail names, so the rows can be
+    correlated.
 
     The pass runs only in the invocation for the FIRST item of each scope. When that item's own scope,
     principal, role or current-assignment read fails, the handler returns before the pass: nothing at
@@ -113,11 +115,12 @@ function Sync-OERStructureRoleAssignment {
 
     .PARAMETER DeclaredAtScope
     All document roleAssignment items sharing this item's scope string, this item included (the
-    engine groups on the scope text as written in the document, not on the resolved ARM scope). Used
-    during the scope-wide prune pass (when -ReconcileScope is set) to build the declared-key set. Each
-    element is expected to have .principal and .role properties. Defaults to an empty array. One
-    element whose principal or role cannot be resolved withholds the prune for the whole scope (see
-    -Prune); that element's Failed record comes from its own invocation of this handler.
+    engine groups on the scope text as written in the document, compared case-insensitively, not on
+    the resolved ARM scope). Used during the scope-wide prune pass (when -ReconcileScope is set) to
+    build the declared-key set. Each element is expected to have .principal and .role properties.
+    Defaults to an empty array. One element whose principal or role cannot be resolved withholds the
+    prune for the whole scope (see -Prune); that element's Failed record comes from its own
+    invocation of this handler.
 
     .PARAMETER ReconcileScope
     When set, this invocation also performs the scope-wide Extra/prune pass after reconciling its
