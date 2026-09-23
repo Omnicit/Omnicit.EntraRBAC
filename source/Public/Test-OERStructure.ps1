@@ -17,6 +17,12 @@ function Test-OERStructure {
     rejected by a draft-07 validator outside the module, even though Invoke-OERStructure would apply
     the very same document successfully: the apply path rewrites the casing first, this one does not.
 
+    An omitted groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
+    catalogs[].resources or accessPackages[].resourceRoles key is reported as a Warning, since
+    Invoke-OERStructure -Prune still removes every live entry in that collection; set the key to null
+    to leave the collection untouched, or declare it. The members key of a group or administrative
+    unit declared "dynamic": true is not reported.
+
     A worked apply document showing every section the engine understands is kept in the repository
     at docs/examples/example-structure.json, and the full export to apply walkthrough is documented
     in the repository at docs/inventory-to-llm/README.md. Neither ships inside the installed module,

@@ -34,7 +34,8 @@ function Invoke-OERStructure {
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
     deletes a top-level object (a group, catalog, etc.) that is absent from the document. A declared
     entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
-    in it is reported Skipped with a Detail starting "prune withheld:" instead of being removed. An OMITTED
+    in it is reported Skipped with a Detail starting "prune withheld:", with or without -Prune,
+    instead of being removed or reported Extra. An OMITTED
     members, scopedRoles, resources or resourceRoles key still prunes, so before the first write the
     engine lists every such key in one warning (see -Prune).
 
@@ -85,8 +86,9 @@ function Invoke-OERStructure {
     A declared entry that cannot be resolved (for example a member whose principal lookup finds no
     object) withholds the prune of its whole collection, since its live counterpart cannot be told
     apart from an undeclared entry: every undeclared live entry in that collection is left in place and
-    reported Skipped with a Detail starting "prune withheld:", while the unresolved entry keeps its own Failed
-    record. Fix or remove the unresolved entry to reconcile the collection.
+    reported Skipped with a Detail starting "prune withheld:", with or without -Prune (instead of
+    Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
+    remove the unresolved entry to reconcile the collection.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
     so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,

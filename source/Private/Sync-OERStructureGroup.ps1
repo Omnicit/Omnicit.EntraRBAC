@@ -69,8 +69,8 @@ function Sync-OERStructureGroup {
     with or without -Prune; no warning is written, no ShouldProcess prompt is issued, and nothing in
     that collection is removed until the entry is fixed or removed from the document
     (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry keeps its own
-    error and Failed record (the record is lost only when a later lookup in the same item throws, see
-    below). The rule is per collection: an unresolved owner withholds the owner prune only, and the
+    error and Failed record (the record is lost only when the handler later throws for the same item,
+    see below). The rule is per collection: an unresolved owner withholds the owner prune only, and the
     member and eligibility passes run as usual. For eligibility, an unresolved entry in either the
     time-bound or the permanent list withholds the whole eligibility prune. A withheld owner is
     reported Skipped before the last-owner guard is consulted. A lookup that THROWS, rather than

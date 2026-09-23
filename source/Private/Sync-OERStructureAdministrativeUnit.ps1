@@ -59,8 +59,8 @@ function Sync-OERStructureAdministrativeUnit {
     resolved"), with or without -Prune; no warning is written, no ShouldProcess prompt is issued, and
     nothing in that collection is removed until the entry is fixed or removed from the document
     (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry keeps its own
-    error and Failed record (the record is lost only when a later lookup in the same item throws, see
-    below). The rule is per collection: an unresolved scoped role principal withholds the scopedRoles
+    error and Failed record (the record is lost only when the handler later throws for the same item,
+    see below). The rule is per collection: an unresolved scoped role principal withholds the scopedRoles
     prune only, and the member pass runs as usual. A lookup that THROWS, rather than giving no id, is
     not caught by this handler: it ends the item where it is thrown, and neither that collection's
     prune pass nor any later step runs. The engine then reports the item as one Failed ("handler

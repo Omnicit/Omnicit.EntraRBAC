@@ -77,8 +77,8 @@ function Sync-OERStructureAccessPackage {
     "declared entries '<resource1>', '<resource2>' could not be resolved"), with or without -Prune;
     no warning is written, no ShouldProcess prompt is issued, and no binding is removed until the
     entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
-    the text). The unresolved entry keeps its own Failed record (the record is lost only when a later
-    lookup in the same item throws, see below). A Resolve-OERGroupId lookup that THROWS, rather than
+    the text). The unresolved entry keeps its own Failed record (the record is lost only when the
+    handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
     finding nothing, is not caught by this handler: it ends the item where it is thrown, neither the
     resource role prune nor the assignment policy step runs, and the engine reports the item as one
     Failed ("handler error") record, discarding every record the handler had already emitted for it
