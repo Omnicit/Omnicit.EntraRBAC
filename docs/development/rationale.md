@@ -2136,6 +2136,66 @@ exclusion is the second lock on that door rather than the only one.
 never reports them -- a required check that never reports stays Pending forever. That is the same
 failure mode the matrix protects against, described in CLAUDE.md under Module Layout.
 
+### No deployment approval: the gate is in the settings
+
+Decision (Philip, 2026-09-23): publishing asks for no approval. The model is unchanged -- a merge to
+`main` publishes a preview, a `v<X.Y.Z>` tag publishes the full release -- but the gate moved from a
+click on the deployment to repository settings that were already in place when the click was
+removed:
+
+- **The `Entra RBAC` environment has no required reviewers.** Its deployment rules admit branch
+  `main` and four tag patterns, matched with Ruby's `File.fnmatch`: `v[0-9].[0-9].[0-9]`,
+  `v[0-9].[0-9].[0-9][0-9]`, `v[0-9].[0-9][0-9].[0-9]` and `v[0-9].[0-9][0-9].[0-9][0-9]`. The
+  earlier `v*` pattern was removed, so no tag carrying a hyphen reaches the Gallery key. A version
+  outside the patterns -- a major of 10 or more, or a minor or patch of 100 or more -- is refused at
+  deployment, visibly, and the repair is to add a pattern.
+- **The tag ruleset `Stable Version`** includes `v*`, excludes `v*-*`, restricts creation, update
+  and deletion, and blocks force pushes. Its bypass list is the users PhilipHaglund and M2ckan plus
+  the Repository admin role (the owner account, Omnicit). Only they can create, move or delete a
+  stable tag; everyone else is refused, the workflow's own `GITHUB_TOKEN` included.
+
+The two are built to fit: every tag the environment admits is a tag the ruleset protects, since
+each pattern starts with `v` and none admits a hyphen. A pattern added later must keep that
+property. One that admits a tag the ruleset does not cover reopens exactly the hole described next.
+
+**The threat these settings close.** With no approval, and without them, anyone with push access
+could point a `v*` tag at an unreviewed commit whose workflow had been changed, and reach the
+secret -- past the pull request and past CI alike.
+
+**Why the closure cannot live in the workflow.** A tag push runs the workflow file AT the tagged
+commit. A check written into that file -- a condition on the `publish` job, a step comparing the
+tag against `main`, anything -- is therefore authored by whoever authors the commit, and the commit
+that abuses the secret simply writes the check away. The environment's deployment rules and the
+tag ruleset are evaluated by GitHub against the ref, outside anything a commit can change. The
+`publish` job's `if:` and the trigger's `!v*-*` exclusion stay, but they keep honest runs honest;
+they are not the control.
+
+**What that asks of the workflow.** Since the ruleset refuses `GITHUB_TOKEN` a stable tag, the
+release step must never create, move or delete one: a stable run that tried would fail in its last
+step, after the Gallery publish. Verified on 2026-09-23 before this decision was written down:
+
+- No step runs `git tag` or `git push`. The only tag the workflow writes is the one
+  `gh release create` makes when the named tag does not exist yet, and on a `main` run that tag is
+  a hyphenated preview tag, outside the ruleset. The first publish logged exactly that:
+  `Created the release v1.0.1-preview0001 on 2c7c7d78e3d6...`.
+- On a `v` tag run the tag already exists, since it is what started the run. `gh release create`
+  creates a matching tag only "if a matching git tag does not yet exist" (its own help text), and
+  the REST API it calls documents `target_commitish` as "Unused if the Git tag already exists".
+  `--target` is `GITHUB_SHA`, the tagged commit, in any case. The stable path therefore attaches a
+  release to the existing tag and writes no ref.
+
+NOT yet measured, because no stable run has happened: the version GitVersion computes on a `v` tag
+whose commit ALSO carries a preview tag, which is the normal case, since every merge tags its own
+commit. The table above measured a stable tag alone on the tip (`1.1.0`); with two tags on HEAD the
+higher, stable one is expected to win. The release step names its tag from that computed version,
+so if it ever differed from the pushed tag, the step would try to create a different tag, and a
+stable one would be refused by the ruleset -- after the Gallery publish. The first full release is
+the measurement.
+
+**Accepted residual.** Whoever can merge a pull request can publish a preview, since the merge is
+the publish and nobody else is asked. That holds until `Require approvals` is switched on for
+`main` with a second reviewer to give it.
+
 ### Known open question
 
 `tests/QA/module.tests.ps1` holds `CHANGELOG.md`'s `[Unreleased]` section to a 500-character floor.

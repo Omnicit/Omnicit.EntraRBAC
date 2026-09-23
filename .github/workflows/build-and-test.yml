@@ -304,8 +304,16 @@ jobs:
       && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # The deployment gate. Approval here is the last point at which a permanent publish can be
-    # stopped; the secret is scoped to this environment.
+    # NOT an approval gate. The environment has no required reviewers, by decision (2026-09-23):
+    # it scopes GALLERYAPITOKEN to this job and limits which refs can reach it at all -- branch
+    # main and the v<X.Y.Z> tag patterns, none of which admits a hyphen. A ref outside them is
+    # refused at deployment, before any step runs, and the secret is never handed out.
+    #
+    # The gate for a preview is the pull request and the three required checks on main. The gate
+    # for a full release is the tag itself: the 'Stable Version' tag ruleset lets only its bypass
+    # list create, move or delete a v<X.Y.Z> tag. Both live in repository settings on purpose. A
+    # tag push runs the workflow file AT the tagged commit, so a check written here is removed by
+    # the same commit that would abuse it. See docs/development/rationale.md#publish-on-merge.
     environment: 'Entra RBAC'
     permissions:
       # ONLY this job. The top-level default above stays contents: read. Needed for the tag and
@@ -432,7 +440,9 @@ jobs:
         # but the line stalls until someone pushes the missing tag by hand onto the commit that was
         # published -- after which the next build counts up again.
         #
-        # On a v-tag run the tag already exists and gh uses it rather than creating one.
+        # On a v-tag run the tag already exists and gh uses it rather than creating one. It must
+        # stay that way: the 'Stable Version' ruleset refuses GITHUB_TOKEN any create, move or
+        # delete of a v<X.Y.Z> tag, so a stable run that tried would fail HERE, after the publish.
         run: |
           # gh reports "no release found" with exit code 1, which is an ANSWER here, not a failure.
           # Every gh exit code is checked explicitly instead, the way the GitVersion step does it.
