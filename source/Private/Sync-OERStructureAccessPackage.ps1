@@ -32,9 +32,11 @@ function Sync-OERStructureAccessPackage {
        changed on an existing package.
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
-       bindings with -Prune). Each binding is identified by the resource display name (resolved to
-       an OriginId via Get-OERCatalogResource, falling back to Resolve-OERGroupId) and the role
-       display name. Existing bindings are read via a raw Graph call against resourceRoleScopes.
+       bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
+       see "Withheld prune" below). Each binding is identified by the resource display name
+       (resolved to an OriginId via Get-OERCatalogResource, falling back to Resolve-OERGroupId) and
+       the role display name. Existing bindings are read via a raw Graph call against
+       resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
 
@@ -66,6 +68,19 @@ function Sync-OERStructureAccessPackage {
     -Prune those extras are reported as Extra (informational) and left alone. -Prune is scoped to
     resource role bindings only -- it never removes an undeclared assignment policy (see above).
 
+    Withheld prune: a declared resourceRoles entry is unresolved when its resource name matches no
+    resource in the catalog by display name and Resolve-OERGroupId finds no group by that name
+    either. Such an entry carries no origin id, so the pass cannot tell which live binding it names,
+    and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
+    every undeclared live binding of the package is reported Skipped, with a Detail that starts
+    "prune withheld: declared entry '<resource>' could not be resolved", with or without -Prune; no
+    warning is written, no ShouldProcess prompt is issued, and no binding is removed until the entry
+    is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and the
+    text). The unresolved entry keeps its own Failed record. A lookup that THROWS, rather than finding
+    nothing, is not caught by this handler: it ends the item where it is thrown, the engine reports
+    the item Failed ("handler error"), and neither the resource role prune nor the assignment policy
+    step runs.
+
     A failed read of the package's live state -- the resource role bindings, the assignment policies,
     or the declared catalog's resources -- reports Failed with the underlying ErrorRecord and
     reconciles nothing further for that item, so a Created row is never derived from a read that did
@@ -91,6 +106,10 @@ function Sync-OERStructureAccessPackage {
     is declared without touching its resource role bindings. Scoped to resource role bindings
     only: an undeclared assignment policy is always reported as Extra and is never removed, with
     or without -Prune -- call Remove-OERAccessPackageAssignmentPolicy directly to delete one.
+    While a declared resourceRoles entry cannot be resolved (its resource matches no catalog
+    resource and no group), no binding is removed or reported Extra: every undeclared live binding
+    is reported Skipped with a Detail starting "prune withheld:", with or without this switch. A
+    lookup that throws aborts the item instead, before the resource role prune.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded to Resolve-OERStructureDefault so that omitted

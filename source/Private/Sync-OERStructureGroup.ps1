@@ -23,13 +23,15 @@ function Sync-OERStructureGroup {
        state for either one gets a Skipped record naming the divergence plus a Write-Warning, and the
        write is never attempted; this also suppresses the contradictory 'group properties match'
        Unchanged for the same group.
-    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune) -- UNLESS
+    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
+       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS
        the group is dynamic (already dynamic, or declared dynamic=true in the document). Microsoft Learn
        is explicit that a member of a dynamic membership group cannot be added or removed manually, so
        every declared member is reported as a Skipped record instead, nothing is added, and the
        Extra/prune pass does not run (a group with no declared members but a live membership still gets
        one summary Skipped record so the inaction is visible under -Prune too).
-    2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune), gated on
+    2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune, or report
+        them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
         dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
@@ -57,6 +59,22 @@ function Sync-OERStructureGroup {
     -Prune) when the document's eligibility key is DECLARED (present and non-null, including an
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
+
+    Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
+    declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
+    entry carries no id, so the pass cannot tell which live entry it names, and its live counterpart
+    would otherwise look undeclared. Every undeclared live entry in that collection is then reported
+    Skipped, with a Detail that starts "prune withheld: declared entry '<reference>' could not be
+    resolved", with or without -Prune; no warning is written, no ShouldProcess prompt is issued, and
+    nothing in that collection is removed until the entry is fixed or removed from the document
+    (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry keeps its own
+    error and Failed record. The rule is per collection: an unresolved owner withholds the owner prune
+    only, and the member and eligibility passes run as usual. For eligibility, an unresolved entry in
+    either the time-bound or the permanent list withholds the whole eligibility prune. A withheld
+    owner is reported Skipped before the last-owner guard is consulted. A lookup that THROWS, rather
+    than giving no id, is not caught by this handler: it ends the item where it is thrown, the engine
+    reports the item Failed ("handler error"), and neither that collection's prune pass nor any later
+    step runs (a prune pass that already completed for an earlier collection stands).
 
     A failed read of the live group -- its properties, members, owners or PIM eligibility -- reports
     Failed with the underlying ErrorRecord and reconciles nothing further for that item, so a Created
@@ -86,7 +104,10 @@ function Sync-OERStructureGroup {
     pruned/reported same as any other run), but an explicit "members": null does not reconcile at
     all. null -- not an omitted key -- is how a group is declared without touching its members,
     owners or eligibility; applying the scalar "omission means untouched" rule to members gets
-    this backwards.
+    this backwards. In each of members, owners and eligibility, while a declared entry cannot be
+    resolved to an object id, nothing in that collection is removed or reported Extra: every
+    undeclared live entry in it is reported Skipped with a Detail starting "prune withheld:", with or
+    without this switch. A lookup that throws aborts the item instead, before that collection's prune.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias, accepted only for call-site uniformity with the other

@@ -23,8 +23,9 @@ function Sync-OERStructureAdministrativeUnit {
        One drift this handler cannot apply to an EXISTING unit is reported as a Skipped record with a
        warning rather than silently ignored (or folded into a misleading Unchanged): the genuinely
        Graph-immutable isMemberManagementRestricted flag, for which recreating the unit is the only route.
-    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune) -- UNLESS the
-       unit is dynamic after this run (already dynamic, or converted by step 1). Microsoft Graph disables
+    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
+       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS
+       the unit is dynamic after this run (already dynamic, or converted by step 1). Microsoft Graph disables
        manual member management on a dynamic administrative unit: the membership rule owns the membership,
        Add/Remove member calls are rejected, and switching a unit to dynamic can change its existing
        membership on its own. Every declared member is then reported as a Skipped record explaining that,
@@ -32,8 +33,9 @@ function Sync-OERStructureAdministrativeUnit {
        membership gets one summary Skipped record so the inaction is visible under -Prune too).
     3. Reconcile declared scopedRoles (add missing by RoleName+PrincipalId, or by RoleId+PrincipalId
        when the declared role is a GUID; emit Extra or prune undeclared with -Prune, removing by
-       ScopedRoleMembershipId). Scoped roles are unaffected by dynamic membership -- only member
-       management is disabled on a dynamic unit -- so this step always runs.
+       ScopedRoleMembershipId, or report them Skipped while a declared scoped role's principal cannot
+       be resolved -- see "Withheld prune" below). Scoped roles are unaffected by dynamic membership --
+       only member management is disabled on a dynamic unit -- so this step always runs.
 
     An explicit JSON null on any document property counts as NOT DECLARED (the live value is left
     untouched), the same rule the offline validator and the other apply diffs apply: "dynamic": null must
@@ -46,6 +48,21 @@ function Sync-OERStructureAdministrativeUnit {
     When -Prune is set, current members and scoped roles not present in the declared set are
     removed (with Write-Warning) after a ShouldProcess gate. Without -Prune those extras are
     reported as Extra (informational) and left alone.
+
+    Withheld prune: members and scopedRoles each withhold their OWN prune when one of their declared
+    entries cannot be resolved -- Resolve-OERStructurePrincipal gives no object id for a member, or
+    for a scoped role's principal (the declared role itself is matched as written, not looked up).
+    Such an entry carries no id, so the pass cannot tell which live entry it names, and its live
+    counterpart would otherwise look undeclared. Every undeclared live entry in that collection is
+    then reported Skipped, with a Detail that starts "prune withheld: declared entry '<reference>'
+    could not be resolved", with or without -Prune; no warning is written, no ShouldProcess prompt
+    is issued, and nothing in that collection is removed until the entry is fixed or removed from
+    the document (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry
+    keeps its own error and Failed record. The rule is per collection: an unresolved scoped role
+    principal withholds the scopedRoles prune only, and the member pass runs as usual. A lookup that
+    THROWS, rather than giving no id, is not caught by this handler: it ends the item where it is
+    thrown, the engine reports the item Failed ("handler error"), and neither that collection's prune
+    pass nor any later step runs (a member prune that already completed stands).
 
     A scopedRoles[].role may be a directory-role display name or a role id (GUID); a GUID is passed
     to Add-OERAdministrativeUnitScopedRole -RoleId and matched against the live membership RoleId,
@@ -89,7 +106,10 @@ function Sync-OERStructureAdministrativeUnit {
     added and nothing is pruned. null -- not an omitted key -- is how an administrative unit is
     declared without touching its members or scoped roles; applying the scalar "omission means
     untouched" rule to these two collections gets this backwards. "[]" and a populated array both
-    reconcile normally.
+    reconcile normally. In each of members and scopedRoles, while a declared entry cannot be
+    resolved to an object id, nothing in that collection is removed or reported Extra: every
+    undeclared live entry in it is reported Skipped with a Detail starting "prune withheld:", with or
+    without this switch. A lookup that throws aborts the item instead, before that collection's prune.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
