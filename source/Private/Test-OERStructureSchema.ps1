@@ -87,7 +87,14 @@ function Test-OERStructureSchema {
     declared in the document (it may be managed elsewhere), when the unit declares members as an
     explicit null (the documented signal that skips reconciling that collection entirely), or when
     the group is template-based (its real displayName is
-    computed by the naming engine at apply time and cannot be resolved offline). Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
+    computed by the naming engine at apply time and cannot be resolved offline). An OMITTED
+    groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
+    catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
+    each of those is still reconciled against an empty declared set when its key is omitted, so
+    Invoke-OERStructure -Prune removes every live entry in it. Get-OEROmittedPruneCollection owns
+    which keys those are; an explicit null (the "leave it untouched" signal), a declared array (an
+    empty one included) and the members of a group or unit declared "dynamic": true are not
+    reported. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
     .PARAMETER Document
@@ -1317,6 +1324,19 @@ function Test-OERStructureSchema {
                         'on every later apply.')
             }
         }
+    }
+
+    # Rule 13: an omitted collection key that -Prune still reconciles. Get-OEROmittedPruneCollection owns
+    # which keys those are (and the null, declared-array and dynamic-members exclusions); this rule only
+    # turns each record into a Warning, never an Error, so no document that validates today starts
+    # failing.
+    foreach ($OmittedCollection in @(Get-OEROmittedPruneCollection -Document $Document)) {
+        $OmittedKey = $OmittedCollection.Collection
+        $OmittedAt = $OmittedCollection.Path
+        Add-Finding -Section $OmittedCollection.Section -Item $OmittedCollection.Item -Path "$OmittedAt.$OmittedKey" -Severity 'Warning' `
+            -Message ("'$OmittedKey' is omitted at $OmittedAt. An omitted $OmittedKey key is still reconciled, against an " +
+                "empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an " +
+                'empty array removes them deliberately), or set it to null to leave the collection untouched.')
     }
 
     $Out = [PSCustomObject]@{

@@ -150,4 +150,14 @@ Describe 'Test-OERStructure' {
         $Hit[0].Severity | Should -BeExactly 'Warning'
         $Hit[0].Path | Should -BeExactly 'accessPackages[0].assignmentPolicies[0].approvalStages'
     }
+    It 'surfaces the omitted-collection Warning for an omitted group members key without flipping Valid to false' {
+        # An omitted members key is still reconciled against an empty declared set, so
+        # Invoke-OERStructure -Prune removes every live member; the offline validator must say so.
+        $V = Test-OERStructure -Json '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $V.Valid | Should -BeTrue
+        $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].members' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].Severity | Should -BeExactly 'Warning'
+        $Hit[0].Message | Should -Match 'Invoke-OERStructure -Prune removes every live entry'
+    }
 }
