@@ -227,8 +227,15 @@ stages:
               summaryFileLocation: '$(buildFolderName)/$(testResultFolderName)/JaCoCo_coverage.xml'
               pathToSources: '$(Build.SourcesDirectory)/'
 
-# NOTE: There is intentionally no Deploy stage. The Build stage produces a versioned .nupkg
-# artifact. Publishing to the PowerShell Gallery is the intended destination once 1.0.0 is cut,
-# but it is not reachable today: build.yaml deliberately defines no `publish` workflow, so
-# `./build.ps1 -Tasks publish` does not resolve. Restoring that workflow, and setting
-# $env:GalleryApiToken, are the two deliberate acts required to release.
+# NOTE: There is intentionally no Deploy stage IN THIS FILE. The Build stage produces a versioned
+# .nupkg artifact and nothing here publishes it.
+#
+# Publishing is owned by .github/workflows/build-and-test.yml: every push to main publishes a
+# preview to the PowerShell Gallery, and pushing a `v<X.Y.Z>` tag publishes the full release. That
+# is the only path that can publish. build.yaml still defines no `publish` workflow, so
+# `./build.ps1 -Tasks publish` does not resolve from this pipeline either -- see the comment there
+# for why Sampler's own publish tasks were not used.
+#
+# Do not add a Deploy stage here. Two pipelines that can both publish are two ways to publish the
+# same version, and the Gallery accepts a given version exactly once -- the loser of that race
+# fails, and neither version can be withdrawn afterwards.

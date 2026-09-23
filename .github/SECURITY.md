@@ -42,3 +42,8 @@ The first public release, `1.0.0`, was published on 2026-09-18, and the built ve
 the `1.x` line (see
 `CLAUDE.md` "CHANGELOG and Version"). Only the current `main` branch is supported; there are no
 maintained release branches to backport a fix to.
+
+Every merge to `main` also publishes a preview version to the PowerShell Gallery. A preview has
+passed the same full test suite on Linux, Windows and macOS as a stable release, but a fix is
+considered released when it reaches a stable version; previews exist so the current state of `main`
+is installable, not as a support channel of their own.

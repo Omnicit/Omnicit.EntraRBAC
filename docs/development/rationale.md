@@ -1677,8 +1677,10 @@ from a purpose-written file instead of from the changelog. Sampler hardcodes
 repo-owned task in a `.build/` folder (`build.ps1:323-324` loads `.build/**/*.ps1` and lets it
 override Sampler's own tasks) wired into `build.yaml`'s `build:` workflow. That is new machinery with
 no precedent in this repo, running on every build, whose failure mode is an empty or wrong
-`ReleaseNotes` -- which is the #39 defect. The benefit today is zero, since `build.yaml` deliberately
-defines no `publish` workflow. And B's desired OUTPUT -- a short blurb plus a link rather than the
+`ReleaseNotes` -- which is the #39 defect. The benefit at the time was zero, since nothing published
+then. It is no longer zero, since every merge to `main` now publishes and `ReleaseNotes` is read by
+consumers on the Gallery -- but the cost has gone UP with it, because an empty `ReleaseNotes` is now
+published rather than merely built. And B's desired OUTPUT -- a short blurb plus a link rather than the
 whole log -- is obtained by making `[Unreleased]` be that blurb, which is what this branch did. Do
 not re-litigate this from scratch; if the coupling ever does bite, the `.build/` route is where to
 start.
@@ -1994,5 +1996,151 @@ the newest dated heading.
 
 **What check 4.2 of the version-cap checklist still lists.** Step 1 is done in part (the `+semver`
 half only), and steps 2 and 4 are done. Step 3, the tag, belongs on the commit that actually ships.
-Step 5 is not done and is not planned: `1.0.0` is published by hand, so `build.yaml` still defines no
-`publish` workflow.
+Step 5 was recorded here as "not done and not planned", on the grounds that `1.0.0` was published by
+hand and `build.yaml` defined no `publish` workflow. That is now history on both counts: publishing
+is automated, and it lives in the workflow rather than in `build.yaml`. See
+[#publish-on-merge](#publish-on-merge).
+
+---
+
+## publish-on-merge
+
+Decision 4 (Philip, 2026-09-18): from `1.1.0` onward, every merge to `main` publishes a preview to
+the PowerShell Gallery, and a full release is cut by pushing a `v` tag. The hand publication of
+`1.0.0` was a one-off, not the model. This anchor records how that is built and what was measured
+while building it.
+
+**The publish is a job in `.github/workflows/build-and-test.yml`, not a Sampler task.** The
+alternative -- restoring `Publish_Release_To_GitHub` and `publish_module_to_gallery` in
+`build.yaml`, which that file's own comment used to prescribe -- was rejected on four measured
+grounds. Every one of them is a failure that reports success:
+
+1. **Both tasks skip silently.** They are declared `-if ($GitHubToken -and ...)`
+   (`New-Release.GitHub.build.ps1:61`) and `-if ($GalleryApiToken -and ...)`. A missing token
+   publishes the package with no tag, or publishes nothing at all, and the build is green either
+   way. The workflow's publish job instead FAILS on an empty `GALLERYAPITOKEN`, and says why.
+2. **`publish_module_to_gallery` writes "Package Published to PSGallery." even when `$SkipPublish`
+   is set.** Its log is therefore not evidence. The workflow asks the Gallery instead, with
+   `Find-PSResource` on the exact version, and goes red if it cannot see it.
+3. **`publish_module_to_gallery` rewrites the built manifest as it publishes**, so the published
+   bytes are not provably the tested bytes.
+4. **A publish job running `./build.ps1 -ResolveDependency` resolves `latest` again.** Every entry
+   in `RequiredModules.psd1` is `latest` by decision ([#dependencies](#dependencies)), so
+   re-resolving at publish time can ship a build made against dependencies no test run ever saw.
+
+Guarding those tasks with `build.yaml` keys would not have helped either: Sampler's publish task
+reads its settings through InvokeBuild's `property` function, which never consults `build.yaml`, so
+`SkipPublish:` and its neighbours are inert there. That reasoning predates this decision and is
+kept in `build.yaml`'s comment, where anyone reaching for those keys will actually read it.
+
+`./build.ps1 -Tasks publish` stays undefined, so there is no local publishing path at all. A
+publish happens on a runner, from a verified artefact, or it does not happen.
+
+### The tag after each publish is the mechanism, not bookkeeping
+
+`GitVersion.yml` runs `mode: ContinuousDelivery`, and in that mode the preview counter does NOT
+advance per commit -- it advances when a tag gives the next build a new base. Two merges in a row
+with no tag between them therefore compute the SAME version, and the second publish is refused by
+the Gallery.
+
+Measured on 2026-09-22 with GitVersion 5.12.0 -- the release CI pins -- in a throwaway clone of
+this repository, starting from `main` at `838c55f` with `v1.0.0` reachable:
+
+| Step | `NuGetVersionV2` |
+|---|---|
+| `main` tip as it stands | `1.0.1-preview0001` |
+| after tagging `v1.0.1-preview0001` ON that tip | `1.0.1-preview0001` (the tag is returned verbatim) |
+| one further commit | `1.0.1-preview0002` |
+| a SECOND further commit, no new tag | `1.0.1-preview0002` **again** |
+| tag `v1.0.1-preview0002`, then one commit | `1.0.1-preview0003` |
+| tag `v1.1.0` sitting on the tip | `1.1.0` |
+| one commit after `v1.1.0` | `1.1.1-preview0001` |
+
+Row four is the whole reason the publish job creates a tag. Sampler and DSC Community do the same
+thing for the same reason.
+
+**If the publish succeeds and the tag step then fails**, the next merge to `main` computes the same
+version, the publish job's idempotence check finds it already on the Gallery and skips, and that
+merge publishes nothing. Nothing is broken and no release is lost, but the line stalls until the
+missing tag is pushed by hand onto the commit that was published. The comment on that step says so
+as well.
+
+### The published version comes from the MANIFEST, not from GitVersion
+
+`Publish-PSResource` publishes the version the manifest carries, and that string is not always
+`NuGetVersionV2`. A PowerShell prerelease label must be alphanumeric, so Sampler keeps only the
+first hyphen-delimited segment of it. Measured on 2026-09-22: on a branch named
+`ci/publish-on-merge`, GitVersion computed `1.0.1-ci-publish-on-me0001` while the manifest was
+stamped `1.0.1` with prerelease `ci`. On `main` and on a `v` tag the two agree exactly --
+`1.0.1-preview0001` stamps `1.0.1` plus `preview0001`, and `1.1.0` stamps `1.1.0` with no label.
+
+So the publish, the Gallery confirmation and the tag all take their version from the built
+manifest, and the only cross-check asserted against GitVersion is the one that holds on every
+branch: the manifest's `ModuleVersion` is the numeric part of `NuGetVersionV2`. Note also that the
+version FOLDER is `MajorMinorPatch` alone (`output/module/Omnicit.EntraRBAC/1.0.1`), never the
+prerelease-bearing string.
+
+### Provenance: the published bytes are the tested bytes
+
+`.github/scripts/PublishArtefact.ps1` owns both halves of that proof in one file, so a recorder and
+a verifier cannot drift apart -- two that enumerated or hashed differently would fail on honest
+artefacts and agree on tampered ones.
+
+`-Record` runs on the `ubuntu-latest` leg after its Test step, and only on success. It writes
+`publish-meta.json`: the commit, the GitVersion value, the manifest's version and prerelease, and a
+SHA-256 for every file in the version folder. `-Verify` runs in the `package` job and AGAIN in the
+`publish` job, each downloading the artefact separately, and refuses to continue on a wrong commit,
+on a changed, added or removed file, or on a manifest that is not the recorded one. Both directions
+are compared: checking only the recorded files would pass an artefact that gained one, and checking
+only the files on disk would pass one that lost a recorded file.
+
+One leg records, not three, because three artefacts would make the publish choose between them, and
+choosing is not proving.
+
+### Two measured facts about Publish-PSResource
+
+Both would have cost a red run to find, and both are pinned by comments at their call sites.
+
+**`-Path` must be the VERSION FOLDER.** Pointing it at the module folder's root fails with "No file
+with a .psd1 extension was found" -- first measured in P6, reproduced on 2026-09-22.
+
+**The declared `RequiredModules` must be resolvable on `PSModulePath` before publishing**, because
+`Publish-PSResource` validates the manifest with `Test-ModuleManifest`. On a clean runner neither
+`AzAuth` nor `Microsoft.Graph.Authentication` is present, and the publish fails with "The specified
+RequiredModules entry 'AzAuth' ... is invalid" -- a manifest error, giving no hint that the repair
+is an install. `-SkipDependenciesCheck` does NOT cover this: it waives only the separate check that
+the dependencies exist in the DESTINATION repository. Both jobs therefore install the two modules
+before publishing. The `package` job additionally needs `-SkipDependenciesCheck`, since its
+destination is an empty folder under `RUNNER_TEMP`; the real publish does not skip it, since both
+dependencies genuinely are on the Gallery and the check is worth running there.
+
+### Why `package` exists at all
+
+It runs on every pull request and every push, it has no environment and no secrets, and it can
+publish nothing: its repository is a folder under `RUNNER_TEMP`. It rehearses the real publish --
+the same `Publish-PSResource` call against the same version folder -- and then proves the package
+it produced can be found, installed and imported by a consumer in a clean `pwsh` process, asserting
+that the exported command count matches the manifest's `FunctionsToExport`. The point is that the
+evidence arrives on the pull request, BEFORE anything permanent happens: a version cannot be
+withdrawn from the Gallery, only unlisted.
+
+### Triggers
+
+`tags: ['v*', '!v*-*']` was added to the push trigger so a full release can be cut by pushing
+`v<X.Y.Z>`. The exclusion keeps the preview tags the workflow creates from starting runs of their
+own; a tag pushed with `GITHUB_TOKEN` does not trigger a workflow in the first place, so the
+exclusion is the second lock on that door rather than the only one.
+
+`paths-ignore` must never be added to the `pull_request` trigger. `ubuntu-latest`,
+`windows-latest` and `macos-latest` are required checks on `main`, and a run that never happens
+never reports them -- a required check that never reports stays Pending forever. That is the same
+failure mode the matrix protects against, described in CLAUDE.md under Module Layout.
+
+### Known open question
+
+`tests/QA/module.tests.ps1` holds `CHANGELOG.md`'s `[Unreleased]` section to a 500-character floor.
+A pull request whose only job is to close out `[Unreleased]` into a dated `## [X.Y.Z]` heading has
+to leave a new `[Unreleased]` behind, and it may have nothing genuine to say there yet. The floor
+fails such a pull request. Nothing in this change addresses that; it is recorded here so it is
+found when it bites, rather than repaired by padding the section with filler, which is the one
+repair that must not be made.

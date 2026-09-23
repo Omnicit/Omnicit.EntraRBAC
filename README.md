@@ -5,8 +5,7 @@ managing RBAC building blocks across many Entra ID and Azure tenants. It covers 
 and PIM, Administrative Units, Entitlement Management (Catalogs, Access Packages, Resources),
 Access Reviews, Azure resources and RBAC, Azure PIM, plus a JSON inventory and a declarative apply
 engine. It is built by Omnicit AB for its own and its customers' tenants, is MIT licensed, and is
-destined for the public PowerShell Gallery once 1.0.0 is cut. Until then it is installed from a
-build artifact or a build from source.
+published on the public PowerShell Gallery.
 
 All 90 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
 `Get-Help <cmdlet> -Full` and `Get-Help about_Omnicit.EntraRBAC` are authoritative for details this
@@ -30,22 +29,35 @@ you started yourself is left alone: this module never establishes an Az context,
 
 ## Install / Import
 
-### From the PowerShell Gallery (after 1.0.0 is published)
+### From the PowerShell Gallery
 
-The module is destined for the public PowerShell Gallery. It is **not published yet** -- the build
-deliberately defines no `publish` workflow until 1.0.0 is ready, so the command below will not
-resolve a package before that release. Use one of the paths under it in the meantime.
+This is the normal way to install the module.
 
 ```powershell
 Install-PSResource -Name Omnicit.EntraRBAC              # PSResourceGet
 Install-Module -Name Omnicit.EntraRBAC -Scope CurrentUser   # PowerShellGet 2.x
 ```
 
+Releases come in two kinds, and the commands above install the stable ones only:
+
+- **Stable releases** (`1.0.0`, `1.1.0`, ...) are cut deliberately by tagging a release.
+- **Previews** (`1.0.1-preview0001` and so on) are published automatically from every merge to
+  `main`, so the newest work is always installable. Ask for one explicitly:
+
+  ```powershell
+  Install-PSResource -Name Omnicit.EntraRBAC -Prerelease
+  Install-Module -Name Omnicit.EntraRBAC -AllowPrerelease -Scope CurrentUser   # PowerShellGet 2.x
+  ```
+
+  A preview has passed the same full test suite on Linux, Windows and macOS as a stable release --
+  that is the gate it has to clear to be published at all -- but it is a snapshot of `main` between
+  releases rather than a version anyone has decided to stand behind.
+
 ### From a build artifact (.nupkg)
 
 The CI Build stage produces a versioned `.nupkg`. To install one that was handed to you, register
-the folder holding it as a local repository and install from there. This is the supported
-consumer path until the Gallery release.
+the folder holding it as a local repository and install from there. This is useful for testing a
+build that has not been published.
 
 ```powershell
 # 1. Register the folder that contains the .nupkg as a repository
