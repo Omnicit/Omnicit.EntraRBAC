@@ -238,6 +238,11 @@ Describe 'Get-OERRequiredScopeMap' {
                     'Group.ReadWrite.All alone cannot update a role-assignable group')
                 $Entry[0].Note | Should -Match 'role-assignable' -Because (
                     'the Note must say the extra scope is needed only for a role-assignable group')
+                # The Update group permission table on Microsoft Learn does not list the extra scope;
+                # it is derived from the role-assignable group guidance, so the entry is not marked as
+                # confirmed against the per-API table.
+                $Entry[0].Verified | Should -BeFalse -Because (
+                    'the per-API table does not state the role-management scope, and the Note says where it comes from')
             }
         }
     }

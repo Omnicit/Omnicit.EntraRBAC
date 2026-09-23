@@ -78,8 +78,8 @@ function Sync-OERStructureGroup {
     collection's prune pass nor any later step runs. The engine then reports the item as one Failed
     ("handler error") record and discards every record the handler had already emitted for it, so a
     change already applied -- a prune pass completed for an earlier collection included -- stands
-    with no Removed row, and an unresolved entry's Failed row is lost; warnings and errors already
-    written remain.
+    with no row, and an unresolved entry's Failed row is lost; warnings and errors already written
+    remain.
 
     A failed read of the live group -- its properties, members, owners or PIM eligibility -- reports
     Failed with the underlying ErrorRecord and reconciles nothing further for that item, so a Created
