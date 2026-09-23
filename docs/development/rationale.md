@@ -366,10 +366,11 @@ each with its own exemption or non-vacuity mechanism:
 (CLAUDE.md ## Code Style); no apply-document-walking file may read a document node's
 `PSObject.Properties.Name` directly outside a named, reasoned allowlist. The violation is flagged on
 the READ itself rather than on the `-contains`-family operator that might later consume it, so an
-intermediate variable cannot hide the same defect. Its scope control asserts the twelve scanned files
-BY NAME rather than by count -- the seven `Sync-OERStructure*` handlers plus
-`Read-OERStructureDocument.ps1` and the four `Resolve-OER*Change` helpers that take a `-Declared`
-node -- because a bare count says only that twelve became eleven, never which file left the scan.
+intermediate variable cannot hide the same defect. Its scope control asserts the thirteen scanned
+files BY NAME rather than by count -- the seven `Sync-OERStructure*` handlers plus
+`Read-OERStructureDocument.ps1`, `Get-OEROmittedPruneCollection.ps1` and the four
+`Resolve-OER*Change` helpers that take a `-Declared` node -- because a bare count says only that
+thirteen became twelve, never which file left the scan.
 Two earlier rounds of that gate each claimed to cover every document consumer while missing some, so
 the named list is the finding, not the tidy-up.
 

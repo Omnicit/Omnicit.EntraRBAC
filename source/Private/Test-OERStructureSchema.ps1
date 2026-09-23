@@ -94,7 +94,10 @@ function Test-OERStructureSchema {
     Invoke-OERStructure -Prune removes every live entry in it. Get-OEROmittedPruneCollection owns
     which keys those are; an explicit null (the "leave it untouched" signal), a declared array (an
     empty one included) and the members of a group or unit declared "dynamic": true are not
-    reported. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
+    reported. The exclusion trusts the document's dynamic flag: a group declared dynamic whose live
+    group is static (Set-OERGroup cannot convert it), or an administrative unit whose conversion to
+    dynamic is not applied in this run (-WhatIf, a declined prompt, a failed update, or no
+    membershipRule available), still has its omitted members pruned, and is not reported. Returns a tagged Omnicit.EntraRBAC.StructureValidation object with a Valid flag and an
     Errors collection of records carrying Section, Item, Path, Message, and Severity. No Graph or ARM
     calls are made and no authentication occurs.
     .PARAMETER Document

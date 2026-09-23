@@ -17,9 +17,15 @@ function Get-OEROmittedPruneCollection {
     untouched" signal and is never listed, and a declared array -- an empty one included -- is a
     deliberate reconcile and is never listed either. The members key of a group or an administrative
     unit that the document declares "dynamic": true is not listed, since both handlers skip the member
-    prune on a dynamic object; the scopedRoles of a dynamic unit still prune and are still listed. A
-    live-dynamic object the document does not declare dynamic cannot be known offline, so its omitted
-    members key is listed -- the conservative direction.
+    prune on a dynamic object; the scopedRoles of a dynamic unit still prune and are still listed. The
+    flag is compared with -eq $true, the way the handlers compare it when they build the create call,
+    so a value that is merely truthy -- the string "false", for example -- does not hide the key. The
+    exclusion trusts the document's dynamic flag: a group declared dynamic whose live group is static
+    (Set-OERGroup cannot convert it), or an administrative unit whose conversion to dynamic is not
+    applied in this run (-WhatIf, a declined prompt, a failed update, or no membershipRule available),
+    still has its omitted members pruned, and this helper does not list them. A live-dynamic object
+    the document does not declare dynamic cannot be known offline, so its omitted members key is
+    listed -- the conservative direction.
 
     Owners and eligibility are deliberately not listed: an omitted owners or eligibility key leaves
     that collection completely untouched, since both passes run only when the key is declared, so
@@ -70,8 +76,13 @@ function Get-OEROmittedPruneCollection {
             $ItemPath = '{0}[{1}]' -f $Entry.Section, $I
             $ItemLabel = if (Test-OERDeclaredProperty -Node $Node -Name 'displayName') { [string]$Node.displayName } else { $ItemPath }
             # Both handlers skip the member prune on an object that is dynamic, and on the create path
-            # the document's own "dynamic": true is what makes it so.
-            $DeclaredDynamic = (Test-OERDeclaredProperty -Node $Node -Name 'dynamic') -and [bool]$Node.dynamic
+            # the document's own "dynamic": true is what makes it so. -eq $true, never [bool]: a truthy
+            # non-boolean such as the string "false" must not hide the key. The exclusion trusts the
+            # document's dynamic flag: a group declared dynamic whose live group is static (Set-OERGroup
+            # cannot convert it), or an administrative unit whose conversion to dynamic is not applied
+            # in this run (-WhatIf, a declined prompt, a failed update, or no membershipRule
+            # available), still has its omitted members pruned, and this helper does not list them.
+            $DeclaredDynamic = (Test-OERDeclaredProperty -Node $Node -Name 'dynamic') -and $Node.dynamic -eq $true
 
             foreach ($Key in $Entry.Collection) {
                 if (Test-OERDeclaredProperty -Node $Node -Name $Key) { continue }

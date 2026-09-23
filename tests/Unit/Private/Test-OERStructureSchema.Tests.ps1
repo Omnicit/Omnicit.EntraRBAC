@@ -2408,7 +2408,6 @@ Describe 'Test-OERStructureSchema omitted collection key warning' {
             $Hit[0].Severity | Should -BeExactly 'Warning'
             $Hit[0].Section  | Should -BeExactly 'groups'
             $Hit[0].Item     | Should -BeExactly 'g1'
-            $Hit[0].Message.StartsWith("'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it.") | Should -BeTrue
             $Hit[0].Message | Should -BeExactly "'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched."
             $V.Valid | Should -BeTrue
         }

@@ -33,8 +33,8 @@ function Invoke-OERStructure {
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
     deletes a top-level object (a group, catalog, etc.) that is absent from the document. A declared
-    entry that cannot be resolved withholds the prune of its collection: the live entries in it are
-    reported Skipped with a Detail starting "prune withheld:" instead of being removed. An OMITTED
+    entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
+    in it is reported Skipped with a Detail starting "prune withheld:" instead of being removed. An OMITTED
     members, scopedRoles, resources or resourceRoles key still prunes, so before the first write the
     engine lists every such key in one warning (see -Prune).
 
@@ -84,8 +84,8 @@ function Invoke-OERStructure {
 
     A declared entry that cannot be resolved (for example a member whose principal lookup finds no
     object) withholds the prune of its whole collection, since its live counterpart cannot be told
-    apart from an undeclared entry: every live entry in that collection is left in place and reported
-    Skipped with a Detail starting "prune withheld:", while the unresolved entry keeps its own Failed
+    apart from an undeclared entry: every undeclared live entry in that collection is left in place and
+    reported Skipped with a Detail starting "prune withheld:", while the unresolved entry keeps its own Failed
     record. Fix or remove the unresolved entry to reconcile the collection.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
@@ -95,8 +95,12 @@ function Invoke-OERStructure {
     anything is written, under -WhatIf too. Declare the key (an empty array removes the entries
     deliberately), or set it to null to leave that collection untouched. The members key of a group
     or administrative unit the document declares "dynamic": true is not listed, since the handlers
-    skip the member prune on a dynamic object. Test-OERStructure reports the same omissions as
-    Warning findings.
+    skip the member prune on a dynamic object. The exclusion trusts the document's dynamic flag: a
+    group declared dynamic whose live group is static (Set-OERGroup cannot convert it), or an
+    administrative unit whose conversion to dynamic is not applied in this run (-WhatIf, a declined
+    prompt, a failed update, or no membershipRule available), still has its omitted members pruned,
+    and this warning does not list them. Test-OERStructure reports the same omissions as Warning
+    findings.
 
     .PARAMETER Include
     Restricts the sections the engine dispatches. Defaults to all seven sections. Pass a subset

@@ -72,6 +72,15 @@ Describe 'Get-OEROmittedPruneCollection' {
             $R[0].Path       | Should -BeExactly 'groups[0]'
         }
 
+        It 'lists the omitted members of a group whose dynamic is the string "false", which is not the boolean true' {
+            # [bool]'false' is $true in PowerShell; the handler builds the create call with -eq $true,
+            # so this group is created static and a later -Prune empties its members.
+            $R = @(Invoke-OmittedPrune -Json '{ "version": "1.0", "groups": [ { "displayName": "g1", "dynamic": "false" } ] }')
+            $R.Count | Should -Be 1
+            $R[0].Collection | Should -BeExactly 'members'
+            $R[0].Path       | Should -BeExactly 'groups[0]'
+        }
+
         It 'lists the omitted scopedRoles but not the omitted members of an administrative unit declared dynamic true' {
             $R = @(Invoke-OmittedPrune -Json '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au1", "dynamic": true, "membershipRule": "(user.department -eq \"IT\")" } ] }')
             $R.Count | Should -Be 1
