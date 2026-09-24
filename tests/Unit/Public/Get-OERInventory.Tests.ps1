@@ -2136,6 +2136,133 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    Context 'pimPolicy approval projection' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                $G = [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'g'; Description = $null
+                    IsAssignableToRole = $true; GroupType = 'Assigned'
+                }
+                $G | Add-Member -NotePropertyName Members -NotePropertyValue @() -Force
+                $G | Add-Member -NotePropertyName Owners -NotePropertyValue @() -Force
+                $G | Add-Member -NotePropertyName PimEligibility -NotePropertyValue @() -Force
+                $G
+            }
+        }
+
+        It 'projects requireApproval true and approvers as object ids when approval is required' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = $null
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = @()
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = @()
+                        RequireApproval           = $true
+                        Approvers                 = @(
+                            [PSCustomObject]@{ DisplayName = 'Anna'; Id = 'usr-1'; UserType = 'User' }
+                            [PSCustomObject]@{ DisplayName = 'Sec Approvers'; Id = 'grp-1'; UserType = 'Group' }
+                        )
+                        Notifications             = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() }
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.requireApproval | Should -Be $true
+            @($Member.approvers.users)  | Should -Be @('usr-1')
+            @($Member.approvers.groups) | Should -Be @('grp-1')
+        }
+
+        It 'projects requireApproval false and omits approvers, even when the live policy still carries them' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = $null
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = @()
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = @()
+                        RequireApproval           = $false
+                        Approvers                 = @(
+                            [PSCustomObject]@{ DisplayName = 'Sec Approvers'; Id = 'grp-1'; UserType = 'Group' }
+                        )
+                        Notifications             = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() }
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.requireApproval | Should -Be $false
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'approvers'
+        }
+
+        It 'omits requireApproval and approvers when the policy has no approval rule at all' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = 8
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = @()
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = @()
+                        RequireApproval           = $null
+                        Approvers                 = @()
+                        Notifications             = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() }
+                    }
+                } else { $null }
+            }
+            $Inv = Get-OERInventory -Include Groups
+            $Member = $Inv.Groups[0].pimPolicy.member
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'requireApproval'
+            $Member.PSObject.Properties.Name | Should -Not -Contain 'approvers'
+        }
+
+        It 'produces a groups pimPolicy approval projection that passes its own offline validator' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                param($AccessType)
+                if ($AccessType -eq 'member') {
+                    [PSCustomObject]@{
+                        ActivationMaxHours        = $null
+                        AuthenticationContextId   = $null
+                        ActivationEnabledRules    = @()
+                        AllowPermanentEligibility = $null
+                        EligibleDurationDays      = $null
+                        AllowPermanentActive      = $null
+                        ActiveDurationDays        = $null
+                        ActiveEnabledRules        = @()
+                        RequireApproval           = $true
+                        Approvers                 = @(
+                            [PSCustomObject]@{ DisplayName = 'Sec Approvers'; Id = 'grp-1'; UserType = 'Group' }
+                        )
+                        Notifications             = [PSCustomObject]@{ EligibleAlert = @(); ActiveAlert = @(); ActivationAlert = @() }
+                    }
+                } else { $null }
+            }
+            $Inventory = Get-OERInventory -Include Groups
+            $Doc = [PSCustomObject]@{ version = '1.0'; groups = @($Inventory.Groups) }
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                (Test-OERStructureSchema -Document $Doc).Valid | Should -BeTrue
+            }
+        }
+    }
+
     Context 'a genuinely empty PIM enablement list is still exportable' {
         # ConvertTo-OERGroupPimPolicy wraps ActivationEnabledRules/ActiveEnabledRules with a
         # null-filter, so a rule the tenant never configured and a rule that is genuinely empty

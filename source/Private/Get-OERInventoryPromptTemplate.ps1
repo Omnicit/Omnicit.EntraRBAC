@@ -171,9 +171,14 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     (Justification | MultiFactorAuthentication | Ticketing), allowPermanentEligibility (bool),
     eligibleDurationDays (1-3650), allowPermanentActive (bool), activeDurationDays (1-3650),
     activeEnablement[] (same enum), notifications { eligibleAlert[], activeAlert[], activationAlert[] }
-    -- each alert is a list of extra admin recipient email addresses (defaults are kept) }. An
-    explicit [] on activationEnablement or activeEnablement asserts that list is genuinely empty
-    (no MFA, justification or ticket required); omitting the key leaves the live setting untouched.
+    -- each alert is a list of extra admin recipient email addresses (defaults are kept),
+    requireApproval (bool), approvers { users[] (UPNs / object ids), groups[] (group display names /
+    object ids) } }. An explicit [] on activationEnablement or activeEnablement asserts that list is
+    genuinely empty (no MFA, justification or ticket required); omitting the key leaves the live
+    setting untouched.
+  - approvers apply only when requireApproval is true (requireApproval false wins and the approvers
+    are ignored); declaring one side (users or groups) leaves the other side on the live policy
+    untouched; names are resolved to object ids before comparison.
   - an activationEnablement containing "MultiFactorAuthentication" and a non-empty
     authenticationContextId are mutually exclusive; declare only one. Declaring both is accepted but
     the MFA requirement is cleared on apply.

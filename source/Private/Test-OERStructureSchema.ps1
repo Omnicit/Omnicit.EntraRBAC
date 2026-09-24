@@ -27,7 +27,11 @@ function Test-OERStructureSchema {
     Test-HasProp applies to every field here and the apply-layer diffs apply in lockstep). A
     requireApproval of false declared together with a non-empty approvers block is a Warning naming
     the precedence: the apply engine drops the approvers, because supplying them to Azure Resource
-    Manager would force approval back on. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
+    Manager would force approval back on. A groups pimPolicy block (flat or nested member/owner)
+    validates requireApproval and approvers the same way a roleManagementPolicies item does: a boolean
+    toggle, an approvers object with optional users/groups string arrays, and requireApproval false
+    declared together with a non-empty approvers block is the same Warning naming the precedence, at
+    the pimPolicy block's own path. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
     PIM rejects both being set at once, a rule draft-07 cannot express, so the offline validator
     enforces it here. An unknown per-item key in the roleAssignments or roleManagementPolicies section
     is reported as a Warning naming the key, because the apply handlers for those two sections read a
@@ -350,6 +354,50 @@ function Test-OERStructureSchema {
                                     if ($AArr -isnot [System.Collections.IEnumerable] -or $AArr -is [string]) {
                                         Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.notifications.$AlertKey" `
                                             -Message "'notifications.$AlertKey' at $BlockPath must be an array of strings."
+                                    }
+                                }
+                            }
+                        }
+
+                        if (Test-HasProp -Node $Block -Name 'requireApproval') {
+                            if ($Block.requireApproval -isnot [bool]) {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.requireApproval" `
+                                    -Message "'requireApproval' at $BlockPath must be a boolean."
+                            }
+                        }
+
+                        # Approvers only take effect when approval is required -- mirrors the
+                        # roleManagementPolicies precedence rule: the apply engine (Resolve-OERDeclaredApprover)
+                        # does not resolve declared approvers when requireApproval is explicitly false, and
+                        # writing them anyway would risk re-enabling approval. Warn (never Error), the same
+                        # way the roleManagementPolicies section does, so a document that validates today
+                        # keeps validating and Get-OERInventory itself can still produce this shape.
+                        if ((Test-HasProp -Node $Block -Name 'requireApproval') -and ($Block.requireApproval -eq $false)) {
+                            $PimDeclaredApproverCount = 0
+                            foreach ($PimApproverKind in @('users', 'groups')) {
+                                if (Test-HasProp -Node $Block.approvers -Name $PimApproverKind) {
+                                    $PimDeclaredApproverCount += @($Block.approvers.$PimApproverKind).Count
+                                }
+                            }
+                            if ($PimDeclaredApproverCount -gt 0) {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.approvers" -Severity 'Warning' `
+                                    -Message "'requireApproval' is false at $BlockPath, so the declared 'approvers' are ignored; requireApproval takes precedence and the approvers are not written. Set 'requireApproval' to true to apply them, or drop the approvers block."
+                            }
+                        }
+
+                        if (Test-HasProp -Node $Block -Name 'approvers') {
+                            $PimApprovers = $Block.approvers
+                            if ($PimApprovers -isnot [PSCustomObject]) {
+                                Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.approvers" `
+                                    -Message "'approvers' at $BlockPath must be an object with optional users and groups arrays."
+                            } else {
+                                foreach ($PimApproverKind in @('users', 'groups')) {
+                                    if (Test-HasProp -Node $PimApprovers -Name $PimApproverKind) {
+                                        $PimApproverVal = $PimApprovers.$PimApproverKind
+                                        if ($PimApproverVal -isnot [System.Collections.IEnumerable] -or $PimApproverVal -is [string]) {
+                                            Add-Finding -Section 'groups' -Item $GItem -Path "$BlockPath.approvers.$PimApproverKind" `
+                                                -Message "'approvers.$PimApproverKind' at $BlockPath must be an array."
+                                        }
                                     }
                                 }
                             }

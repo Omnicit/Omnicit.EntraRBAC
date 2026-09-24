@@ -171,6 +171,16 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'documents pimPolicy approval fields and their precedence' {
+        InModuleScope $script:moduleName {
+            $T = Get-OERInventoryPromptTemplate
+            $T | Should -Match 'requireApproval \(bool\)'
+            $T | Should -Match 'approvers \{ users\[\]'
+            $T | Should -Match 'requireApproval false wins'
+            $T | Should -Match 'names are resolved to object ids before comparison'
+        }
+    }
+
     It 'documents the three keys Tasks 16 and 17 added to the schema' {
         InModuleScope $script:moduleName {
             $Prompt = Get-OERInventoryPromptTemplate

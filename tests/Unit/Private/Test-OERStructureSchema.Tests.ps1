@@ -1971,6 +1971,211 @@ Describe 'Test-OERStructureSchema group pimPolicy MFA/auth-context warning' {
     }
 }
 
+Describe 'Test-OERStructureSchema group pimPolicy approval' {
+    It 'flags a non-boolean requireApproval on the flat form' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{ requireApproval = 'yes' }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.requireApproval' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'requireApproval' at groups[0].pimPolicy must be a boolean."
+        }
+    }
+
+    It 'flags a non-boolean requireApproval on pimPolicy.owner' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        owner = [PSCustomObject]@{ requireApproval = 'yes' }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.owner.requireApproval' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'requireApproval' at groups[0].pimPolicy.owner must be a boolean."
+        }
+    }
+
+    It 'flags a non-object approvers block on the flat form' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{ approvers = 'sec-approvers' }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.approvers' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'approvers' at groups[0].pimPolicy must be an object with optional users and groups arrays."
+        }
+    }
+
+    It 'flags a non-object approvers block on pimPolicy.owner' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        owner = [PSCustomObject]@{ approvers = 'sec-approvers' }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.owner.approvers' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'approvers' at groups[0].pimPolicy.owner must be an object with optional users and groups arrays."
+        }
+    }
+
+    It 'flags a non-array approvers.users on the flat form' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        approvers = [PSCustomObject]@{ users = 'anna@contoso.com' }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.approvers.users' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'approvers.users' at groups[0].pimPolicy must be an array."
+        }
+    }
+
+    It 'flags a non-array approvers.groups on pimPolicy.owner' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        owner = [PSCustomObject]@{
+                            approvers = [PSCustomObject]@{ groups = 'sec-approvers' }
+                        }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeFalse
+            $Hit = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.owner.approvers.groups' -and $_.Severity -eq 'Error' }
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -Be "'approvers.groups' at groups[0].pimPolicy.owner must be an array."
+        }
+    }
+
+    It 'warns when requireApproval is false but approvers are declared on the flat form' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        requireApproval = $false
+                        approvers       = [PSCustomObject]@{ groups = @('sec-approvers') }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeTrue
+            $Finding = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.approvers' }
+            $Finding | Should -Not -BeNullOrEmpty
+            $Finding.Severity | Should -Be 'Warning'
+            $Finding.Message | Should -Be "'requireApproval' is false at groups[0].pimPolicy, so the declared 'approvers' are ignored; requireApproval takes precedence and the approvers are not written. Set 'requireApproval' to true to apply them, or drop the approvers block."
+        }
+    }
+
+    It 'warns when requireApproval is false but approvers are declared on pimPolicy.owner' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                version = '1.0'
+                groups  = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        owner = [PSCustomObject]@{
+                            requireApproval = $false
+                            approvers       = [PSCustomObject]@{ users = @('anna@contoso.com') }
+                        }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            $Result.Valid | Should -BeTrue
+            $Finding = @($Result.Errors) | Where-Object { $_.Path -eq 'groups[0].pimPolicy.owner.approvers' }
+            $Finding | Should -Not -BeNullOrEmpty
+            $Finding.Severity | Should -Be 'Warning'
+            $Finding.Message | Should -Match 'requireApproval'
+        }
+    }
+
+    It 'does not warn when requireApproval is true' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        requireApproval = $true
+                        approvers       = [PSCustomObject]@{ groups = @('sec-approvers') }
+                    }
+                })
+            }
+            @((Test-OERStructureSchema -Document $Doc).Errors) |
+                Where-Object { $_.Path -eq 'groups[0].pimPolicy.approvers' } |
+                Should -BeNullOrEmpty
+        }
+    }
+
+    It 'does not warn when the approvers block is empty' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        requireApproval = $false
+                        approvers       = [PSCustomObject]@{ groups = @() }
+                    }
+                })
+            }
+            @((Test-OERStructureSchema -Document $Doc).Errors) |
+                Where-Object { $_.Path -eq 'groups[0].pimPolicy.approvers' } |
+                Should -BeNullOrEmpty
+        }
+    }
+
+    It 'gives no finding for a fully valid pimPolicy approval block' {
+        InModuleScope $script:moduleName {
+            $Doc = [PSCustomObject]@{
+                groups = @([PSCustomObject]@{
+                    displayName = 'g1'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{
+                            requireApproval = $true
+                            approvers       = [PSCustomObject]@{ users = @('anna@contoso.com'); groups = @('sec-approvers') }
+                        }
+                        owner  = [PSCustomObject]@{ requireApproval = $false }
+                    }
+                })
+            }
+            $Result = Test-OERStructureSchema -Document $Doc
+            @($Result.Errors | Where-Object { $_.Path -like 'groups[0].pimPolicy*' }) | Should -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Test-OERStructureSchema accessPackages requireApproval vs empty approvalStages warning' {
     # Two mutually exclusive Warnings live on this path, so every assertion below filters on the
     # phrase unique to ONE of them, never on a phrase both could produce:
