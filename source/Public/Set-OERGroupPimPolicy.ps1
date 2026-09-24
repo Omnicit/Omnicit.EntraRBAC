@@ -24,10 +24,27 @@ function Set-OERGroupPimPolicy {
     error, so a partial apply is detectable with -ErrorAction Stop or by inspecting $?. At least one
     rule parameter (ActivationMaxHours, AuthenticationContextId, ActivationEnabledRules,
     ActiveEnabledRules, EligibleDuration, ActiveDuration, EligibleAlertRecipient,
-    ActiveAlertRecipient, ActivationAlertRecipient, AllowPermanentEligibility, or
-    AllowPermanentActive) must be supplied or a non-terminating NothingToUpdate error is emitted;
-    -AccessType alone only selects which policy would have been patched. Supports -WhatIf and
-    -Confirm.
+    ActiveAlertRecipient, ActivationAlertRecipient, RequireApproval, ApproverUser, ApproverGroup,
+    AllowPermanentEligibility, or AllowPermanentActive) must be supplied or a non-terminating
+    NothingToUpdate error is emitted; -AccessType alone only selects which policy would have been
+    patched. Supports -WhatIf and -Confirm.
+
+    Approval on activation is the Approval_EndUser_Assignment rule, set with -RequireApproval,
+    -ApproverUser and -ApproverGroup. Binding -ApproverUser replaces the user approvers only and
+    -ApproverGroup the group approvers only: the side left unbound is carried over from the live rule,
+    so a call that names a new user approver keeps the group approvers already there (this differs
+    from Set-OERRoleManagementPolicy, which replaces the whole list). Supplying approvers on either
+    side implies approval is required. -RequireApproval $true needs at least one approver, either
+    supplied or already on the live rule; with none, a non-terminating ApproverRequired error is
+    written and nothing is sent. Every approver value is resolved to an object id first (a user by
+    UPN or id, a group by display name or id); a value that does not resolve is a non-terminating
+    ApproverNotFound error and nothing is sent. Stage fields this cmdlet has no parameter for, such
+    as the approval timeout and whether approvers must justify, carry over from the live stage; a
+    policy with no stage yet gets a 1-day timeout with approver justification required. Any of the
+    three parameters makes the cmdlet read the live approval rule first; when that read fails, a
+    non-terminating ApprovalRuleReadFailed error is written and NO rule is patched, including the
+    other rules bound on the same call, since the carried-over stage and approvers would otherwise be
+    lost.
 
     Entra PIM treats an enabled authentication context and MultiFactorAuthentication on activation as
     mutually exclusive, so this cmdlet reconciles the two instead of sending a combination the
@@ -122,6 +139,26 @@ function Set-OERGroupPimPolicy {
     (Notification_Admin_EndUser_Assignment). When bound, patches that notification rule; when omitted
     the rule is not patched and the existing recipients are preserved.
 
+    .PARAMETER RequireApproval
+    Whether end-user activation requires approval (the Approval_EndUser_Assignment rule). $true
+    requires at least one approver, either supplied with -ApproverUser or -ApproverGroup or already on
+    the live rule, or the call is refused with ApproverRequired. $false turns approval off and keeps
+    the live stage and approvers for a later re-enable. When omitted and neither approver parameter
+    is bound, the approval rule is not patched.
+
+    .PARAMETER ApproverUser
+    The user approvers, each a user principal name or user object id, resolved to object ids before
+    anything is sent. Replaces the user approvers on the live rule; the group approvers are kept.
+    Supplying it implies -RequireApproval $true. An empty list clears the user side. A value that does
+    not resolve refuses the whole call with ApproverNotFound. The same user named twice (by UPN and
+    by id, or in a different letter case) is sent once.
+
+    .PARAMETER ApproverGroup
+    The group approvers, each a group display name or group object id, resolved to object ids before
+    anything is sent. Replaces the group approvers on the live rule; the user approvers are kept.
+    Supplying it implies -RequireApproval $true. An empty list clears the group side. A value that
+    does not resolve refuses the whole call with ApproverNotFound.
+
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired to false on the eligibility rule).
     When supplied (even without -EligibleDuration), the eligible-expiration rule is included in the
@@ -151,6 +188,12 @@ function Set-OERGroupPimPolicy {
     Set-OERGroupPimPolicy -Group 'role_az_owner' -AccessType owner -ActivationMaxHours 1 -ActiveEnabledRules MultiFactorAuthentication,Justification -EligibleAlertRecipient 'admin@contoso.com'
     Sets the owner activation window to 1 hour, requires MFA + justification on active assignment, and
     adds an admin recipient to the eligible-assignment alert -- patching only those rules.
+
+    .EXAMPLE
+    Set-OERGroupPimPolicy -Group 'role_sec_identity_administrator' -RequireApproval $true -ApproverGroup 'pim-approvers'
+    Requires approval on member activation with the members of the pim-approvers group as approvers,
+    replacing any group approvers on the live rule while keeping its user approvers, its approval
+    timeout and its justification settings.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([PSCustomObject])]
@@ -191,6 +234,12 @@ function Set-OERGroupPimPolicy {
 
         [string[]]$ActivationAlertRecipient,
 
+        [bool]$RequireApproval,
+
+        [string[]]$ApproverUser,
+
+        [string[]]$ApproverGroup,
+
         [switch]$AllowPermanentEligibility,
 
         [switch]$AllowPermanentActive,
@@ -211,7 +260,8 @@ function Set-OERGroupPimPolicy {
         $RuleParamNames = @(
             'ActivationMaxHours', 'AuthenticationContextId', 'ActivationEnabledRules', 'ActiveEnabledRules',
             'EligibleDuration', 'ActiveDuration', 'EligibleAlertRecipient', 'ActiveAlertRecipient',
-            'ActivationAlertRecipient', 'AllowPermanentEligibility', 'AllowPermanentActive')
+            'ActivationAlertRecipient', 'RequireApproval', 'ApproverUser', 'ApproverGroup',
+            'AllowPermanentEligibility', 'AllowPermanentActive')
         $AnyRuleBound = $RuleParamNames | Where-Object { $PSBoundParameters.ContainsKey($_) }
         if (-not $AnyRuleBound) {
             Write-CmdletError `
@@ -219,12 +269,41 @@ function Set-OERGroupPimPolicy {
                     'No updatable property was supplied. Pass at least one of -ActivationMaxHours, ' +
                     '-AuthenticationContextId, -ActivationEnabledRules, -ActiveEnabledRules, -EligibleDuration, ' +
                     '-ActiveDuration, -EligibleAlertRecipient, -ActiveAlertRecipient, -ActivationAlertRecipient, ' +
-                    '-AllowPermanentEligibility, or -AllowPermanentActive. -AccessType alone only selects which ' +
-                    'policy would be patched; it is not itself an update.')) `
+                    '-RequireApproval, -ApproverUser, -ApproverGroup, -AllowPermanentEligibility, or ' +
+                    '-AllowPermanentActive. -AccessType alone only selects which policy would be patched; it is ' +
+                    'not itself an update.')) `
                 -ErrorId 'NothingToUpdate' `
                 -Category InvalidArgument `
                 -TargetObject $Group `
                 -Cmdlet $PSCmdlet
+            return
+        }
+
+        # Approvers are resolved to object ids before anything else, all or nothing: one value that
+        # does not resolve refuses the whole call before the group is even looked up, so nothing is
+        # sent. The same principal named twice (a UPN and its id, or an id in another letter case)
+        # is kept once, in first-seen order. Same shape as Set-OERRoleManagementPolicy.
+        $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
+        $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
+        $ResolvedUser = [System.Collections.Generic.List[string]]::new()
+        $ResolvedGroup = [System.Collections.Generic.List[string]]::new()
+        $SeenUser = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $SeenGroup = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $Value = $null
+        try {
+            foreach ($Value in @($ApproverUser)) {
+                if (-not $Value) { continue }
+                $PrincipalId = [string](Resolve-OERPrincipal -User $Value).PrincipalId
+                if ($SeenUser.Add($PrincipalId)) { $ResolvedUser.Add($PrincipalId) }
+            }
+            foreach ($Value in @($ApproverGroup)) {
+                if (-not $Value) { continue }
+                $PrincipalId = [string](Resolve-OERPrincipal -Group $Value).PrincipalId
+                if ($SeenGroup.Add($PrincipalId)) { $ResolvedGroup.Add($PrincipalId) }
+            }
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
             return
         }
 
@@ -382,6 +461,59 @@ function Set-OERGroupPimPolicy {
             }
         }
 
+        # Approval is patched as one rule, so what the caller did not supply -- the stage fields and
+        # the approver side left unbound -- has to come from the live rule, or the PATCH would erase
+        # it. Unlike the duration reads above, a failed read here is a REFUSAL of the whole call, not
+        # a warning: there is no safe fallback for someone else's approvers. It is issued only when an
+        # approval parameter is bound, and before any PATCH, so no other rule is half-applied either.
+        $ApproversBound = $ApproverUserBound -or $ApproverGroupBound
+        $ApprovalBound = $ApproversBound -or $PSBoundParameters.ContainsKey('RequireApproval')
+        $LiveApprovalRule = $null
+        $EffUser = @()
+        $EffGroup = @()
+        $EffRequired = $false
+        if ($ApprovalBound) {
+            try {
+                $LiveApprovalRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/Approval_EndUser_Assignment" -f $PolicyId))
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Could not read the live approval rule for PIM policy '$PolicyId': $($PSItem.Exception.Message) Nothing was changed: the approval stage and the approvers not supplied on this call are carried over from the live rule, and without it they would be lost.")) `
+                    -ErrorId 'ApprovalRuleReadFailed' -Category ReadError -TargetObject $PolicyId `
+                    -InnerException $PSItem.Exception -Cmdlet $PSCmdlet
+                return
+            }
+
+            # Only the first stage counts (PIM uses one), read through the single approver reader so
+            # a beta { id } approver is understood. A bound side replaces that side; the unbound side
+            # is the live ids of that kind.
+            $LiveStage = $null
+            if ($null -ne $LiveApprovalRule -and $null -ne $LiveApprovalRule.setting) {
+                $LiveStage = @($LiveApprovalRule.setting.approvalStages) | Where-Object { $null -ne $_ } | Select-Object -First 1
+            }
+            $LivePrimary = @()
+            if ($null -ne $LiveStage) {
+                $LivePrimary = @(@($LiveStage.primaryApprovers) | ForEach-Object { ConvertFrom-OERGraphApprover -Approver $_ })
+            }
+            $EffUser = @(if ($ApproverUserBound) { $ResolvedUser } else { $LivePrimary | Where-Object { $_.UserType -eq 'User' -and $_.Id } | ForEach-Object { $_.Id } })
+            $EffGroup = @(if ($ApproverGroupBound) { $ResolvedGroup } else { $LivePrimary | Where-Object { $_.UserType -eq 'Group' -and $_.Id } | ForEach-Object { $_.Id } })
+            # Supplying approvers implies approval. The live isApprovalRequired never decides here:
+            # this block only runs when -RequireApproval or an approver parameter is bound.
+            $EffRequired = if ($ApproversBound) { $true } else { $RequireApproval }
+
+            # With approvers bound, what will be sent is exactly the two effective sides; otherwise
+            # the live primary approvers go out as they are, every kind counted.
+            $EffApproverCount = if ($ApproversBound) { $EffUser.Count + $EffGroup.Count } else { $LivePrimary.Count }
+            if ($EffRequired -and $EffApproverCount -eq 0) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "Approval cannot be required with no approver: PIM policy '$PolicyId' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup.")) `
+                    -ErrorId 'ApproverRequired' -Category InvalidArgument -TargetObject $Group -Cmdlet $PSCmdlet
+                return
+            }
+        }
+
         $RuleParams = @{}
         if ($PSBoundParameters.ContainsKey('ActivationMaxHours'))      { $RuleParams.ActivationMaxHours = $ActivationMaxHours }
         if ($PSBoundParameters.ContainsKey('AuthenticationContextId')) { $RuleParams.AuthenticationContextId = $AuthenticationContextId }
@@ -406,6 +538,17 @@ function Set-OERGroupPimPolicy {
         if ($PSBoundParameters.ContainsKey('EligibleAlertRecipient'))  { $RuleParams.EligibleAlertRecipient = $EligibleAlertRecipient }
         if ($PSBoundParameters.ContainsKey('ActiveAlertRecipient'))    { $RuleParams.ActiveAlertRecipient = $ActiveAlertRecipient }
         if ($PSBoundParameters.ContainsKey('ActivationAlertRecipient')){ $RuleParams.ActivationAlertRecipient = $ActivationAlertRecipient }
+        # Bound approvers are sent as the two effective sides together -- rebuilding the unbound side
+        # from its live ids is how that side is carried. Unbound, New-OERPimRuleSet carries the live
+        # stage's approvers itself.
+        if ($ApprovalBound) {
+            $RuleParams.RequireApproval = $EffRequired
+            $RuleParams.LiveApprovalRule = $LiveApprovalRule
+            if ($ApproversBound) {
+                $RuleParams.PrimaryApprover = @($EffUser | ForEach-Object { New-OERApproverObject -Spec @{ User = $_ } }) +
+                    @($EffGroup | ForEach-Object { New-OERApproverObject -Spec @{ Group = $_ } })
+            }
+        }
 
         # The eligible- and active-expiration rules are each a unit: bind either the duration or the
         # permanence switch and both fields are sent so the rule is never half-updated. When only the
@@ -540,6 +683,16 @@ function Set-OERGroupPimPolicy {
         if ($Sent.Contains('Notification_Admin_Admin_Eligibility'))     { $Patched.EligibleAlertRecipient = $EligibleAlertRecipient }
         if ($Sent.Contains('Notification_Admin_Admin_Assignment'))      { $Patched.ActiveAlertRecipient = $ActiveAlertRecipient }
         if ($Sent.Contains('Notification_Admin_EndUser_Assignment'))    { $Patched.ActivationAlertRecipient = $ActivationAlertRecipient }
+        # The effective values, not the parameters: approval is reported as it was sent (true when
+        # approvers were supplied), and both approver sides as the object ids sent, the carried side
+        # included.
+        if ($Sent.Contains('Approval_EndUser_Assignment')) {
+            $Patched.RequireApproval = $EffRequired
+            if ($ApproversBound) {
+                $Patched.ApproverUser = @($EffUser)
+                $Patched.ApproverGroup = @($EffGroup)
+            }
+        }
 
         $Out = ConvertTo-OERGroupPimPolicyResult -GroupId $GroupId -PolicyId $PolicyId -AccessType $AccessType `
             -Patched $Patched -FailedRules $Failed.ToArray()

@@ -420,6 +420,258 @@ Describe 'Set-OERGroupPimPolicy' {
             (@($Result.$Property) -join ',') | Should -Be (@($Value) -join ',')
         }
     }
+
+    Context 'approval' {
+        # The live approval rule is read in the beta shape PIM for Groups is pinned to: an approver
+        # carries id, never userId or groupId. $script:LiveApproval is what that read returns;
+        # $script:Patches records every PATCH body, in order.
+        BeforeEach {
+            $script:Patches = [System.Collections.Generic.List[object]]::new()
+            $script:LiveApproval = @{
+                id      = 'Approval_EndUser_Assignment'
+                setting = @{
+                    isApprovalRequired               = $false
+                    isApprovalRequiredForExtension   = $false
+                    isRequestorJustificationRequired = $true
+                    approvalMode                     = 'SingleStage'
+                    approvalStages                   = @(@{
+                            approvalStageTimeOutInDays      = 2
+                            isApproverJustificationRequired = $true
+                            escalationTimeInMinutes         = 0
+                            isEscalationEnabled             = $false
+                            primaryApprovers                = @(
+                                @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1'; description = 'Old user' }
+                                @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1'; description = 'Approvers' }
+                            )
+                            escalationApprovers             = @()
+                        })
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                if ($Method -eq 'PATCH') { $script:Patches.Add($Body); return @{} }
+                if ($Uri -like '*rules/Approval_EndUser_Assignment') { return $script:LiveApproval }
+                return @{}
+            }
+            # An id resolves to itself, letter case preserved (as the real resolver returns a GUID
+            # input untouched); a name resolves through the map; anything else is not found.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
+                $Map = @{
+                    'person1@example.com' = '11111111-1111-1111-1111-111111111111'
+                    'person2@example.com' = '22222222-2222-2222-2222-222222222222'
+                    'pim-approvers'       = '33333333-3333-3333-3333-333333333333'
+                }
+                $Kind = if ($User) { 'User' } else { 'Group' }
+                $Name = if ($User) { $User } else { $Group }
+                $Id = if ($Name -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { $Name } else { $Map[$Name] }
+                if (-not $Id) { throw "$Kind '$Name' was not found." }
+                [pscustomobject]@{ PrincipalId = $Id; PrincipalType = $Kind }
+            }
+        }
+
+        It 'still reports NothingToUpdate when no rule parameter is bound' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'NothingToUpdate*'
+            $Err[0].Exception.Message | Should -Match '-RequireApproval, -ApproverUser, -ApproverGroup'
+        }
+
+        It 'does not report NothingToUpdate when only -<Parameter> is bound' -TestCases @(
+            @{ Parameter = 'RequireApproval'; Value = $true }
+            @{ Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+            @{ Parameter = 'ApproverGroup'; Value = @('pim-approvers') }
+        ) {
+            $Err = $null
+            $Splat = @{ Group = 'gid-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat[$Parameter] = $Value
+            Set-OERGroupPimPolicy @Splat | Out-Null
+            @($Err).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and $Uri -like '*rules/Approval_EndUser_Assignment'
+            }
+        }
+
+        It 'refuses with ApproverNotFound when one of two users does not resolve, and sends nothing' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person1@example.com', 'person9@example.com' -ActivationMaxHours 8 `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            # -ErrorVariable also collects the resolver's own throw, caught inside the cmdlet, so the
+            # record the cmdlet WROTE is selected by its id rather than by position.
+            $Record = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'ApproverNotFound*' })
+            $Record.Count | Should -Be 1
+            $Record[0].TargetObject | Should -Be 'person9@example.com'
+            $Record[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Record[0].Exception.Message | Should -Match 'person9@example\.com'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+            # Approvers are resolved before the group, so a refused call costs no Graph round trip.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses with ApproverNotFound when a group does not resolve' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverGroup 'no-such-group' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Record = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'ApproverNotFound*' })
+            $Record.Count | Should -Be 1
+            $Record[0].TargetObject | Should -Be 'no-such-group'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        # Three call shapes. With -RequireApproval $true alone, a missing return after the read failure
+        # would still be caught downstream by ApproverRequired (the unread rule has no approvers), so
+        # the other two shapes -- where that guard cannot fire -- are what prove the read failure
+        # itself stops the call.
+        It 'refuses with ApprovalRuleReadFailed when the live approval rule cannot be read, and patches no rule at all (<Shape>)' -TestCases @(
+            @{ Shape = 'RequireApproval true'; Parameter = 'RequireApproval'; Value = $true }
+            @{ Shape = 'RequireApproval false'; Parameter = 'RequireApproval'; Value = $false }
+            @{ Shape = 'ApproverUser only'; Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+        ) {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Uri -like '*rules/Approval_EndUser_Assignment' -and $Method -ne 'PATCH' } {
+                throw [System.Exception]::new('transport failure')
+            }
+            $Err = $null
+            $Splat = @{
+                Group = 'gid-1'; ActivationMaxHours = 8; EligibleAlertRecipient = 'person18@example.com'
+                Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err'
+            }
+            $Splat[$Parameter] = $Value
+            $Result = Set-OERGroupPimPolicy @Splat
+            $Result | Should -BeNullOrEmpty
+            $Record = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'ApprovalRuleReadFailed*' })
+            $Record.Count | Should -Be 1
+            $Record[0].CategoryInfo.Category | Should -Be 'ReadError'
+            $Record[0].TargetObject | Should -Be 'pol-1'
+            $Record[0].Exception.Message | Should -Match 'Nothing was changed'
+            $Record[0].Exception.InnerException.Message | Should -Be 'transport failure'
+            # No PATCH of ANY rule -- not the approval rule, and not the two other rules bound in the
+            # same call either.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'refuses with ApproverRequired when approval is required and the live rule has no approver' {
+            $script:LiveApproval = @{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'NoApproval'; approvalStages = @() } }
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -ActivationMaxHours 8 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'ApproverRequired*'
+            $Err[0].TargetObject | Should -Be 'gid-1'
+            $Err[0].Exception.Message | Should -Match "PIM policy 'pol-1'"
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'refuses with ApproverRequired when both approver sides end up empty' {
+            # Binding -ApproverUser to an empty list clears the user side; the live rule has no group.
+            $script:LiveApproval.setting.approvalStages[0].primaryApprovers = @(
+                @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1' }
+            )
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser @() -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Err[0].FullyQualifiedErrorId | Should -BeLike 'ApproverRequired*'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'lets -RequireApproval $false through with no approver anywhere' {
+            $script:LiveApproval = @{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $true; approvalStages = @() } }
+            $Err = $null
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err).Count | Should -Be 0
+            $Result.RequireApproval | Should -BeFalse
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Body.setting.isApprovalRequired | Should -BeFalse
+            @($Body.setting.approvalStages).Count | Should -Be 0
+        }
+
+        It 'patches -RequireApproval $true alone with the live approvers normalized to the PATCH shape' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -Confirm:$false
+            $Result.Applied | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and $Uri -like '*policies/roleManagementPolicies/pol-1/rules/Approval_EndUser_Assignment'
+            }
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Body.'@odata.type' | Should -Be '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'
+            $Body.setting.isApprovalRequired | Should -BeTrue
+            $Stage = @($Body.setting.approvalStages)[0]
+            $Stage.approvalStageTimeOutInDays | Should -Be 2
+            $Primary = @($Stage.primaryApprovers)
+            $Primary.Count | Should -Be 2
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' -and $_.groupId -eq 'grp-1' }).Count | Should -Be 1
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' -and $_.userId -eq 'user-1' }).Count | Should -Be 1
+            @($Primary | Where-Object { $_.Keys -contains 'id' }).Count | Should -Be 0
+        }
+
+        It 'replaces only the user side and carries the live group side when only -ApproverUser is bound' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person1@example.com' -Confirm:$false
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Body.setting.isApprovalRequired | Should -BeTrue
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            $Primary.Count | Should -Be 2
+            $Users = @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' })
+            $Groups = @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' })
+            @($Users.userId) | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Groups.groupId) | Should -Be @('grp-1')
+            @($Result.ApproverUser) | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Result.ApproverGroup) | Should -Be @('grp-1')
+        }
+
+        It 'clears the group side and keeps the live user when -ApproverGroup is bound to an empty list' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverGroup @() -Confirm:$false
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            $Primary.Count | Should -Be 1
+            $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.singleUser'
+            $Primary[0].userId | Should -Be 'user-1'
+            @($Result.ApproverUser) | Should -Be @('user-1')
+            @($Result.ApproverGroup).Count | Should -Be 0
+            $Result.PSObject.Properties.Name | Should -Contain 'ApproverGroup'
+        }
+
+        It 'de-duplicates an approver named twice, by UPN and by id or in different letter case' {
+            $null = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person1@example.com', '11111111-1111-1111-1111-111111111111' `
+                -ApproverGroup 'aaaaaaaa-0000-0000-0000-00000000000a', 'AAAAAAAA-0000-0000-0000-00000000000A' -Confirm:$false
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            $Primary.Count | Should -Be 2
+            @($Primary.userId | Where-Object { $_ }) | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Primary.groupId | Where-Object { $_ }) | Should -Be @('aaaaaaaa-0000-0000-0000-00000000000a')
+        }
+
+        It 'reports RequireApproval, ApproverUser and ApproverGroup on the result when approvers are bound' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -ApproverGroup 'pim-approvers' -Confirm:$false
+            $Result.RequireApproval | Should -BeTrue
+            @($Result.ApproverUser) | Should -Be @('user-1')
+            @($Result.ApproverGroup) | Should -Be @('33333333-3333-3333-3333-333333333333')
+        }
+
+        It 'reports RequireApproval but no approver lists when only -RequireApproval is bound' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -Confirm:$false
+            $Result.PSObject.Properties.Name | Should -Contain 'RequireApproval'
+            $Result.RequireApproval | Should -BeTrue
+            $Result.PSObject.Properties.Name | Should -Not -Contain 'ApproverUser'
+            $Result.PSObject.Properties.Name | Should -Not -Contain 'ApproverGroup'
+        }
+
+        It 'sends nothing and returns no object under -WhatIf' {
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -ApproverUser 'person1@example.com' -WhatIf
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'does not read the live approval rule when no approval parameter is bound' {
+            $null = Set-OERGroupPimPolicy -Group 'gid-1' -ActivationMaxHours 8 -Confirm:$false
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*Approval_EndUser_Assignment' }
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipal -Times 0
+        }
+
+        It 'reads the live approval rule through the PIM for Groups path helper' {
+            # The expected uri comes from the helper itself, so this pins the ROUTING through it and
+            # not the api version the helper owns.
+            $Expected = InModuleScope $script:moduleName {
+                Get-OERPimGroupsGraphPath -Path 'policies/roleManagementPolicies/pol-1/rules/Approval_EndUser_Assignment'
+            }
+            $null = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -Confirm:$false
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -ne 'PATCH' -and $Uri -eq $Expected
+            }
+        }
+    }
 }
 
 Describe 'Set-OERGroupPimPolicy verbose output' {
