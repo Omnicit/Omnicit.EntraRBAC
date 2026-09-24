@@ -9,9 +9,12 @@ function Get-OERGroupPimPolicy {
     Omnicit.EntraRBAC.GroupPimPolicy shape by the private ConvertTo-OERGroupPimPolicy, the single owner
     of this read shape: friendly properties ActivationMaxHours, AuthenticationContextId,
     ActivationEnabledRules, AllowPermanentEligibility, EligibleDuration, EligibleDurationDays,
-    AllowPermanentActive, ActiveDuration, ActiveDurationDays, ActiveEnabledRules, and a Notifications
-    object carrying EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw
-    Rules array. A group that has not been onboarded to PIM for Groups (no policy assignment) produces a
+    AllowPermanentActive, ActiveDuration, ActiveDurationDays, ActiveEnabledRules, RequireApproval
+    (whether activation requires approval, or $null when the policy has no approval rule at all),
+    Approvers (the first approval stage's primary approvers, each an Id/UserType/DisplayName object --
+    a genuinely empty array when there is no approval rule), and a Notifications object carrying
+    EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw Rules array. A
+    group that has not been onboarded to PIM for Groups (no policy assignment) produces a
     non-terminating PimPolicyNotFound error. A policy-assignment lookup that FAILED rather than
     answering -- a 403, a throttle, a dead transport -- is a different fact and is reported separately
     as a non-terminating PimPolicyReadFailed error, so a caller suppressing the ordinary

@@ -142,6 +142,7 @@
           <TableColumnHeader><Label>AccessType</Label></TableColumnHeader>
           <TableColumnHeader><Label>ActivationMaxHours</Label></TableColumnHeader>
           <TableColumnHeader><Label>AuthenticationContextId</Label></TableColumnHeader>
+          <TableColumnHeader><Label>RequireApproval</Label></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -150,6 +151,7 @@
               <TableColumnItem><PropertyName>AccessType</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>ActivationMaxHours</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>AuthenticationContextId</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>RequireApproval</PropertyName></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
         </TableRowEntries>

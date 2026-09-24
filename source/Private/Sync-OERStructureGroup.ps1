@@ -45,8 +45,11 @@ function Sync-OERStructureGroup {
        -Action adminAssign when the eligibility is absent and -Action adminUpdate when it already
        exists and only its window or permanence differs, since Microsoft Graph rejects an adminAssign
        against a principal that is already eligible.
-    4. Apply pimPolicy (e.g. ActivationMaxHours, AllowPermanentEligibility) -- must come after the
-       first time-bound eligibility so the policy exists.
+    4. Apply pimPolicy (e.g. ActivationMaxHours, AllowPermanentEligibility, and approval on activation
+       via requireApproval/approvers) -- must come after the first time-bound eligibility so the
+       policy exists. A declared approver (a UPN or a group display name) is resolved to an object id
+       before the diff, for each access type in turn; an approver that does not resolve reports Failed
+       for that access type ONLY -- the other access type (member/owner) and every later step still run.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -660,6 +663,24 @@ function Sync-OERStructureGroup {
 
             foreach ($AccessType in $DesiredByAccess.Keys) {
                 $Declared = $DesiredByAccess[$AccessType]
+
+                # Declared approver names are resolved to object ids BEFORE the diff, so the diff
+                # compares ids with ids (a UPN or a group name never equals a live approver id).
+                try {
+                    $Declared = Resolve-OERDeclaredApprover -Declared $Declared
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
+                        'ApproverNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                        -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($PSItem.Exception.Message)" `
+                        -ErrorRecord $ErrRec
+                    continue
+                }
 
                 # Read current policy for this access type (best-effort -- group may not be onboarded).
                 $CurrentPolicy = $null

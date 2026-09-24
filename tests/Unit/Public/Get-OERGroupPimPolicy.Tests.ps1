@@ -195,7 +195,7 @@ Describe 'Get-OERGroupPimPolicy' {
         } -ParameterFilter { $Uri -match 'roleManagementPolicies/pol-1/rules' }
         $Result = Get-OERGroupPimPolicy -Id 'gid-1'
         $Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimPolicy'
-        @($Result.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,Notifications,Rules'
+        @($Result.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,RequireApproval,Approvers,Notifications,Rules'
     }
 
     Context 'paging (-All opt-in, Task 7 closes PR36 deliberately-not-fixed item 3)' {

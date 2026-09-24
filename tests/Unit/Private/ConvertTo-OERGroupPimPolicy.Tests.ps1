@@ -41,7 +41,7 @@ Describe 'ConvertTo-OERGroupPimPolicy' {
         InModuleScope Omnicit.EntraRBAC -Parameters @{ Rules = $script:Rules } {
             param($Rules)
             $Out = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
-            @($Out.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,Notifications,Rules'
+            @($Out.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,RequireApproval,Approvers,Notifications,Rules'
         }
     }
 
@@ -52,6 +52,40 @@ Describe 'ConvertTo-OERGroupPimPolicy' {
             @($Out.ActivationEnabledRules).Count | Should -Be 0
             @($Out.Notifications.EligibleAlert).Count | Should -Be 0
             $Out.AllowPermanentEligibility | Should -BeNullOrEmpty
+            # No Approval_EndUser_Assignment rule at all: RequireApproval is genuinely $null (distinct
+            # from a rule that exists with approval turned off), and Approvers is a real empty array,
+            # not a one-element array holding $null (the same array-wrap gotcha the comment above
+            # documents for the other rule-derived collections).
+            $Out.RequireApproval | Should -BeNullOrEmpty
+            @($Out.Approvers).Count | Should -Be 0
+        }
+    }
+
+    Context 'approval rule (RequireApproval, Approvers)' {
+        It 'reads RequireApproval true and both a beta group approver and a v1.0 user approver' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    @{
+                        id      = 'Approval_EndUser_Assignment'
+                        setting = @{
+                            isApprovalRequired = $true
+                            approvalStages     = @(
+                                @{
+                                    primaryApprovers = @(
+                                        @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1'; description = 'A' }
+                                        @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'user-1' }
+                                    )
+                                }
+                            )
+                        }
+                    }
+                )
+                $Out = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+                $Out.RequireApproval | Should -BeTrue
+                @($Out.Approvers).Count | Should -Be 2
+                ($Out.Approvers | Where-Object { $_.UserType -eq 'Group' }).Id | Should -Be 'grp-1'
+                ($Out.Approvers | Where-Object { $_.UserType -eq 'User' }).Id | Should -Be 'user-1'
+            }
         }
     }
 

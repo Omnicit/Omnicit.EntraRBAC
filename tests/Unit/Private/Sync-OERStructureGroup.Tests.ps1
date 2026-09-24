@@ -2487,6 +2487,107 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    Context 'pimPolicy approval (requireApproval, approvers) -- step 4 approver name resolution' {
+        It 'resolves approver names before the diff and converges' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy {
+                    [PSCustomObject]@{
+                        RequireApproval = $true
+                        Approvers       = @([PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; UserType = 'Group'; DisplayName = 'Approvers' })
+                    }
+                }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'Group' } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{
+                            requireApproval = $true
+                            approvers       = [PSCustomObject]@{ groups = @('Approvers') }
+                        }
+                    }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+                ($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                Should -Invoke Set-OERGroupPimPolicy -Times 0
+            }
+        }
+
+        It 'reports Failed for an unresolvable approver in the owner block only; member still processes' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{ activationMaxHours = 8 }
+                        owner  = [PSCustomObject]@{
+                            requireApproval = $true
+                            approvers       = [PSCustomObject]@{ users = @('nobody@example.com') }
+                        }
+                    }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
+                $OwnerFailed.Count | Should -Be 1
+                $OwnerFailed[0].Detail | Should -Match 'could not resolve an approver'
+                @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+            }
+        }
+
+        It 'sends ids, not names, to Set-OERGroupPimPolicy' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ RequireApproval = $true; Approvers = @() } }
+                Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'Group' } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        requireApproval = $true
+                        approvers       = [PSCustomObject]@{ groups = @('Approvers') }
+                    }
+                }
+                Invoke-SyncGroupViaCaller -Item $Item | Out-Null
+                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                    @($ApproverGroup) -contains '22222222-2222-2222-2222-222222222222' -and
+                    @($ApproverGroup) -notcontains 'Approvers'
+                }
+            }
+        }
+    }
+
     Context 'prune withheld when a declared entry cannot be resolved' {
         # A declared entry whose principal lookup gives no id carries no key, so the live entry it
         # was meant to name looks undeclared. Every such pass must report its live candidates

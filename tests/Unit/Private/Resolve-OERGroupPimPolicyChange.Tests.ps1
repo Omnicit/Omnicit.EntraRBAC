@@ -233,3 +233,138 @@ Describe 'Resolve-OERGroupPimPolicyChange authentication context reconcile' {
         }
     }
 }
+
+Describe 'Resolve-OERGroupPimPolicyChange approval (requireApproval, approvers)' {
+    # THE ACCEPTANCE TEST -- Current is built with the REAL ConvertTo-OERGroupPimPolicy (not a hand
+    # built object) so this proves the read side (ConvertFrom-OERGraphApprover's id-for-groupId
+    # fallback) and the diff side agree on what an approver id is, for BOTH shapes Graph can return a
+    # group approver in: the beta endpoint's bare { id }, and the v1.0/PATCH-body { groupId }.
+    It 'reports Unchanged for an approver group returned as id (beta) and as groupId' -ForEach @(
+        @{ Shape = 'beta id'; Approver = @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1' } }
+        @{ Shape = 'groupId'; Approver = @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'grp-1' } }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Approver = $Approver } {
+            param($Approver)
+            $Rules = @(
+                @{
+                    id      = 'Approval_EndUser_Assignment'
+                    setting = @{
+                        isApprovalRequired = $true
+                        approvalStages     = @(@{ primaryApprovers = @($Approver) })
+                    }
+                }
+            )
+            $Current = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $Declared = [pscustomobject]@{ requireApproval = $true; approvers = [pscustomobject]@{ groups = @('grp-1') } }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeFalse
+        }
+    }
+
+    It 'compares approver ids case-insensitively' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ approvers = [pscustomobject]@{ groups = @('GRP-1') } }
+            $Current  = [pscustomobject]@{
+                Approvers = @([PSCustomObject]@{ Id = 'grp-1'; UserType = 'Group'; DisplayName = '' })
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeFalse
+        }
+    }
+
+    It 'sends only ApproverUser when only users are declared and differ' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ approvers = [pscustomobject]@{ users = @('11111111-1111-1111-1111-111111111111') } }
+            $Current  = [pscustomobject]@{ Approvers = @() }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeTrue
+            $R.SetParams.ContainsKey('ApproverUser') | Should -BeTrue
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+        }
+    }
+
+    It 'sends both declared sides when only groups differ' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{
+                approvers = [pscustomobject]@{
+                    users  = @('11111111-1111-1111-1111-111111111111')
+                    groups = @('22222222-2222-2222-2222-222222222222')
+                }
+            }
+            $Current = [pscustomobject]@{
+                Approvers = @(
+                    [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; UserType = 'User'; DisplayName = '' }
+                    [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; UserType = 'Group'; DisplayName = '' }
+                )
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeTrue
+            $R.SetParams.ContainsKey('ApproverUser') | Should -BeTrue
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeTrue
+            $R.SetParams.ApproverGroup | Should -Be @('22222222-2222-2222-2222-222222222222')
+        }
+    }
+
+    It 'ignores approvers and sends no approver key when requireApproval is declared false' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{
+                requireApproval = $false
+                approvers       = [pscustomobject]@{ groups = @('22222222-2222-2222-2222-222222222222') }
+            }
+            $Current = [pscustomobject]@{
+                RequireApproval = $false
+                Approvers       = @()
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.SetParams.ContainsKey('ApproverUser') | Should -BeFalse
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+            $R.SetParams.ContainsKey('RequireApproval') | Should -BeFalse
+            ($R.Changes -join ' ') | Should -Match 'approvers ignored: requireApproval=False takes precedence'
+        }
+    }
+
+    It 'sends RequireApproval only when it differs from Current, even with the ignore note present' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{
+                requireApproval = $false
+                approvers       = [pscustomobject]@{ groups = @('22222222-2222-2222-2222-222222222222') }
+            }
+            $Current = [pscustomobject]@{
+                RequireApproval = $true
+                Approvers       = @([PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; UserType = 'Group'; DisplayName = '' })
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeTrue
+            $R.SetParams.RequireApproval | Should -BeFalse
+            $R.SetParams.ContainsKey('ApproverUser') | Should -BeFalse
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+        }
+    }
+
+    It 'sends every declared approval field when Current is null' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{
+                requireApproval = $true
+                approvers       = [pscustomobject]@{
+                    users  = @('11111111-1111-1111-1111-111111111111')
+                    groups = @('22222222-2222-2222-2222-222222222222')
+                }
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $null
+            $R.Changed | Should -BeTrue
+            $R.SetParams.RequireApproval | Should -BeTrue
+            $R.SetParams.ApproverUser | Should -Be @('11111111-1111-1111-1111-111111111111')
+            $R.SetParams.ApproverGroup | Should -Be @('22222222-2222-2222-2222-222222222222')
+        }
+    }
+
+    It 'treats an explicit "approvers": null as undeclared and sends no approver key' {
+        InModuleScope $script:moduleName {
+            $Declared = '{ "requireApproval": true, "approvers": null }' | ConvertFrom-Json
+            $Current  = [pscustomobject]@{ RequireApproval = $true; Approvers = @() }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.SetParams.ContainsKey('ApproverUser') | Should -BeFalse
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+        }
+    }
+}
