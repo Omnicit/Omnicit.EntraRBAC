@@ -377,7 +377,7 @@ Describe 'Set-OERGroupPimPolicy' {
     }
 
     Context 'every $Sent.Contains rule-id literal that gates the summary is pinned (audit prom-pimpolicy-rule-literals-partially-unpinned)' {
-        # BLAST RADIUS -- recorded here so future triage stays honest. These nine literals gate ONLY
+        # BLAST RADIUS -- recorded here so future triage stays honest. These ten literals gate ONLY
         # $Patched, i.e. WHICH PROPERTIES APPEAR on the returned summary object. $Out.Applied is
         # computed from $Failed.Count / $Sent.Count against @($Rules).Count and does not depend on
         # any of them, and Sync-OERStructureGroup consumes only .FailedRules and .Applied. So the
@@ -390,11 +390,14 @@ Describe 'Set-OERGroupPimPolicy' {
         # the far side of the module, not Set-OERGroupPimPolicy's own $Sent.Contains('<literal>')
         # line. The two are independent strings and a typo in either alone still passes such a test.
         # What pins the gate is asserting that the corresponding $Patched property lands on the
-        # returned object. Five of the nine literals had no such assertion before this table:
+        # returned object. Five of the original nine literals had no such assertion before this table:
         # AuthenticationContext_EndUser_Assignment, Enablement_EndUser_Assignment,
         # Notification_Admin_Admin_Eligibility, Notification_Admin_Admin_Assignment and
-        # Notification_Admin_EndUser_Assignment. Do NOT add a uri-match case here -- that would
-        # simply reproduce the blind spot this table exists to close.
+        # Notification_Admin_EndUser_Assignment. The tenth, Approval_EndUser_Assignment, joined with
+        # its own row when the approval parameters were added (Sprint 6 step 2); it is exercised with
+        # -RequireApproval $false, since this table's mock returns no live approval rule and $true
+        # would then be refused as ApproverRequired before any PATCH. Do NOT add a uri-match case
+        # here -- that would simply reproduce the blind spot this table exists to close.
         It 'reports <Property> on the summary when -<Parameter> is bound (gate literal <Literal>)' -TestCases @(
             @{ Parameter = 'ActivationMaxHours';       Literal = 'Expiration_EndUser_Assignment';            Property = 'ActivationMaxHours';       Value = 4 }
             @{ Parameter = 'AuthenticationContextId';  Literal = 'AuthenticationContext_EndUser_Assignment'; Property = 'AuthenticationContextId';  Value = 'c1' }
@@ -405,6 +408,7 @@ Describe 'Set-OERGroupPimPolicy' {
             @{ Parameter = 'EligibleAlertRecipient';   Literal = 'Notification_Admin_Admin_Eligibility';     Property = 'EligibleAlertRecipient';   Value = @('person31@example.com') }
             @{ Parameter = 'ActiveAlertRecipient';     Literal = 'Notification_Admin_Admin_Assignment';      Property = 'ActiveAlertRecipient';     Value = @('person32@example.com') }
             @{ Parameter = 'ActivationAlertRecipient'; Literal = 'Notification_Admin_EndUser_Assignment';    Property = 'ActivationAlertRecipient'; Value = @('person33@example.com') }
+            @{ Parameter = 'RequireApproval';          Literal = 'Approval_EndUser_Assignment';              Property = 'RequireApproval';          Value = $false }
         ) {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
             $Splat = @{ Group = 'gid-1'; Confirm = $false }
@@ -554,6 +558,7 @@ Describe 'Set-OERGroupPimPolicy' {
             $Err[0].FullyQualifiedErrorId | Should -BeLike 'ApproverRequired*'
             $Err[0].TargetObject | Should -Be 'gid-1'
             $Err[0].Exception.Message | Should -Match "PIM policy 'pol-1'"
+            $Err[0].Exception.Message | Should -BeLike '*has none on its live approval rule and none was supplied*'
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
         }
 
@@ -565,7 +570,47 @@ Describe 'Set-OERGroupPimPolicy' {
             $Err = $null
             Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser @() -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
             $Err[0].FullyQualifiedErrorId | Should -BeLike 'ApproverRequired*'
+            # The live rule DID have an approver here -- the bound side cleared it -- so the message
+            # must not claim the policy had none.
+            $Err[0].Exception.Message | Should -BeLike '*would have none*'
+            $Err[0].Exception.Message | Should -Not -BeLike '*has none on its live approval rule*'
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'carries a live approver of another kind unchanged when an approver side is bound' {
+            $Manager = @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 }
+            $script:LiveApproval.setting.approvalStages[0].primaryApprovers = @(
+                $Manager
+                @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1' }
+                @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1' }
+            )
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person1@example.com' -Confirm:$false
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            $Primary.Count | Should -Be 3
+            # The other-kind approver is the very object that was read, not a rebuilt copy.
+            $Kept = @($Primary | Where-Object { [object]::ReferenceEquals($_, $Manager) })
+            $Kept.Count | Should -Be 1
+            $Kept[0].Keys.Count | Should -Be 2
+            $Kept[0].managerLevel | Should -Be 1
+            # The group side survived; the user side was replaced.
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).groupId | Should -Be @('grp-1')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).userId | Should -Be @('11111111-1111-1111-1111-111111111111')
+            $Result.Applied | Should -BeTrue
+        }
+
+        It 'counts a carried other-kind approver, so clearing both sides beside it is not ApproverRequired' {
+            $script:LiveApproval.setting.approvalStages[0].primaryApprovers = @(
+                @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 }
+                @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1' }
+            )
+            $Err = $null
+            $null = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser @() -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'ApproverRequired*' }).Count | Should -Be 0
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            $Primary.Count | Should -Be 1
+            $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.requestorManager'
         }
 
         It 'lets -RequireApproval $false through with no approver anywhere' {

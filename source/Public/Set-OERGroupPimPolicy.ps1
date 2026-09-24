@@ -33,7 +33,9 @@ function Set-OERGroupPimPolicy {
     -ApproverUser and -ApproverGroup. Binding -ApproverUser replaces the user approvers only and
     -ApproverGroup the group approvers only: the side left unbound is carried over from the live rule,
     so a call that names a new user approver keeps the group approvers already there (this differs
-    from Set-OERRoleManagementPolicy, which replaces the whole list). Supplying approvers on either
+    from Set-OERRoleManagementPolicy, which replaces the whole list). A live approver that is neither
+    a user nor a group (a requestor's manager, for example) is never replaced by either parameter and
+    is sent back unchanged. Supplying approvers on either
     side implies approval is required. -RequireApproval $true needs at least one approver, either
     supplied or already on the live rule; with none, a non-terminating ApproverRequired error is
     written and nothing is sent. Every approver value is resolved to an object id first (a user by
@@ -471,6 +473,7 @@ function Set-OERGroupPimPolicy {
         $LiveApprovalRule = $null
         $EffUser = @()
         $EffGroup = @()
+        $LiveOther = @()
         $EffRequired = $false
         if ($ApprovalBound) {
             try {
@@ -487,7 +490,9 @@ function Set-OERGroupPimPolicy {
 
             # Only the first stage counts (PIM uses one), read through the single approver reader so
             # a beta { id } approver is understood. A bound side replaces that side; the unbound side
-            # is the live ids of that kind.
+            # is the live ids of that kind. A live approver of any OTHER kind (requestorManager, for
+            # example) belongs to neither side, so no parameter replaces it: it is kept as the raw
+            # object it was read as, and sent back unchanged.
             $LiveStage = $null
             if ($null -ne $LiveApprovalRule -and $null -ne $LiveApprovalRule.setting) {
                 $LiveStage = @($LiveApprovalRule.setting.approvalStages) | Where-Object { $null -ne $_ } | Select-Object -First 1
@@ -495,6 +500,9 @@ function Set-OERGroupPimPolicy {
             $LivePrimary = @()
             if ($null -ne $LiveStage) {
                 $LivePrimary = @(@($LiveStage.primaryApprovers) | ForEach-Object { ConvertFrom-OERGraphApprover -Approver $_ })
+                $LiveOther = @(@($LiveStage.primaryApprovers) | Where-Object {
+                        $null -ne $_ -and (ConvertFrom-OERGraphApprover -Approver $_).UserType -eq ''
+                    })
             }
             $EffUser = @(if ($ApproverUserBound) { $ResolvedUser } else { $LivePrimary | Where-Object { $_.UserType -eq 'User' -and $_.Id } | ForEach-Object { $_.Id } })
             $EffGroup = @(if ($ApproverGroupBound) { $ResolvedGroup } else { $LivePrimary | Where-Object { $_.UserType -eq 'Group' -and $_.Id } | ForEach-Object { $_.Id } })
@@ -502,13 +510,17 @@ function Set-OERGroupPimPolicy {
             # this block only runs when -RequireApproval or an approver parameter is bound.
             $EffRequired = if ($ApproversBound) { $true } else { $RequireApproval }
 
-            # With approvers bound, what will be sent is exactly the two effective sides; otherwise
-            # the live primary approvers go out as they are, every kind counted.
-            $EffApproverCount = if ($ApproversBound) { $EffUser.Count + $EffGroup.Count } else { $LivePrimary.Count }
+            # With approvers bound, what will be sent is the two effective sides plus the carried
+            # other-kind approvers; otherwise the live primary approvers go out as they are. Every
+            # kind is counted either way.
+            $EffApproverCount = if ($ApproversBound) { $EffUser.Count + $EffGroup.Count + $LiveOther.Count } else { $LivePrimary.Count }
             if ($EffRequired -and $EffApproverCount -eq 0) {
-                Write-CmdletError `
-                    -Message ([System.Exception]::new(
-                        "Approval cannot be required with no approver: PIM policy '$PolicyId' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup.")) `
+                $NoApproverMessage = if ($ApproversBound) {
+                    "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy '$PolicyId' would have none. Pass at least one approver."
+                } else {
+                    "Approval cannot be required with no approver: PIM policy '$PolicyId' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
+                }
+                Write-CmdletError -Message ([System.Exception]::new($NoApproverMessage)) `
                     -ErrorId 'ApproverRequired' -Category InvalidArgument -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
@@ -539,14 +551,16 @@ function Set-OERGroupPimPolicy {
         if ($PSBoundParameters.ContainsKey('ActiveAlertRecipient'))    { $RuleParams.ActiveAlertRecipient = $ActiveAlertRecipient }
         if ($PSBoundParameters.ContainsKey('ActivationAlertRecipient')){ $RuleParams.ActivationAlertRecipient = $ActivationAlertRecipient }
         # Bound approvers are sent as the two effective sides together -- rebuilding the unbound side
-        # from its live ids is how that side is carried. Unbound, New-OERPimRuleSet carries the live
-        # stage's approvers itself.
+        # from its live ids is how that side is carried -- followed by the live approvers of any other
+        # kind, as read (New-OERPimRuleSet passes those through unchanged). Unbound, New-OERPimRuleSet
+        # carries the live stage's approvers itself.
         if ($ApprovalBound) {
             $RuleParams.RequireApproval = $EffRequired
             $RuleParams.LiveApprovalRule = $LiveApprovalRule
             if ($ApproversBound) {
                 $RuleParams.PrimaryApprover = @($EffUser | ForEach-Object { New-OERApproverObject -Spec @{ User = $_ } }) +
-                    @($EffGroup | ForEach-Object { New-OERApproverObject -Spec @{ Group = $_ } })
+                    @($EffGroup | ForEach-Object { New-OERApproverObject -Spec @{ Group = $_ } }) +
+                    @($LiveOther)
             }
         }
 
