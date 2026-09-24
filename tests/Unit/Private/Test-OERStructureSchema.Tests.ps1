@@ -1514,6 +1514,220 @@ Describe 'Test-OERStructureSchema' {
         }
     }
 
+    Context 'unknown keys in groups items and pimPolicy blocks' {
+        It 'warns once per legacy pimPolicy field name at the flat root, with a did-you-mean hint, and stays Valid' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName = 'role_sec_core'
+                        pimPolicy   = [PSCustomObject]@{
+                            activationEnabledRules    = @('Justification')
+                            activeEnabledRules        = @('Justification')
+                            eligibleAlertRecipients   = @('person1@example.com')
+                            activeAlertRecipients     = @('person1@example.com')
+                            activationAlertRecipients = @('person1@example.com')
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                $Result.Valid | Should -BeTrue
+
+                $LegacyKeys = @('activationEnabledRules', 'activeEnabledRules', 'eligibleAlertRecipients',
+                    'activeAlertRecipients', 'activationAlertRecipients')
+                foreach ($LegacyKey in $LegacyKeys) {
+                    $Finding = @($Result.Errors | Where-Object { $_.Path -eq "groups[0].pimPolicy.$LegacyKey" })
+                    $Finding.Count | Should -Be 1
+                    $Finding[0].Severity | Should -Be 'Warning'
+                }
+
+                $ActivationFinding = @($Result.Errors | Where-Object { $_.Path -eq 'groups[0].pimPolicy.activationEnabledRules' })
+                $ActivationFinding[0].Message | Should -Match ([regex]::Escape("Did you mean 'activationEnablement'?"))
+            }
+        }
+
+        It 'warns about the same legacy names inside pimPolicy.owner at the owner path' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName = 'role_sec_core'
+                        pimPolicy   = [PSCustomObject]@{
+                            owner = [PSCustomObject]@{
+                                activationEnabledRules = @('Justification')
+                            }
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                $Finding = @($Result.Errors | Where-Object { $_.Path -eq 'groups[0].pimPolicy.owner.activationEnabledRules' })
+                $Finding.Count | Should -Be 1
+                $Finding[0].Severity | Should -Be 'Warning'
+                $Finding[0].Message | Should -Match ([regex]::Escape("Did you mean 'activationEnablement'?"))
+            }
+        }
+
+        It 'warns about an unknown group key without a hint' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{ displayName = 'role_sec_core'; colour = 'blue' })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                $Finding = @($Result.Errors | Where-Object { $_.Path -eq 'groups[0].colour' })
+                $Finding.Count | Should -Be 1
+                $Finding[0].Severity | Should -Be 'Warning'
+                $Finding[0].Message | Should -Not -Match 'Did you mean'
+            }
+        }
+
+        It 'does not warn about id on the group, the pimPolicy root, or the member/owner blocks' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName = 'role_sec_core'
+                        id          = 'grp-1'
+                        pimPolicy   = [PSCustomObject]@{
+                            id     = 'policy-1'
+                            member = [PSCustomObject]@{ id = 'member-policy-1' }
+                            owner  = [PSCustomObject]@{ id = 'owner-policy-1' }
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                @($Result.Errors | Where-Object { $_.Message -match 'not applied' }) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'does not warn about any documented key on the group or a flat pimPolicy block' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName                   = 'role_sec_core'
+                        roleAssignable                 = $true
+                        dynamic                        = $false
+                        description                    = 'x'
+                        membershipRule                 = 'x'
+                        membershipRuleProcessingState  = 'On'
+                        mailNickname                   = 'rolesec-core'
+                        administrativeUnit             = 'au_hr'
+                        members                        = @('person1@example.com')
+                        owners                          = @('person2@example.com')
+                        eligibility                    = @([PSCustomObject]@{ principal = 'person3@example.com'; durationDays = 30; accessType = 'member' })
+                        id                              = 'grp-1'
+                        pimPolicy                       = [PSCustomObject]@{
+                            activationMaxHours        = 4
+                            authenticationContextId   = 'c1'
+                            activationEnablement      = @('Justification')
+                            allowPermanentEligibility = $false
+                            eligibleDurationDays      = 30
+                            allowPermanentActive      = $false
+                            activeDurationDays        = 30
+                            activeEnablement          = @('Justification')
+                            notifications             = [PSCustomObject]@{
+                                eligibleAlert   = @('person1@example.com')
+                                activeAlert     = @('person1@example.com')
+                                activationAlert = @('person1@example.com')
+                            }
+                            requireApproval           = $true
+                            approvers                 = [PSCustomObject]@{
+                                users  = @('person4@example.com')
+                                groups = @('grp-approver-1')
+                            }
+                            id                        = 'policy-1'
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                @($Result.Errors | Where-Object { $_.Message -match 'not applied' }) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'does not warn about any documented key in nested member/owner pimPolicy blocks' {
+            InModuleScope $script:moduleName {
+                function New-FullPimBlock {
+                    [PSCustomObject]@{
+                        activationMaxHours        = 4
+                        authenticationContextId   = 'c1'
+                        activationEnablement      = @('Justification')
+                        allowPermanentEligibility = $false
+                        eligibleDurationDays      = 30
+                        allowPermanentActive      = $false
+                        activeDurationDays        = 30
+                        activeEnablement          = @('Justification')
+                        notifications             = [PSCustomObject]@{
+                            eligibleAlert   = @('person1@example.com')
+                            activeAlert     = @('person1@example.com')
+                            activationAlert = @('person1@example.com')
+                        }
+                        requireApproval           = $true
+                        approvers                 = [PSCustomObject]@{
+                            users  = @('person4@example.com')
+                            groups = @('grp-approver-1')
+                        }
+                        id                        = 'member-policy-1'
+                    }
+                }
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName = 'role_sec_core'
+                        pimPolicy   = [PSCustomObject]@{
+                            id     = 'policy-1'
+                            member = New-FullPimBlock
+                            owner  = New-FullPimBlock
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                @($Result.Errors | Where-Object { $_.Message -match 'not applied' }) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'flags mixing nested member with a flat pim field at the pimPolicy root' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    groups  = @([PSCustomObject]@{
+                        displayName = 'role_sec_core'
+                        pimPolicy   = [PSCustomObject]@{
+                            activationEnablement = @('Justification')
+                            member                = [PSCustomObject]@{ activationMaxHours = 4 }
+                        }
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+                $Finding = @($Result.Errors | Where-Object { $_.Path -eq 'groups[0].pimPolicy' -and $_.Message -match 'mixes flat and nested' })
+                $Finding.Count | Should -Be 1
+                $Finding[0].Severity | Should -Be 'Warning'
+            }
+        }
+
+        It 'keeps the roleAssignments and roleManagementPolicies unknown-key messages byte-identical' {
+            InModuleScope $script:moduleName {
+                $Doc = [PSCustomObject]@{
+                    version = '1.0'
+                    roleAssignments = @([PSCustomObject]@{
+                        scope = '/subscriptions/sub-1'; role = 'Reader'; principal = 'anna@contoso.com'
+                        delegatedManagedIdentityResourceId = '/x'
+                    })
+                    roleManagementPolicies = @([PSCustomObject]@{
+                        scope = '/subscriptions/sub-1'; role = 'Owner'; notifications = @('a@b.c')
+                    })
+                }
+                $Result = Test-OERStructureSchema -Document $Doc
+
+                $RAFinding = @($Result.Errors | Where-Object { $_.Path -eq 'roleAssignments[0].delegatedManagedIdentityResourceId' })
+                $RAFinding[0].Message | Should -Be "Unknown key 'delegatedManagedIdentityResourceId' at roleAssignments[0] is not applied by Invoke-OERStructure and will be ignored."
+
+                $RMPFinding = @($Result.Errors | Where-Object { $_.Path -eq 'roleManagementPolicies[0].notifications' })
+                $RMPFinding[0].Message | Should -Be "Unknown key 'notifications' at roleManagementPolicies[0] is not applied by Invoke-OERStructure and will be ignored."
+            }
+        }
+    }
+
     It 'reports no Error for a PascalCase-root document written by an earlier module version' {
         InModuleScope $script:moduleName {
             $Doc = Read-OERStructureDocument -Json @'

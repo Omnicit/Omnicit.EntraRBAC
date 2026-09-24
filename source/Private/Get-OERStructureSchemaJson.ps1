@@ -29,9 +29,12 @@ function Get-OERStructureSchemaJson {
     to object ids before the policy is compared, and requireApproval false takes precedence over a
     declared approvers block. Section item
     objects stay open (additionalProperties is not restricted); only the root object forbids unknown
-    keys at the draft-07 level. Unknown keys in the roleAssignments and roleManagementPolicies sections
-    stay schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply
-    engine cannot honour is visible rather than silent. Tenant-dependent values that the
+    keys at the draft-07 level. Unknown keys in the roleAssignments and roleManagementPolicies sections,
+    in a groups[] item, and in a groups[] pimPolicy block (root, or a nested member/owner block) stay
+    schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply engine
+    cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
+    inventory README used to document before they were renamed gets a did-you-mean hint pointing at its
+    replacement. Tenant-dependent values that the
     offline validator does not enforce (role names, requestorScope scope strings) are intentionally
     left as free strings here and documented in the bundle prompt instead. Pure string builder: no
     Graph, ARM, or filesystem access. SharePointSite catalog resources carry the site URL in a

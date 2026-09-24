@@ -33,10 +33,14 @@ function Test-OERStructureSchema {
     declared together with a non-empty approvers block is the same Warning naming the precedence, at
     the pimPolicy block's own path. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
     PIM rejects both being set at once, a rule draft-07 cannot express, so the offline validator
-    enforces it here. An unknown per-item key in the roleAssignments or roleManagementPolicies section
-    is reported as a Warning naming the key, because the apply handlers for those two sections read a
-    fixed field list and would otherwise drop it silently. Other sections keep accepting unknown keys
-    without comment. An accessPackages assignmentPolicies entry declaring requireApproval true together
+    enforces it here. An unknown per-item key in the roleAssignments or roleManagementPolicies section, a
+    groups[] item, or a groups[] pimPolicy block (root, or a nested member/owner block) is reported as a
+    Warning naming the key, because the apply handlers for those sections and blocks read a fixed field
+    list and would otherwise drop it silently. A pimPolicy key matching one of the five field names the
+    inventory README used to document before they were renamed (activationEnabledRules,
+    activeEnabledRules, eligibleAlertRecipients, activeAlertRecipients, activationAlertRecipients) gets a
+    "Did you mean '<current name>'?" suffix pointing at its replacement. Other sections keep accepting
+    unknown keys without comment. An accessPackages assignmentPolicies entry declaring requireApproval true together
     with an empty approvalStages array is a Warning naming the measured outcome: Microsoft Graph refuses
     the write with InvalidApprovalStages ("If approval is required, a valid list of stages must be
     provided."), so the assignment policy is reported Failed and left completely unchanged and the
@@ -144,15 +148,22 @@ function Test-OERStructureSchema {
 
     # Per-item objects are intentionally open in schema.json, so an unsupported key passes draft-07
     # validation and is then silently dropped on apply. Surface it as a Warning (never an Error, so no
-    # existing document starts failing) in the two Azure Resource Manager sections, where the apply
-    # handlers read a fixed field list and ignore everything else.
+    # existing document starts failing) in the sections and blocks where the apply handlers read a
+    # fixed field list and ignore everything else. The optional -Hint maps a known-obsolete key
+    # (case-insensitive) to the current key it was renamed to, so a document still carrying an old
+    # inventory README field name gets a did-you-mean pointer instead of a bare "unknown key". Existing
+    # callers pass no -Hint, so their messages are unchanged.
     function Add-UnknownKeyWarning {
-        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string[]]$KnownKey)
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path, [string[]]$KnownKey, [hashtable]$Hint)
         if ($null -eq $Node) { return }
         foreach ($Key in $Node.PSObject.Properties.Name) {
             if ($KnownKey -inotcontains $Key) {
+                $UnknownKeyMessage = "Unknown key '$Key' at $Path is not applied by Invoke-OERStructure and will be ignored."
+                if ($Hint -and $Hint.ContainsKey($Key)) {
+                    $UnknownKeyMessage += " Did you mean '$($Hint[$Key])'?"
+                }
                 Add-Finding -Section $Section -Item $Item -Path "$Path.$Key" `
-                    -Message "Unknown key '$Key' at $Path is not applied by Invoke-OERStructure and will be ignored." `
+                    -Message $UnknownKeyMessage `
                     -Severity 'Warning'
             }
         }
@@ -207,12 +218,33 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'groups') {
         if (Test-SectionIsArray -SectionName 'groups') {
             $Groups = @($Document.groups)
+
+            # Shared across the whole groups[] rule: the pimPolicy vocabulary (flat and nested member/
+            # owner blocks alike), and the five field names the inventory README used to document before
+            # they were renamed. A document still carrying one of those old names gets a did-you-mean
+            # hint pointing at its replacement instead of a bare "unknown key".
+            $PimBlockKeys = @('activationMaxHours', 'authenticationContextId', 'activationEnablement',
+                'allowPermanentEligibility', 'eligibleDurationDays', 'allowPermanentActive', 'activeDurationDays',
+                'activeEnablement', 'notifications', 'requireApproval', 'approvers')
+            $LegacyPimKeyHint = @{
+                activationEnabledRules    = 'activationEnablement'
+                activeEnabledRules        = 'activeEnablement'
+                eligibleAlertRecipients   = 'notifications.eligibleAlert'
+                activeAlertRecipients     = 'notifications.activeAlert'
+                activationAlertRecipients = 'notifications.activationAlert'
+            }
+
             for ($I = 0; $I -lt $Groups.Count; $I++) {
                 $G = $Groups[$I]
                 $GPath = "groups[$I]"
                 $HasDN = Test-HasProp -Node $G -Name 'displayName'
                 $HasTpl = Test-HasProp -Node $G -Name 'template'
                 $GItem = if ($HasDN) { $G.displayName } else { "groups[$I]" }
+
+                Add-UnknownKeyWarning -Node $G -Section 'groups' -Item $GItem -Path $GPath `
+                    -KnownKey @('displayName', 'template', 'tokens', 'roleAssignable', 'dynamic',
+                        'description', 'membershipRule', 'membershipRuleProcessingState', 'mailNickname',
+                        'administrativeUnit', 'members', 'owners', 'eligibility', 'pimPolicy', 'id')
 
                 if ($HasDN -and $HasTpl) {
                     Add-Finding -Section 'groups' -Item $GItem -Path $GPath `
@@ -421,9 +453,13 @@ function Test-OERStructureSchema {
 
                     $HasMember = Test-HasProp -Node $Pp -Name 'member'
                     $HasOwner  = Test-HasProp -Node $Pp -Name 'owner'
-                    $HasFlat   = (Test-HasProp -Node $Pp -Name 'activationMaxHours') -or
-                                 (Test-HasProp -Node $Pp -Name 'authenticationContextId') -or
-                                 (Test-HasProp -Node $Pp -Name 'allowPermanentEligibility')
+                    $HasFlat   = $false
+                    foreach ($PimBlockKey in $PimBlockKeys) {
+                        if (Test-HasProp -Node $Pp -Name $PimBlockKey) { $HasFlat = $true; break }
+                    }
+
+                    Add-UnknownKeyWarning -Node $Pp -Section 'groups' -Item $GItem -Path "$GPath.pimPolicy" `
+                        -KnownKey ($PimBlockKeys + @('member', 'owner', 'id')) -Hint $LegacyPimKeyHint
 
                     if (($HasMember -or $HasOwner) -and $HasFlat) {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.pimPolicy" `
@@ -431,8 +467,16 @@ function Test-OERStructureSchema {
                             -Severity 'Warning'
                     }
 
-                    if ($HasMember) { & $ValidatePimBlock $Pp.member "$GPath.pimPolicy.member" }
-                    if ($HasOwner)  { & $ValidatePimBlock $Pp.owner  "$GPath.pimPolicy.owner" }
+                    if ($HasMember) {
+                        Add-UnknownKeyWarning -Node $Pp.member -Section 'groups' -Item $GItem -Path "$GPath.pimPolicy.member" `
+                            -KnownKey ($PimBlockKeys + @('id')) -Hint $LegacyPimKeyHint
+                        & $ValidatePimBlock $Pp.member "$GPath.pimPolicy.member"
+                    }
+                    if ($HasOwner) {
+                        Add-UnknownKeyWarning -Node $Pp.owner -Section 'groups' -Item $GItem -Path "$GPath.pimPolicy.owner" `
+                            -KnownKey ($PimBlockKeys + @('id')) -Hint $LegacyPimKeyHint
+                        & $ValidatePimBlock $Pp.owner "$GPath.pimPolicy.owner"
+                    }
                     if (-not $HasMember -and -not $HasOwner) { & $ValidatePimBlock $Pp "$GPath.pimPolicy" }
                 }
             }
