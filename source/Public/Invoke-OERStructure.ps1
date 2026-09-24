@@ -32,7 +32,12 @@ function Invoke-OERStructure {
 
     Prune mode (-Prune): passed through to every handler. Each handler gates its prune pass
     with $Caller.ShouldProcess, honouring -WhatIf. Prune is child-scope only -- no handler ever
-    deletes a top-level object (a group, catalog, etc.) that is absent from the document.
+    deletes a top-level object (a group, catalog, etc.) that is absent from the document. A declared
+    entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
+    in it is reported Skipped with a Detail starting "prune withheld:", with or without -Prune,
+    instead of being removed or reported Extra. An OMITTED
+    members, scopedRoles, resources or resourceRoles key still prunes, so before the first write the
+    engine lists every such key in one warning (see -Prune).
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
@@ -77,6 +82,27 @@ function Invoke-OERStructure {
     absent from the document (for example undeclared group members or undeclared role assignments
     at a declared scope). Each removal is gated by ShouldProcess so -WhatIf shows the plan without
     making changes. Top-level objects (groups, catalogs, etc.) are never deleted by the engine.
+
+    A declared entry that cannot be resolved (for example a member whose principal lookup finds no
+    object) withholds the prune of its whole collection, since its live counterpart cannot be told
+    apart from an undeclared entry: every undeclared live entry in that collection is left in place and
+    reported Skipped with a Detail starting "prune withheld:", with or without -Prune (instead of
+    Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
+    remove the unresolved entry to reconcile the collection.
+
+    Five collections are reconciled even when their key is omitted, against an empty declared set,
+    so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,
+    administrativeUnits[].scopedRoles, catalogs[].resources and accessPackages[].resourceRoles. When
+    -Prune is set, one warning lists every such omitted key in a section selected by -Include before
+    anything is written, under -WhatIf too. Declare the key (an empty array removes the entries
+    deliberately), or set it to null to leave that collection untouched. The members key of a group
+    or administrative unit the document declares "dynamic": true is not listed, since the handlers
+    skip the member prune on a dynamic object. The exclusion trusts the document's dynamic flag: a
+    group declared dynamic whose live group is static (Set-OERGroup cannot convert it), or an
+    administrative unit whose conversion to dynamic is not applied in this run (-WhatIf, a declined
+    prompt, a failed update, or no membershipRule available), still has its omitted members pruned,
+    and this warning does not list them. Test-OERStructure reports the same omissions as Warning
+    findings.
 
     .PARAMETER Include
     Restricts the sections the engine dispatches. Defaults to all seven sections. Pass a subset
@@ -191,6 +217,20 @@ function Invoke-OERStructure {
         # Per-scope tracking for the RoleAssignments section, so the scope-wide reconcile/prune pass
         # runs once per declared scope (on the first item of that scope).
         $SeenRaScopes = @{}
+
+        # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
+        # Five collections are reconciled against an empty declared set when their key is omitted, so
+        # -Prune removes every live entry in them. Get-OEROmittedPruneCollection owns which keys those
+        # are; list the ones in a section -Include selects, once, before the pre-pass below -- the first
+        # code that can write. -WhatIf included, since that is where an operator reads the plan.
+        if ($Prune) {
+            $PruneDocKey = @($SectionOrder | Where-Object { $Include -contains $_.IncludeName } | ForEach-Object { $_.DocKey })
+            $Omitted = @(Get-OEROmittedPruneCollection -Document $Document | Where-Object { $PruneDocKey -contains $_.Section })
+            if ($Omitted.Count -gt 0) {
+                $Verb = if ($WhatIfPreference) { 'would be removed' } else { 'will be removed' }
+                Write-Warning "Invoke-OERStructure: -Prune is set and the document omits $($Omitted.Count) collection key(s) that are still reconciled when omitted, so every live entry in them $Verb`: $(($Omitted | ForEach-Object { "$($_.Section) '$($_.Item)' $($_.Collection)" }) -join '; '). Declare each key (an empty array removes the entries deliberately), or set it to null to leave that collection untouched."
+            }
+        }
 
         # -- 6a. Pre-pass: ensure an administrative unit a declared group is created INTO -----------
         # A group can be created INTO an administrative unit (New-OERGroup -AdministrativeUnit), but the

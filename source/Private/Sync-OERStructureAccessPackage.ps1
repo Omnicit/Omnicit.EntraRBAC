@@ -32,9 +32,11 @@ function Sync-OERStructureAccessPackage {
        changed on an existing package.
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
-       bindings with -Prune). Each binding is identified by the resource display name (resolved to
-       an OriginId via Get-OERCatalogResource, falling back to Resolve-OERGroupId) and the role
-       display name. Existing bindings are read via a raw Graph call against resourceRoleScopes.
+       bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
+       see "Withheld prune" below). Each binding is identified by the resource display name
+       (resolved to an OriginId via Get-OERCatalogResource, falling back to Resolve-OERGroupId) and
+       the role display name. Existing bindings are read via a raw Graph call against
+       resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
 
@@ -66,6 +68,22 @@ function Sync-OERStructureAccessPackage {
     -Prune those extras are reported as Extra (informational) and left alone. -Prune is scoped to
     resource role bindings only -- it never removes an undeclared assignment policy (see above).
 
+    Withheld prune: a declared resourceRoles entry is unresolved when its resource name matches no
+    resource in the catalog by display name and Resolve-OERGroupId finds no group by that name
+    either. Such an entry carries no origin id, so the pass cannot tell which live binding it names,
+    and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
+    every undeclared live binding of the package is reported Skipped, with a Detail that starts
+    "prune withheld: declared entry '<resource>' could not be resolved" (several unresolved entries:
+    "declared entries '<resource1>', '<resource2>' could not be resolved"), with or without -Prune;
+    no warning is written, no ShouldProcess prompt is issued, and no binding is removed until the
+    entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
+    the text). The unresolved entry keeps its own Failed record (the record is lost only when the
+    handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
+    finding nothing, is not caught by this handler: it ends the item where it is thrown, neither the
+    resource role prune nor the assignment policy step runs, and the engine reports the item as one
+    Failed ("handler error") record, discarding every record the handler had already emitted for it
+    (a Created package or an added binding stands with no row).
+
     A failed read of the package's live state -- the resource role bindings, the assignment policies,
     or the declared catalog's resources -- reports Failed with the underlying ErrorRecord and
     reconciles nothing further for that item, so a Created row is never derived from a read that did
@@ -91,6 +109,10 @@ function Sync-OERStructureAccessPackage {
     is declared without touching its resource role bindings. Scoped to resource role bindings
     only: an undeclared assignment policy is always reported as Extra and is never removed, with
     or without -Prune -- call Remove-OERAccessPackageAssignmentPolicy directly to delete one.
+    While a declared resourceRoles entry cannot be resolved (its resource matches no catalog
+    resource and no group), no binding is removed or reported Extra: every undeclared live binding
+    is reported Skipped with a Detail starting "prune withheld:", with or without this switch. A
+    lookup that throws aborts the item instead, before the resource role prune.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded to Resolve-OERStructureDefault so that omitted
@@ -332,6 +354,10 @@ function Sync-OERStructureAccessPackage {
         # -- Step 2: resourceRoles ---------------------------------------------------------
         # Track declared (originId, roleDisplayName) pairs for prune comparison.
         $DeclaredBindingKeys = [System.Collections.Generic.List[string]]::new()
+        # Declared resources that could not be resolved to an origin id carry no binding key, so they
+        # cannot protect their live bindings; while this list is non-empty the Extra/prune loop below
+        # withholds every candidate (ConvertTo-OERPruneWithheldResult owns the rule).
+        $ResourceRoleUnresolved = [System.Collections.Generic.List[string]]::new()
         # An omitted 'resourceRoles' key has always meant "no add-list, but the prune/Extra loop
         # below still runs against whatever it finds" -- that is intentional, existing, tested
         # behavior (an absent collection is not an instruction to leave live state alone; only an
@@ -386,6 +412,7 @@ function Sync-OERStructureAccessPackage {
 
                 if (-not $OriginId) {
                     ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' -Detail "could not resolve resource '$ResName' to an origin id in catalog '$($Item.catalog)'"
+                    $ResourceRoleUnresolved.Add($ResName)
                     continue
                 }
 
@@ -429,6 +456,8 @@ function Sync-OERStructureAccessPackage {
             foreach ($CurBinding in $CurrentBindings) {
                 $CurKey = "$($CurBinding.role.displayName)|$($CurBinding.scope.originId)"
                 if ($DeclaredBindingKeys -notcontains $CurKey) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'accessPackages' -Item $Name -Unresolved $ResourceRoleUnresolved -Candidate "undeclared resourceRole binding '$CurKey'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                         Write-Warning "Sync-OERStructureAccessPackage: $PruneVerb undeclared resourceRole binding '$CurKey' from access package '$Name'."

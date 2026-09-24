@@ -23,13 +23,15 @@ function Sync-OERStructureGroup {
        state for either one gets a Skipped record naming the divergence plus a Write-Warning, and the
        write is never attempted; this also suppresses the contradictory 'group properties match'
        Unchanged for the same group.
-    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune) -- UNLESS
+    2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
+       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS
        the group is dynamic (already dynamic, or declared dynamic=true in the document). Microsoft Learn
        is explicit that a member of a dynamic membership group cannot be added or removed manually, so
        every declared member is reported as a Skipped record instead, nothing is added, and the
        Extra/prune pass does not run (a group with no declared members but a live membership still gets
        one summary Skipped record so the inaction is visible under -Prune too).
-    2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune), gated on
+    2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune, or report
+        them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
         dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
@@ -57,6 +59,27 @@ function Sync-OERStructureGroup {
     -Prune) when the document's eligibility key is DECLARED (present and non-null, including an
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
+
+    Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
+    declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
+    entry carries no id, so the pass cannot tell which live entry it names, and its live counterpart
+    would otherwise look undeclared. Every undeclared live entry in that collection is then reported
+    Skipped, with a Detail that starts "prune withheld: declared entry '<reference>' could not be
+    resolved" (several unresolved entries: "declared entries '<a>', '<b>' could not be resolved"),
+    with or without -Prune; no warning is written, no ShouldProcess prompt is issued, and nothing in
+    that collection is removed until the entry is fixed or removed from the document
+    (ConvertTo-OERPruneWithheldResult owns the rule and the text). The unresolved entry keeps its own
+    error and Failed record (the record is lost only when the handler later throws for the same item,
+    see below). The rule is per collection: an unresolved owner withholds the owner prune only, and the
+    member and eligibility passes run as usual. For eligibility, an unresolved entry in either the
+    time-bound or the permanent list withholds the whole eligibility prune. A withheld owner is
+    reported Skipped before the last-owner guard is consulted. A lookup that THROWS, rather than
+    giving no id, is not caught by this handler: it ends the item where it is thrown, and neither that
+    collection's prune pass nor any later step runs. The engine then reports the item as one Failed
+    ("handler error") record and discards every record the handler had already emitted for it, so a
+    change already applied -- a prune pass completed for an earlier collection included -- stands
+    with no row, and an unresolved entry's Failed row is lost; warnings and errors already written
+    remain.
 
     A failed read of the live group -- its properties, members, owners or PIM eligibility -- reports
     Failed with the underlying ErrorRecord and reconciles nothing further for that item, so a Created
@@ -86,7 +109,10 @@ function Sync-OERStructureGroup {
     pruned/reported same as any other run), but an explicit "members": null does not reconcile at
     all. null -- not an omitted key -- is how a group is declared without touching its members,
     owners or eligibility; applying the scalar "omission means untouched" rule to members gets
-    this backwards.
+    this backwards. In each of members, owners and eligibility, while a declared entry cannot be
+    resolved to an object id, nothing in that collection is removed or reported Extra: every
+    undeclared live entry in it is reported Skipped with a Detail starting "prune withheld:", with or
+    without this switch. A lookup that throws aborts the item instead, before that collection's prune.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias, accepted only for call-site uniformity with the other
@@ -356,6 +382,10 @@ function Sync-OERStructureGroup {
                     -Detail "the $($CurrentMembers.Count) current member(s) were not reconciled: group '$Name' is dynamic and its membership is owned by its membership rule -- members cannot be removed manually, so -Prune does not apply to them"
             }
         } else {
+            # A declared member that cannot be resolved carries no id, so it cannot protect its live
+            # counterpart from the Extra/prune loop below; while this list is non-empty that loop
+            # withholds every candidate (ConvertTo-OERPruneWithheldResult owns the rule).
+            $MemberUnresolved = [System.Collections.Generic.List[string]]::new()
             if (Test-OERDeclaredProperty -Node $Item -Name 'members') {
                 foreach ($MRef in @($Item.members)) {
                     $Mid = Resolve-OERStructurePrincipal -Reference $MRef
@@ -368,6 +398,7 @@ function Sync-OERStructureGroup {
                         )
                         $Caller.WriteError($ErrRec)
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve member '$MRef'" -ErrorRecord $ErrRec
+                        $MemberUnresolved.Add($MRef)
                         continue
                     }
                     $DeclaredMemberIds.Add($Mid)
@@ -401,6 +432,8 @@ function Sync-OERStructureGroup {
                 foreach ($CurMember in $CurrentMembers) {
                     $CurId = $CurMember.id
                     if ($DeclaredMemberIds -notcontains $CurId) {
+                        $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
+                        if ($Withheld) { $Withheld; continue }
                         if ($Prune) {
                             $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                             Write-Warning "Sync-OERStructureGroup: $PruneVerb undeclared member '$CurId' from group '$Name'."
@@ -434,6 +467,9 @@ function Sync-OERStructureGroup {
         # off every group in an already-written document on its next -Prune run.
         if (Test-OERDeclaredProperty -Node $Item -Name 'owners') {
             $DeclaredOwnerIds = [System.Collections.Generic.List[string]]::new()
+            # Same rule as $MemberUnresolved: an unresolved declared owner withholds every owner
+            # candidate in the Extra/prune loop below.
+            $OwnerUnresolved = [System.Collections.Generic.List[string]]::new()
             foreach ($ORef in @($Item.owners)) {
                 $Oid = Resolve-OERStructurePrincipal -Reference $ORef
                 if (-not $Oid) {
@@ -445,6 +481,7 @@ function Sync-OERStructureGroup {
                     )
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve owner '$ORef'" -ErrorRecord $ErrRec
+                    $OwnerUnresolved.Add($ORef)
                     continue
                 }
                 $DeclaredOwnerIds.Add($Oid)
@@ -484,6 +521,8 @@ function Sync-OERStructureGroup {
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $OwnerUnresolved -Candidate "undeclared owner '$CurId'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         if ($RemainingOwnerCount -le 1) {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' `
@@ -522,6 +561,10 @@ function Sync-OERStructureGroup {
         # Declared (principalId, accessType) keys, populated as both eligibility loops below resolve
         # each entry's principal and access type. Consumed by the Extra/prune pass after Step 5.
         $DeclaredEligibilityKeys = [System.Collections.Generic.List[string]]::new()
+        # Declared eligibility principals that could not be resolved, fed by BOTH loops below. While
+        # it is non-empty the Extra/prune pass withholds every eligibility candidate, since an
+        # unresolved entry carries no key to protect its live counterpart with.
+        $EligibilityUnresolved = [System.Collections.Generic.List[string]]::new()
         if ($HasEligibility) {
             foreach ($EEntry in @($Item.eligibility)) {
                 if (Test-OERDeclaredProperty -Node $EEntry -Name 'durationDays') {
@@ -559,6 +602,7 @@ function Sync-OERStructureGroup {
                 )
                 $Caller.WriteError($ErrRec)
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve eligibility principal '$EPrinRef'" -ErrorRecord $ErrRec
+                $EligibilityUnresolved.Add($EPrinRef)
                 continue
             }
 
@@ -664,6 +708,7 @@ function Sync-OERStructureGroup {
                 )
                 $Caller.WriteError($ErrRec)
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "could not resolve eligibility principal '$EPrinRef'" -ErrorRecord $ErrRec
+                $EligibilityUnresolved.Add($EPrinRef)
                 continue
             }
 
@@ -706,6 +751,8 @@ function Sync-OERStructureGroup {
                 $CurKey = ('{0}|{1}' -f $CurPrincipal, $CurAccess).ToLowerInvariant()
                 if ($DeclaredEligibilityKeys -contains $CurKey) { continue }
                 $Label = "undeclared $CurAccess eligibility for principal '$CurPrincipal'"
+                $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $EligibilityUnresolved -Candidate $Label
+                if ($Withheld) { $Withheld; continue }
                 if ($Prune) {
                     # Remove-OERGroupEligibility (ConfirmImpact = High) also emits its own generic
                     # Write-Warning inside its ShouldProcess gate on every real removal. A previous revision

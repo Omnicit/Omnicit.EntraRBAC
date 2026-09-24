@@ -307,3 +307,106 @@ Describe 'Invoke-OERStructure handler-failure row' {
         $Failed[0].Item | Should -Be '(item)'
     }
 }
+
+Describe 'Invoke-OERStructure omitted-collection prune warning' {
+    # Five collections are reconciled against an empty declared set when their key is omitted, so
+    # -Prune removes every live entry in them. The engine lists those keys in one warning, after
+    # authentication and before the administrative unit pre-pass -- the first code that can write.
+    # Warnings are captured with 3>&1 so their relative ORDER is preserved: each mocked handler writes
+    # its own MARKER warning, and the engine's warning has to precede every one of them.
+    BeforeAll {
+        function Get-WarningMessage {
+            param([object[]]$Stream)
+            @($Stream | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+        }
+        function Get-EngineWarning {
+            param([string[]]$Message)
+            @($Message | Where-Object { $_ -like 'Invoke-OERStructure: -Prune is set*' })
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        InModuleScope $script:moduleName {
+            Mock Sync-OERStructureGroup { Write-Warning 'MARKER: Sync-OERStructureGroup ran' }
+            Mock Sync-OERStructureAdministrativeUnit {
+                param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly)
+                Write-Warning "MARKER: Sync-OERStructureAdministrativeUnit ran (EnsureOnly=$([bool]$EnsureOnly))"
+            }
+            Mock Sync-OERStructureCatalog { Write-Warning 'MARKER: Sync-OERStructureCatalog ran' }
+            Mock Sync-OERStructureAccessPackage { Write-Warning 'MARKER: Sync-OERStructureAccessPackage ran' }
+        }
+    }
+
+    It 'writes one warning under -Prune -WhatIf before the administrative unit pre-pass and the first handler run' {
+        # g1 omits members and names AU-1, so the pre-pass runs; AU-1 declares both of its collections.
+        $Json = '{ "version": "1.0", ' +
+            '"groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], ' +
+            '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "g1" ], "scopedRoles": [] } ] }'
+        $Messages = @(Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1))
+
+        $EngineAt = @(for ($I = 0; $I -lt $Messages.Count; $I++) { if ($Messages[$I] -like 'Invoke-OERStructure: -Prune is set*') { $I } })
+        $MarkerAt = @(for ($I = 0; $I -lt $Messages.Count; $I++) { if ($Messages[$I] -like 'MARKER:*') { $I } })
+        $EngineAt.Count | Should -Be 1
+        # Non-vacuity: the pre-pass and the handlers really ran, or the order proves nothing.
+        $MarkerAt.Count | Should -Be 3
+        $Messages[$MarkerAt[0]] | Should -BeExactly 'MARKER: Sync-OERStructureAdministrativeUnit ran (EnsureOnly=True)'
+        $EngineAt[0] | Should -BeLessThan $MarkerAt[0]
+        $EngineAt[0] | Should -Be 0
+    }
+
+    It 'names each omitted key as section, quoted item and collection, and counts them' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ], "catalogs": [ { "displayName": "c1" } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 1
+        $Engine[0] | Should -BeLike "*the document omits 2 collection key(s)*"
+        $Engine[0] | Should -BeLike "*: groups 'g1' members; catalogs 'c1' resources. Declare each key*"
+    }
+
+    It 'says would be removed under -WhatIf and will be removed without it' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $Planned = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1)))
+        $Planned.Count | Should -Be 1
+        $Planned[0] | Should -BeLike '*every live entry in them would be removed: *'
+        $Live = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -Confirm:$false 3>&1)))
+        $Live.Count | Should -Be 1
+        $Live[0] | Should -BeLike '*every live entry in them will be removed: *'
+    }
+
+    It 'writes no warning without -Prune' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 0
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureGroup -Times 1 -Exactly }
+    }
+
+    It 'writes no warning when members is an explicit null' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": null } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 0
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureGroup -Times 1 -Exactly }
+    }
+
+    It 'writes no warning for the omitted members of a group declared dynamic' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "dynamic": true, "membershipRule": "(user.department -eq \"IT\")" } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Prune -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 0
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureGroup -Times 1 -Exactly }
+    }
+
+    It 'writes no warning when -Include excludes the only section that omits a key' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ], "catalogs": [ { "displayName": "c1", "resources": [] } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Include Catalogs -Prune -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 0
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureCatalog -Times 1 -Exactly }
+    }
+
+    It 'lists only the keys of the sections -Include selects' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ], "catalogs": [ { "displayName": "c1" } ] }'
+        $Engine = @(Get-EngineWarning (Get-WarningMessage (Invoke-OERStructure -Json $Json -Include Groups -Prune -WhatIf 3>&1)))
+        $Engine.Count | Should -Be 1
+        $Engine[0] | Should -BeLike "*omits 1 collection key(s)*: groups 'g1' members. Declare each key*"
+        $Engine[0] | Should -Not -BeLike '*catalogs*'
+    }
+}

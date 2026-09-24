@@ -408,7 +408,9 @@ Describe 'Test-OERStructureSchema' {
 
     It 'warns (but stays Valid) when an access package references an undeclared catalog' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap", "catalog": "CAT-Absent" } ] }' | ConvertFrom-Json
+            # resourceRoles is declared so the omitted-collection Warning cannot stand in for the
+            # catalog cross-reference Warning this test is about.
+            $Doc = '{ "version": "1.0", "accessPackages": [ { "displayName": "ap", "catalog": "CAT-Absent", "resourceRoles": [] } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             $V.Valid | Should -BeTrue
             @($V.Errors | Where-Object Severity -eq 'Warning').Count | Should -BeGreaterThan 0
@@ -417,7 +419,9 @@ Describe 'Test-OERStructureSchema' {
 
     It 'does not warn when the access package catalog is declared' {
         InModuleScope $script:moduleName {
-            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-X" } ], "accessPackages": [ { "displayName": "ap", "catalog": "CAT-X" } ] }' | ConvertFrom-Json
+            # resources and resourceRoles are declared so the omitted-collection Warning does not
+            # count against the catalog cross-reference this test is about.
+            $Doc = '{ "version": "1.0", "catalogs": [ { "displayName": "CAT-X", "resources": [] } ], "accessPackages": [ { "displayName": "ap", "catalog": "CAT-X", "resourceRoles": [] } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors | Where-Object Severity -eq 'Warning').Count | Should -Be 0
         }
@@ -2385,6 +2389,74 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                 '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "SomeoneElse" ] } ] }') | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
             @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema omitted collection key warning' {
+    # Five collections are reconciled against an empty declared set when their key is omitted, so
+    # Invoke-OERStructure -Prune removes every live entry in them. Get-OEROmittedPruneCollection owns
+    # which keys those are; the validator turns each one into a Warning, never an Error.
+    It 'warns exactly once for an omitted group members key, at groups[0].members, and keeps the document Valid' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "g1" } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors).Count | Should -Be 1
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].members' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section  | Should -BeExactly 'groups'
+            $Hit[0].Item     | Should -BeExactly 'g1'
+            $Hit[0].Message | Should -BeExactly "'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched."
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'does not warn when group members is an explicit null' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].members' }).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'does not warn for the omitted members of a group declared dynamic true' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "g1", "dynamic": true, "membershipRule": "(user.department -eq \"IT\")" } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'groups[0].members' }).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'warns for an omitted catalog resources key and an omitted access package resourceRoles key' {
+        InModuleScope $script:moduleName {
+            $Doc = ('{ "version": "1.0", ' +
+                '"catalogs": [ { "displayName": "c1" } ], ' +
+                '"accessPackages": [ { "displayName": "ap1", "catalog": "c1" } ] }') | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Resources = @($V.Errors | Where-Object { $_.Path -eq 'catalogs[0].resources' })
+            $Resources.Count | Should -Be 1
+            $Resources[0].Severity | Should -BeExactly 'Warning'
+            $Resources[0].Item     | Should -BeExactly 'c1'
+            $Resources[0].Message  | Should -BeLike "'resources' is omitted at catalogs[[]0]. An omitted resources key*"
+            $RoleWarnings = @($V.Errors | Where-Object { $_.Path -eq 'accessPackages[0].resourceRoles' })
+            $RoleWarnings.Count | Should -Be 1
+            $RoleWarnings[0].Severity | Should -BeExactly 'Warning'
+            $RoleWarnings[0].Item     | Should -BeExactly 'ap1'
+            $RoleWarnings[0].Message  | Should -BeLike "'resourceRoles' is omitted at accessPackages[[]0]. An omitted resourceRoles key*"
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'warns for the omitted scopedRoles, but not the omitted members, of an administrative unit declared dynamic true' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "au1", "dynamic": true, "membershipRule": "(user.department -eq \"IT\")" } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[0].scopedRoles' -and $_.Severity -eq 'Warning' }).Count | Should -Be 1
+            @($V.Errors | Where-Object { $_.Path -eq 'administrativeUnits[0].members' }).Count | Should -Be 0
             $V.Valid | Should -BeTrue
         }
     }

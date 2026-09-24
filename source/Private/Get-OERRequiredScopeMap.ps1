@@ -426,7 +426,9 @@ function Get-OERRequiredScopeMap {
         }
         @{
             Cmdlet = 'Set-OERGroup'; Transport = 'Graph'
-            GraphScope = 'Group.ReadWrite.All'
+            GraphScope = 'Group.ReadWrite.All', 'RoleManagement.ReadWrite.Directory'
+            Verified = $false
+            Note = 'RoleManagement.ReadWrite.Directory is needed only when the group is role-assignable (isAssignableToRole); Group.ReadWrite.All alone cannot update such a group. The Update group permission table does not list it: Microsoft Learn states it in the role-assignable group guidance and the Entra role reference, where the microsoft.directory/groups update actions exclude role-assignable groups.'
         }
         @{
             Cmdlet = 'Set-OERGroupPimPolicy'; Transport = 'Graph'

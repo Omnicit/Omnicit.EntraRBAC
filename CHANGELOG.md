@@ -7,8 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.0.1. A preview published from this point differs from 1.0.1 only
-in documentation, tests or the build.
+`Invoke-OERStructure -Prune` no longer removes anything because a lookup failed. When a declared
+entry cannot be resolved -- a group member, owner or PIM eligibility, an administrative unit member
+or scoped role, an access package resource role, or a role assignment under the same `scope` --
+nothing in that collection is removed: its undeclared live entries are reported `Skipped`, rather
+than removed or `Extra`, with the reason
+`prune withheld: declared entry '<entry>' could not be resolved`, and the unresolved entry is still
+`Failed`. Such a live entry could previously be deleted, PIM eligibility and Azure role assignments
+included. A service principal named in `roleAssignments` needs `"principalType": "ServicePrincipal"`
+to resolve.
+
+`Test-OERStructure` now warns about an omitted `members`, `scopedRoles`, catalog `resources` or
+access package `resourceRoles` key, which still prunes, and `Invoke-OERStructure -Prune` lists them
+before it writes anything; set such a key to `null` to leave it untouched. `Get-OERRequiredScope`
+lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
 ## [1.0.1] - 2026-09-23
 
