@@ -121,6 +121,43 @@ Describe 'Set-OERGroupPimPolicy' {
         $err.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
     }
 
+    It 'reports PimPolicyNotFound naming replication delay' {
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue | Out-Null
+        $Err.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
+        $Message = @($Err).Exception.Message -join ' '
+        $Message | Should -BeLike '*replication delay*'
+        $Message | Should -Not -BeLike '*Add-OERGroupEligibility*'
+    }
+
+    It 'reports PimPolicyReadFailed, not PimPolicyNotFound, when the policy lookup is refused' {
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges'),
+                'Authorization_RequestDenied',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue | Out-Null
+        # -ErrorVariable also carries the raw Authorization_RequestDenied record the engine records at
+        # the point of the throw (see the -ErrorVariable comment on Get-OERPimGroupPolicyId's own not-
+        # onboarded contract tests), so filter to the cmdlet's OWN wrapped record instead of asserting
+        # on $Err as a whole.
+        $ReadFailed = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyReadFailed*' })
+        $ReadFailed.Count | Should -Be 1
+        $ReadFailed[0].CategoryInfo.Category | Should -Be 'ReadError'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+    }
+
+    It 'never calls Start-Sleep on its own -- retry belongs to the apply engine, not a standalone Set' {
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        Mock -ModuleName $script:moduleName Start-Sleep {}
+        Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Start-Sleep -Times 0
+    }
+
     It 'does not PATCH and returns no object under -WhatIf' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         $Result = Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -WhatIf
@@ -193,13 +230,29 @@ Describe 'Set-OERGroupPimPolicy' {
         @($Error).Exception.Message -join ';' | Should -Not -Match 'transport failure'
     }
 
-    It 'leaves no record in $Error when the policy resolver fails' {
+    It 'leaves no DUPLICATE record in $Error when the policy resolver fails' {
+        # The raw record the engine recorded for the swallowed resolver throw must be gone (the
+        # PimPolicyReadFailed catch's Remove-OERErrorRecord call), leaving exactly the cmdlet's own
+        # wrapped PimPolicyReadFailed record -- which legitimately quotes the original exception
+        # message as part of its explanation (see the next test), so this no longer asserts the raw
+        # text is absent, only that it is not duplicated.
         Mock -ModuleName $script:moduleName Initialize-OERAuth { }
         Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'group-id-1' }
         Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { throw 'policy transport failure' }
         $Error.Clear()
         Set-OERGroupPimPolicy -Group 'grp' -ActivationMaxHours 4 -ErrorAction SilentlyContinue | Out-Null
-        @($Error).Exception.Message -join ';' | Should -Not -Match 'policy transport failure'
+        @($Error).Count | Should -Be 1
+        $Error[0].FullyQualifiedErrorId | Should -Match 'PimPolicyReadFailed'
+    }
+
+    It 'quotes the underlying transport failure inside the PimPolicyReadFailed message' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'group-id-1' }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { throw 'policy transport failure' }
+        Set-OERGroupPimPolicy -Group 'grp' -ActivationMaxHours 4 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $ReadFailed = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyReadFailed*' })
+        $ReadFailed.Count | Should -Be 1
+        $ReadFailed[0].Exception.Message | Should -Match 'policy transport failure'
     }
 
     Context 'duration vocabulary aliases (audit PR6)' {

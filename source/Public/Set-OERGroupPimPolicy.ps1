@@ -17,12 +17,16 @@ function Set-OERGroupPimPolicy {
     and rejected; a declined rule is not a failure and is not listed here either). A rule the mutual-
     exclusion reconcile sent on the caller's behalf IS reported, with the value actually sent, even
     though its own parameter was never bound -- see the reconcile paragraph below. This summary is not
-    a read of the resulting policy state; use Get-OERGroupPimPolicy for that. A group that has not been
-    onboarded to PIM for Groups produces a non-terminating PimPolicyNotFound error -- add at least one
-    eligible member first with Add-OERGroupEligibility. When Graph rejects one or more rules the cmdlet
-    still returns the summary object and additionally writes a non-terminating PolicyRulesRejected
-    error, so a partial apply is detectable with -ErrorAction Stop or by inspecting $?. At least one
-    rule parameter (ActivationMaxHours, AuthenticationContextId, ActivationEnabledRules,
+    a read of the resulting policy state; use Get-OERGroupPimPolicy for that. A group that has no PIM-
+    for-groups policy assignment for the requested access type -- never onboarded, or onboarded moments
+    ago and not yet listed by Graph (replication delay) -- produces a non-terminating PimPolicyNotFound
+    error; re-running usually succeeds once the group's first eligibility has onboarded it. A refused
+    read of that policy assignment (insufficient permission, throttling, a dead transport, ...) is a
+    DIFFERENT, non-terminating PimPolicyReadFailed error: whether the group has a policy is unknown,
+    which is not the same as it having none, so nothing is changed either way. When Graph rejects one
+    or more rules the cmdlet still returns the summary object and additionally writes a non-terminating
+    PolicyRulesRejected error, so a partial apply is detectable with -ErrorAction Stop or by inspecting
+    $?. At least one rule parameter (ActivationMaxHours, AuthenticationContextId, ActivationEnabledRules,
     ActiveEnabledRules, EligibleDuration, ActiveDuration, EligibleAlertRecipient,
     ActiveAlertRecipient, ActivationAlertRecipient, RequireApproval, ApproverUser, ApproverGroup,
     AllowPermanentEligibility, or AllowPermanentActive) must be supplied or a non-terminating
@@ -333,10 +337,31 @@ function Set-OERGroupPimPolicy {
         }
         Write-Verbose "[Set-OERGroupPimPolicy] Resolved group to '$GroupId'."
 
-        $PolicyId = try { Get-OERPimGroupPolicyId -GroupId $GroupId -AccessType $AccessType } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        # A FAILED LOOKUP IS NOT AN ABSENT POLICY -- same split as Get-OERGroupPimPolicy.ps1:96-115.
+        # A refused read (403, 429, ...) means "I could not tell", never "there is none", so it gets
+        # its own PimPolicyReadFailed id and nothing is changed; only a genuinely absent policy is
+        # PimPolicyNotFound.
+        $PolicyId = $null
+        try {
+            $PolicyId = Get-OERPimGroupPolicyId -GroupId $GroupId -AccessType $AccessType
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Could not read the PIM-for-groups policy assignment for group '$GroupId' ('$AccessType' access): " +
+                    "$($PSItem.Exception.Message). Whether this group has a policy is UNKNOWN, which is not the same " +
+                    'as the group having none, so nothing was changed.')) `
+                -ErrorId 'PimPolicyReadFailed' -Category ReadError -TargetObject $GroupId `
+                -InnerException $PSItem.Exception -Cmdlet $PSCmdlet
+            return
+        }
         if (-not $PolicyId) {
             Write-CmdletError `
-                -Message ([System.Exception]::new("Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access. Add at least one eligible member with Add-OERGroupEligibility first.")) `
+                -Message ([System.Exception]::new(
+                    "Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access yet. A group created " +
+                    'moments ago can take a short while before Microsoft Graph lists its policies (replication ' +
+                    'delay), and re-running usually succeeds. A group never used with PIM for Groups gets its ' +
+                    'policies when it is first onboarded, for example by its first eligibility.')) `
                 -ErrorId 'PimPolicyNotFound' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
             return
         }

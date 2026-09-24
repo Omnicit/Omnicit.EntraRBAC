@@ -50,6 +50,14 @@ function Sync-OERStructureGroup {
        policy exists. A declared approver (a UPN or a group display name) is resolved to an object id
        before the diff, for each access type in turn; an approver that does not resolve reports Failed
        for that access type ONLY -- the other access type (member/owner) and every later step still run.
+       Reading the current policy for a pimPolicy (member and/or owner) of a group THIS RUN created is
+       retried briefly while Graph does not list it yet -- one shared budget of at most about 30 seconds
+       (2 + 4 + 8 + 16 s) per group item, spent by whichever access type hits it first -- since a brand-
+       new group's policy assignments can take a moment to be listed. Once the budget is spent, that
+       access type reports Failed with a replication-delay message naming a re-run, and the loop moves
+       to the next access type; a group that already existed never retries a missing policy (a fact, not
+       a timing issue), and a refused read (PimPolicyReadFailed, for example a 403) is never retried
+       either, on a new group or an existing one.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -160,6 +168,11 @@ function Sync-OERStructureGroup {
         # -- Check existence ----------------------------------------------------------------
         $Gid = Resolve-OERGroupId -DisplayName $Name
 
+        # Whether THIS run created the group, consulted only by the step-4 pimPolicy retry below: a
+        # brand-new group's policy assignments can take a moment to be listed by Graph, but a missing
+        # policy on a group that already existed is a fact, not a timing issue, and is never retried.
+        $CreatedThisRun = $false
+
         # -- Create or update the group object ------------------------------------------
         if (-not $Gid) {
             # Group does not exist -- create it.
@@ -230,6 +243,7 @@ function Sync-OERStructureGroup {
             }
 
             $Gid = $Created.Id
+            $CreatedThisRun = $true
             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Created' -Detail "created group $Name ($Gid)"
 
             # After create: current state is empty
@@ -661,6 +675,10 @@ function Sync-OERStructureGroup {
                 $DesiredByAccess['member'] = $Pp
             }
 
+            # ONE retry budget for the whole group item (at most 30 s of waiting total: 2 + 4 + 8 +
+            # 16), shared by the member and owner access types below -- not one budget each.
+            $PolicyRetryDelays = [System.Collections.Generic.Queue[int]]::new([int[]]@(2, 4, 8, 16))
+
             foreach ($AccessType in $DesiredByAccess.Keys) {
                 $Declared = $DesiredByAccess[$AccessType]
 
@@ -683,11 +701,44 @@ function Sync-OERStructureGroup {
                 }
 
                 # Read current policy for this access type (best-effort -- group may not be onboarded).
+                # A missing policy (PimPolicyNotFound) on a group THIS RUN created is retried briefly --
+                # its policy assignments can take a moment to be listed by Graph after creation -- up to
+                # the shared $PolicyRetryDelays budget. A refused read (PimPolicyReadFailed, 403, ...) is
+                # never retried, and neither is a missing policy on a group that already existed: that is
+                # a fact, not a timing issue. Everything else here (the diff, the Set call, a non-
+                # created-group path where a missing or unreadable policy leaves $CurrentPolicy null)
+                # stays exactly as before.
                 $CurrentPolicy = $null
-                try {
-                    $CurrentPolicy = Get-OERGroupPimPolicy -Id $Gid -AccessType $AccessType -ErrorAction Stop
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
+                $PolicyMissing = $false
+                $Retries = 0
+                while ($true) {
+                    try {
+                        $CurrentPolicy = Get-OERGroupPimPolicy -Id $Gid -AccessType $AccessType -ErrorAction Stop
+                        $PolicyMissing = $false
+                        break
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $PolicyMissing = ([string]$PSItem.FullyQualifiedErrorId -like 'PimPolicyNotFound*')
+                        # Retry ONLY a missing policy of a group this run created: its policies can
+                        # take a moment to be listed. A refusal (PimPolicyReadFailed, 403) is never
+                        # retried, and neither is an existing group, whose missing policy is a fact.
+                        if (-not ($PolicyMissing -and $CreatedThisRun -and $PolicyRetryDelays.Count -gt 0)) { break }
+                        $Delay = $PolicyRetryDelays.Dequeue()
+                        $Retries++
+                        Write-Verbose "Sync-OERStructureGroup: pimPolicy ($AccessType) of new group '$Name' is not listed yet; retry $Retries in $Delay s."
+                        Start-Sleep -Seconds $Delay
+                    }
+                }
+                if ($PolicyMissing -and $CreatedThisRun) {
+                    $Message = "pimPolicy ($AccessType) not applied: Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group '$Name', created in this run, after $Retries retries. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them."
+                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($Message),
+                        'PimPolicyNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                        $Name)
+                    $Caller.WriteError($ErrRec)
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail $Message -ErrorRecord $ErrRec
+                    continue
                 }
 
                 $Change = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $CurrentPolicy
