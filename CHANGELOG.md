@@ -22,6 +22,14 @@ access package `resourceRoles` key, which still prunes, and `Invoke-OERStructure
 before it writes anything; set such a key to `null` to leave it untouched. `Get-OERRequiredScope`
 lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
+`Invoke-OERStructure` now resolves a declared Azure role management policy approver -- a user by
+UPN or object id, a group by display name or object id -- to its object id before comparing it
+against the live policy. Previously a user declared by UPN never matched the live approver, whose
+recorded name is a display name rather than a UPN, so the policy reported a change and rewrote the
+approver list on every apply run; a declared display name is also no longer matched against a live
+approver's object id, closing the same gap from the other side. No document or cmdlet parameter
+shapes change.
+
 ## [1.0.1] - 2026-09-23
 
 Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:

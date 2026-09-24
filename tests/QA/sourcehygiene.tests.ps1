@@ -804,9 +804,9 @@ BeforeAll {
         documentation as a violation of the rule it defines. A comment is a TOKEN the parser discards
         before this walk ever sees the tree, so an AST scan is immune to it by construction.
 
-        SCOPE is the THIRTEEN files listed below by name -- not a claim about the whole tree, and not
+        SCOPE is the FOURTEEN files listed below by name -- not a claim about the whole tree, and not
         derived from one glob. They are the seven source/Private/Sync-OERStructure*.ps1 handlers plus
-        the six private helpers that are handed an apply-document node and walk it:
+        the seven private helpers that are handed an apply-document node and walk it:
 
           - source/Private/Read-OERStructureDocument.ps1 -- its nested Write-OEREnumValue helper walks
             the freshly parsed apply document to canonicalize enum casing, so it asks the same
@@ -823,6 +823,14 @@ BeforeAll {
             declared, explicitly null or omitted -- the declared-value question itself, and the
             answer that decides whether -Prune's warning lists the key. Its parameter is -Document,
             not -Declared, so the tell named under SCOPE MAINTENANCE below would not have found it.
+          - source/Private/Resolve-OERDeclaredApprover.ps1 -- handed one roleManagementPolicies[]
+            entry (-Declared) by Sync-OERStructureRoleManagementPolicy.ps1 BEFORE the diff, it walks
+            the approvers.users/approvers.groups sub-block and requireApproval to decide what needs
+            resolving to an object id, so it asks the same present-and-not-null question about the
+            same kind of node that Resolve-OERRoleManagementPolicyChange.ps1 asks of it afterward.
+            Its name does not end in *Change (it resolves names, it does not diff), which is exactly
+            why it is named individually here rather than folded into the Resolve-OER*Change bullet
+            above.
 
         Resolve-OERAssignmentPolicyChange.ps1 is the ONE Resolve-OER*Change helper deliberately left
         out, and the reason is structural rather than a judgement call: it takes -Desired (a BUILT
@@ -942,9 +950,13 @@ BeforeAll {
 
         CURRENT MEASUREMENTS, re-taken with this gate's own counter on every round rather than
         carried forward (fix round 3 found the previous figure had gone stale in this very block --
-        the one that says "measure, do not reason"):
-          - scanned files: 13 (the 7 Sync-OERStructure* handlers + the 6 named document consumers).
-          - source/**/*.ps1: 212 files.
+        the one that says "measure, do not reason"). Sprint 6 step 2 added
+        Resolve-OERDeclaredApprover.ps1 to the scanned set (a seventh document consumer), moving the
+        scanned-file count from 13 to 14; it introduces no PSObject.Properties.Name chain of its own
+        (it calls Test-OERDeclaredProperty throughout), so the chain-predicate figures below are
+        unchanged by its addition:
+          - scanned files: 14 (the 7 Sync-OERStructure* handlers + the 7 named document consumers).
+          - source/**/*.ps1: 214 files.
           - chain predicate, module-wide: 25.
           - of those, in-scope: exactly ONE -- the $PimResult check in Sync-OERStructureGroup.ps1
             that $script:declaredValueAllowlist documents below, keyed with its literal ('Applied').
@@ -976,16 +988,19 @@ BeforeAll {
         =====================================================================================
     #>
     <#
-        The six apply-document consumers outside the Sync-OERStructure* glob (see SCOPE above).
+        The seven apply-document consumers outside the Sync-OERStructure* glob (see SCOPE above).
         Named one by one on purpose: a second glob -- 'Resolve-OER*Change.ps1', say -- would be
         another implicit claim about which files walk document nodes, and it would be wrong, since
         Resolve-OERAssignmentPolicyChange.ps1 matches that shape and takes no document node at all.
         It was exactly such an implicit claim that let these files go unscanned through two rounds.
+        Sprint 6 step 2 added Resolve-OERDeclaredApprover.ps1, which reads a declared approvers block
+        before the approval diffs.
     #>
     $script:declaredValueDocumentConsumerNames = @(
         'Get-OEROmittedPruneCollection.ps1'
         'Read-OERStructureDocument.ps1'
         'Resolve-OERAccessReviewChange.ps1'
+        'Resolve-OERDeclaredApprover.ps1'
         'Resolve-OERGroupEligibilityChange.ps1'
         'Resolve-OERGroupPimPolicyChange.ps1'
         'Resolve-OERRoleManagementPolicyChange.ps1'
@@ -1665,7 +1680,7 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             'a source file that fails to parse drops out of both scans below with no violation reported, the same silent-loss failure mode Pass 1 above documents; Pass 1 already asserts the whole tree parses, so this failing points at a file that parses for that gate and not for this one')
     }
 
-    It 'scans exactly the expected thirteen apply-document-walking files, by name' {
+    It 'scans exactly the expected fourteen apply-document-walking files, by name' {
         <#
             Named-FILE control, not a bare count (fix round 2). CLAUDE.md ## Module Layout and
             ## declared-property in docs/development/rationale.md both treat the Sync-OERStructure*
@@ -1674,7 +1689,9 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             document consumers; fix round 3 added the remaining three Resolve-OER*Change helpers that
             take a -Declared document node, which round 2 had left out while claiming to cover every
             such file; sprint 6 added Get-OEROmittedPruneCollection.ps1, which walks the whole document
-            for Invoke-OERStructure's -Prune warning. Asserting the NAMES rather than the count says
+            for Invoke-OERStructure's -Prune warning. Sprint 6 step 2 added
+            Resolve-OERDeclaredApprover.ps1, which reads a declared approvers block before the
+            approval diffs. Asserting the NAMES rather than the count says
             which file left the scan when one does -- a plain count told you only that "7" became "6", which is precisely the kind
             of silent narrowing this gate exists to stop. A file that appears means a new handler or
             document consumer was added and needs a deliberate look at whether it reads
@@ -1684,6 +1701,7 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             'Get-OEROmittedPruneCollection.ps1'
             'Read-OERStructureDocument.ps1'
             'Resolve-OERAccessReviewChange.ps1'
+            'Resolve-OERDeclaredApprover.ps1'
             'Resolve-OERGroupEligibilityChange.ps1'
             'Resolve-OERGroupPimPolicyChange.ps1'
             'Resolve-OERRoleManagementPolicyChange.ps1'
@@ -1702,7 +1720,7 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
                 Sort-Object)
 
         ($Actual -join ', ') | Should -BeExactly ($Expected -join ', ') -Because (
-            'this gate scans exactly these thirteen files: the seven source/Private/Sync-OERStructure*.ps1 handlers plus the six document consumers named in the SCOPE note (Read-OERStructureDocument.ps1, Get-OEROmittedPruneCollection.ps1 and the four Resolve-OER*Change helpers that take a -Declared document node); a name missing here means the selection stopped matching that file and silently narrowed the gate, and a name added means a new apply-document walker needs a deliberate look')
+            'this gate scans exactly these fourteen files: the seven source/Private/Sync-OERStructure*.ps1 handlers plus the seven document consumers named in the SCOPE note (Read-OERStructureDocument.ps1, Get-OEROmittedPruneCollection.ps1, Resolve-OERDeclaredApprover.ps1 and the four Resolve-OER*Change helpers that take a -Declared document node); a name missing here means the selection stopped matching that file and silently narrowed the gate, and a name added means a new apply-document walker needs a deliberate look')
     }
 
     It 'scans a meaningful number of PSObject.Properties.Name member-access chains module-wide' {
@@ -1726,8 +1744,8 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
         $script:declaredValueViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 CLAUDE.md ## Code Style: Test-OERDeclaredProperty and Test-OERDeclaredNull are the single owners of
 the apply engine's declared-value rule (docs/development/rationale.md#declared-property). A property
-on an apply-document node is declared only when it is present AND not null; one of the thirteen scanned
-apply-document walkers (the seven Sync-OERStructure* handlers and the six document consumers named in
+on an apply-document node is declared only when it is present AND not null; one of the fourteen scanned
+apply-document walkers (the seven Sync-OERStructure* handlers and the seven document consumers named in
 the SCOPE note) that instead reads a node's ".PSObject.Properties.Name" directly
 -- whether compared inline with -contains, assigned to a variable for a later comparison, or consumed
 any other way -- and pairs

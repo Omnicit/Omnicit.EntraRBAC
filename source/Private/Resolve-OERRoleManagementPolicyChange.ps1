@@ -19,11 +19,12 @@ function Resolve-OERRoleManagementPolicyChange {
     A document that explicitly declares requireApproval = false suppresses the approver parameters
     entirely (Resolve-OERPolicyRulePatch forces isApprovalRequired = true whenever approvers are sent,
     so sending both would re-enable approval); the suppression is recorded in the Changes list.
-    Approver lists are compared offline as case-insensitive
-    sets, matching a declared value against either the live approver id or its display name, so an
-    inventory round-trip (which carries ids) and a hand-authored document (which carries names) both
-    compare cleanly; when either list differs both are sent, because Azure Resource Manager replaces
-    the whole primaryApprovers array in one patch. The approvers.users and approvers.groups sub-fields
+    Declared approver values are object ids by the time this diff sees them -- the handler resolves a
+    declared UPN or group display name to its object id first, through Resolve-OERDeclaredApprover --
+    so approver lists are compared offline as case-insensitive sets of ids against the live approver
+    ids; a name is never compared with an id. When either list differs both are sent, because Azure
+    Resource Manager replaces the whole primaryApprovers array in one patch. The approvers.users and
+    approvers.groups sub-fields
     are independently presence-gated: when the document declares only one side, the other side is
     seeded from the live policy's approver ids (rather than defaulted to empty) so the write does not
     silently wipe the half the document left alone. A null Current (the policy could not be read) is
@@ -74,10 +75,13 @@ function Resolve-OERRoleManagementPolicyChange {
     # scope, regardless of which branch below ends up calling it.
     # Each current approver can satisfy at most one declared value -- a plain "some current approver
     # matches" lookup (with no consumption) would let one live approver silently satisfy two declared
-    # entries (e.g. a duplicate declared id, or an id and a display name that both resolve to the same
-    # live approver) and still report equal counts as a false match. Matching one declared value at a
-    # time and removing the matched candidate from the pool forces a true one-to-one pairing: equal iff
-    # every declared value consumes a distinct current approver and every current approver is consumed.
+    # entries (e.g. a duplicate declared id) and still report equal counts as a false match. Matching
+    # one declared value at a time and removing the matched candidate from the pool forces a true
+    # one-to-one pairing: equal iff every declared value consumes a distinct current approver and every
+    # current approver is consumed. A declared value is always an object id by the time it reaches
+    # here (the handler resolves a UPN or group display name through Resolve-OERDeclaredApprover
+    # first), so this only ever compares ids with ids -- a name is never compared against a live
+    # approver's id.
     function Test-ApproverSetEqual {
         param([string[]]$DeclaredValue, [object[]]$CurrentApprover)
         $Declared  = @($DeclaredValue)
@@ -88,8 +92,7 @@ function Resolve-OERRoleManagementPolicyChange {
             $HitIndex = -1
             for ($Index = 0; $Index -lt $Available.Count; $Index++) {
                 $Candidate = $Available[$Index]
-                if ([string]$Candidate.Id -eq $Value -or
-                    ([string]$Candidate.DisplayName -and [string]$Candidate.DisplayName -ieq $Value)) {
+                if ([string]$Candidate.Id -ieq $Value) {
                     $HitIndex = $Index
                     break
                 }

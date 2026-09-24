@@ -30,7 +30,10 @@ function Sync-OERStructureRoleManagementPolicy {
     - allowPermanentActiveAssignment, activeDurationDays
     - activationMaxHours
     - requireMfaOnActivation, requireJustificationOnActivation, requireTicketOnActivation
-    - requireApproval, approvers { users[], groups[] }
+    - requireApproval, approvers { users[], groups[] } -- users are UPNs or object ids and groups are
+      group display names or object ids; both are resolved to object ids by Resolve-OERDeclaredApprover
+      before the diff, so the diff only ever compares ids with ids. An approver that does not resolve
+      reports Failed and changes nothing.
     - authenticationContextId (empty string disables it)
     - requireMfaOnActiveAssignment, requireJustificationOnActiveAssignment
     Fields the document does not declare are never compared and never sent. Notification rules and
@@ -113,10 +116,30 @@ function Sync-OERStructureRoleManagementPolicy {
             return
         }
 
+        # -- Resolve declared approver names to object ids BEFORE the diff ------------------
+        # The diff compares ids with ids. A user declared by UPN never matched the live approver
+        # (whose description is a display name), so the policy reported a change on every run.
+        $Declared = $Item
+        try {
+            $Declared = Resolve-OERDeclaredApprover -Declared $Item
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
+                'ApproverNotFound',
+                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                $Label)
+            $Caller.WriteError($ErrRec)
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                -Detail "could not resolve an approver: $($PSItem.Exception.Message); the policy was not changed" `
+                -ErrorRecord $ErrRec
+            return
+        }
+
         # -- Diff the declared fields against the live policy --------------------------------
         # Resolve-OERRoleManagementPolicyChange is the single owner of the presence semantics and the
         # field-to-parameter mapping; it returns only the parameters that actually differ.
-        $Change = Resolve-OERRoleManagementPolicyChange -Declared $Item -Current $Cur
+        $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Cur
         $SetSplat = $Change.SetParams
 
         # -- Unchanged if nothing differs ---------------------------------------------------
