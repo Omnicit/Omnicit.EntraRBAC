@@ -2648,7 +2648,7 @@ Describe 'Sync-OERStructureGroup' {
                     displayName = 'role_sec_x'
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
-                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
                 Should -Invoke Start-Sleep -Times 4 -Exactly
                 Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 2 }
                 Should -Invoke Start-Sleep -Times 1 -Exactly -ParameterFilter { $Seconds -eq 4 }
@@ -2660,13 +2660,24 @@ Describe 'Sync-OERStructureGroup' {
                 $Failed[0].Detail | Should -Match 'replication delay'
                 $Failed[0].Detail | Should -Match 're-running'
                 $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
-                # The Failed row's Error is the exact ErrorRecord $Caller.WriteError() received -- the
-                # same object, not a copy -- so this is direct proof that exactly one PimPolicyNotFound
-                # record reached the caller (an -ErrorVariable/$Error count is unreliable here: this
-                # suite's accumulated global $Error state, and WriteError() under SilentlyContinue, both
-                # make a raw count meaningless across a run of hundreds of tests).
+                # The Failed row's Error is the exact ErrorRecord passed to ConvertTo-OERStructureResult,
+                # so this alone does NOT prove $Caller.WriteError($ErrRec) actually ran -- both calls are
+                # fed the same $ErrRec variable regardless of whether WriteError executes. It only proves
+                # the RESULT ROW carries the right record.
                 $Failed[0].Error | Should -Not -BeNullOrEmpty
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
+                # This is the proof that the record actually reached the caller: -ErrorVariable, narrowed
+                # to a record carrying BOTH the PimPolicyNotFound id and the replication-delay text, is
+                # reliable even at this suite's scale (an UNFILTERED count is not -- see the Set-
+                # OERGroupPimPolicy tests for that quirk -- but this specific filter isolates the one
+                # record this test cares about from any accumulated noise). Deleting the
+                # $Caller.WriteError($ErrRec) call in Sync-OERStructureGroup.ps1 makes this assertion
+                # fail while every other assertion above keeps passing (M6.5).
+                $Reached = @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' -and
+                        $_.Exception.Message -like '*replication delay*'
+                    })
+                $Reached.Count | Should -Be 1
             }
         }
 
