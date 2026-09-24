@@ -22,13 +22,14 @@ access package `resourceRoles` key, which still prunes, and `Invoke-OERStructure
 before it writes anything; set such a key to `null` to leave it untouched. `Get-OERRequiredScope`
 lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
-`Invoke-OERStructure` now resolves a declared Azure role management policy approver -- a user by
-UPN or object id, a group by display name or object id -- to its object id before comparing it
-against the live policy. Previously a user declared by UPN never matched the live approver, whose
-recorded name is a display name rather than a UPN, so the policy reported a change and rewrote the
-approver list on every apply run; a declared display name is also no longer matched against a live
-approver's object id, closing the same gap from the other side. No document or cmdlet parameter
-shapes change.
+PIM for Groups policies now support approval: `Set-OERGroupPimPolicy` takes `-RequireApproval`,
+`-ApproverUser` and `-ApproverGroup`, and a group's `pimPolicy` accepts `requireApproval` and
+`approvers { users[], groups[] }`, which `Get-OERInventory` exports. Approvers declared by UPN or
+group name are resolved to object ids before comparison, in `pimPolicy` and `roleManagementPolicies`
+alike, so a re-run reports `Unchanged` instead of rewriting them. An owner lookup no longer returns
+the member policy, a refused policy read is `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
+and a group created in the same run gets up to 30 seconds for its policies to appear.
+`Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
 
 ## [1.0.1] - 2026-09-23
 
