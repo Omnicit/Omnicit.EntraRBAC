@@ -132,7 +132,10 @@ given a lookup that returns `$null`. They cannot prove the four things this file
 - One admin account in that tenant that can create users, groups, app registrations and
   administrative units, grant PIM-for-Groups eligibility, manage entitlement-management catalogs,
   and create resource groups and role assignments in the subscription. Global Administrator plus
-  Owner on the test subscription covers all of it.
+  Owner on the test subscription covers all of it. Every role has to be ACTIVE for the whole run,
+  teardown included -- with PIM, activate them first and for long enough. A directory role that is
+  not active shows up as `Authorization_RequestDenied` on the member removals (6.3b, 6.4b) and on
+  the teardown's deletions.
 - The prerequisite script `Initialize-OerS61Prereq.ps1`. It is kept OUTSIDE this repository and is
   never committed; it is run by hand, by the operator, and never by Claude or CI.
 - PowerShell 7 and a clone of this repository on this branch.
@@ -458,7 +461,7 @@ the prerequisite script (it restores exactly what is missing), record that you d
 
 ### 0. Preparation and baseline capture
 
-- [ ] **0.1 The session runs THIS branch's build.**
+- [x] **0.1 The session runs THIS branch's build.**
 
   ```powershell
   git -C $Repo fetch origin
@@ -490,9 +493,50 @@ the prerequisite script (it restores exactly what is missing), record that you d
   **Failure looks like:** `CommandNotFound` for either function, or `$Probe` with no finding -- a
   build without this branch's change is loaded. Rebuild, fix `PSModulePath`, re-import; nothing
   below means anything until this passes.
-  **Result:**
+  **Result:** PASS, 2026-09-24. The branch build is loaded, both private functions resolve, and the probe gives exactly the one Warning.
 
-- [ ] **0.2 The prerequisite script ran and every test object exists.** Paste its summary table,
+  ```text
+  PS> git -C $Repo fetch origin
+  PS> git -C $Repo log --format=%s origin/main..HEAD
+  docs: build the checklist's module in a process of its own
+  docs: live-verification checklist for the withheld prune
+  docs: release notes for the withheld prune and the omitted-key warning
+  docs: name the withheld and omitted-key rules in the public help
+  fix: state the dynamic limit of the omitted-collection warning
+  fix: mark the Set-OERGroup scope entry as not confirmed by the API table
+  fix: list the role-management scope for updating a role-assignable group
+  fix: warn when an omitted collection key would prune
+  docs: state what the engine keeps when an apply handler throws
+  docs: describe the withheld prune in the apply handlers' help
+  test: keep the sibling-resolution tests protective under the withheld rule
+  fix: withhold prune when a declared entry cannot be resolved
+  PS> $M = Get-Module Omnicit.EntraRBAC
+  PS> '{0} {1} from {2}' -f $M.Name, $M.Version, $M.ModuleBase
+  Omnicit.EntraRBAC 1.0.2 from <repo>\output\module\Omnicit.EntraRBAC\1.0.2
+  PS> & $M { Get-Command ConvertTo-OERPruneWithheldResult, Get-OEROmittedPruneCollection } | Format-Table Name, CommandType -AutoSize
+
+  Name CommandType
+  ---- -----------
+  ConvertTo-OERPruneWithheldResult Function
+  Get-OEROmittedPruneCollection Function
+
+  PS> $Probe = Test-OERStructure -Json '{"version":"1.0","groups":[{"displayName":"probe"}]}'
+  PS> $Probe.Valid
+  True
+  PS> $Probe.Errors | Format-List Section, Item, Path, Severity, Message
+
+  Section : groups
+  Item : probe
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune remove
+  the collection untouched.
+
+  PS>
+
+  ```
+
+- [x] **0.2 The prerequisite script ran and every test object exists.** Paste its summary table,
   redacted.
 
   **Expect:** before any write the run printed
@@ -510,9 +554,76 @@ the prerequisite script (it restores exactly what is missing), record that you d
   the cause and re-run the script before 0.3. A `Refusing to run: ...` line from the tenant
   identification means nothing was written: check `$OrgName` (exact, case-sensitive), `$Domain`
   and the Tenant Profile before trying again -- never weaken the check.
-  **Result:**
+  **Result:** PASS with one deviation, 2026-09-24. Every summary row is present and none reads `(none -- not created)`. The confirmation question did NOT name the subscription: the prerequisite script interpolated `$SubscriptionId?`, which PowerShell 7 reads as a variable named `SubscriptionId?`. Fixed in the script (`$($SubscriptionId)?`); the resource group was created in the subscription passed with `-SubscriptionId`, as the summary's resource group path shows. The `Identified the test tenant` and `Done.` lines were not captured in the paste.
 
-- [ ] **0.3 Record the starting state of every test object, before the first write.** This is the
+  ```text
+  Omnicit.EntraRBAC live-verification prerequisites
+  CREATE or complete the 'oer-s61' live-verification objects in the organization '<test-tenant-organization>' (tenant id 00000000-0000-0000-0000-000000000001) and the subscription This must be a TEST tenant.
+  [Y] Yes [N] No [S] Suspend [?] Help (default is "Y"):
+  [oer-s61] Created user person1@example.com (disabled).
+  [oer-s61] Created user person2@example.com (disabled).
+  [oer-s61] Created user person3@example.com (disabled).
+  [oer-s61] Created app registration oer-s61-app.
+  [oer-s61] Created service principal oer-s61-app.
+  [oer-s61] Created group oer-s61-members.
+  [oer-s61] Created group oer-s61-pim.
+  [oer-s61] Created group oer-s61-ra.
+  [oer-s61] Created group oer-s61-ap-res1.
+  [oer-s61] Created group oer-s61-ap-res2.
+  [oer-s61] Added person1@example.com to oer-s61-members.
+  [oer-s61] Added person2@example.com to oer-s61-members.
+  [oer-s61] Added person3@example.com to oer-s61-members.
+  [oer-s61] Created administrative unit oer-s61-au.
+  [oer-s61] Added person1@example.com to oer-s61-au.
+  [oer-s61] Added person2@example.com to oer-s61-au.
+  [oer-s61] Added person3@example.com to oer-s61-au.
+  [oer-s61] Phase 2: signing in with Connect-OER -TenantAlias <your-test-tenant-alias> -IncludeARM.
+  [oer-s61] Phase 2 (Connect-OER) is signed in to the confirmed test tenant '<test-tenant-organization>' (00000000-0000-0000-0000-000000000001).
+  [oer-s61] Granted person1@example.com a 30-day member eligibility on oer-s61-pim.
+  [oer-s61] Granted person2@example.com a 30-day member eligibility on oer-s61-pim.
+  [oer-s61] Granted person3@example.com a 30-day member eligibility on oer-s61-pim.
+  [oer-s61] Created catalog oer-s61-catalog.
+  [oer-s61] Added oer-s61-ap-res1 to oer-s61-catalog.
+  [oer-s61] Added oer-s61-ap-res2 to oer-s61-catalog.
+  [oer-s61] Created access package oer-s61-ap.
+  [oer-s61] Bound the Member role of oer-s61-ap-res1 to oer-s61-ap.
+  [oer-s61] Bound the Member role of oer-s61-ap-res2 to oer-s61-ap.
+  [oer-s61] Created resource group oer-s61-rg in swedencentral.
+  [oer-s61] Assigned Reader to group oer-s61-ra at oer-s61-rg.
+  [oer-s61] Assigned Reader to service principal oer-s61-app at oer-s61-rg.
+  [oer-s61] Assigned Reader to user person3@example.com at oer-s61-rg.
+
+  [oer-s61] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+
+  Kind Name Id
+  ---- ---- --
+  user person1@example.com 00000000-0000-0000-0000-000000000002
+  user person2@example.com 00000000-0000-0000-0000-000000000003
+  user person3@example.com 00000000-0000-0000-0000-000000000004
+  app registration (object id) oer-s61-app 00000000-0000-0000-0000-000000000005
+  app registration (appId) oer-s61-app 00000000-0000-0000-0000-000000000006
+  service principal oer-s61-app 00000000-0000-0000-0000-000000000007
+  group oer-s61-members 00000000-0000-0000-0000-000000000008
+  group oer-s61-pim 00000000-0000-0000-0000-000000000009
+  group oer-s61-ra 00000000-0000-0000-0000-000000000010
+  group oer-s61-ap-res1 00000000-0000-0000-0000-000000000011
+  group oer-s61-ap-res2 00000000-0000-0000-0000-000000000012
+  administrative unit oer-s61-au 00000000-0000-0000-0000-000000000013
+  catalog oer-s61-catalog 00000000-0000-0000-0000-000000000014
+  access package oer-s61-ap 00000000-0000-0000-0000-000000000015
+  resource group oer-s61-rg /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  PIM eligibility (member, ends 10/24/2026 06:17:39) oer-s61-pim <- person3@example.com 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000004
+  PIM eligibility (member, ends 10/24/2026 06:17:35) oer-s61-pim <- person2@example.com 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000003
+  PIM eligibility (member, ends 10/24/2026 06:17:59) oer-s61-pim <- person1@example.com 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000002
+  resource role binding oer-s61-ap <- Member of oer-s61-ap-res1 00000000-0000-0000-0000-000000000017_00000000-0000-0000-0000-000000000018
+  resource role binding oer-s61-ap <- Member of oer-s61-ap-res2 00000000-0000-0000-0000-000000000019_00000000-0000-0000-0000-000000000020
+  role assignment (Group) Reader -> oer-s61-ra @ oer-s61-rg /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000021
+  role assignment (ServicePrincipal) Reader -> oer-s61-app @ oer-s61-rg /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000022
+  role assignment (User) Reader -> OER S61 User C @ oer-s61-rg /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000023
+
+  ```
+
+- [x] **0.3 Record the starting state of every test object, before the first write.** This is the
   baseline every read-back below is compared against.
 
   ```powershell
@@ -563,7 +674,112 @@ the prerequisite script (it restores exactly what is missing), record that you d
   value other than `30` changes what 2.1 expects for user A (see there). A FOURTH role assignment
   defined at the resource group is not a failure, but every check in sections 1 and 6 then has one
   more candidate row than its `Expect:` states -- record it here.
-  **Result:**
+  **Result:** PASS, 2026-09-24. The baseline is exactly as expected. User A's window is 30 days and 28 seconds, which `Resolve-OEREligibilityDuration` rounds to 30, so 2.1 and 6.2 report A `Unchanged`, as they did.
+
+  ```text
+  PS> $Members0 = @(Get-OERGroupMember -Group "$Prefix-members" -ErrorAction Stop)
+  PS> $Members0 | Sort-Object UserPrincipalName | Format-Table PrincipalId, UserPrincipalName, DisplayName -AutoSize
+
+  PrincipalId UserPrincipalName DisplayName
+  ----------- ----------------- -----------
+  00000000-0000-0000-0000-000000000002 person1@example.com OER S61 User A
+  00000000-0000-0000-0000-000000000003 person2@example.com OER S61 User B
+  00000000-0000-0000-0000-000000000004 person3@example.com OER S61 User C
+
+
+  PS> $IdA = ($Members0 | Where-Object UserPrincipalName -eq $UserA).PrincipalId
+
+  PS> $IdB = ($Members0 | Where-Object UserPrincipalName -eq $UserB).PrincipalId
+
+  PS> $IdC = ($Members0 | Where-Object UserPrincipalName -eq $UserC).PrincipalId
+
+  PS>
+  PS> $Elig0 = @(Get-OERGroupEligibility -Group "$Prefix-pim" -ErrorAction Stop)
+
+  PS> $Elig0 | Sort-Object PrincipalId | Format-Table PrincipalId, AccessType, StartDateTime, EndDateTime, ScheduleInstanceId,
+  > @{ Name = 'Days'; Expression = { [math]::Round(([datetimeoffset]$_.EndDateTime - [datetimeoffset]$_.StartDateTime).TotalDays) } } -AutoSize
+
+  PrincipalId AccessType StartDateTime EndDateTime ScheduleInstanceId Days
+  ----------- ---------- ------------- ----------- ------------------ ----
+  00000000-0000-0000-0000-000000000004 member 2026-09-24 06:17:39 2026-10-24 06:17:39 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000004 30,00
+  00000000-0000-0000-0000-000000000003 member 2026-09-24 06:17:35 2026-10-24 06:17:35 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000003 30,00
+  00000000-0000-0000-0000-000000000002 member 2026-09-24 06:17:31 2026-10-24 06:17:59 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000002 30,00
+
+
+  PS> @(Get-OERGroupMember -Group "$Prefix-pim" -ErrorAction Stop).Count
+  0
+  PS>
+
+  PS> $Au0 = Get-OERAdministrativeUnit -AdministrativeUnit "$Prefix-au" -IncludeMembers -IncludeScopedRoles -ErrorAction Stop
+
+  PS> $Au0 | Format-List DisplayName, MembershipType, Visibility
+
+  DisplayName : oer-s61-au
+  MembershipType : Assigned
+  Visibility :
+
+  PS> $Au0.Members | Sort-Object UserPrincipalName | Format-Table PrincipalId, UserPrincipalName -AutoSize
+
+  PrincipalId UserPrincipalName
+  ----------- -----------------
+  00000000-0000-0000-0000-000000000002 person1@example.com
+  00000000-0000-0000-0000-000000000003 person2@example.com
+  00000000-0000-0000-0000-000000000004 person3@example.com
+
+  PS> @($Au0.ScopedRoles).Count
+  0
+  PS>
+  PS> $Ra0 = @(Get-OERRoleAssignment -Scope $RgScope -AtScope -ResolveNames -ErrorAction Stop | Where-Object Scope -eq $RgScope)
+  PS> $Ra0 | Sort-Object PrincipalDisplayName | Format-Table PrincipalDisplayName, PrincipalType, RoleName, PrincipalId, RoleAssignmentId -AutoSize
+
+  PrincipalDisplayName PrincipalType RoleName PrincipalId RoleAssignmentId
+  -------------------- ------------- -------- ----------- ----------------
+  OER S61 User C User Reader 00000000-0000-0000-0000-000000000004 /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000023
+  oer-s61-app ServicePrincipal Reader 00000000-0000-0000-0000-000000000007 /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000022
+  oer-s61-ra Group Reader 00000000-0000-0000-0000-000000000010 /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000021
+
+  PS> $IdSp = ($Ra0 | Where-Object PrincipalDisplayName -eq "$Prefix-app").PrincipalId
+  PS> $ReaderId = ($Ra0 | Where-Object PrincipalDisplayName -eq "$Prefix-app").RoleDefinitionId
+  PS>
+  PS> $CatRes0 = @(Get-OERCatalogResource -Catalog "$Prefix-catalog" -ErrorAction Stop)
+  PS> $CatRes0 | Format-Table DisplayName, ResourceType, OriginId -AutoSize
+
+  DisplayName ResourceType OriginId
+  ----------- ------------ --------
+  oer-s61-ap-res2 Group 00000000-0000-0000-0000-000000000012
+  oer-s61-ap-res1 Group 00000000-0000-0000-0000-000000000011
+
+  PS> $IdRes1 = ($CatRes0 | Where-Object DisplayName -eq "$Prefix-ap-res1").OriginId
+  PS> $IdRes2 = ($CatRes0 | Where-Object DisplayName -eq "$Prefix-ap-res2").OriginId
+  PS> $ApId = (Get-OERAccessPackage -Catalog "$Prefix-catalog" -ErrorAction Stop | Where-Object DisplayName -eq "$Prefix-ap").Id
+  PS> $ApRoles0 = @(Get-OERAccessPackageResourceRole -AccessPackage $ApId -ErrorAction Stop)
+  PS> $ApRoles0 | Format-Table ResourceDisplayName, RoleName, OriginId, ResourceRoleScopeId -AutoSize
+
+  ResourceDisplayName RoleName OriginId ResourceRoleScopeId
+  ------------------- -------- -------- -------------------
+  oer-s61-ap-res1 Member 00000000-0000-0000-0000-000000000011 00000000-0000-0000-0000-000000000017_00000000-0000-0000-0000-000000000018
+  oer-s61-ap-res2 Member 00000000-0000-0000-0000-000000000012 00000000-0000-0000-0000-000000000019_00000000-0000-0000-0000-000000000020
+
+  PS> @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $ApId -ErrorAction Stop).Count
+  0
+  PS>
+  PS> $IdA, $IdB, $IdC, $IdSp, $ReaderId, $IdRes1, $IdRes2, $ApId | ForEach-Object { [bool]$_ }
+  True
+  True
+  True
+  True
+  True
+  True
+  True
+  True
+  PS> [ordered]@{ Members = $Members0; Eligibility = $Elig0; AdministrativeUnit = $Au0; RoleAssignments = $Ra0
+  > CatalogResources = $CatRes0; ResourceRoles = $ApRoles0 } |
+  > ConvertTo-Json -Depth 8 | Set-Content -Path (Join-Path $Raw '0.3-baseline.json') -Encoding utf8NoBOM
+  > Test-Path "<repo>\docs\live-verification\raw\s61\0.3-baseline.json"
+  True
+  Copy-Item "<repo>\docs\live-verification\raw\s61\0.3-baseline.json" -Destination "<vault-folder>"
+
+  ```
 
 ---
 
@@ -587,7 +803,7 @@ Document `$Docs.RaWithheld` -- the resolvable entry FIRST, the unresolvable one 
 }
 ```
 
-- [ ] **1.1 The `-Prune -WhatIf` plan withholds both candidates.**
+- [x] **1.1 The `-Prune -WhatIf` plan withholds both candidates.**
 
   ```powershell
   Invoke-S61Check -Id '1.1' -Json $Docs.RaWithheld -Include RoleAssignments -Prune
@@ -609,9 +825,57 @@ Document `$Docs.RaWithheld` -- the resolvable entry FIRST, the unresolvable one 
   a group of that name exists, and the trigger is gone); or the `oer-s61-app` row `Failed` with
   `could not resolve principal 'oer-s61-app': ...` (the lookup THREW -- the abort path, not this
   one; record the message).
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **1.2 Without `-Prune` the rows are the same -- `Skipped`, not `Extra`.**
+  ```text
+  PS> Invoke-S61Check -Id '1.1' -Json $Docs.RaWithheld -Include RoleAssignments -Prune
+  === 1.1 -- <repo>\docs\live-verification\raw\s61\1.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000007' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000004 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Failed
+  Detail : principal 'oer-s61-app' could not be resolved to an object id
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=1
+  PS> Compare-Object (Get-S61WithheldId) (@($IdSp, $IdC) | Sort-Object)
+  PS>
+
+  ```
+
+- [x] **1.2 Without `-Prune` the rows are the same -- `Skipped`, not `Extra`.**
 
   ```powershell
   Invoke-S61Check -Id '1.2' -Json $Docs.RaWithheld -Include RoleAssignments
@@ -622,9 +886,57 @@ Document `$Docs.RaWithheld` -- the resolvable entry FIRST, the unresolvable one 
   nothing.
   **Failure looks like:** two `Extra` rows with `(use -Prune to remove)` in place of the withheld
   rows.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **1.3 The real `-Prune` run removes nothing, and the read-back proves it.**
+  ```text
+  PS> Invoke-S61Check -Id '1.2' -Json $Docs.RaWithheld -Include RoleAssignments
+  === 1.2 -- <repo>\docs\live-verification\raw\s61\1.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000007' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000004 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Failed
+  Detail : principal 'oer-s61-app' could not be resolved to an object id
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=1
+  PS> Compare-Object (Get-S61WithheldId) (@($IdSp, $IdC) | Sort-Object)
+  PS>
+
+  ```
+
+- [x] **1.3 The real `-Prune` run removes nothing, and the read-back proves it.**
 
   ```powershell
   Invoke-S61Check -Id '1.3' -Json $Docs.RaWithheld -Include RoleAssignments -Prune -Apply
@@ -638,9 +950,66 @@ Document `$Docs.RaWithheld` -- the resolvable entry FIRST, the unresolvable one 
   `Compare-Object` prints nothing.
   **Failure looks like:** a `Removed` row, or the SP's or user C's assignment missing from the
   read-back. Restore with the prerequisite script and record it.
-  **Result:**
+  **Result:** PASS, 2026-09-24. Nothing removed; the read-back matches 0.3.
 
-- [ ] **1.4 Unresolved entry FIRST: no prune pass runs at all.**
+  ```text
+  PS> Invoke-S61Check -Id '1.3' -Json $Docs.RaWithheld -Include RoleAssignments -Prune -Apply
+  === 1.3 -- <repo>\docs\live-verification\raw\s61\1.3.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000007 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000007' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000004 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : prune withheld: declared entry 'Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg' could not be resolved, so undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Aut
+  horization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this
+  collection.
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Failed
+  Detail : principal 'oer-s61-app' could not be resolved to an object id
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=1
+  PS> $Ra13 = @(Get-OERRoleAssignment -Scope $RgScope -AtScope -ResolveNames -ErrorAction Stop | Where-Object Scope -eq $RgScope)
+  PS> $Ra13 | Sort-Object PrincipalDisplayName | Format-Table PrincipalDisplayName, PrincipalType, RoleName, RoleAssignmentId -AutoSize
+
+  PrincipalDisplayName PrincipalType RoleName RoleAssignmentId
+  -------------------- ------------- -------- ----------------
+  OER S61 User C User Reader /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000023
+  oer-s61-app ServicePrincipal Reader /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000022
+  oer-s61-ra Group Reader /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000021
+
+  PS> Compare-Object @($Ra0.RoleAssignmentId) @($Ra13.RoleAssignmentId)
+  PS>
+
+  ```
+
+- [x] **1.4 Unresolved entry FIRST: no prune pass runs at all.**
 
   Document `$Docs.RaWithheldFirst` -- the same two entries, order reversed:
 
@@ -668,7 +1037,70 @@ Document `$Docs.RaWithheld` -- the resolvable entry FIRST, the unresolvable one 
   scope: the first item of a scope carries the prune pass, and it returned before reaching it. No
   warning. `Compare-Object` prints nothing.
   **Failure looks like:** any row whose Item starts with `<reader-guid> ->`, or a changed read-back.
-  **Result:**
+  **Result:** PASS, 2026-09-24. No pass ran; the read-back matches 0.3.
+
+  ```text
+  PS> Invoke-S61Check -Id '1.4a' -Json $Docs.RaWithheldFirst -Include RoleAssignments -Prune
+  === 1.4a -- <repo>\docs\live-verification\raw\s61\1.4a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Failed
+  Detail : principal 'oer-s61-app' could not be resolved to an object id
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Failed=1, Unchanged=1
+  PS> Invoke-S61Check -Id '1.4b' -Json $Docs.RaWithheldFirst -Include RoleAssignments -Prune -Apply
+  === 1.4b -- <repo>\docs\live-verification\raw\s61\1.4b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Failed
+  Detail : principal 'oer-s61-app' could not be resolved to an object id
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Failed=1, Unchanged=1
+  PS> $Ra14 = @(Get-OERRoleAssignment -Scope $RgScope -AtScope -ErrorAction Stop | Where-Object Scope -eq $RgScope)
+  PS> Compare-Object @($Ra0.RoleAssignmentId) @($Ra14.RoleAssignmentId)
+  PS>
+
+  ```
 
 ---
 
@@ -708,7 +1140,7 @@ Document `$Docs.PimWithheld`:
 }
 ```
 
-- [ ] **2.1 The `-Prune -WhatIf` plan withholds B's and C's eligibility.**
+- [x] **2.1 The `-Prune -WhatIf` plan withholds B's and C's eligibility.**
 
   ```powershell
   Invoke-S61Check -Id '2.1' -Json $Docs.PimWithheld -Include Groups -Prune
@@ -730,9 +1162,72 @@ Document `$Docs.PimWithheld`:
   `Sync-OERStructureGroup: would remove ...` warning (the old behaviour); B's row `Failed` with
   `handler error: ...` and no withheld rows (the lookup THREW and aborted the item -- a different
   path; record the message); any member row (the explicit null was not honoured).
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **2.2 The real `-Prune` run revokes nothing.**
+  ```text
+  PS> Invoke-S61Check -Id '2.1' -Json $Docs.PimWithheld -Include Groups -Prune
+  === 2.1 -- <repo>\docs\live-verification\raw\s61\2.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "OER S61 User B", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve eligibility principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve eligibility principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Failed
+  Detail : could not resolve eligibility principal 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove
+  the unresolved entry to reconcile this collection.
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member eligibility for principal '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove
+  the unresolved entry to reconcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> Compare-Object (Get-S61WithheldId) (@($IdB, $IdC) | Sort-Object)
+  PS>
+
+  ```
+
+- [x] **2.2 The real `-Prune` run revokes nothing.**
 
   ```powershell
   Invoke-S61Check -Id '2.2' -Json $Docs.PimWithheld -Include Groups -Prune -Apply
@@ -748,7 +1243,80 @@ Document `$Docs.PimWithheld`:
   **Failure looks like:** a `Removed` row, or B's or C's eligibility missing from the read-back
   (restore with the prerequisite script and record it); an `Updated` row for A (see the note above
   the document).
-  **Result:**
+  **Result:** PASS, 2026-09-24. Nothing revoked; every eligibility keeps its 0.3 end time.
+
+  ```text
+  PS> Invoke-S61Check -Id '2.2' -Json $Docs.PimWithheld -Include Groups -Prune -Apply
+  === 2.2 -- <repo>\docs\live-verification\raw\s61\2.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "OER S61 User B", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve eligibility principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve eligibility principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Failed
+  Detail : could not resolve eligibility principal 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove
+  the unresolved entry to reconcile this collection.
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member eligibility for principal '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove
+  the unresolved entry to reconcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> $Elig22 = @(Get-OERGroupEligibility -Group "$Prefix-pim" -ErrorAction Stop)
+  PS> $Elig22 | Sort-Object PrincipalId | Format-Table PrincipalId, AccessType, EndDateTime, ScheduleInstanceId -AutoSize
+
+  PrincipalId AccessType EndDateTime ScheduleInstanceId
+  ----------- ---------- ----------- ------------------
+  00000000-0000-0000-0000-000000000004 member 2026-10-24 06:17:39 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000004
+  00000000-0000-0000-0000-000000000003 member 2026-10-24 06:17:35 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000003
+  00000000-0000-0000-0000-000000000002 member 2026-10-24 06:17:59 00000000-0000-0000-0000-000000000009_member_00000000-0000-0000-0000-000000000002
+
+  PS> Compare-Object @($Elig0 | ForEach-Object { "$($_.PrincipalId)|$($_.AccessType)|$($_.EndDateTime)" }) `
+  > @($Elig22 | ForEach-Object { "$($_.PrincipalId)|$($_.AccessType)|$($_.EndDateTime)" })
+  PS>
+
+  ```
 
 ---
 
@@ -764,7 +1332,7 @@ Document `$Docs.MembersWithheld`:
 }
 ```
 
-- [ ] **3.1 The `-Prune -WhatIf` plan withholds B and C.**
+- [x] **3.1 The `-Prune -WhatIf` plan withholds B and C.**
 
   ```powershell
   Invoke-S61Check -Id '3.1' -Json $Docs.MembersWithheld -Include Groups -Prune
@@ -785,9 +1353,63 @@ Document `$Docs.MembersWithheld`:
   **Failure looks like:** `would remove undeclared member ...` rows with
   `Sync-OERStructureGroup: would remove undeclared member ...` warnings; B's row reading
   `handler error: ...` (a thrown lookup).
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **3.2 Without `-Prune`, the same rows -- `Skipped`, not `Extra`.**
+  ```text
+  PS> Invoke-S61Check -Id '3.1' -Json $Docs.MembersWithheld -Include Groups -Prune
+  === 3.1 -- <repo>\docs\live-verification\raw\s61\3.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "OER S61 User B" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> Compare-Object (Get-S61WithheldId) (@($IdB, $IdC) | Sort-Object)
+  PS>
+
+  ```
+
+- [x] **3.2 Without `-Prune`, the same rows -- `Skipped`, not `Extra`.**
 
   ```powershell
   Invoke-S61Check -Id '3.2' -Json $Docs.MembersWithheld -Include Groups
@@ -795,9 +1417,62 @@ Document `$Docs.MembersWithheld`:
 
   **Expect:** the same five rows as 3.1; no `Extra` row.
   **Failure looks like:** two `Extra` rows `undeclared member '<id>' (use -Prune to remove)`.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **3.3 The real `-Prune` run removes nothing.**
+  ```text
+  PS> Invoke-S61Check -Id '3.2' -Json $Docs.MembersWithheld -Include Groups
+  === 3.2 -- <repo>\docs\live-verification\raw\s61\3.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "OER S61 User B" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS>
+
+  ```
+
+- [x] **3.3 The real `-Prune` run removes nothing.**
 
   ```powershell
   Invoke-S61Check -Id '3.3' -Json $Docs.MembersWithheld -Include Groups -Prune -Apply
@@ -809,9 +1484,72 @@ Document `$Docs.MembersWithheld`:
   **Expect:** the same five rows as 3.1, no `Removed` row; A, B and C are all still members and
   `Compare-Object` prints nothing.
   **Failure looks like:** a `Removed` row, or B or C missing from the read-back.
-  **Result:**
+  **Result:** PASS, 2026-09-24. Nothing removed; the read-back matches 0.3.
 
-- [ ] **3.4 Two unresolved entries: the plural form names both (`-WhatIf` only).**
+  ```text
+  PS> Invoke-S61Check -Id '3.3' -Json $Docs.MembersWithheld -Include Groups -Prune -Apply
+  === 3.3 -- <repo>\docs\live-verification\raw\s61\3.3.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "OER S61 User B" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> $Members33 = @(Get-OERGroupMember -Group "$Prefix-members" -ErrorAction Stop)
+  PS> $Members33 | Sort-Object UserPrincipalName | Format-Table PrincipalId, UserPrincipalName, DisplayName -AutoSize
+
+  PrincipalId UserPrincipalName DisplayName
+  ----------- ----------------- -----------
+  00000000-0000-0000-0000-000000000002 person1@example.com OER S61 User A
+  00000000-0000-0000-0000-000000000003 person2@example.com OER S61 User B
+  00000000-0000-0000-0000-000000000004 person3@example.com OER S61 User C
+
+  PS> Compare-Object @($Members0.PrincipalId) @($Members33.PrincipalId)
+  PS>
+
+  ```
+
+- [x] **3.4 Two unresolved entries: the plural form names both (`-WhatIf` only).**
 
   Document `$Docs.MembersWithheldTwo`:
 
@@ -831,7 +1569,71 @@ Document `$Docs.MembersWithheld`:
   and two errors; the two `Skipped` rows (for `<IdB>` and `<IdC>`) read
   `prune withheld: declared entries 'OER S61 User B', 'OER S61 User C' could not be resolved, so undeclared member '<IdB or IdC>' may be the live counterpart of one of them and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entries to reconcile this collection.`
   **Failure looks like:** the singular form naming only one entry.
-  **Result:**
+  **Result:** PASS, 2026-09-24. The plural form names both entries.
+
+  ```text
+  PS> Invoke-S61Check -Id '3.4' -Json $Docs.MembersWithheldTwo -Include Groups -Prune
+  === 3.4 -- <repo>\docs\live-verification\raw\s61\3.4.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "OER S61 User B", "OER S61 User C" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User C' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 2
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User C' to an object id.
+  --- results: 6
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User C'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entries 'OER S61 User B', 'OER S61 User C' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be the live counterpart of one of them and is left in place (our own guard, not a Graph rejection). Fix
+  or remove the unresolved entries to reconcile this collection.
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : prune withheld: declared entries 'OER S61 User B', 'OER S61 User C' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be the live counterpart of one of them and is left in place (our own guard, not a Graph rejection). Fix
+  or remove the unresolved entries to reconcile this collection.
+
+  --- action counts: Failed=2, Skipped=2, Unchanged=2
+  PS>
+
+  ```
 
 ---
 
@@ -847,7 +1649,7 @@ Document `$Docs.AuWithheld` -- `"scopedRoles": null` keeps the scoped-role pass 
 }
 ```
 
-- [ ] **4.1 The `-Prune -WhatIf` plan withholds B and C.**
+- [x] **4.1 The `-Prune -WhatIf` plan withholds B and C.**
 
   ```powershell
   Invoke-S61Check -Id '4.1' -Json $Docs.AuWithheld -Include AdministrativeUnits -Prune
@@ -866,9 +1668,63 @@ Document `$Docs.AuWithheld` -- `"scopedRoles": null` keeps the scoped-role pass 
   No scoped-role row. `Compare-Object` prints nothing.
   **Failure looks like:** `would remove undeclared member ...` rows with
   `Sync-OERStructureAdministrativeUnit: would remove ...` warnings; any scoped-role row.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **4.2 The real `-Prune` run removes nothing.**
+  ```text
+  PS> Invoke-S61Check -Id '4.1' -Json $Docs.AuWithheld -Include AdministrativeUnits -Prune
+  === 4.1 -- <repo>\docs\live-verification\raw\s61\4.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "OER S61 User B" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -WhatIf
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> Compare-Object (Get-S61WithheldId) (@($IdB, $IdC) | Sort-Object)
+  PS>
+
+  ```
+
+- [x] **4.2 The real `-Prune` run removes nothing.**
 
   ```powershell
   Invoke-S61Check -Id '4.2' -Json $Docs.AuWithheld -Include AdministrativeUnits -Prune -Apply
@@ -880,7 +1736,70 @@ Document `$Docs.AuWithheld` -- `"scopedRoles": null` keeps the scoped-role pass 
   **Expect:** the same five rows as 4.1, no `Removed` row; A, B and C still members;
   `Compare-Object` prints nothing.
   **Failure looks like:** a `Removed` row, or B or C missing.
-  **Result:**
+  **Result:** PASS, 2026-09-24. Nothing removed; the read-back matches 0.3.
+
+  ```text
+  PS> Invoke-S61Check -Id '4.2' -Json $Docs.AuWithheld -Include AdministrativeUnits -Prune -Apply
+  === 4.2 -- <repo>\docs\live-verification\raw\s61\4.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "OER S61 User B" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Could not resolve principal 'OER S61 User B' to an object id.
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 1
+  ERROR [PrincipalNotFound,Invoke-OERStructure]: Could not resolve principal 'OER S61 User B' to an object id.
+  --- results: 5
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Failed
+  Detail : could not resolve member 'OER S61 User B'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000003' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : prune withheld: declared entry 'OER S61 User B' could not be resolved, so undeclared member '00000000-0000-0000-0000-000000000004' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to r
+  econcile this collection.
+
+  --- action counts: Failed=1, Skipped=2, Unchanged=2
+  PS> $Au42 = Get-OERAdministrativeUnit -AdministrativeUnit "$Prefix-au" -IncludeMembers -ErrorAction Stop
+  PS> $Au42.Members | Sort-Object UserPrincipalName | Format-Table PrincipalId, UserPrincipalName -AutoSize
+
+  PrincipalId UserPrincipalName
+  ----------- -----------------
+  00000000-0000-0000-0000-000000000002 person1@example.com
+  00000000-0000-0000-0000-000000000003 person2@example.com
+  00000000-0000-0000-0000-000000000004 person3@example.com
+
+  PS> Compare-Object @($Au0.Members.PrincipalId) @($Au42.Members.PrincipalId)
+  PS>
+
+  ```
 
 ---
 
@@ -909,7 +1828,7 @@ Document `$Docs.ApWithheld`:
 }
 ```
 
-- [ ] **5.1 The `-Prune -WhatIf` plan withholds the res2 binding.**
+- [x] **5.1 The `-Prune -WhatIf` plan withholds the res2 binding.**
 
   ```powershell
   Invoke-S61Check -Id '5.1' -Json $Docs.ApWithheld -Include AccessPackages -Prune
@@ -931,9 +1850,67 @@ Document `$Docs.ApWithheld`:
   **Failure looks like:** `would remove undeclared resourceRole binding 'Member|<IdRes2>'` with a
   `Sync-OERStructureAccessPackage: would remove ...` warning; the typo row `Unchanged` or
   `Created` (it resolved to something); a `Failed` "handler error" row.
-  **Result:**
+  **Result:** PASS, 2026-09-24. The live binding key is `Member|<origin id>`, which also settles the handler's live-verify note: `role.displayName` IS populated under `$expand=scope,role`.
 
-- [ ] **5.2 The real `-Prune` run unbinds nothing.**
+  ```text
+  PS> Invoke-S61Check -Id '5.1' -Json $Docs.ApWithheld -Include AccessPackages -Prune
+  === 5.1 -- <repo>\docs\live-verification\raw\s61\5.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [
+  { "resource": "oer-s61-ap-res1", "role": "Member" },
+  { "resource": "oer-s61-ap-res2-typo", "role": "Member" }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Failed
+  Detail : could not resolve resource 'oer-s61-ap-res2-typo' to an origin id in catalog 'oer-s61-catalog'
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Skipped
+  Detail : prune withheld: declared entry 'oer-s61-ap-res2-typo' could not be resolved, so undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remov
+  e the unresolved entry to reconcile this collection.
+
+  --- action counts: Failed=1, Skipped=1, Unchanged=2
+  PS> Compare-Object (Get-S61WithheldId) @($IdRes2)
+  PS>
+
+  ```
+
+- [x] **5.2 The real `-Prune` run unbinds nothing.**
 
   ```powershell
   Invoke-S61Check -Id '5.2' -Json $Docs.ApWithheld -Include AccessPackages -Prune -Apply
@@ -945,7 +1922,73 @@ Document `$Docs.ApWithheld`:
   **Expect:** the same four rows as 5.1, no `Removed` row; both `Member` bindings still there;
   `Compare-Object` prints nothing.
   **Failure looks like:** a `Removed` row, or the res2 binding missing.
-  **Result:**
+  **Result:** PASS, 2026-09-24. Nothing unbound; the read-back matches 0.3.
+
+  ```text
+  PS> Invoke-S61Check -Id '5.2' -Json $Docs.ApWithheld -Include AccessPackages -Prune -Apply
+  === 5.2 -- <repo>\docs\live-verification\raw\s61\5.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [
+  { "resource": "oer-s61-ap-res1", "role": "Member" },
+  { "resource": "oer-s61-ap-res2-typo", "role": "Member" }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Failed
+  Detail : could not resolve resource 'oer-s61-ap-res2-typo' to an origin id in catalog 'oer-s61-catalog'
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Skipped
+  Detail : prune withheld: declared entry 'oer-s61-ap-res2-typo' could not be resolved, so undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remov
+  e the unresolved entry to reconcile this collection.
+
+  --- action counts: Failed=1, Skipped=1, Unchanged=2
+  PS> $ApRoles52 = @(Get-OERAccessPackageResourceRole -AccessPackage $ApId -ErrorAction Stop)
+  PS> $ApRoles52 | Format-Table ResourceDisplayName, RoleName, OriginId, ResourceRoleScopeId -AutoSize
+
+  ResourceDisplayName RoleName OriginId ResourceRoleScopeId
+  ------------------- -------- -------- -------------------
+  oer-s61-ap-res1 Member 00000000-0000-0000-0000-000000000011 00000000-0000-0000-0000-000000000017_00000000-0000-0000-0000-000000000018
+  oer-s61-ap-res2 Member 00000000-0000-0000-0000-000000000012 00000000-0000-0000-0000-000000000019_00000000-0000-0000-0000-000000000020
+
+  PS> Compare-Object @($ApRoles0.ResourceRoleScopeId) @($ApRoles52.ResourceRoleScopeId)
+  PS>
+
+  ```
 
 ---
 
@@ -955,7 +1998,7 @@ Each control declares the same collection with every entry resolvable, so user C
 binding) is a genuine extra. These are the only writes in this file that remove anything, and they
 remove only the one candidate each check names. `a` is the plan, `b` the real run.
 
-- [ ] **6.1 `roleAssignments`: user C's Reader is removed.**
+- [x] **6.1 `roleAssignments`: user C's Reader is removed.**
 
   Document `$Docs.RaControl` -- the SP entry now carries `principalType`:
 
@@ -984,13 +2027,99 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   `Sync-OERStructureRoleAssignment: would remove undeclared assignment '<ReaderId>' for principal '<IdC>' at scope '<RgScope>'.`
   and one `What if:` line for `Remove undeclared role assignment '<C's RoleAssignmentId>'`.
   **Expect (6.1b):** the same rows with `Removed` `removed undeclared assignment '<ReaderId>' for principal '<IdC>'`
-  in place of the `Skipped` row, and the warning reading `removing` instead of `would remove`.
+  in place of the `Skipped` row, and two warnings: the handler's, reading `removing` instead of
+  `would remove`, then `Remove-OERRoleAssignment`'s own
+  `Deleting Azure role assignment '<C's RoleAssignmentId>'. This removes the principal's access at that scope.`
   The read-back lists exactly two assignments, `oer-s61-ra` and `oer-s61-app`.
   **Failure looks like:** a withheld row (the guard fires with nothing unresolved), or C's
   assignment still in the read-back.
-  **Result:**
+  **Result:** PASS, 2026-09-24. C's Reader removed, nothing else. 6.1b wrote two warnings, the second being `Remove-OERRoleAssignment`'s own; the Expect above now says so (it named only the handler's).
 
-- [ ] **6.2 Eligibility: C's eligibility is revoked.**
+  ```text
+  PS> Invoke-S61Check -Id '6.1a' -Json $Docs.RaControl -Include RoleAssignments -Prune
+  === 6.1a -- <repo>\docs\live-verification\raw\s61\6.1a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app", "principalType": "ServicePrincipal" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared role assignment '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000023'" on target "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureRoleAssignment: would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004' at scope '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'.
+  --- errors: 0
+  --- results: 3
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000004 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Skipped
+  Detail : would remove undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004'
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Skipped=1, Unchanged=2
+  PS> Invoke-S61Check -Id '6.1b' -Json $Docs.RaControl -Include RoleAssignments -Prune -Apply
+  === 6.1b -- <repo>\docs\live-verification\raw\s61\6.1b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app", "principalType": "ServicePrincipal" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -Confirm:$false
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 2
+  WARNING: Sync-OERStructureRoleAssignment: removing undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004'
+  at scope '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'.
+  WARNING: Deleting Azure role assignment '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000023'. This removes the principal's access at that scope.
+  --- errors: 0
+  --- results: 3
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : 00000000-0000-0000-0000-000000000024 -> 00000000-0000-0000-0000-000000000004 @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Removed
+  Detail : removed undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000016/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000024' for principal '00000000-0000-0000-0000-000000000004'
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Removed=1, Unchanged=2
+  PS> Get-OERRoleAssignment -Scope $RgScope -AtScope -ResolveNames -ErrorAction Stop | Where-Object Scope -eq $RgScope |
+  > Format-Table PrincipalDisplayName, PrincipalType, RoleName, RoleAssignmentId -AutoSize
+
+  PrincipalDisplayName PrincipalType RoleName RoleAssignmentId
+  -------------------- ------------- -------- ----------------
+  oer-s61-ra Group Reader /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000021
+  oer-s61-app ServicePrincipal Reader /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-000000000022
+
+  PS>
+
+  ```
+
+- [x] **6.2 Eligibility: C's eligibility is revoked.**
 
   Document `$Docs.PimControl` -- B by user principal name:
 
@@ -1025,7 +2154,110 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   and the warning reading `removing`. The read-back lists A and B only. A revoked instance can take
   a minute to disappear: if C is still listed, re-read after a minute and record both reads.
   **Failure looks like:** a withheld row; C still eligible after the second read.
-  **Result:**
+  **Result:** PASS, 2026-09-24. C's eligibility revoked; A and B kept.
+
+  ```text
+  PS> Invoke-S61Check -Id '6.2a' -Json $Docs.PimControl -Include Groups -Prune
+  === 6.2a -- <repo>\docs\live-verification\raw\s61\6.2a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "person2@example.com", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004'" on target "oer-s61-pim".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: would remove undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004' from group 'oer-s61-pim'.
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person2@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Skipped
+  Detail : would remove undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=1, Unchanged=3
+  PS> Invoke-S61Check -Id '6.2b' -Json $Docs.PimControl -Include Groups -Prune -Apply
+  === 6.2b -- <repo>\docs\live-verification\raw\s61\6.2b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "person2@example.com", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: removing undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004' from group 'oer-s61-pim'.
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person2@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Removed
+  Detail : removed undeclared member eligibility for principal '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Removed=1, Unchanged=3
+  PS> Get-OERGroupEligibility -Group "$Prefix-pim" -ErrorAction Stop | Format-Table PrincipalId, AccessType, EndDateTime -AutoSize
+
+  PrincipalId AccessType EndDateTime
+  ----------- ---------- -----------
+  00000000-0000-0000-0000-000000000003 member 2026-10-24 06:17:35
+  00000000-0000-0000-0000-000000000002 member 2026-10-24 06:17:59
+
+  PS>
+
+  ```
 
 - [ ] **6.3 Group members: C is removed.**
 
@@ -1048,8 +2280,106 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   **Expect (6.3a):** two `member '...' already present` rows, `Skipped` `would remove undeclared member '<IdC>'`,
   warning `Sync-OERStructureGroup: would remove undeclared member '<IdC>' from group 'oer-s61-members'.`
   **Expect (6.3b):** `Removed` `removed undeclared member '<IdC>'`; the read-back lists A and B only.
-  **Failure looks like:** a withheld row, or C still a member.
-  **Result:**
+  **Failure looks like:** a withheld row, or C still a member. A `Failed` row
+  `failed to remove member '<IdC>': Authorization_RequestDenied: Insufficient privileges to complete the operation.`
+  after the `removing undeclared member '<IdC>'` warning is NOT this branch's guard: the pass chose
+  exactly C and reached the removal, and the tenant refused the write because the signed-in
+  account has no active role that can change the group's membership (see Setup). Record it; the
+  teardown removes C with the group.
+  **Result:** GUARD VERIFIED, REMOVAL REFUSED BY THE TENANT, 2026-09-24. 6.3a planned exactly C's removal with no withheld row, and 6.3b reached `Remove-OERGroupMember` for C, so the guard stayed out of the way -- the point of this check. Microsoft Graph answered `Authorization_RequestDenied`, so C stayed a member: the signed-in account had no active role that can change the group's membership. `Remove-OERGroupMember` is not changed by this branch. Not re-run; the teardown removes C with the group.
+
+  ```text
+  PS> Invoke-S61Check -Id '6.3a' -Json $Docs.MembersControl -Include Groups -Prune
+  === 6.3a -- <repo>\docs\live-verification\raw\s61\6.3a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "person2@example.com" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-members".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=1, Unchanged=3
+  PS> Invoke-S61Check -Id '6.3b' -Json $Docs.MembersControl -Include Groups -Prune -Apply
+  === 6.3b -- <repo>\docs\live-verification\raw\s61\6.3b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "person2@example.com" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: removing undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  --- errors: 4
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR []:
+  ERROR [Authorization_RequestDenied,Remove-OERGroupMember]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : failed to remove member '00000000-0000-0000-0000-000000000004': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+
+  --- action counts: Failed=1, Unchanged=3
+  PS> Get-OERGroupMember -Group "$Prefix-members" -ErrorAction Stop | Format-Table PrincipalId, UserPrincipalName -AutoSize
+
+  PrincipalId UserPrincipalName
+  ----------- -----------------
+  00000000-0000-0000-0000-000000000002 person1@example.com
+  00000000-0000-0000-0000-000000000003 person2@example.com
+  00000000-0000-0000-0000-000000000004 person3@example.com
+
+  ```
 
 - [ ] **6.4 Administrative unit members: C is removed.**
 
@@ -1073,10 +2403,111 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   **Expect (6.4a):** `Skipped` `would remove undeclared member '<IdC>'`, warning
   `Sync-OERStructureAdministrativeUnit: would remove undeclared member '<IdC>' from unit 'oer-s61-au'.`
   **Expect (6.4b):** `Removed` `removed undeclared member '<IdC>'`; the read-back lists A and B only.
-  **Failure looks like:** a withheld row, or C still a member.
-  **Result:**
+  **Failure looks like:** a withheld row, or C still a member. A `Failed` row
+  `failed to remove member '<IdC>': Authorization_RequestDenied: Insufficient privileges to complete the operation.`
+  after the `removing undeclared member '<IdC>'` warning is NOT this branch's guard: the pass chose
+  exactly C and reached the removal, and the tenant refused the write because the signed-in
+  account has no active role that can change the unit's membership (see Setup). Record it; the
+  teardown removes C with the unit.
+  **Result:** GUARD VERIFIED, REMOVAL REFUSED BY THE TENANT, 2026-09-24. As 6.3, for the administrative unit: 6.4b reached `Remove-OERAdministrativeUnitMember` for C and Microsoft Graph answered `Authorization_RequestDenied`. `Remove-OERAdministrativeUnitMember` is not changed by this branch. Not re-run; the teardown removes C with the unit.
 
-- [ ] **6.5 Access package: the res2 binding is removed.**
+  ```text
+  PS> Invoke-S61Check -Id '6.4a' -Json $Docs.AuControl -Include AdministrativeUnits -Prune
+  === 6.4a -- <repo>\docs\live-verification\raw\s61\6.4a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "person2@example.com" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-au".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  --- errors: 0
+  --- results: 4
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=1, Unchanged=3
+  PS> Invoke-S61Check -Id '6.4b' -Json $Docs.AuControl -Include AdministrativeUnits -Prune -Apply
+  === 6.4b -- <repo>\docs\live-verification\raw\s61\6.4b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "person2@example.com" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAdministrativeUnit: removing undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  --- errors: 4
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR []:
+  ERROR [Authorization_RequestDenied,Remove-OERAdministrativeUnitMember]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- results: 4
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Failed
+  Detail : failed to remove member '00000000-0000-0000-0000-000000000004': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+
+  --- action counts: Failed=1, Unchanged=3
+  PS> (Get-OERAdministrativeUnit -AdministrativeUnit "$Prefix-au" -IncludeMembers -ErrorAction Stop).Members |
+  > Format-Table PrincipalId, UserPrincipalName -AutoSize
+
+  PrincipalId UserPrincipalName
+  ----------- -----------------
+  00000000-0000-0000-0000-000000000002 person1@example.com
+  00000000-0000-0000-0000-000000000003 person2@example.com
+  00000000-0000-0000-0000-000000000004 person3@example.com
+
+  PS>
+
+  ```
+
+- [x] **6.5 Access package: the res2 binding is removed.**
 
   Document `$Docs.ApControl`:
 
@@ -1107,7 +2538,107 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   read-back lists the res1 binding only. (`oer-s61-ap-res2` stays a catalog resource: the catalog is
   not in the document.)
   **Failure looks like:** a withheld row, or the res2 binding still there.
-  **Result:**
+  **Result:** PASS, 2026-09-24. The res2 binding removed; res1 kept.
+
+  ```text
+  PS> Invoke-S61Check -Id '6.5a' -Json $Docs.ApControl -Include AccessPackages -Prune
+  === 6.5a -- <repo>\docs\live-verification\raw\s61\6.5a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [ { "resource": "oer-s61-ap-res1", "role": "Member" } ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012'" on target "oer-s61-ap".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAccessPackage: would remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012' from access package 'oer-s61-ap'.
+  --- errors: 0
+  --- results: 3
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Skipped
+  Detail : would remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012'
+
+  --- action counts: Skipped=1, Unchanged=2
+  PS> Invoke-S61Check -Id '6.5b' -Json $Docs.ApControl -Include AccessPackages -Prune -Apply
+  === 6.5b -- <repo>\docs\live-verification\raw\s61\6.5b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [ { "resource": "oer-s61-ap-res1", "role": "Member" } ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -Confirm:$false
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAccessPackage: removing undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012' from access package 'oer-s61-ap'.
+  --- errors: 0
+  --- results: 3
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Removed
+  Detail : removed undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000012'
+
+  --- action counts: Removed=1, Unchanged=2
+  PS> Get-OERAccessPackageResourceRole -AccessPackage $ApId -ErrorAction Stop | Format-Table ResourceDisplayName, RoleName, OriginId -AutoSize
+
+  ResourceDisplayName RoleName OriginId
+  ------------------- -------- --------
+  oer-s61-ap-res1 Member 00000000-0000-0000-0000-000000000011
+
+  PS>
+
+  ```
 
 - [ ] **6.6 Convergence: each control document applied again changes nothing.**
 
@@ -1132,8 +2663,409 @@ remove only the one candidate each check names. `a` is the plan, `b` the real ru
   warning, no error and no `What if:` line. (The two `6.5` documents still show the catalog Warning
   at validation, exactly as in 5.1; that is a validation finding, not a run warning.)
   **Failure looks like:** any row other than `Unchanged`; a `Removed` row means the first apply did
-  not converge.
-  **Result:**
+  not converge. A control whose first apply the tenant refused (6.3b or 6.4b) has nothing to
+  converge on: its two runs repeat that check's `Skipped` plan row and `Failed` removal.
+  **Result:** PASS for 6.1, 6.2 and 6.5, 2026-09-24: only `Unchanged` in both runs. 6.3 and 6.4 never applied (see there), so their runs repeat the `Skipped` plan row and the refused removal -- not a convergence failure.
+
+  ```text
+  PS> $Controls = [ordered]@{
+  > '6.1' = @($Docs.RaControl, 'RoleAssignments')
+  > '6.2' = @($Docs.PimControl, 'Groups')
+  > '6.3' = @($Docs.MembersControl, 'Groups')
+  > '6.4' = @($Docs.AuControl, 'AdministrativeUnits')
+  > '6.5' = @($Docs.ApControl, 'AccessPackages')
+  > }
+  PS> foreach ($Key in $Controls.Keys) {
+  > Invoke-S61Check -Id "6.6-$Key-plan" -Json $Controls[$Key][0] -Include $Controls[$Key][1] -Prune
+  > Invoke-S61Check -Id "6.6-$Key-apply" -Json $Controls[$Key][0] -Include $Controls[$Key][1] -Prune -Apply
+  > }
+  === 6.6-6.1-plan -- <repo>\docs\live-verification\raw\s61\6.6-6.1-plan.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app", "principalType": "ServicePrincipal" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Unchanged=2
+  === 6.6-6.1-apply -- <repo>\docs\live-verification\raw\s61\6.6-6.1-apply.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "roleAssignments": [
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-ra", "principalType": "Group" },
+  { "scope": "/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg", "role": "Reader", "principal": "oer-s61-app", "principalType": "ServicePrincipal" }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleAssignments -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-ra @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  Section : roleAssignments
+  Item : Reader -> oer-s61-app @ /subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg
+  Action : Unchanged
+  Detail : role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000016/resourceGroups/oer-s61-rg'
+
+  --- action counts: Unchanged=2
+  === 6.6-6.2-plan -- <repo>\docs\live-verification\raw\s61\6.6-6.2-plan.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "person2@example.com", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 3
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person2@example.com' (member) already matches
+
+  --- action counts: Unchanged=3
+  === 6.6-6.2-apply -- <repo>\docs\live-verification\raw\s61\6.6-6.2-apply.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [
+  {
+  "displayName": "oer-s61-pim",
+  "members": null,
+  "eligibility": [
+  { "principal": "person1@example.com", "durationDays": 30 },
+  { "principal": "person2@example.com", "durationDays": 30 }
+  ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 3
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person1@example.com' (member) already matches
+
+  Section : groups
+  Item : oer-s61-pim
+  Action : Unchanged
+  Detail : eligibility for 'person2@example.com' (member) already matches
+
+  --- action counts: Unchanged=3
+  === 6.6-6.3-plan -- <repo>\docs\live-verification\raw\s61\6.6-6.3-plan.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "person2@example.com" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-members".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=1, Unchanged=3
+  === 6.6-6.3-apply -- <repo>\docs\live-verification\raw\s61\6.6-6.3-apply.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": [ "person1@example.com", "person2@example.com" ] } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureGroup: removing undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  --- errors: 4
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR []:
+  ERROR [Authorization_RequestDenied,Remove-OERGroupMember]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Failed
+  Detail : failed to remove member '00000000-0000-0000-0000-000000000004': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+
+  --- action counts: Failed=1, Unchanged=3
+  === 6.6-6.4-plan -- <repo>\docs\live-verification\raw\s61\6.6-6.4-plan.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "person2@example.com" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-au".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  --- errors: 0
+  --- results: 4
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=1, Unchanged=3
+  === 6.6-6.4-apply -- <repo>\docs\live-verification\raw\s61\6.6-6.4-apply.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "administrativeUnits": [ { "displayName": "oer-s61-au", "members": [ "person1@example.com", "person2@example.com" ], "scopedRoles": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include AdministrativeUnits -Prune -Confirm:$false
+  Invoke-OERStructure:
+  Line |
+  29 | $global:S61Out = @(Invoke-OERStructure @Splat 3>&1)
+  | ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  | Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 1
+  WARNING: Sync-OERStructureAdministrativeUnit: removing undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  --- errors: 4
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR []:
+  ERROR [Authorization_RequestDenied,Remove-OERAdministrativeUnitMember]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  --- results: 4
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person1@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : member 'person2@example.com' already present
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Failed
+  Detail : failed to remove member '00000000-0000-0000-0000-000000000004': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+
+  --- action counts: Failed=1, Unchanged=3
+  === 6.6-6.5-plan -- <repo>\docs\live-verification\raw\s61\6.6-6.5-plan.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [ { "resource": "oer-s61-ap-res1", "role": "Member" } ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  --- action counts: Unchanged=2
+  === 6.6-6.5-apply -- <repo>\docs\live-verification\raw\s61\6.6-6.5-apply.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "accessPackages": [
+  {
+  "displayName": "oer-s61-ap",
+  "catalog": "oer-s61-catalog",
+  "resourceRoles": [ { "resource": "oer-s61-ap-res1", "role": "Member" } ]
+  }
+  ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].catalog
+  Severity : Warning
+  Message : Catalog 'oer-s61-catalog' is not declared in this document. It may already exist in the tenant.
+
+  --- Invoke-OERStructure -Include AccessPackages -Prune -Confirm:$false
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : resourceRole 'Member' on 'oer-s61-ap-res1' already bound
+
+  --- action counts: Unchanged=2
+  PS> Import-Csv (Join-Path $Raw 'all-results.csv') | Where-Object CheckId -like '6.6-*' | Group-Object CheckId, Action -NoElement |
+  > Format-Table Count, Name -AutoSize
+
+  Count Name
+  ----- ----
+  2 6.6-6.1-apply, Unchanged
+  2 6.6-6.1-plan, Unchanged
+  3 6.6-6.2-apply, Unchanged
+  3 6.6-6.2-plan, Unchanged
+  1 6.6-6.3-apply, Failed
+  3 6.6-6.3-apply, Unchanged
+  1 6.6-6.3-plan, Skipped
+  3 6.6-6.3-plan, Unchanged
+  1 6.6-6.4-apply, Failed
+  3 6.6-6.4-apply, Unchanged
+  1 6.6-6.4-plan, Skipped
+  3 6.6-6.4-plan, Unchanged
+  2 6.6-6.5-apply, Unchanged
+  2 6.6-6.5-plan, Unchanged
+
+  PS>
+
+  ```
 
 ---
 
@@ -1153,7 +3085,7 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
 }
 ```
 
-- [ ] **7.1 `Test-OERStructure` reports the omitted `members` key as a Warning.**
+- [x] **7.1 `Test-OERStructure` reports the omitted `members` key as a Warning.**
 
   ```powershell
   Invoke-S61Check -Id '7.1' -Json $Docs.MembersOmitted -Include Groups -ValidateOnly
@@ -1163,9 +3095,28 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   Path `groups[0].members`, Severity `Warning`, Message
   `'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.`
   **Failure looks like:** no finding, or the finding as an `Error` (`Valid = False`).
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **7.2 `Invoke-OERStructure -Prune -WhatIf` writes ONE warning, before anything else.**
+  ```text
+  PS> Invoke-S61Check -Id '7.1' -Json $Docs.MembersOmitted -Include Groups -ValidateOnly
+  === 7.1 -- <repo>\docs\live-verification\raw\s61\7.1.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members" } ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : groups
+  Item : oer-s61-members
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave
+  the collection untouched.
+
+  ```
+
+- [x] **7.2 `Invoke-OERStructure -Prune -WhatIf` writes ONE warning, before anything else.**
   **`-WhatIf` only.**
 
   ```powershell
@@ -1184,9 +3135,72 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   member. `Get-OERGroupMember -Group oer-s61-members` afterwards is unchanged.
   **Failure looks like:** no `Invoke-OERStructure:` warning; two of them; the warning not first;
   `will be removed` under `-WhatIf`.
-  **Result:**
+  **Result:** PASS, 2026-09-24. One engine warning, first in the stream, before the handlers' own. C is still listed as a live member since 6.3b's removal was refused.
 
-- [ ] **7.3 All five collections, and the `-Include` narrowing. `-WhatIf` only.**
+  ```text
+  PS> Invoke-S61Check -Id '7.2' -Json $Docs.MembersOmitted -Include Groups -Prune
+  === 7.2 -- <repo>\docs\live-verification\raw\s61\7.2.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members" } ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : groups
+  Item : oer-s61-members
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave
+  the collection untouched.
+
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000002'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000003'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-members".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 4
+  WARNING: Invoke-OERStructure: -Prune is set and the document omits 1 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members. Declare each key (an empty array removes the entries delibe
+  rately), or set it to null to leave that collection untouched.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000002' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000003' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000002'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000003'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=3, Unchanged=1
+  PS> $S61Out[0].GetType().Name
+  WarningRecord
+  PS> $S61Out[0].Message
+  Invoke-OERStructure: -Prune is set and the document omits 1 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members. Declare each key (an empty array removes the entries deliberately), or s
+  et it to null to leave that collection untouched.
+  PS> @($S61Warning | Where-Object Message -like 'Invoke-OERStructure:*').Count
+  1
+  PS>
+
+  ```
+
+- [x] **7.3 All five collections, and the `-Include` narrowing. `-WhatIf` only.**
 
   Document `$Docs.FiveOmitted`:
 
@@ -1218,9 +3232,263 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   unit's row is `Failed`; the warning is still the verdict here.)
   **Failure looks like:** a count other than 5 / 3; a collection missing or listed twice; the order
   not groups, units (members before scopedRoles), catalogs, access packages.
-  **Result:**
+  **Result:** PASS, 2026-09-24. 7.3a lists all five collections in engine order; 7.3b, narrowed by -Include, lists three.
 
-- [ ] **7.4 An explicit `"members": null` is not warned about.**
+  ```text
+  PS> Invoke-S61Check -Id '7.3a' -Json $Docs.FiveOmitted -Include Groups, AdministrativeUnits, Catalogs, AccessPackages -Prune
+  === 7.3a -- <repo>\docs\live-verification\raw\s61\7.3a.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members" } ],
+  "administrativeUnits": [ { "displayName": "oer-s61-au" } ],
+  "catalogs": [ { "displayName": "oer-s61-catalog" } ],
+  "accessPackages": [ { "displayName": "oer-s61-ap", "catalog": "oer-s61-catalog" } ]
+  }
+  --- offline validation: Valid = True, findings = 5
+
+  Section : groups
+  Item : oer-s61-members
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave
+  the collection untouched.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Path : administrativeUnits[0].members
+  Severity : Warning
+  Message : 'members' is omitted at administrativeUnits[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to
+  null to leave the collection untouched.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Path : administrativeUnits[0].scopedRoles
+  Severity : Warning
+  Message : 'scopedRoles' is omitted at administrativeUnits[0]. An omitted scopedRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or se
+  t it to null to leave the collection untouched.
+
+  Section : catalogs
+  Item : oer-s61-catalog
+  Path : catalogs[0].resources
+  Severity : Warning
+  Message : 'resources' is omitted at catalogs[0]. An omitted resources key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to
+  leave the collection untouched.
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].resourceRoles
+  Severity : Warning
+  Message : 'resourceRoles' is omitted at accessPackages[0]. An omitted resourceRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set
+  it to null to leave the collection untouched.
+
+  --- Invoke-OERStructure -Include Groups,AdministrativeUnits,Catalogs,AccessPackages -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000002'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000003'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000002'" on target "oer-s61-au".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000003'" on target "oer-s61-au".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-au".
+  What if: Performing the operation "Remove undeclared resource 'oer-s61-ap-res2'" on target "oer-s61-catalog".
+  What if: Performing the operation "Remove undeclared resource 'oer-s61-ap-res1'" on target "oer-s61-catalog".
+  What if: Performing the operation "Remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000011'" on target "oer-s61-ap".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 10
+  WARNING: Invoke-OERStructure: -Prune is set and the document omits 5 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members; administrativeUnits 'oer-s61-au' members; administrativeUnits 'oer-s61-au' scopedRoles; catalogs 'oer-s61-catalog' resources; accessPackages 'oer-s61-ap' resourceRoles. Declare each key (an empty array removes the entries deliberately), or set it to null to leave that collection untouched.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000002' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000003' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000002' from unit 'oer-s61-au'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000003' from unit 'oer-s61-au'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  WARNING: Sync-OERStructureCatalog: would remove undeclared resource 'oer-s61-ap-res2' from catalog 'oer-s61-catalog'.
+  WARNING: Sync-OERStructureCatalog: would remove undeclared resource 'oer-s61-ap-res1' from catalog 'oer-s61-catalog'.
+  WARNING: Sync-OERStructureAccessPackage: would remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000011' from access package 'oer-s61-ap'.
+  --- errors: 0
+  --- results: 13
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000002'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000003'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000002'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000003'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  Section : catalogs
+  Item : oer-s61-catalog
+  Action : Unchanged
+  Detail : catalog properties match
+
+  Section : catalogs
+  Item : oer-s61-catalog
+  Action : Skipped
+  Detail : would remove undeclared resource 'oer-s61-ap-res2'
+
+  Section : catalogs
+  Item : oer-s61-catalog
+  Action : Skipped
+  Detail : would remove undeclared resource 'oer-s61-ap-res1'
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Unchanged
+  Detail : access package properties match
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Action : Skipped
+  Detail : would remove undeclared resourceRole binding 'Member|00000000-0000-0000-0000-000000000011'
+
+  --- action counts: Skipped=9, Unchanged=4
+  PS> $S61Out[0].Message
+  Invoke-OERStructure: -Prune is set and the document omits 5 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members; administrativeUnits 'oer-s61-au' members; administrativeUnits 'oer-s61-au' scopedRoles; catalogs 'oer-s61-catalog' resources; accessPackages 'oer-s61-ap' resourceRoles. Declare each key (an empty array removes the entries deliberately), or set it to null to leave that collection untouched.
+  PS> Invoke-S61Check -Id '7.3b' -Json $Docs.FiveOmitted -Include Groups, AdministrativeUnits -Prune
+  === 7.3b -- <repo>\docs\live-verification\raw\s61\7.3b.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members" } ],
+  "administrativeUnits": [ { "displayName": "oer-s61-au" } ],
+  "catalogs": [ { "displayName": "oer-s61-catalog" } ],
+  "accessPackages": [ { "displayName": "oer-s61-ap", "catalog": "oer-s61-catalog" } ]
+  }
+  --- offline validation: Valid = True, findings = 5
+
+  Section : groups
+  Item : oer-s61-members
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave
+  the collection untouched.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Path : administrativeUnits[0].members
+  Severity : Warning
+  Message : 'members' is omitted at administrativeUnits[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to
+  null to leave the collection untouched.
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Path : administrativeUnits[0].scopedRoles
+  Severity : Warning
+  Message : 'scopedRoles' is omitted at administrativeUnits[0]. An omitted scopedRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or se
+  t it to null to leave the collection untouched.
+
+  Section : catalogs
+  Item : oer-s61-catalog
+  Path : catalogs[0].resources
+  Severity : Warning
+  Message : 'resources' is omitted at catalogs[0]. An omitted resources key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to
+  leave the collection untouched.
+
+  Section : accessPackages
+  Item : oer-s61-ap
+  Path : accessPackages[0].resourceRoles
+  Severity : Warning
+  Message : 'resourceRoles' is omitted at accessPackages[0]. An omitted resourceRoles key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set
+  it to null to leave the collection untouched.
+
+  --- Invoke-OERStructure -Include Groups,AdministrativeUnits -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000002'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000003'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-members".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000002'" on target "oer-s61-au".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000003'" on target "oer-s61-au".
+  What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s61-au".
+  --- first item of the merged output stream: WarningRecord
+  --- warnings, in the order written: 7
+  WARNING: Invoke-OERStructure: -Prune is set and the document omits 3 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members; administrativeUnits 'oer-s61-au' members; administrativeUnits 'oer-s61-au' scopedRoles. Declare each key (an empty array removes the entries deliberately), or set it to null to leave that collection untouched.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000002' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000003' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s61-members'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000002' from unit 'oer-s61-au'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000003' from unit 'oer-s61-au'.
+  WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000004' from unit 'oer-s61-au'.
+  --- errors: 0
+  --- results: 8
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000002'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000003'
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Unchanged
+  Detail : administrative unit properties match
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000002'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000003'
+
+  Section : administrativeUnits
+  Item : oer-s61-au
+  Action : Skipped
+  Detail : would remove undeclared member '00000000-0000-0000-0000-000000000004'
+
+  --- action counts: Skipped=6, Unchanged=2
+  PS> $S61Out[0].Message
+  Invoke-OERStructure: -Prune is set and the document omits 3 collection key(s) that are still reconciled when omitted, so every live entry in them would be removed: groups 'oer-s61-members' members; administrativeUnits 'oer-s61-au' members; administrativeUnits 'oer-s61-au' scopedRoles. Declare each key (an empty array removes the entries deliberately), or set it to null to leave that collection untouched.
+  PS>
+
+  ```
+
+- [x] **7.4 An explicit `"members": null` is not warned about.**
 
   Document `$Docs.MembersNull`:
 
@@ -1239,9 +3507,34 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   **Expect:** validation `Valid = True`, no finding; no warning at all; one result, `Unchanged`
   `group properties match`.
   **Failure looks like:** the omitted-collection Warning or warning appears; any member row.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **7.5 The `members` of a group declared `"dynamic": true` are not warned about. `-WhatIf` only.**
+  ```text
+  PS> Invoke-S61Check -Id '7.4' -Json $Docs.MembersNull -Include Groups -Prune
+  === 7.4 -- <repo>\docs\live-verification\raw\s61\7.4.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members", "members": null } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  --- action counts: Unchanged=1
+  PS>
+
+  ```
+
+- [x] **7.5 The `members` of a group declared `"dynamic": true` are not warned about. `-WhatIf` only.**
 
   Document `$Docs.DynamicAbsent` -- a group name that does not exist:
 
@@ -1263,9 +3556,37 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   warning; one result, `Skipped` `would create group oer-s61-dyn-absent`.
   **Failure looks like:** a `groups 'oer-s61-dyn-absent' members` entry in a Warning finding or in
   an `Invoke-OERStructure:` warning.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
 
-- [ ] **7.6 The same omitted document WITHOUT `-Prune`: no warning.**
+  ```text
+  PS> Get-OERGroup -Filter "displayName eq '$Prefix-dyn-absent'" -ErrorAction Continue
+  Get-OERGroup: No group found for 'displayName eq 'oer-s61-dyn-absent''.
+  PS> Invoke-S61Check -Id '7.5' -Json $Docs.DynamicAbsent -Include Groups -Prune
+  === 7.5 -- <repo>\docs\live-verification\raw\s61\7.5.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-dyn-absent", "dynamic": true, "membershipRule": "(user.department -eq \"oer-s61-dyn-none\")" } ]
+  }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Prune -WhatIf
+  What if: Performing the operation "Create group" on target "oer-s61-dyn-absent".
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+
+  Section : groups
+  Item : oer-s61-dyn-absent
+  Action : Skipped
+  Detail : would create group oer-s61-dyn-absent
+
+  --- action counts: Skipped=1
+  PS>
+
+  ```
+
+- [x] **7.6 The same omitted document WITHOUT `-Prune`: no warning.**
 
   ```powershell
   Invoke-S61Check -Id '7.6' -Json $Docs.MembersOmitted -Include Groups
@@ -1275,13 +3596,61 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   but the run writes no warning at all; results: `Unchanged` `group properties match` and one
   `Extra` `undeclared member '<id>' (use -Prune to remove)` per live member.
   **Failure looks like:** an `Invoke-OERStructure:` warning without `-Prune`.
-  **Result:**
+  **Result:** PASS, 2026-09-24.
+
+  ```text
+  PS> Invoke-S61Check -Id '7.6' -Json $Docs.MembersOmitted -Include Groups
+  === 7.6 -- <repo>\docs\live-verification\raw\s61\7.6.json
+  {
+  "version": "1.0",
+  "tenantAlias": "<your-test-tenant-alias>",
+  "groups": [ { "displayName": "oer-s61-members" } ]
+  }
+  --- offline validation: Valid = True, findings = 1
+
+  Section : groups
+  Item : oer-s61-members
+  Path : groups[0].members
+  Severity : Warning
+  Message : 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave
+  the collection untouched.
+
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  --- first item of the merged output stream: PSCustomObject
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 4
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Unchanged
+  Detail : group properties match
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Extra
+  Detail : undeclared member '00000000-0000-0000-0000-000000000002' (use -Prune to remove)
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Extra
+  Detail : undeclared member '00000000-0000-0000-0000-000000000003' (use -Prune to remove)
+
+  Section : groups
+  Item : oer-s61-members
+  Action : Extra
+  Detail : undeclared member '00000000-0000-0000-0000-000000000004' (use -Prune to remove)
+
+  --- action counts: Extra=3, Unchanged=1
+  PS>
+
+  ```
 
 ---
 
 ### 8. `Get-OERRequiredScope` -- `Set-OERGroup`
 
-- [ ] **8.1 `Set-OERGroup` lists `RoleManagement.ReadWrite.Directory`.** Offline: this reads a
+- [x] **8.1 `Set-OERGroup` lists `RoleManagement.ReadWrite.Directory`.** Offline: this reads a
   static table and signs in to nothing.
 
   ```powershell
@@ -1297,7 +3666,24 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   **Failure looks like:** `GraphScope` is `Group.ReadWrite.All` alone -- a build without this
   branch's scope-map change; or `Verified` is `True` -- a build without "fix: mark the Set-OERGroup
   scope entry as not confirmed by the API table".
-  **Result:**
+  **Result:** PASS, 2026-09-24.
+
+  ```text
+  PS> Get-OERRequiredScope -Cmdlet Set-OERGroup | Format-List Cmdlet, Transport, GraphScope, AzureRole, Note, Verified
+
+  Cmdlet : Set-OERGroup
+  Transport : Graph
+  GraphScope : {Group.ReadWrite.All, RoleManagement.ReadWrite.Directory}
+  AzureRole : {}
+  Note : RoleManagement.ReadWrite.Directory is needed only when the group is role-assignable (isAssignableToRole); Group.ReadWrite.All alone cannot update such a group. The Update group permission table does not list it: Microsoft Learn states it in the role-assign
+  able group guidance and the Entra role reference, where the microsoft.directory/groups update actions exclude role-assignable groups.
+  Verified : False
+
+  PS> (Get-OERRequiredScope -Cmdlet Set-OERGroup).GraphScope -contains 'RoleManagement.ReadWrite.Directory'
+  True
+  PS>
+
+  ```
 
 ---
 
@@ -1333,7 +3719,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   left together with the group's own PIM-for-Groups policies, which the prerequisite script's first
   eligibility created and no check ever changed.
   **Failure looks like:** a sweep line `still present: ...` other than a `Deleting` resource group;
-  an error. Re-run T.2 (it only removes what is still there) and record both runs.
+  an error. Re-run T.2 (it only removes what is still there) and record both runs. An
+  `Authorization_RequestDenied` on a deletion means a role is not active (see Setup): activate it
+  and re-run T.2.
   **Result:**
 
 - [ ] **T.3 Read back through the module that everything is gone.**
@@ -1386,7 +3774,8 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
 
   **Expect:** exactly five rows, all `Removed`: `6.1b` (user C's Reader), `6.2b` (user C's
   eligibility), `6.3b` and `6.4b` (user C's memberships) and `6.5b` (the res2 binding) -- and no
-  `Created` or `Updated` row in any check. The count line prints `0`: every row of every run names
+  `Created` or `Updated` row in any check. A control removal the tenant refused (6.3b or 6.4b) is a
+  `Failed` row instead and is missing from this list. The count line prints `0`: every row of every run names
   an `oer-s61` object (a role-assignment row names the scope `.../resourceGroups/oer-s61-rg`). No
   document ever named an object outside the prefix, none declared a `pimPolicy`, `owners` or a
   non-null `scopedRoles`, and no pre-existing object or policy in the tenant was read for a verdict
