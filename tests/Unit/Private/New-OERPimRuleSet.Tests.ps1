@@ -142,7 +142,10 @@ Describe 'New-OERPimRuleSet' {
                 $Stage.approvalStageTimeOutInDays | Should -Be 1
                 $Stage.isApproverJustificationRequired | Should -BeTrue
                 @($Stage.primaryApprovers).Count | Should -Be 1
-                @($Stage.primaryApprovers)[0].groupId | Should -Be 'grp-1'
+                # Supplied in the v1.0 groupId shape, sent in the beta shape PIM for Groups is PATCHed on.
+                @($Stage.primaryApprovers)[0].id | Should -Be 'grp-1'
+                @($Stage.primaryApprovers)[0].isBackup | Should -BeExactly $false
+                @($Stage.primaryApprovers)[0].Keys | Should -Not -Contain 'groupId'
                 @($Stage.primaryApprovers)[0].'@odata.type' | Should -Be '#microsoft.graph.groupMembers'
                 # Neither the setting nor the stage carries a discriminator: the approvers carry their
                 # own, and the other rules send their target without one either.
@@ -185,9 +188,12 @@ Describe 'New-OERPimRuleSet' {
                 $Stage.isApproverJustificationRequired | Should -BeFalse
                 @($Stage.primaryApprovers).Count | Should -Be 1
                 $Approver = @($Stage.primaryApprovers)[0]
-                $Approver.groupId | Should -Be 'grp-1'
+                $Approver.id | Should -Be 'grp-1'
+                $Approver.isBackup | Should -BeExactly $false
                 $Approver.'@odata.type' | Should -Be '#microsoft.graph.groupMembers'
-                $Approver.Keys | Should -Not -Contain 'id'
+                # The live read's read-only description is not sent back, and no v1.0 field is added.
+                $Approver.Keys | Should -Not -Contain 'groupId'
+                $Approver.Keys | Should -Not -Contain 'description'
                 @($Stage.escalationApprovers).Count | Should -Be 0
             }
         }
@@ -220,10 +226,11 @@ Describe 'New-OERPimRuleSet' {
                 $Stage.escalationTimeInMinutes | Should -Be 30
                 $Stage.isEscalationEnabled | Should -BeTrue
                 @($Stage.primaryApprovers).Count | Should -Be 1
-                @($Stage.primaryApprovers)[0].groupId | Should -Be 'grp-2'
+                @($Stage.primaryApprovers)[0].id | Should -Be 'grp-2'
                 @($Stage.primaryApprovers | Where-Object { $_.userId -eq 'user-1' -or $_.id -eq 'user-1' }).Count | Should -Be 0
                 @($Stage.escalationApprovers).Count | Should -Be 1
-                @($Stage.escalationApprovers)[0].groupId | Should -Be 'grp-esc'
+                @($Stage.escalationApprovers)[0].id | Should -Be 'grp-esc'
+                @($Stage.escalationApprovers)[0].Keys | Should -Not -Contain 'groupId'
             }
         }
 
@@ -231,7 +238,7 @@ Describe 'New-OERPimRuleSet' {
             InModuleScope $script:moduleName {
                 $R = @(New-OERPimRuleSet -RequireApproval $false -PrimaryApprover @(@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'user-2' }))[0]
                 $R.setting.isApprovalRequired | Should -BeTrue
-                @(@($R.setting.approvalStages)[0].primaryApprovers)[0].userId | Should -Be 'user-2'
+                @(@($R.setting.approvalStages)[0].primaryApprovers)[0].id | Should -Be 'user-2'
             }
         }
 
@@ -255,7 +262,67 @@ Describe 'New-OERPimRuleSet' {
                 $Kept.Count | Should -Be 1
                 $Kept[0].Keys.Count | Should -Be 2
                 $Kept[0].managerLevel | Should -Be 1
-                @($Primary | Where-Object { $_.userId -eq 'user-1' }).Count | Should -Be 1
+                @($Primary | Where-Object { $_.id -eq 'user-1' }).Count | Should -Be 1
+            }
+        }
+
+        # PIM for Groups is PATCHed on Graph BETA, whose singleUser and groupMembers types declare only
+        # id, description (read-only) and isBackup. Every user and group approver -- supplied in the
+        # v1.0 userId/groupId shape or carried from a beta read with a description -- must go out with
+        # exactly @odata.type, id and isBackup, primary and escalation alike.
+        It 'sends every user and group approver in the beta shape, never userId, groupId or description' {
+            InModuleScope $script:moduleName {
+                $Live = @{
+                    setting = @{
+                        approvalMode   = 'SingleStage'
+                        approvalStages = @(@{
+                                primaryApprovers    = @(@{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-9'; description = 'Live user' })
+                                escalationApprovers = @(
+                                    @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'user-esc' }
+                                    @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-esc'; description = 'Esc' }
+                                )
+                            })
+                    }
+                }
+                $Supplied = @(
+                    @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'user-1' }
+                    @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'grp-1' }
+                )
+                foreach ($R in @(
+                        @(New-OERPimRuleSet -RequireApproval $true -PrimaryApprover $Supplied -LiveApprovalRule $Live)[0]
+                        @(New-OERPimRuleSet -RequireApproval $true -LiveApprovalRule $Live)[0]
+                    )) {
+                    $Stage = @($R.setting.approvalStages)[0]
+                    $All = @(@($Stage.primaryApprovers) + @($Stage.escalationApprovers))
+                    $All.Count | Should -BeGreaterThan 2
+                    foreach ($A in $All) {
+                        [string[]]$Keys = @($A.Keys)
+                        [System.Array]::Sort($Keys, [System.StringComparer]::Ordinal)
+                        $Keys | Should -Be @('@odata.type', 'id', 'isBackup')
+                        $A.isBackup | Should -BeExactly $false
+                    }
+                }
+                $Bound = @(New-OERPimRuleSet -RequireApproval $true -PrimaryApprover $Supplied -LiveApprovalRule $Live)[0]
+                @(@($Bound.setting.approvalStages)[0].primaryApprovers).id | Should -Be @('user-1', 'grp-1')
+                @(@($Bound.setting.approvalStages)[0].escalationApprovers).id | Should -Be @('user-esc', 'grp-esc')
+            }
+        }
+
+        # The body just built must still read back through the module's one approver reader, which
+        # falls back to id for both kinds -- the same reader the diff uses on a later live read.
+        It 'emits approvers that read back through ConvertFrom-OERGraphApprover to the same ids and kinds' {
+            InModuleScope $script:moduleName {
+                $Supplied = @(
+                    @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'user-1' }
+                    @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'grp-1' }
+                )
+                $R = @(New-OERPimRuleSet -RequireApproval $true -PrimaryApprover $Supplied)[0]
+                $Read = @(@(@($R.setting.approvalStages)[0].primaryApprovers) | ForEach-Object { ConvertFrom-OERGraphApprover -Approver $_ })
+                $Read.Count | Should -Be 2
+                $Read[0].Id | Should -Be 'user-1'
+                $Read[0].UserType | Should -Be 'User'
+                $Read[1].Id | Should -Be 'grp-1'
+                $Read[1].UserType | Should -Be 'Group'
             }
         }
 

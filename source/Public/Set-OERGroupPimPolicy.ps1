@@ -578,7 +578,9 @@ function Set-OERGroupPimPolicy {
         # Bound approvers are sent as the two effective sides together -- rebuilding the unbound side
         # from its live ids is how that side is carried -- followed by the live approvers of any other
         # kind, as read (New-OERPimRuleSet passes those through unchanged). Unbound, New-OERPimRuleSet
-        # carries the live stage's approvers itself.
+        # carries the live stage's approvers itself. Either way New-OERPimRuleSet owns the wire shape:
+        # it sends every user and group approver in the Graph beta shape (id and isBackup), so the
+        # v1.0 userId/groupId objects built here never reach the PATCH body as they are.
         if ($ApprovalBound) {
             $RuleParams.RequireApproval = $EffRequired
             $RuleParams.LiveApprovalRule = $LiveApprovalRule

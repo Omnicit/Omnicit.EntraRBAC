@@ -480,8 +480,9 @@ Describe 'Set-OERGroupPimPolicy' {
 
     Context 'approval' {
         # The live approval rule is read in the beta shape PIM for Groups is pinned to: an approver
-        # carries id, never userId or groupId. $script:LiveApproval is what that read returns;
-        # $script:Patches records every PATCH body, in order.
+        # carries id, never userId or groupId -- and it is PATCHed in that same beta shape (id and
+        # isBackup, never userId, groupId or the read-only description). $script:LiveApproval is what
+        # that read returns; $script:Patches records every PATCH body, in order.
         BeforeEach {
             $script:Patches = [System.Collections.Generic.List[object]]::new()
             $script:LiveApproval = @{
@@ -647,8 +648,8 @@ Describe 'Set-OERGroupPimPolicy' {
             $Kept[0].Keys.Count | Should -Be 2
             $Kept[0].managerLevel | Should -Be 1
             # The group side survived; the user side was replaced.
-            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).groupId | Should -Be @('grp-1')
-            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).userId | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).id | Should -Be @('grp-1')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).id | Should -Be @('11111111-1111-1111-1111-111111111111')
             $Result.Applied | Should -BeTrue
         }
 
@@ -677,7 +678,7 @@ Describe 'Set-OERGroupPimPolicy' {
             @($Body.setting.approvalStages).Count | Should -Be 0
         }
 
-        It 'patches -RequireApproval $true alone with the live approvers normalized to the PATCH shape' {
+        It 'patches -RequireApproval $true alone with the live approvers normalized to the beta PATCH shape' {
             $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -Confirm:$false
             $Result.Applied | Should -BeTrue
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
@@ -690,9 +691,12 @@ Describe 'Set-OERGroupPimPolicy' {
             $Stage.approvalStageTimeOutInDays | Should -Be 2
             $Primary = @($Stage.primaryApprovers)
             $Primary.Count | Should -Be 2
-            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' -and $_.groupId -eq 'grp-1' }).Count | Should -Be 1
-            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' -and $_.userId -eq 'user-1' }).Count | Should -Be 1
-            @($Primary | Where-Object { $_.Keys -contains 'id' }).Count | Should -Be 0
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' -and $_.id -eq 'grp-1' }).Count | Should -Be 1
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' -and $_.id -eq 'user-1' }).Count | Should -Be 1
+            # Beta shape: id and isBackup = false; never v1.0's userId/groupId, and never the read-only
+            # description the live read carried.
+            @($Primary | Where-Object { $_.isBackup -ne $false }).Count | Should -Be 0
+            @($Primary | Where-Object { $_.Keys -contains 'userId' -or $_.Keys -contains 'groupId' -or $_.Keys -contains 'description' }).Count | Should -Be 0
         }
 
         It 'replaces only the user side and carries the live group side when only -ApproverUser is bound' {
@@ -703,8 +707,11 @@ Describe 'Set-OERGroupPimPolicy' {
             $Primary.Count | Should -Be 2
             $Users = @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' })
             $Groups = @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' })
-            @($Users.userId) | Should -Be @('11111111-1111-1111-1111-111111111111')
-            @($Groups.groupId) | Should -Be @('grp-1')
+            @($Users.id) | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Groups.id) | Should -Be @('grp-1')
+            # The bound user is built in the v1.0 userId shape here and still goes out in the beta shape.
+            @($Primary | Where-Object { $_.isBackup -ne $false }).Count | Should -Be 0
+            @($Primary | Where-Object { $_.Keys -contains 'userId' -or $_.Keys -contains 'groupId' -or $_.Keys -contains 'description' }).Count | Should -Be 0
             @($Result.ApproverUser) | Should -Be @('11111111-1111-1111-1111-111111111111')
             @($Result.ApproverGroup) | Should -Be @('grp-1')
         }
@@ -715,7 +722,7 @@ Describe 'Set-OERGroupPimPolicy' {
             $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
             $Primary.Count | Should -Be 1
             $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.singleUser'
-            $Primary[0].userId | Should -Be 'user-1'
+            $Primary[0].id | Should -Be 'user-1'
             @($Result.ApproverUser) | Should -Be @('user-1')
             @($Result.ApproverGroup).Count | Should -Be 0
             $Result.PSObject.Properties.Name | Should -Contain 'ApproverGroup'
@@ -727,8 +734,8 @@ Describe 'Set-OERGroupPimPolicy' {
             $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
             $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
             $Primary.Count | Should -Be 2
-            @($Primary.userId | Where-Object { $_ }) | Should -Be @('11111111-1111-1111-1111-111111111111')
-            @($Primary.groupId | Where-Object { $_ }) | Should -Be @('aaaaaaaa-0000-0000-0000-00000000000a')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).id | Should -Be @('11111111-1111-1111-1111-111111111111')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).id | Should -Be @('aaaaaaaa-0000-0000-0000-00000000000a')
         }
 
         It 'reports RequireApproval, ApproverUser and ApproverGroup on the result when approvers are bound' {

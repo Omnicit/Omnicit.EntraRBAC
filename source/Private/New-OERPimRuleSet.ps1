@@ -63,11 +63,14 @@ function New-OERPimRuleSet {
 
     .PARAMETER PrimaryApprover
     The complete list of primary approvers for the single approval stage, as Graph approver objects
-    (for example from New-OERApproverObject). Each is normalized to the PATCH shape: a user becomes a
-    singleUser with userId and a group a groupMembers with groupId, even when it was read from beta
-    with only an id; any other approver kind is passed through unchanged. When bound, it replaces the
-    live stage's primary approvers while the live stage's other fields carry over. When omitted, the
-    live stage's primary approvers carry over, normalized the same way.
+    (for example from New-OERApproverObject). Each is normalized to the shape of the Graph BETA
+    endpoint PIM for Groups is PATCHed on: a user becomes a singleUser and a group a groupMembers,
+    each carrying only id and isBackup (false), whether it came in as v1.0's userId/groupId or as
+    beta's id. The beta types declare no userId or groupId, and their description is read-only, so
+    neither is ever sent. Any other approver kind is passed through unchanged. When bound, it
+    replaces the live stage's primary approvers while the live stage's other fields carry over. When
+    omitted, the live stage's primary approvers carry over, normalized the same way, and so do its
+    escalation approvers either way.
 
     .PARAMETER LiveApprovalRule
     The Approval_EndUser_Assignment rule as currently read from the policy (hashtable or
@@ -122,15 +125,21 @@ function New-OERPimRuleSet {
         [switch]$AllowPermanentActive
     )
 
-    # A beta read of PIM for Groups returns an approver as { id } with no userId or groupId, and a
-    # PATCH needs the userId/groupId shape. ConvertFrom-OERGraphApprover owns reading either form; an
-    # approver kind that is neither a user nor a group is returned as it came, never dropped.
+    # PIM for Groups is PATCHed on the Graph BETA endpoint, and this is the BETA type model, not
+    # v1.0's: beta singleUser and groupMembers declare only id, description and isBackup, so a user
+    # or group approver is sent as { @odata.type, id, isBackup = $false }. v1.0's userId and groupId
+    # are never sent, and neither is description, which is read-only. (The only documented
+    # userId/groupId PATCH is v1.0, for Entra roles; New-OERApproverObject keeps that shape for the
+    # v1.0 access-package path.) ConvertFrom-OERGraphApprover owns READING either shape, so an
+    # approver built by New-OERApproverObject and one carried from a beta read both land here in the
+    # same form. An approver kind that is neither a user nor a group is returned as it came, never
+    # dropped.
     function ConvertTo-PatchApprover {
         param([object]$Approver)
         if ($null -eq $Approver) { return }
         $Read = ConvertFrom-OERGraphApprover -Approver $Approver
-        if ($Read.UserType -eq 'User') { return (New-OERApproverObject -Spec @{ User = $Read.Id }) }
-        if ($Read.UserType -eq 'Group') { return (New-OERApproverObject -Spec @{ Group = $Read.Id }) }
+        if ($Read.UserType -eq 'User') { return @{ '@odata.type' = '#microsoft.graph.singleUser'; id = $Read.Id; isBackup = $false } }
+        if ($Read.UserType -eq 'Group') { return @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = $Read.Id; isBackup = $false } }
         $Approver
     }
 

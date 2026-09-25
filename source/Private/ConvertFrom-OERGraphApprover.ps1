@@ -5,10 +5,11 @@ function ConvertFrom-OERGraphApprover {
 
     .DESCRIPTION
     The single owner of how a Microsoft Graph approver (a subjectSet in an approval stage) is read.
-    Graph returns the same approver in two shapes: v1.0 and every PATCH body carry the object id as
-    userId (#microsoft.graph.singleUser) or groupId (#microsoft.graph.groupMembers), while the beta
-    endpoint PIM for Groups is pinned to returns it as id -- a group approver read from beta has no
-    groupId at all. Reading groupId alone made every beta-read group approver id-less, so a declared
+    Graph carries the same approver in two shapes: v1.0, and every v1.0 body this module builds,
+    carries the object id as userId (#microsoft.graph.singleUser) or groupId
+    (#microsoft.graph.groupMembers), while the beta endpoint PIM for Groups is pinned to carries it
+    as id, on a read and in the body New-OERPimRuleSet PATCHes alike -- a group approver read from
+    beta has no groupId at all. Reading groupId alone made every beta-read group approver id-less, so a declared
     approver list never matched the live one and every apply rewrote the rule. This helper reads
     userId or groupId with id as the fallback for both, and derives UserType from @odata.type ('User'
     or 'Group'), falling back to whichever of userId or groupId is present when the discriminator is
