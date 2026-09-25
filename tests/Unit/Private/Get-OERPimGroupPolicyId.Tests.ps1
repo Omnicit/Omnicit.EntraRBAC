@@ -48,7 +48,7 @@ Describe 'Get-OERPimGroupPolicyId' {
         }
     }
 
-    It 'falls back to the first assignment when no assignment matches the requested access type' {
+    It 'returns $null when no assignment matches the requested access type' {
         # Get-OERPimGroupPolicyId.ps1:38. This helper is the sole policy-id resolver behind both
         # Get- and Set-OERGroupPimPolicy, so a regression here silently targets the wrong policy
         # and mis-applies high-privilege PIM rules.
@@ -59,7 +59,37 @@ Describe 'Get-OERPimGroupPolicyId' {
             ) }
         }
         InModuleScope $script:moduleName {
-            Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' | Should -Be 'pol-first'
+            Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'returns $null for owner, never the member policy id, when only the member assignment exists' {
+        # A no-match must never fall back to whatever assignment happens to be first: right after a
+        # group is created, one access type's assignment can be listed before the other, and a
+        # fallback here returned the MEMBER policy for an OWNER lookup (owner settings were then
+        # written to the member policy with no error).
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                @{ policyId = 'pol-member'; roleDefinitionId = 'member' }
+            ) }
+        }
+        InModuleScope $script:moduleName {
+            $Result = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'owner'
+            $Result | Should -BeNullOrEmpty
+            $Result | Should -Not -Be 'pol-member'
+        }
+    }
+
+    It 'returns $null for member, never the owner policy id, when only the owner assignment exists' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                @{ policyId = 'pol-owner'; roleDefinitionId = 'owner' }
+            ) }
+        }
+        InModuleScope $script:moduleName {
+            $Result = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member'
+            $Result | Should -BeNullOrEmpty
+            $Result | Should -Not -Be 'pol-owner'
         }
     }
 

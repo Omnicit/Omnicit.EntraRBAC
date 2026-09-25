@@ -8,11 +8,17 @@ function ConvertTo-OERGroupPimPolicy {
     Maps the rules collection of a beta policies/roleManagementPolicies/{id}/rules read into the flat
     [PSCustomObject] shape tagged Omnicit.EntraRBAC.GroupPimPolicy so the Format view applies and
     Resolve-OERGroupPimPolicyChange can diff a live policy against a declared apply-document block.
-    Activation, authentication context, eligible and active expiration, both enablement rule sets, and
-    the three admin notification recipient lists are read from their canonical rule ids; the raw rules
-    are carried through unchanged on the Rules property. This private converter is the single owner of
-    the PIM-for-groups policy READ shape and is used by Get-OERGroupPimPolicy. The patch summary that
-    Set-OERGroupPimPolicy returns is a different shape owned by ConvertTo-OERGroupPimPolicyResult.
+    Activation, authentication context, eligible and active expiration, both enablement rule sets, the
+    three admin notification recipient lists, and approval on activation are read from their canonical
+    rule ids; the raw rules are carried through unchanged on the Rules property. RequireApproval is the
+    Approval_EndUser_Assignment rule's isApprovalRequired, or $null when the policy has no approval
+    rule at all -- distinct from a rule that exists with approval turned off. Approvers is the first
+    approval stage's primaryApprovers, each read through the single owner ConvertFrom-OERGraphApprover
+    (so a beta-read group approver, which carries id and no groupId, still matches a declared group id)
+    -- an absent approval rule or stage gives a genuinely empty array, never a one-element array holding
+    $null. This private converter is the single owner of the PIM-for-groups policy READ shape and is
+    used by Get-OERGroupPimPolicy. The patch summary that Set-OERGroupPimPolicy returns is a different
+    shape owned by ConvertTo-OERGroupPimPolicyResult.
 
     .PARAMETER Rules
     The rules collection read from the group's roleManagementPolicy, one object per policy rule.
@@ -51,6 +57,7 @@ function ConvertTo-OERGroupPimPolicy {
         $NotifElig     = $Rules | Where-Object { $_.id -eq 'Notification_Admin_Admin_Eligibility' } | Select-Object -First 1
         $NotifActive   = $Rules | Where-Object { $_.id -eq 'Notification_Admin_Admin_Assignment' } | Select-Object -First 1
         $NotifActon    = $Rules | Where-Object { $_.id -eq 'Notification_Admin_EndUser_Assignment' } | Select-Object -First 1
+        $Approval      = $Rules | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' } | Select-Object -First 1
 
         # Parsed through the single read-side owner rather than an anchored single-unit regex: a policy
         # written by the portal or another tool can legitimately hold P1Y or PT1H30M, and reading those
@@ -77,6 +84,18 @@ function ConvertTo-OERGroupPimPolicy {
             ActivationAlert = @($NotifActon.notificationRecipients | Where-Object { $null -ne $PSItem })
         }
 
+        # RequireApproval is $null when the policy carries no Approval_EndUser_Assignment rule at all --
+        # distinct from a rule that exists with isApprovalRequired = $false. PIM uses one approval
+        # stage; only its primaryApprovers are read here, through the single owner
+        # ConvertFrom-OERGraphApprover so a beta-read group approver (id, no groupId) still projects to
+        # the same Id a declared group would resolve to.
+        $RequireApproval = if ($Approval) { [bool]$Approval.setting.isApprovalRequired } else { $null }
+        $ApprovalStage = $null
+        if ($Approval -and $Approval.setting) {
+            $ApprovalStage = @($Approval.setting.approvalStages) | Where-Object { $null -ne $_ } | Select-Object -First 1
+        }
+        $Approvers = @($ApprovalStage.primaryApprovers | Where-Object { $null -ne $PSItem } | ForEach-Object { ConvertFrom-OERGraphApprover -Approver $PSItem })
+
         $Out = [PSCustomObject]@{
             GroupId                   = $GroupId
             PolicyId                  = $PolicyId
@@ -91,6 +110,8 @@ function ConvertTo-OERGroupPimPolicy {
             ActiveDuration            = $ActiveExpiry.maximumDuration
             ActiveDurationDays        = $ActiveDays
             ActiveEnabledRules        = @($ActiveEnable.enabledRules | Where-Object { $null -ne $PSItem })
+            RequireApproval           = $RequireApproval
+            Approvers                 = $Approvers
             Notifications             = $Notifications
             Rules                     = $Rules
         }

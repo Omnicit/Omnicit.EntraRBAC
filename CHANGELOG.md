@@ -22,6 +22,19 @@ access package `resourceRoles` key, which still prunes, and `Invoke-OERStructure
 before it writes anything; set such a key to `null` to leave it untouched. `Get-OERRequiredScope`
 lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
+PIM for Groups policies now support approval: `Set-OERGroupPimPolicy` takes `-RequireApproval`,
+`-ApproverUser` and `-ApproverGroup`, and a group's `pimPolicy` accepts `requireApproval` and
+`approvers { users[], groups[] }`, which `Get-OERInventory` now exports (`requireApproval` appears
+in every exported `pimPolicy` block). Approvers declared by UPN or group name are resolved to object
+ids before comparison, in `pimPolicy` and `roleManagementPolicies` alike, so a re-run reports
+`Unchanged`; a `roleManagementPolicies` user approver must now be a UPN or object id, since a
+display name is reported `Failed`. Earlier versions could resolve the OWNER policy of a group whose
+owner policy was not yet listed to its MEMBER policy, so owner settings, a permanent-eligibility
+opening included, could land on the member policy: review the member policies of groups onboarded by
+an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
+and a group created in the same run gets up to 30 seconds for its policies to appear.
+`Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
+
 ## [1.0.1] - 2026-09-23
 
 Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:

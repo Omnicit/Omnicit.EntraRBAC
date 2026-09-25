@@ -38,6 +38,10 @@ Describe 'Sync-OERStructureGroup' {
             Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; Members = @(); PimEligibility = @() } }
             Mock Add-OERGroupMember { $script:CallLog.Add('Add-OERGroupMember') }
             Mock Add-OERGroupEligibility { $script:CallLog.Add('Add-OERGroupEligibility') }
+            # The group is created in this run, so step 4 first asks whether its policy is listed;
+            # it is, at once, so nothing waits (Start-Sleep is mocked all the same).
+            Mock Get-OERPimGroupPolicyId { 'pol-member' }
+            Mock Start-Sleep { }
             Mock Get-OERGroupPimPolicy { $null }
             Mock Set-OERGroupPimPolicy { $script:CallLog.Add('Set-OERGroupPimPolicy') }
             Mock Initialize-OERAuth { }
@@ -2483,6 +2487,371 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'member' }
                 Should -Invoke Get-OERGroupPimPolicy -Times 0 -Exactly -ParameterFilter { $AccessType -eq 'owner' }
                 Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'member' -and $ActivationMaxHours -eq 4 }
+            }
+        }
+    }
+
+    Context 'pimPolicy approval (requireApproval, approvers) -- step 4 approver name resolution' {
+        It 'resolves approver names before the diff and converges' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy {
+                    [PSCustomObject]@{
+                        RequireApproval = $true
+                        Approvers       = @([PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; UserType = 'Group'; DisplayName = 'Approvers' })
+                    }
+                }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'Group' } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{
+                            requireApproval = $true
+                            approvers       = [PSCustomObject]@{ groups = @('Approvers') }
+                        }
+                    }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+                ($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                Should -Invoke Set-OERGroupPimPolicy -Times 0
+            }
+        }
+
+        It 'reports Failed for an unresolvable approver in the owner block only; member still processes' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{ activationMaxHours = 8 }
+                        owner  = [PSCustomObject]@{
+                            requireApproval = $true
+                            approvers       = [PSCustomObject]@{ users = @('nobody@example.com') }
+                        }
+                    }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
+                $OwnerFailed.Count | Should -Be 1
+                $OwnerFailed[0].Detail | Should -Match 'could not resolve an approver'
+                @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                # The approver is resolved BEFORE the owner policy is read, so a failed resolution costs
+                # no policy read for that access type.
+                Should -Invoke Get-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                # The Failed row carries the same $ErrRec whether or not $Caller.WriteError ran, so only
+                # the caller's -ErrorVariable proves the record was published. Narrowed to the id AND the
+                # handler's own text, exactly one record.
+                @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' -and
+                        $_.Exception.Message -like '*Could not resolve an approver declared in pimPolicy (owner)*'
+                    }).Count | Should -Be 1
+            }
+        }
+
+        It 'sends ids, not names, to Set-OERGroupPimPolicy' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ RequireApproval = $true; Approvers = @() } }
+                Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = '22222222-2222-2222-2222-222222222222'; PrincipalType = 'Group' } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        requireApproval = $true
+                        approvers       = [PSCustomObject]@{ groups = @('Approvers') }
+                    }
+                }
+                Invoke-SyncGroupViaCaller -Item $Item | Out-Null
+                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
+                    @($ApproverGroup) -contains '22222222-2222-2222-2222-222222222222' -and
+                    @($ApproverGroup) -notcontains 'Approvers'
+                }
+            }
+        }
+    }
+
+    Context 'pimPolicy step-4 wait for the policy of a group created in the same run' {
+        # For a group THIS run created, step 4 ASKS Get-OERPimGroupPolicyId whether the access type's
+        # policy is listed yet (a silent $null while it is not) before its single Get-OERGroupPimPolicy
+        # read, waiting 2, 4, 8 and 16 s from one budget shared by member and owner. Every test that can
+        # reach that poll mocks Start-Sleep and records each wait in order.
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:Slept = [System.Collections.Generic.List[int]]::new()
+            }
+        }
+
+        It 'waits for a policy that is not listed yet, then applies it with no PimPolicyNotFound record left behind' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                # One replication clock for both reads: the policy is listed from the third look on,
+                # whichever command looks. The policy read models the real cmdlet: while nothing is
+                # listed it writes a non-terminating PimPolicyNotFound, which -ErrorAction Stop turns
+                # into a throw AND a record in the caller's -ErrorVariable.
+                $script:Looks = 0
+                Mock Get-OERPimGroupPolicyId {
+                    $script:Looks++
+                    if ($script:Looks -le 2) { $null } else { 'pol-member' }
+                }
+                Mock Get-OERGroupPimPolicy {
+                    $script:Looks++
+                    if ($script:Looks -le 2) {
+                        Write-Error -Message "Group 'g-1' has no PIM-for-groups policy for 'member' access yet." `
+                            -ErrorId 'PimPolicyNotFound' -Category ObjectNotFound -TargetObject 'g-1'
+                        return
+                    }
+                    [PSCustomObject]@{ ActivationMaxHours = 1 }
+                }
+                Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                ($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                Should -Invoke Start-Sleep -Times 2 -Exactly
+                @($script:Slept) | Should -Be @(2, 4)
+                # The point of asking first, checked before the call counts so a poll through the
+                # policy read fails HERE: a run that ends Updated hands the caller no PimPolicyNotFound
+                # record. Polling Get-OERGroupPimPolicy -ErrorAction Stop left records per caught attempt.
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' }).Count | Should -Be 0
+                Should -Invoke Get-OERPimGroupPolicyId -Times 3 -Exactly -ParameterFilter { $GroupId -eq 'g-1' -and $AccessType -eq 'member' }
+                Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly
+            }
+        }
+
+        It 'gives up after the 30-second wait with a replication message and one PimPolicyNotFound record' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Get-OERPimGroupPolicyId { $null }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                Should -Invoke Start-Sleep -Times 4 -Exactly
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                # Nothing listed, so nothing is read and nothing is set.
+                Should -Invoke Get-OERGroupPimPolicy -Times 0
+                Should -Invoke Set-OERGroupPimPolicy -Times 0
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(member\)' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -Match 'replication delay'
+                $Failed[0].Detail | Should -Match 'within the 30-second wait'
+                # M2: no retry count (a shared budget made the owner row read "after 0 retries"), and
+                # no cmdlet named.
+                $Failed[0].Detail | Should -Not -Match 'retries'
+                $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
+                # This document declares no eligibility, so the run applied none: a re-run cannot help.
+                $Failed[0].Detail | Should -Match 'This run applied no time-bound eligibility to the new group'
+                $Failed[0].Detail | Should -Match 'declare a time-bound eligibility entry for it'
+                # The Failed row carries the same record whether or not $Caller.WriteError ran; the
+                # narrowed -ErrorVariable count is what proves it reached the caller.
+                $Failed[0].Error.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
+                @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' -and
+                        $_.Exception.Message -like '*within the 30-second wait*'
+                    }).Count | Should -Be 1
+            }
+        }
+
+        It 'does not tell a group whose time-bound eligibility this run applied that a re-run cannot help' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Add-OERGroupEligibility { }
+                Mock Get-OERPimGroupPolicyId { $null }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    members     = $null
+                    eligibility = @([PSCustomObject]@{ principal = 'person9@example.com'; durationDays = 30 })
+                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match '^set time-bound member eligibility' }).Count | Should -Be 1
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(member\)' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -Match 'within the 30-second wait'
+                $Failed[0].Detail | Should -Match 're-running the same document usually applies them'
+                $Failed[0].Detail | Should -Not -Match 'This run applied no time-bound eligibility'
+                $Failed[0].Detail | Should -Not -Match 'retries'
+                $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
+            }
+        }
+
+        It 'shares one 30-second budget between member and owner' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Get-OERPimGroupPolicyId { $null }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{
+                        member = [PSCustomObject]@{ activationMaxHours = 4 }
+                        owner  = [PSCustomObject]@{ activationMaxHours = 2 }
+                    }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                Should -Invoke Start-Sleep -Times 4 -Exactly
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                # member spends the whole budget (five looks, four waits); owner finds it spent and
+                # looks once.
+                Should -Invoke Get-OERPimGroupPolicyId -Times 5 -Exactly -ParameterFilter { $AccessType -eq 'member' }
+                Should -Invoke Get-OERPimGroupPolicyId -Times 1 -Exactly -ParameterFilter { $AccessType -eq 'owner' }
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \((member|owner)\)' })
+                $Failed.Count | Should -Be 2
+                @($Failed | Where-Object { $_.Detail -match 'retries' }).Count | Should -Be 0
+            }
+        }
+
+        It 'stops waiting at once when the lookup is refused (403), and reads and sets as for any group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Get-OERPimGroupPolicyId {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges'), 'GraphHttpError',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-1')
+                }
+                Mock Get-OERGroupPimPolicy {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges'), 'PimPolicyReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError, 'g-1')
+                }
+                Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                Should -Invoke Start-Sleep -Times 0
+                Should -Invoke Get-OERPimGroupPolicyId -Times 1 -Exactly
+                Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
+                @($r | Where-Object { $_.Detail -match 'within the 30-second wait' }).Count | Should -Be 0
+            }
+        }
+
+        It 'never polls or waits for the policy of an existing group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                # A listed id, so a poll that ran anyway would neither sleep nor fail: only the call
+                # count below can catch it.
+                Mock Get-OERPimGroupPolicyId { 'pol-member' }
+                Mock Get-OERGroupPimPolicy {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('no policy'), 'PimPolicyNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'g-1')
+                }
+                Mock Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                Invoke-SyncGroupViaCaller -Item $Item | Out-Null
+                Should -Invoke Get-OERPimGroupPolicyId -Times 0
+                Should -Invoke Start-Sleep -Times 0
+                Should -Invoke Get-OERGroupPimPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter { $ActivationMaxHours -eq 4 }
             }
         }
     }

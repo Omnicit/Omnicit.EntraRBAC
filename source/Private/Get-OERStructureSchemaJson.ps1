@@ -23,11 +23,18 @@ function Get-OERStructureSchemaJson {
     expirationDateTime may be set (documented; enforced by offline validator, not by draft-07). The
     pimPolicy block supports
     both the flat (member-only) form and the nested member/owner form -- a shared definitions entry
-    (pimPolicyBlock) is referenced by both member and owner, keeping the schema DRY. Section item
+    (pimPolicyBlock) is referenced by both member and owner, keeping the schema DRY. A pimPolicy
+    block, flat or nested, carries approval (requireApproval, approvers) with the same vocabulary as
+    roleManagementPolicies: approvers is an object with optional users/groups string arrays resolved
+    to object ids before the policy is compared, and requireApproval false takes precedence over a
+    declared approvers block. Section item
     objects stay open (additionalProperties is not restricted); only the root object forbids unknown
-    keys at the draft-07 level. Unknown keys in the roleAssignments and roleManagementPolicies sections
-    stay schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply
-    engine cannot honour is visible rather than silent. Tenant-dependent values that the
+    keys at the draft-07 level. Unknown keys in the roleAssignments and roleManagementPolicies sections,
+    in a groups[] item, and in a groups[] pimPolicy block (root, or a nested member/owner block) stay
+    schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply engine
+    cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
+    inventory README used to document before they were renamed gets a did-you-mean hint pointing at its
+    replacement. Tenant-dependent values that the
     offline validator does not enforce (role names, requestorScope scope strings) are intentionally
     left as free strings here and documented in the bundle prompt instead. Pure string builder: no
     Graph, ARM, or filesystem access. SharePointSite catalog resources carry the site URL in a
@@ -95,6 +102,15 @@ function Get-OERStructureSchemaJson {
             "eligibleAlert": { "type": "array", "items": { "type": "string" } },
             "activeAlert": { "type": "array", "items": { "type": "string" } },
             "activationAlert": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "requireApproval": { "type": "boolean" },
+        "approvers": {
+          "type": "object",
+          "description": "Approvers of an activation when approval is required: users are user principal names or object ids, groups are group display names or object ids; each is resolved to an object id before the policy is compared. Declaring one side leaves the other side on the live policy untouched. requireApproval false TAKES PRECEDENCE: approvers declared alongside it are ignored, and the offline validator warns about the combination.",
+          "properties": {
+            "users": { "type": "array", "items": { "type": "string" } },
+            "groups": { "type": "array", "items": { "type": "string" } }
           }
         }
       }
@@ -166,6 +182,15 @@ function Get-OERStructureSchemaJson {
                   "eligibleAlert": { "type": "array", "items": { "type": "string" } },
                   "activeAlert": { "type": "array", "items": { "type": "string" } },
                   "activationAlert": { "type": "array", "items": { "type": "string" } }
+                }
+              },
+              "requireApproval": { "type": "boolean" },
+              "approvers": {
+                "type": "object",
+                "description": "Approvers of an activation when approval is required: users are user principal names or object ids, groups are group display names or object ids; each is resolved to an object id before the policy is compared. Declaring one side leaves the other side on the live policy untouched. requireApproval false TAKES PRECEDENCE: approvers declared alongside it are ignored, and the offline validator warns about the combination.",
+                "properties": {
+                  "users": { "type": "array", "items": { "type": "string" } },
+                  "groups": { "type": "array", "items": { "type": "string" } }
                 }
               },
               "member": { "$ref": "#/definitions/pimPolicyBlock" },

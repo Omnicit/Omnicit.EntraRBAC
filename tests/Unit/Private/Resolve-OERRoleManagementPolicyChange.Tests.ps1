@@ -93,12 +93,26 @@ Describe 'Resolve-OERRoleManagementPolicyChange' {
         }
     }
 
-    It 'matches an approver declared by display name against the live approver description' {
+    It 'never matches a declared display name against a live approver id' {
         $Current = $script:CurrentPolicy.PSObject.Copy()
         $Current.Approvers = @([PSCustomObject]@{ DisplayName = 'Sec Approvers'; Id = 'grp-1'; UserType = 'Group' })
         $Declared = [PSCustomObject]@{
             scope = '/s'; role = 'Contributor'
             approvers = [PSCustomObject]@{ groups = @('sec approvers') }
+        }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
+            param($Declared, $Current)
+            (Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current).Changed |
+                Should -Be $true
+        }
+    }
+
+    It 'matches an approver id case-insensitively' {
+        $Current = $script:CurrentPolicy.PSObject.Copy()
+        $Current.Approvers = @([PSCustomObject]@{ DisplayName = 'Sec Approvers'; Id = 'grp-1'; UserType = 'Group' })
+        $Declared = [PSCustomObject]@{
+            scope = '/s'; role = 'Contributor'
+            approvers = [PSCustomObject]@{ groups = @('GRP-1') }
         }
         InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $Current } {
             param($Declared, $Current)

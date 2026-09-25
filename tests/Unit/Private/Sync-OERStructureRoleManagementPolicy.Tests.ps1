@@ -205,6 +205,12 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                 }
                 Mock Set-OERRoleManagementPolicy {}
                 Mock Initialize-OERAuth {}
+                # Resolve-OERDeclaredApprover now runs before the diff, so a declared group NAME
+                # must resolve through Resolve-OERPrincipal. Mocked as an identity pass-through so
+                # this test keeps proving the OTHER fields propagate, unrelated to approver id
+                # resolution (that is Resolve-OERDeclaredApprover's own test file and the dedicated
+                # tests below).
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = $Group; PrincipalType = 'Group' } }
                 $Item = [PSCustomObject]@{
                     scope = 'subscription:Prod'; role = 'Owner'
                     requireMfaOnActivation = $true; requireApproval = $true
@@ -256,6 +262,143 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                 $Records = @(Invoke-SyncRmpViaCaller -Item $Item)
                 Should -Invoke Set-OERRoleManagementPolicy -Times 0
                 @($Records).Action | Should -Be @('Unchanged')
+            }
+        }
+    }
+
+    Context 'declared approver resolution' {
+        It 'converges when approvers are declared as a UPN and a group name that resolve to the live approver ids' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRmpViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERRoleManagementPolicy {
+                    [PSCustomObject]@{
+                        ActivationMaxHours = 8
+                        RequireMfaOnActivation = $false
+                        RequireJustificationOnActivation = $false
+                        RequireTicketOnActivation = $false
+                        RequireApproval = $true
+                        Approvers = @(
+                            [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; UserType = 'User'; DisplayName = 'Person One' }
+                            [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; UserType = 'Group'; DisplayName = 'Approvers' }
+                        )
+                        AuthenticationContextId = $null
+                        AllowPermanentEligibility = $false
+                        EligibleDurationDays = 365
+                        AllowPermanentActiveAssignment = $false
+                        ActiveDurationDays = 180
+                        RequireMfaOnActiveAssignment = $false
+                        RequireJustificationOnActiveAssignment = $false
+                        Scope = '/subscriptions/sub-1'
+                        RoleName = 'Owner'
+                    }
+                }
+                Mock Set-OERRoleManagementPolicy {}
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERPrincipal {
+                    param($User, $Group)
+                    $Map = @{
+                        'person1@example.com' = '11111111-1111-1111-1111-111111111111'
+                        'Approvers' = '22222222-2222-2222-2222-222222222222'
+                    }
+                    $Key = if ($User) { $User } else { $Group }
+                    [PSCustomObject]@{ PrincipalId = $Map[$Key]; PrincipalType = $(if ($User) { 'User' } else { 'Group' }) }
+                }
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Owner'
+                    requireApproval = $true
+                    approvers = [PSCustomObject]@{ users = @('person1@example.com'); groups = @('Approvers') }
+                }
+                $Records = @(Invoke-SyncRmpViaCaller -Item $Item)
+                @($Records).Action | Should -Be @('Unchanged')
+                Should -Invoke Set-OERRoleManagementPolicy -Times 0
+            }
+        }
+
+        It 'reports Failed and changes nothing when a declared approver does not resolve' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRmpViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERRoleManagementPolicy { [PSCustomObject]@{ AllowPermanentEligibility = $false; ActivationMaxHours = 8; Scope = '/subscriptions/sub-1'; RoleName = 'Owner'; Approvers = @() } }
+                Mock Set-OERRoleManagementPolicy {}
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Owner'
+                    requireApproval = $true
+                    approvers = [PSCustomObject]@{ users = @('nobody@example.com') }
+                }
+                $Records = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                Should -Invoke Set-OERRoleManagementPolicy -Times 0
+                @($Records).Action | Should -Be @('Failed')
+                ($Records[0].Detail) | Should -Match 'could not resolve an approver'
+                # The Failed row carries the same $ErrRec whether or not $Caller.WriteError ran, so only
+                # the caller's -ErrorVariable proves the record was published. Narrowed to the id AND the
+                # handler's own text, exactly one record.
+                @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' -and
+                        $_.Exception.Message -like "*Could not resolve an approver declared for 'Owner'*"
+                    }).Count | Should -Be 1
+            }
+        }
+
+        It 'does not resolve approvers when requireApproval is declared false' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRmpViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERRoleManagementPolicy { [PSCustomObject]@{ AllowPermanentEligibility = $false; ActivationMaxHours = 8; RequireApproval = $false; Approvers = @(); Scope = '/subscriptions/sub-1'; RoleName = 'Owner' } }
+                Mock Set-OERRoleManagementPolicy {}
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Owner'
+                    requireApproval = $false
+                    approvers = [PSCustomObject]@{ users = @('nobody@example.com') }
+                }
+                $null = @(Invoke-SyncRmpViaCaller -Item $Item)
+                Should -Invoke Resolve-OERPrincipal -Times 0
+            }
+        }
+
+        It 'sends object ids, not names, to Set-OERRoleManagementPolicy' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRmpViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Get-OERRoleManagementPolicy {
+                    [PSCustomObject]@{
+                        AllowPermanentEligibility = $false
+                        ActivationMaxHours = 8
+                        RequireApproval = $false
+                        Approvers = @()
+                        Scope = '/subscriptions/sub-1'
+                        RoleName = 'Owner'
+                    }
+                }
+                Mock Set-OERRoleManagementPolicy { [PSCustomObject]@{ PolicyId = 'p-1' } }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111'; PrincipalType = 'User' } }
+                $Item = [PSCustomObject]@{
+                    scope = 'subscription:Prod'; role = 'Owner'
+                    requireApproval = $true
+                    approvers = [PSCustomObject]@{ users = @('person1@example.com') }
+                }
+                $null = @(Invoke-SyncRmpViaCaller -Item $Item)
+                Should -Invoke Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                    @($ApproverUser) -contains '11111111-1111-1111-1111-111111111111' -and
+                    @($ApproverUser) -notcontains 'person1@example.com'
+                }
             }
         }
     }

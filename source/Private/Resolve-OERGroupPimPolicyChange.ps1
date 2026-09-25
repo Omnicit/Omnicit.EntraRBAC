@@ -24,14 +24,34 @@ function Resolve-OERGroupPimPolicyChange {
     exclusion: because the platform cannot hold both at once, reconciling them can add an
     ActivationEnabledRules or an AuthenticationContextId the document never declared -- a plan that
     printed "unchanged" for a field the apply then overwrites would be lying. See
-    docs/development/rationale.md#mfa-authcontext-exclusion. No Graph, ARM, or authentication occurs.
+    docs/development/rationale.md#mfa-authcontext-exclusion.
+
+    Declared approver values (approvers.users, approvers.groups) are ALREADY resolved to object ids by
+    the time this diff sees them -- the caller (Sync-OERStructureGroup) resolves a declared UPN or
+    group display name through Resolve-OERDeclaredApprover first, so this diff only ever compares ids
+    with ids, never a name with an id. requireApproval and each approver side are independently
+    presence-gated. A document that explicitly declares requireApproval = false takes precedence over
+    a declared approvers block, and no approver parameter is sent: binding -ApproverUser or
+    -ApproverGroup on Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval),
+    so sending them would override the explicit false -- the same reason the Azure Resource Manager
+    sibling gives. The ignore is noted in Changes, but that note alone changes nothing: when it is the
+    only entry, Changed is false and the handler reports "already matches" for that access type, so
+    the note is not shown to a plan reader at all. Unlike the Azure Resource Manager sibling
+    (Resolve-OERRoleManagementPolicyChange), which always sends both approver sides because ARM
+    replaces the whole primaryApprovers array in one patch, this diff sends only the DECLARED side(s)
+    when either side differs: Set-OERGroupPimPolicy replaces only the side it is bound for and carries
+    the other side from the live rule, so an undeclared side must never be sent here either. No Graph,
+    ARM, or authentication occurs.
 
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat
     member-only form. Recognized fields: activationMaxHours, authenticationContextId,
     activationEnablement, allowPermanentEligibility, eligibleDurationDays, allowPermanentActive,
-    activeDurationDays, activeEnablement, and a notifications object (eligibleAlert, activeAlert,
-    activationAlert).
+    activeDurationDays, activeEnablement, a notifications object (eligibleAlert, activeAlert,
+    activationAlert), requireApproval, and approvers (an object whose users and groups arrays are each
+    independently optional -- declaring only one side leaves the other alone on the live rule, and the
+    whole block is ignored when requireApproval is explicitly false). Approver values must already be
+    object ids (see Resolve-OERDeclaredApprover).
 
     .PARAMETER Current
     The current policy as returned by Get-OERGroupPimPolicy for the same access type, or null when the
@@ -153,6 +173,57 @@ function Resolve-OERGroupPimPolicyChange {
                     $SetParams[$A.Param] = $D; $Changes.Add("$($A.Decl)=[$($D -join ',')]")
                 }
             }
+        }
+    }
+
+    # -- scalar: requireApproval -------------------------------------------------------------
+    if (Test-DeclHas $Declared 'requireApproval') {
+        $D = [bool]$Declared.requireApproval
+        if ($null -eq $Current -or $D -ne [bool]$Current.RequireApproval) {
+            $SetParams.RequireApproval = $D; $Changes.Add("requireApproval=$D")
+        }
+    }
+
+    # -- set: approvers (users/groups) --------------------------------------------------------
+    # Declared values are already object ids (see the help above -- Resolve-OERDeclaredApprover runs
+    # before this diff), so the comparison below only ever matches ids with ids. requireApproval=false
+    # wins over a declared approvers block: binding -ApproverUser or -ApproverGroup on
+    # Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval, and
+    # New-OERPimRuleSet sends isApprovalRequired true whenever approvers are bound), so sending them
+    # would silently override the explicit false -- the same reason the ARM sibling,
+    # Resolve-OERRoleManagementPolicyChange, gives. The ignore is added to Changes, but it sets no
+    # parameter: when it is the only entry, Changed is false and the handler reports "already
+    # matches", so a plan reader never sees the note. Otherwise,
+    # only the side(s) the document actually declares are compared and, when either differs, sent:
+    # Set-OERGroupPimPolicy replaces exactly the side it is bound for and carries the other from the
+    # live rule, so sending an undeclared side here would be redundant at best and, on a null Current,
+    # would invent a side the document never named.
+    $HasDeclUser  = Test-DeclHas $Declared.approvers 'users'
+    $HasDeclGroup = Test-DeclHas $Declared.approvers 'groups'
+    $ApprovalExplicitlyOff = (Test-DeclHas $Declared 'requireApproval') -and (-not [bool]$Declared.requireApproval)
+    if (($HasDeclUser -or $HasDeclGroup) -and $ApprovalExplicitlyOff) {
+        $Changes.Add('approvers ignored: requireApproval=False takes precedence (approvers only apply when approval is required)')
+    } elseif ($HasDeclUser -or $HasDeclGroup) {
+        $CurAll   = if ($null -ne $Current) { @(@($Current.Approvers) | Where-Object { $_ }) } else { @() }
+        $CurUser  = @($CurAll | Where-Object { [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id })
+        $CurGroup = @($CurAll | Where-Object { [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id })
+
+        $DeclUser  = @(@($Declared.approvers.users) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+        $DeclGroup = @(@($Declared.approvers.groups) | ForEach-Object { [string]$_ } | Where-Object { $_ })
+
+        $UserChanged  = $HasDeclUser  -and ($null -eq $Current -or -not (Test-SetEqual $DeclUser  $CurUser))
+        $GroupChanged = $HasDeclGroup -and ($null -eq $Current -or -not (Test-SetEqual $DeclGroup $CurGroup))
+        if ($UserChanged -or $GroupChanged) {
+            $Parts = [System.Collections.Generic.List[string]]::new()
+            if ($HasDeclUser) {
+                $SetParams.ApproverUser = $DeclUser
+                $Parts.Add("users=[$($DeclUser -join ',')]")
+            }
+            if ($HasDeclGroup) {
+                $SetParams.ApproverGroup = $DeclGroup
+                $Parts.Add("groups=[$($DeclGroup -join ',')]")
+            }
+            $Changes.Add("approvers($($Parts -join ','))")
         }
     }
 

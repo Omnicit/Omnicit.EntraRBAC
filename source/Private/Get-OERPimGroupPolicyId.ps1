@@ -5,12 +5,16 @@ function Get-OERPimGroupPolicyId {
 
     .DESCRIPTION
     Queries the beta roleManagementPolicyAssignments for the given group (scopeType Group) and returns
-    the policyId of the assignment that matches the requested access type (member or owner), falling back
-    to the first assignment when no exact match is found. Returns $null when the group has no policy
-    assignment yet (it has not been onboarded to PIM for Groups) -- including when Graph says so with
-    400 ResourceTypeNotSupported, which is declared to the transport as an expected answer so it is
-    never raised as an error. Ported from a prior internal Get-PimGroupPolicyId. Used by
-    Get-OERGroupPimPolicy and Set-OERGroupPimPolicy.
+    the policyId of the assignment whose roleDefinitionId equals the requested access type, and $null
+    when there is none -- never another access type's policy: right after a group is created, one
+    access type's assignment can be listed before the other, and falling back to the first assignment
+    then returned the MEMBER policy for an OWNER lookup, so owner settings were written to the member
+    policy with no error. $null is also returned when the group has no policy assignment at all yet
+    (it has not been onboarded to PIM for Groups) -- including when Graph says so with 400
+    ResourceTypeNotSupported, which is declared to the transport as an expected answer so it is never
+    raised as an error. Ported from a prior internal Get-PimGroupPolicyId. Used by
+    Get-OERGroupPimPolicy, Set-OERGroupPimPolicy, Get-OERGroupPermanentEligibilityState and
+    Get-OERInventory.
 
     .PARAMETER GroupId
     The object id of the group whose PIM policy id is resolved.
@@ -46,7 +50,6 @@ function Get-OERPimGroupPolicyId {
     if (-not $Response.value -or @($Response.value).Count -eq 0) { return $null }
 
     $Assignment = @($Response.value) | Where-Object { $_.roleDefinitionId -eq $AccessType } | Select-Object -First 1
-    if (-not $Assignment) { $Assignment = @($Response.value) | Select-Object -First 1 }
     if (-not $Assignment) { return $null }
     [string]$Assignment.policyId
 }

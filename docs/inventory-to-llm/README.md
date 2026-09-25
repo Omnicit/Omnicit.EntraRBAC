@@ -47,8 +47,13 @@ Invoke-OERStructure -Path .\proposal.json         # apply
 
 ## Groups schema -- pimPolicy
 
-PIM-onboarded groups carry a `pimPolicy` object in the inventory and apply document. The schema
-supports two forms:
+PIM-onboarded groups carry a `pimPolicy` object in the inventory and apply document. The field
+names below are the DOCUMENT field names the apply engine reads -- they are not the
+`Set-OERGroupPimPolicy` parameter names, which spell some of the same settings differently (for
+example the document field `activationEnablement` is sent through the `-ActivationEnabledRules`
+parameter). A document written with the cmdlet's parameter names instead of these field names is
+not applied: the apply engine does not recognize them, and `Test-OERStructure` warns about the
+unknown key (see below). The schema supports two forms:
 
 **Flat (member-only, back-compat):**
 
@@ -60,11 +65,13 @@ supports two forms:
   "eligibleDurationDays": 365,
   "allowPermanentActive": false,
   "activeDurationDays": 180,
-  "activationEnabledRules": ["MultiFactorAuthentication", "Justification"],
-  "activeEnabledRules": [],
-  "eligibleAlertRecipients": [],
-  "activeAlertRecipients": [],
-  "activationAlertRecipients": []
+  "activationEnablement": ["MultiFactorAuthentication", "Justification"],
+  "activeEnablement": [],
+  "notifications": {
+    "eligibleAlert": [],
+    "activeAlert": [],
+    "activationAlert": []
+  }
 }
 ```
 
@@ -80,9 +87,14 @@ All fields are optional. Omitted fields are not patched -- the existing policy v
   },
   "owner": {
     "activationMaxHours": 1,
-    "activationEnabledRules": ["MultiFactorAuthentication", "Justification", "Ticketing"],
+    "activationEnablement": ["MultiFactorAuthentication", "Justification", "Ticketing"],
     "allowPermanentEligibility": false,
-    "eligibleDurationDays": 90
+    "eligibleDurationDays": 90,
+    "requireApproval": true,
+    "approvers": {
+      "users": ["person1@example.com"],
+      "groups": ["pim-approvers"]
+    }
   }
 }
 ```
@@ -96,18 +108,40 @@ Supplying only `"member"` or only `"owner"` is valid; the other access type is l
 |---|---|---|
 | `activationMaxHours` | integer 1-24 | End-user activation window. |
 | `authenticationContextId` | string or null | Conditional-access context required on activation (e.g. `"c1"`). Empty string disables it. |
-| `activationEnabledRules` | string[] | Requirements on activation: `Justification`, `MultiFactorAuthentication`, `Ticketing`. |
-| `activeEnabledRules` | string[] | Requirements on admin active assignment: same enum values. |
+| `activationEnablement` | string[] | Requirements on activation: `Justification`, `MultiFactorAuthentication`, `Ticketing`. |
+| `activeEnablement` | string[] | Requirements on admin active assignment: same enum values. |
 | `allowPermanentEligibility` | boolean | Allow permanent eligible assignments (no expiry). |
 | `eligibleDurationDays` | integer 1-3650 | Max days for time-bound eligible assignments. |
 | `allowPermanentActive` | boolean | Allow permanent active assignments (no expiry). |
 | `activeDurationDays` | integer 1-3650 | Max days for time-bound active assignments. |
-| `eligibleAlertRecipients` | string[] | Extra admin email addresses for the eligible-assignment alert. Defaults are always kept. |
-| `activeAlertRecipients` | string[] | Extra admin email addresses for the active-assignment alert. Defaults are always kept. |
-| `activationAlertRecipients` | string[] | Extra admin email addresses for the role-activation alert. Defaults are always kept. |
+| `notifications.eligibleAlert` | string[] | Extra admin email addresses for the eligible-assignment alert. Defaults are always kept. |
+| `notifications.activeAlert` | string[] | Extra admin email addresses for the active-assignment alert. Defaults are always kept. |
+| `notifications.activationAlert` | string[] | Extra admin email addresses for the role-activation alert. Defaults are always kept. |
+| `requireApproval` | boolean | Whether an activation of this access type must be approved. |
+| `approvers.users` | string[] | Approving users, as user principal names or object ids. |
+| `approvers.groups` | string[] | Approving groups, as display names or object ids. |
 
-Groups that are not PIM-onboarded carry no `pimPolicy` in the inventory and are silently skipped
-by the apply engine.
+To require approval, declare `requireApproval: true`. Approvers declared without `requireApproval`
+are written only when they differ from the live approvers, and writing them turns approval on --
+so approvers that already match the live ones leave an approval-off policy off. An explicit
+`requireApproval: false` in the same block wins over a declared `approvers` block: the approvers
+are ignored rather than applied. Declaring only `approvers.users` or only
+`approvers.groups` leaves the other side untouched on the live rule. Names are resolved to object
+ids before comparison (and de-duplicated case-insensitively), so a UPN or a group display name in
+the document does not cause the apply to report a change on every run once it has converged. A
+group with no existing approval stage gets a new one with a 1-day timeout and approver
+justification required; a group that already has a stage keeps that stage's own timeout and
+justification setting. An unknown key inside a `pimPolicy` block -- including the five field names
+this page used to document (`activationEnabledRules`, `activeEnabledRules`,
+`eligibleAlertRecipients`, `activeAlertRecipients`, `activationAlertRecipients`) -- is reported as a
+`Warning` by `Test-OERStructure`, with a "did you mean" hint at the current name for those five.
+
+Groups that are not onboarded to PIM for Groups carry no `pimPolicy` in the inventory. A
+`pimPolicy` declared for such a group is not silently skipped: the apply reports that access type
+`Failed` (`PimPolicyNotFound`) until the group has a policy, which a time-bound `eligibility` entry
+declared in the same group entry provides -- the engine applies that eligibility entry first, ahead
+of `pimPolicy`. For a group created by the same apply run, the engine waits up to about 30 seconds
+for its policies to appear before it reports `Failed`.
 
 ## Access package assignment policy schema
 
