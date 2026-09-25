@@ -334,10 +334,17 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                     requireApproval = $true
                     approvers = [PSCustomObject]@{ users = @('nobody@example.com') }
                 }
-                $Records = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $Records = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
                 Should -Invoke Set-OERRoleManagementPolicy -Times 0
                 @($Records).Action | Should -Be @('Failed')
                 ($Records[0].Detail) | Should -Match 'could not resolve an approver'
+                # The Failed row carries the same $ErrRec whether or not $Caller.WriteError ran, so only
+                # the caller's -ErrorVariable proves the record was published. Narrowed to the id AND the
+                # handler's own text, exactly one record.
+                @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' -and
+                        $_.Exception.Message -like "*Could not resolve an approver declared for 'Owner'*"
+                    }).Count | Should -Be 1
             }
         }
 

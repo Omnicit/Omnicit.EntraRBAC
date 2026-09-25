@@ -358,6 +358,24 @@ Describe 'Resolve-OERGroupPimPolicyChange approval (requireApproval, approvers)'
         }
     }
 
+    # Review Focus 2: a document that declares only approvers.users must leave the live group
+    # approvers alone even when the live read failed (Current null). Set-OERGroupPimPolicy carries an
+    # UNBOUND side from its own live read, so the diff must not bind the undeclared side at all -- an
+    # ApproverGroup = @() here would clear the live group approvers.
+    It 'sends only the declared user side when Current is null, never an ApproverGroup key' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{
+                requireApproval = $true
+                approvers       = [pscustomobject]@{ users = @('user-1') }
+            }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $null
+            $R.Changed | Should -BeTrue
+            $R.SetParams.ApproverUser | Should -Be @('user-1')
+            $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
+            @($R.Changes | Where-Object { $_ -like 'approvers(*' }) | Should -Be @('approvers(users=[user-1])')
+        }
+    }
+
     It 'treats an explicit "approvers": null as undeclared and sends no approver key' {
         InModuleScope $script:moduleName {
             $Declared = '{ "requireApproval": true, "approvers": null }' | ConvertFrom-Json

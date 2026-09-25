@@ -2548,12 +2548,22 @@ Describe 'Sync-OERStructureGroup' {
                         }
                     }
                 }
-                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
                 $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
                 $OwnerFailed.Count | Should -Be 1
                 $OwnerFailed[0].Detail | Should -Match 'could not resolve an approver'
                 @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
                 Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                # The approver is resolved BEFORE the owner policy is read, so a failed resolution costs
+                # no policy read for that access type.
+                Should -Invoke Get-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                # The Failed row carries the same $ErrRec whether or not $Caller.WriteError ran, so only
+                # the caller's -ErrorVariable proves the record was published. Narrowed to the id AND the
+                # handler's own text, exactly one record.
+                @($Err | Where-Object {
+                        [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' -and
+                        $_.Exception.Message -like '*Could not resolve an approver declared in pimPolicy (owner)*'
+                    }).Count | Should -Be 1
             }
         }
 
