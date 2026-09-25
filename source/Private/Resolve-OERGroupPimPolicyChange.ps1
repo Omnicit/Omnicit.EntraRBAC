@@ -31,9 +31,12 @@ function Resolve-OERGroupPimPolicyChange {
     group display name through Resolve-OERDeclaredApprover first, so this diff only ever compares ids
     with ids, never a name with an id. requireApproval and each approver side are independently
     presence-gated. A document that explicitly declares requireApproval = false takes precedence over
-    a declared approvers block: Set-OERGroupPimPolicy needs at least one approver to require approval,
-    so sending approvers alongside an explicit false would be inconsistent, and the suppression is
-    recorded in Changes instead. Unlike the Azure Resource Manager sibling
+    a declared approvers block, and no approver parameter is sent: binding -ApproverUser or
+    -ApproverGroup on Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval),
+    so sending them would override the explicit false -- the same reason the Azure Resource Manager
+    sibling gives. The ignore is noted in Changes, but that note alone changes nothing: when it is the
+    only entry, Changed is false and the handler reports "already matches" for that access type, so
+    the note is not shown to a plan reader at all. Unlike the Azure Resource Manager sibling
     (Resolve-OERRoleManagementPolicyChange), which always sends both approver sides because ARM
     replaces the whole primaryApprovers array in one patch, this diff sends only the DECLARED side(s)
     when either side differs: Set-OERGroupPimPolicy replaces only the side it is bound for and carries
@@ -184,10 +187,13 @@ function Resolve-OERGroupPimPolicyChange {
     # -- set: approvers (users/groups) --------------------------------------------------------
     # Declared values are already object ids (see the help above -- Resolve-OERDeclaredApprover runs
     # before this diff), so the comparison below only ever matches ids with ids. requireApproval=false
-    # wins over a declared approvers block: Set-OERGroupPimPolicy refuses to require approval with no
-    # approver, so a document combining requireApproval=false with approvers is read as "approval (and
-    # therefore its approvers) is off", not as "stage these approvers for later" -- the ignore is
-    # recorded in Changes so a plan reader sees the declared block was not silently dropped. Otherwise,
+    # wins over a declared approvers block: binding -ApproverUser or -ApproverGroup on
+    # Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval, and
+    # New-OERPimRuleSet sends isApprovalRequired true whenever approvers are bound), so sending them
+    # would silently override the explicit false -- the same reason the ARM sibling,
+    # Resolve-OERRoleManagementPolicyChange, gives. The ignore is added to Changes, but it sets no
+    # parameter: when it is the only entry, Changed is false and the handler reports "already
+    # matches", so a plan reader never sees the note. Otherwise,
     # only the side(s) the document actually declares are compared and, when either differs, sent:
     # Set-OERGroupPimPolicy replaces exactly the side it is bound for and carries the other from the
     # live rule, so sending an undeclared side here would be redundant at best and, on a null Current,

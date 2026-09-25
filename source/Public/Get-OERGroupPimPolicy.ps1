@@ -14,8 +14,11 @@ function Get-OERGroupPimPolicy {
     Approvers (the first approval stage's primary approvers, each an Id/UserType/DisplayName object --
     a genuinely empty array when there is no approval rule), and a Notifications object carrying
     EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw Rules array. A
-    group that has not been onboarded to PIM for Groups (no policy assignment) produces a
-    non-terminating PimPolicyNotFound error. A policy-assignment lookup that FAILED rather than
+    group that has no PIM-for-groups policy assignment for the requested access type -- never
+    onboarded, or onboarded moments ago and not yet listed by Graph (replication delay) -- produces a
+    non-terminating PimPolicyNotFound error, worded as Set-OERGroupPimPolicy words it: re-running
+    usually succeeds, and a group never used with PIM for Groups gets its policies when it is first
+    onboarded, for example by its first eligibility. A policy-assignment lookup that FAILED rather than
     answering -- a 403, a throttle, a dead transport -- is a different fact and is reported separately
     as a non-terminating PimPolicyReadFailed error, so a caller suppressing the ordinary
     not-onboarded case does not suppress a refusal along with it.
@@ -111,8 +114,14 @@ function Get-OERGroupPimPolicy {
             return
         }
         if (-not $PolicyId) {
+            # The same wording as Set-OERGroupPimPolicy for the same condition: a group created moments
+            # ago reaches this branch too (replication delay), so the likely cause comes first.
             Write-CmdletError `
-                -Message ([System.Exception]::new("Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access. Onboard it first with Add-OERGroupEligibility.")) `
+                -Message ([System.Exception]::new(
+                    "Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access yet. A group created " +
+                    'moments ago can take a short while before Microsoft Graph lists its policies (replication ' +
+                    'delay), and re-running usually succeeds. A group never used with PIM for Groups gets its ' +
+                    'policies when it is first onboarded, for example by its first eligibility.')) `
                 -ErrorId 'PimPolicyNotFound' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
             return
         }

@@ -1,11 +1,14 @@
 function Resolve-OERDeclaredApprover {
     <#
     .SYNOPSIS
-    Resolves a declared roleManagementPolicies[] approvers block from names to object ids.
+    Resolves the declared approvers of a roleManagementPolicies[] entry or a group pimPolicy block from
+    names to object ids.
 
     .DESCRIPTION
-    Runs before every approval diff -- both the group pimPolicy block and each roleManagementPolicies[]
-    entry -- so the diff that follows compares ids with ids, never a name with an id. approvers.users
+    Runs before every approval diff, for both callers: Sync-OERStructureRoleManagementPolicy passes
+    each roleManagementPolicies[] entry, and Sync-OERStructureGroup passes each group pimPolicy block
+    (member, owner, or the flat form) -- so the diff that follows compares ids with ids, never a name
+    with an id. approvers.users
     entries resolve through Resolve-OERPrincipal -User (a user principal name or an object id both
     pass); approvers.groups entries resolve through Resolve-OERPrincipal -Group (a group display name
     or an object id both pass). Results are de-duplicated case-insensitively after resolution, so the

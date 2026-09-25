@@ -177,7 +177,13 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'requireApproval \(bool\)'
             $T | Should -Match 'approvers \{ users\[\]'
             $T | Should -Match 'requireApproval false wins'
-            $T | Should -Match 'names are resolved to object ids before comparison'
+            $T | Should -Match 'names are resolved to object ids before\s+comparison'
+            # The true rule for approvers declared without requireApproval: written only when they
+            # differ from the live approvers, and writing them turns approval on. The old sentence
+            # ("apply only when requireApproval is true") was false for exactly that case.
+            $T | Should -Match 'to require approval, declare requireApproval: true'
+            $T | Should -Match 'approvers declared without requireApproval\s+are written only when they differ from the live approvers, and writing them turns approval on'
+            $T | Should -Not -Match 'approvers apply only when requireApproval is true'
         }
     }
 

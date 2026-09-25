@@ -823,11 +823,14 @@ BeforeAll {
             declared, explicitly null or omitted -- the declared-value question itself, and the
             answer that decides whether -Prune's warning lists the key. Its parameter is -Document,
             not -Declared, so the tell named under SCOPE MAINTENANCE below would not have found it.
-          - source/Private/Resolve-OERDeclaredApprover.ps1 -- handed one roleManagementPolicies[]
-            entry (-Declared) by Sync-OERStructureRoleManagementPolicy.ps1 BEFORE the diff, it walks
-            the approvers.users/approvers.groups sub-block and requireApproval to decide what needs
-            resolving to an object id, so it asks the same present-and-not-null question about the
-            same kind of node that Resolve-OERRoleManagementPolicyChange.ps1 asks of it afterward.
+          - source/Private/Resolve-OERDeclaredApprover.ps1 -- handed a document node (-Declared)
+            BEFORE the diff by two handlers: one roleManagementPolicies[] entry by
+            Sync-OERStructureRoleManagementPolicy.ps1, and one pimPolicy block (member, owner or the
+            flat form) by Sync-OERStructureGroup.ps1. It walks the approvers.users/approvers.groups
+            sub-block and requireApproval to decide what needs resolving to an object id, so it asks
+            the same present-and-not-null question about the same kind of node that
+            Resolve-OERRoleManagementPolicyChange.ps1 and Resolve-OERGroupPimPolicyChange.ps1 ask of
+            it afterward.
             Its name does not end in *Change (it resolves names, it does not diff), which is exactly
             why it is named individually here rather than folded into the Resolve-OER*Change bullet
             above.

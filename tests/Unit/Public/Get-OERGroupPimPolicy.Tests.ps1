@@ -32,6 +32,22 @@ Describe 'Get-OERGroupPimPolicy' {
         $err.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
     }
 
+    It 'words PimPolicyNotFound as Set-OERGroupPimPolicy does: replication delay first, no cmdlet named' {
+        # A group created moments ago reaches this branch too, and the same condition must not read
+        # differently from the two cmdlets.
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
+        $err = $null
+        Get-OERGroupPimPolicy -Id 'gid-1' -AccessType owner -ErrorVariable err -ErrorAction SilentlyContinue | Out-Null
+        $Record = @($err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' })
+        $Record.Count | Should -Be 1
+        $Record[0].Exception.Message | Should -BeExactly (
+            "Group 'gid-1' has no PIM-for-groups policy for 'owner' access yet. A group created moments ago can " +
+            'take a short while before Microsoft Graph lists its policies (replication delay), and re-running ' +
+            'usually succeeds. A group never used with PIM for Groups gets its policies when it is first ' +
+            'onboarded, for example by its first eligibility.')
+        $Record[0].Exception.Message | Should -Not -Match 'Add-OERGroupEligibility'
+    }
+
     It 'reports a FAILED policy-assignment lookup as PimPolicyReadFailed, never as PimPolicyNotFound' {
         # THE DISTINCTION THIS CMDLET OWNS. Get-OERPimGroupPolicyId returns $null only where it
         # LEARNED there is no assignment; a 403, a throttle or a dead transport throws instead. Both

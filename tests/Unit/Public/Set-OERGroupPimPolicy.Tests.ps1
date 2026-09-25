@@ -565,6 +565,22 @@ Describe 'Set-OERGroupPimPolicy' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
 
+        It 'skips an empty or whitespace-only approver value instead of resolving it' {
+            $Err = $null
+            $null = Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person1@example.com', '   ', '' -ApproverGroup "`t", 'pim-approvers' `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            # Only the two real values reach the resolver; a blank one would have been looked up (and
+            # refused the whole call as ApproverNotFound with the real resolver).
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipal -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipal -Times 0 -ParameterFilter {
+                [string]::IsNullOrWhiteSpace([string]$User) -and [string]::IsNullOrWhiteSpace([string]$Group)
+            }
+            $Body = @($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }
+            $Primary = @(@($Body.setting.approvalStages)[0].primaryApprovers)
+            @($Primary.id) | Should -Be @('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333')
+        }
+
         It 'refuses with ApproverNotFound when a group does not resolve' {
             $Err = $null
             Set-OERGroupPimPolicy -Group 'gid-1' -ApproverGroup 'no-such-group' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null

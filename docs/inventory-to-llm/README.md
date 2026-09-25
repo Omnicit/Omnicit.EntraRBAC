@@ -121,10 +121,11 @@ Supplying only `"member"` or only `"owner"` is valid; the other access type is l
 | `approvers.users` | string[] | Approving users, as user principal names or object ids. |
 | `approvers.groups` | string[] | Approving groups, as display names or object ids. |
 
-Approvers are applied only when `requireApproval` is not explicitly `false`: declaring
-`approvers.users` and/or `approvers.groups` is enough on its own to require approval, but an
-explicit `requireApproval: false` in the same block takes precedence over a declared `approvers`
-block, and the approvers are ignored rather than applied. Declaring only `approvers.users` or only
+To require approval, declare `requireApproval: true`. Approvers declared without `requireApproval`
+are written only when they differ from the live approvers, and writing them turns approval on --
+so approvers that already match the live ones leave an approval-off policy off. An explicit
+`requireApproval: false` in the same block wins over a declared `approvers` block: the approvers
+are ignored rather than applied. Declaring only `approvers.users` or only
 `approvers.groups` leaves the other side untouched on the live rule. Names are resolved to object
 ids before comparison (and de-duplicated case-insensitively), so a UPN or a group display name in
 the document does not cause the apply to report a change on every run once it has converged. A

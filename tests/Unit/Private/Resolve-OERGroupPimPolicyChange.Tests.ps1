@@ -320,6 +320,9 @@ Describe 'Resolve-OERGroupPimPolicyChange approval (requireApproval, approvers)'
             $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
             $R.SetParams.ContainsKey('RequireApproval') | Should -BeFalse
             ($R.Changes -join ' ') | Should -Match 'approvers ignored: requireApproval=False takes precedence'
+            # The note alone sets nothing, so the handler reports "already matches" and the note is
+            # never shown: the help must not promise a plan reader sees it.
+            $R.Changed | Should -BeFalse
         }
     }
 

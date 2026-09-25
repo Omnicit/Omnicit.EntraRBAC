@@ -288,7 +288,9 @@ function Set-OERGroupPimPolicy {
         # Approvers are resolved to object ids before anything else, all or nothing: one value that
         # does not resolve refuses the whole call before the group is even looked up, so nothing is
         # sent. The same principal named twice (a UPN and its id, or an id in another letter case)
-        # is kept once, in first-seen order. Same shape as Set-OERRoleManagementPolicy.
+        # is kept once, in first-seen order. Same shape as Set-OERRoleManagementPolicy. An empty or
+        # whitespace-only value is skipped, never resolved -- the same rule Resolve-OERDeclaredApprover
+        # applies to a document.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         $ResolvedUser = [System.Collections.Generic.List[string]]::new()
@@ -298,12 +300,12 @@ function Set-OERGroupPimPolicy {
         $Value = $null
         try {
             foreach ($Value in @($ApproverUser)) {
-                if (-not $Value) { continue }
+                if ([string]::IsNullOrWhiteSpace($Value)) { continue }
                 $PrincipalId = [string](Resolve-OERPrincipal -User $Value).PrincipalId
                 if ($SeenUser.Add($PrincipalId)) { $ResolvedUser.Add($PrincipalId) }
             }
             foreach ($Value in @($ApproverGroup)) {
-                if (-not $Value) { continue }
+                if ([string]::IsNullOrWhiteSpace($Value)) { continue }
                 $PrincipalId = [string](Resolve-OERPrincipal -Group $Value).PrincipalId
                 if ($SeenGroup.Add($PrincipalId)) { $ResolvedGroup.Add($PrincipalId) }
             }
