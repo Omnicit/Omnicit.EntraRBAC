@@ -24,10 +24,14 @@ lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
 PIM for Groups policies now support approval: `Set-OERGroupPimPolicy` takes `-RequireApproval`,
 `-ApproverUser` and `-ApproverGroup`, and a group's `pimPolicy` accepts `requireApproval` and
-`approvers { users[], groups[] }`, which `Get-OERInventory` exports. Approvers declared by UPN or
-group name are resolved to object ids before comparison, in `pimPolicy` and `roleManagementPolicies`
-alike, so a re-run reports `Unchanged` instead of rewriting them. An owner lookup no longer returns
-the member policy, a refused policy read is `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
+`approvers { users[], groups[] }`, which `Get-OERInventory` now exports (`requireApproval` appears
+in every exported `pimPolicy` block). Approvers declared by UPN or group name are resolved to object
+ids before comparison, in `pimPolicy` and `roleManagementPolicies` alike, so a re-run reports
+`Unchanged`; a `roleManagementPolicies` user approver must now be a UPN or object id, since a
+display name is reported `Failed`. Earlier versions could resolve the OWNER policy of a group whose
+owner policy was not yet listed to its MEMBER policy, so owner settings, a permanent-eligibility
+opening included, could land on the member policy: review the member policies of groups onboarded by
+an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
 and a group created in the same run gets up to 30 seconds for its policies to appear.
 `Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
 
