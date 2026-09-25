@@ -45,7 +45,11 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   refused with `ApproverRequired`. Stage fields the cmdlet has no parameter for carry over from the
   live stage, and a policy with no stage gets a 1-day timeout with approver justification required.
   The summary object reports `RequireApproval`, `ApproverUser` and `ApproverGroup` as SENT (object
-  ids, the carried side included).
+  ids, the carried side included). Every user and group approver goes out in the Graph BETA shape
+  ("fix: send PIM for Groups approvers in the Graph beta shape"): `@odata.type`, `id` and
+  `isBackup = false`, never v1.0's `userId`/`groupId` and never the read-only `description` -- beta's
+  `singleUser` and `groupMembers` declare only `id`, `description` and `isBackup`, and the only
+  documented `userId`/`groupId` PATCH is v1.0's, for Entra roles. Check 2 settles it.
 - **B. Declared approvers are resolved to object ids BEFORE the diff** ("feat: resolve declared
   approvers to object ids before the approval diff"). The private `Resolve-OERDeclaredApprover` turns
   a declared UPN or group display name into an object id, de-duplicated case-insensitively, for a
@@ -71,9 +75,14 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   MEMBER policy for an OWNER lookup, and owner settings were written to the member policy with no
   error. It now returns nothing instead. `Set-OERGroupPimPolicy` reports a refused policy-assignment
   read as `PimPolicyReadFailed` and a genuinely missing policy as `PimPolicyNotFound` (whose message
-  now names replication delay first). The apply engine, for a group it CREATED in the same run,
-  retries a missing policy with one shared budget of 2, 4, 8 and 16 seconds per group item, then
-  reports `Failed` with a replication message; a refused read is never retried.
+  now names replication delay first, in `Get-OERGroupPimPolicy` too). The apply engine, for a group
+  it CREATED in the same run, first ASKS whether each access type's policy is listed yet
+  (`Get-OERPimGroupPolicyId`, which answers a silent nothing while it is not) and waits with one
+  shared budget of 2, 4, 8 and 16 seconds per group item before its single policy read ("fix: ask
+  whether a new group's PIM policy is listed instead of retrying the read") -- so a run that ends
+  `Updated` leaves no `PimPolicyNotFound` record behind. With the budget spent it reports `Failed`
+  with a replication message, which adds, when the run applied no time-bound eligibility to the
+  group, that a re-run alone does not help; a refused lookup is never waited on.
 - **E. Unknown keys in `groups[]` items and `pimPolicy` blocks warn** ("feat: warn about unknown keys
   in groups and pimPolicy blocks"). `Test-OERStructure` reports each as a Warning, with a
   `Did you mean '<current name>'?` suffix for the five field names the inventory README used to
@@ -85,8 +94,9 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
 shapes the tests assume. They cannot prove the five things this file is for:
 
 1. That Graph beta ACCEPTS the approval rule the module sends (no `@odata.type` on the setting or the
-   stage, approvers in the `userId`/`groupId` PATCH shape), and returns it in the shape the reader
-   assumes -- in particular which id field a group approver comes back with (checks 2, 3).
+   stage, approvers in the beta `id`/`isBackup` shape -- the documented `userId`/`groupId` PATCH is
+   v1.0's), and returns it in the shape the reader assumes -- in particular which id field a group
+   approver comes back with (checks 2, 3).
 2. That a document naming approvers by UPN and group name converges -- `Unchanged` on the second
    run -- for PIM for Groups AND for an Azure role management policy (checks 3, 4).
 3. That a group created in the same run gets each access type's settings on ITS OWN policy, and what
@@ -184,14 +194,18 @@ New-Item -ItemType Directory -Path $Raw -Force | Out-Null
 ```
 
 **Create the test objects.** The script runs in its own process, so this window keeps its own
-sign-in. It signs in twice (Microsoft Graph for Phase 1, `Connect-OER` for Phase 2). Before its
+sign-in. It signs in three times: `Connect-OER` first, only to identify the tenant and read the
+subscription; then Microsoft Graph for Phase 1; then `Connect-OER` again for Phase 2. Before its
 first write it identifies the tenant positively: it reads the signed-in organization and refuses to
 go on -- nothing written -- unless the organization's display name equals
 `-ExpectedTenantDisplayName` EXACTLY, `-UserDomain` is one of its verified domains, and the Tenant
-Profile's tenant id (or domain) names the same organization. Only then does it ask once for
-confirmation, naming the organization display name, the tenant id and the subscription; the
-`Connect-OER` sign-in must land in that same organization too. It ends with a summary of names and
-REAL object ids -- redact those before pasting (check 0.2). It is idempotent: a second run creates
+Profile's tenant id (or domain) names the same organization. It then reads the subscription through
+the module and stops unless exactly one subscription with that id and a display name comes back.
+Only then does it ask once for confirmation, naming the organization display name, the tenant id,
+and the subscription's display name and id; every later sign-in must land in that same
+organization too. It tags the resource group it creates `purpose = oer-s62-live-verification`, and
+its teardown deletes the resource group only while that tag is still there. It ends with a summary
+of names and REAL object ids -- redact those before pasting (check 0.2). It is idempotent: a second run creates
 nothing that exists and only fills in what is missing. The `-WhatIf` line is optional (it still
 signs in and identifies the tenant, and asks nothing).
 
@@ -475,7 +489,9 @@ try {
 } catch {
     Write-Host "Could not read the signed-in user: $($PSItem.Exception.Message)"
 }
-$Result = @(Set-OERGroupPimPolicy -Group $In.PimName -ActivationMaxHours 2 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable SetError)
+# -WhatIf: the policy-assignment read happens BEFORE ShouldProcess, so a refused read takes the same
+# PimPolicyReadFailed path, and an identity that turns out to have write rights still writes nothing.
+$Result = @(Set-OERGroupPimPolicy -Group $In.PimName -ActivationMaxHours 2 -WhatIf -ErrorAction SilentlyContinue -ErrorVariable SetError)
 Write-Host "Result objects: $($Result.Count)"
 $Published = @($SetError | Where-Object { @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Set-OERGroupPimPolicy' })
 Write-Host "Errors published by Set-OERGroupPimPolicy: $($Published.Count)"
@@ -552,10 +568,13 @@ documents), re-run 0.3, and restore the policy ids with
 - [ ] **0.2 The prerequisite script ran and every test object exists.** Paste its summary table, redacted.
 
   **Expect:** before any write the run printed
-  `Identified the test tenant: organization '<your-test-tenant-display-name>', tenant id <id>, verified domain <your-verified-domain>.`,
-  asked once with a question naming that organization, its tenant id and the subscription, and later
-  printed `Phase 2 (Connect-OER) is signed in to the confirmed test tenant ...`. No warning about
-  `oer-s62-new`. The run ends with `Done.` and no error; the summary has one row each for the two
+  `Identified the test tenant: organization '<your-test-tenant-display-name>', tenant id <id>, verified domain <your-verified-domain>.`
+  and `Identified the test subscription: '<your-test-subscription-name>' (<your-test-subscription-id>).`,
+  asked once with a question naming that organization, its tenant id, and the subscription's display
+  name and id, and later printed `Phase 1 is signed in to the confirmed test tenant ...` and
+  `Phase 2 (Connect-OER) is signed in to the confirmed test tenant ...`. No warning about
+  `oer-s62-new`, and none about the `purpose` tag of `oer-s62-rg`. The run ends with `Done.` and no
+  error; the summary has one row each for the two
   users, the groups `oer-s62-approvers` and `oer-s62-pim` and the resource group `oer-s62-rg`, one
   `group member` row (`oer-s62-approvers <- <ApproverUpn>`) and one `PIM eligibility (member, ends ...)`
   row (`oer-s62-pim <- <EligibleUpn>`, about 30 days out). No row reads `(none -- not created)`.
@@ -563,7 +582,10 @@ documents), re-run 0.3, and restore the policy ids with
   cause and re-run the script before 0.3. A `Refusing to run: ...` line from the tenant
   identification means nothing was written: check `$OrgName` (exact, case-sensitive), `$Domain` and
   the Tenant Profile before trying again -- never weaken the check. A warning that `oer-s62-new`
-  exists means a previous run was not torn down: run the Teardown's T.4 and T.5 first.
+  exists means a previous run was not torn down: run the Teardown's T.4 and T.5 first. A warning
+  that `oer-s62-rg` exists without the `purpose` tag `oer-s62-live-verification` means the resource
+  group was not created by the script: find out whose it is before any check writes to its Reader
+  policy.
   **Result:**
 
 - [ ] **0.3 Record the object ids every later check compares against.** Read-only.
@@ -705,9 +727,12 @@ Nothing below this section may run before it: the Teardown restores exactly what
   **Failure looks like:** a warning `Rule 'Approval_EndUser_Assignment' was not applied: ...` and a
   `PolicyRulesRejected` error with `Applied` `False` -- record Graph's message (redacted). If it asks
   for an `@odata.type` on the approval setting or stage, that is the open question this branch left
-  for the live run (the module sends neither). If it names the approver as invalid or disabled, the
-  prerequisite script's disabled approver account is the cause: record it, enable
-  `oer-s62-approver` by hand, re-run 2.3 and record both runs.
+  for the live run (the module sends neither). If Graph refuses the rule with a message naming `id`,
+  `userId` or `groupId`, record the exact error: the module sends each approver in the beta type
+  model (`@odata.type`, `id`, `isBackup` -- all that beta's `singleUser` and `groupMembers` declare),
+  and the fix is the v1.0 shape (`userId`/`groupId`), one line in `New-OERPimRuleSet`. If it names
+  the approver as invalid or disabled, the prerequisite script's disabled approver account is the
+  cause: record it, enable `oer-s62-approver` by hand, re-run 2.3 and record both runs.
   **Result:**
 
 - [ ] **2.4 Read back INDEPENDENTLY, raw from Graph beta, per policy id.**
@@ -718,14 +743,16 @@ Nothing below this section may run before it: the Teardown restores exactly what
   ```
 
   **Expect:** for EACH of the two policies: `isApprovalRequired = True`, `approvalMode = SingleStage`,
-  `stages = 1`, and exactly two primary approvers -- one `#microsoft.graph.singleUser` whose `id` or
-  `userId` is `<IdApprover>`, one `#microsoft.graph.groupMembers` whose `id` or `groupId` is
-  `<IdApprovers>`. **Record which columns Graph filled for each approver** -- in particular whether
-  the group comes back with `id` (the branch's premise: beta returns a group approver as `id` with no
-  `groupId`) or with `groupId`. The stage timeout and approver justification are 1.1's values where
-  1.1 had a stage, and `1` and `True` where it had none.
+  `stages = 1`, and exactly two primary approvers -- one `#microsoft.graph.singleUser` whose `id` is
+  `<IdApprover>`, one `#microsoft.graph.groupMembers` whose `id` is `<IdApprovers>`, with `userId`
+  and `groupId` empty on both: the beta read-back shows `id` for both approvers, the same beta shape
+  the module sent. **Record which columns Graph filled for each approver**, `description` included.
+  The stage timeout and approver justification are 1.1's values where 1.1 had a stage, and `1` and
+  `True` where it had none.
   **Failure looks like:** `isApprovalRequired = False`, a missing approver, a third approver, or a
-  policy that does not carry what 2.3 reported.
+  policy that does not carry what 2.3 reported. An approver that comes back with `userId` or
+  `groupId` and no `id` is not a failure of the module (its reader falls back either way), but it
+  contradicts the beta premise both the read and the PATCH rest on: record it exactly.
   **Result:**
 
 - [ ] **2.5 The module reads the same approvers back, with an id for the group.**
@@ -911,31 +938,39 @@ member policy, and the owner's settings landed there.
 
   ```powershell
   Invoke-S62Check -Id '5.2' -Json $Docs.NewGroup -Include Groups -Apply -VerboseLog
+  "PimPolicyNotFound records in -ErrorVariable: $(@($S62Error | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' }).Count)"
   ```
 
   **Expect:** in this order, all Item `oer-s62-new`:
   1. `Created` `created group oer-s62-new (<IdNew>)`.
   2. `Updated` `set time-bound member eligibility for '<EligibleUpn>' (30 days): time-bound member eligibility (30 days) is absent`.
   3. The member policy: `Updated` `pimPolicy (member) set: activationMaxHours=2` -- or `Failed`
-     `pimPolicy (member) not applied: Microsoft Graph does not list a PIM-for-groups policy for 'member' access on group 'oer-s62-new', created in this run, after <n> retries. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them.`
+     `pimPolicy (member) not applied: Microsoft Graph does not list a PIM-for-groups policy for 'member' access on group 'oer-s62-new', created in this run, within the 30-second wait. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them.`
      with a matching `ERROR [PimPolicyNotFound,Invoke-OERStructure]: pimPolicy (member) not applied: ...` line.
+     If row 2 was `Failed` instead, so the run applied no time-bound eligibility, that text goes on:
+     `This run applied no time-bound eligibility to the new group, and PIM for Groups onboards a group with its first eligibility, so a re-run alone does not help: declare a time-bound eligibility entry for it.`
   4. The owner policy: `Updated` `pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[<IdApprover>],groups=[<IdApprovers>])`
      -- or the same `Failed` text and error line for `'owner'` access.
 
-  The retry lines are zero to four
+  The wait lines are zero to four
   `Sync-OERStructureGroup: pimPolicy (<member or owner>) of new group 'oer-s62-new' is not listed yet; retry <n> in <s> s.`,
   across BOTH access types together, with the delays `2`, `4`, `8`, `16` in that order and `<n>`
-  counting within each access type -- one budget per group item, spent by whichever access type hits
-  it first (an owner that finds the budget spent fails `after 0 retries`). Record every retry line,
-  and whether the path was exercised at all. No warning. With no retry line and no `Failed` row the
-  error list is empty. On the retry path it may also hold records whose id starts with
-  `PimPolicyNotFound` from the policy reads the handler caught and retried -- the engine collects
-  those into `-ErrorVariable` as well; record them, they are expected there.
+  counting within each access type -- one budget per group item, spent by whichever access type needs
+  it first (an owner that finds the budget spent fails at once, with the same
+  `within the 30-second wait` text and no retry count). Record every wait line, and whether the path
+  was exercised at all. No warning. The last line prints `0` when both policy rows are `Updated`,
+  wait lines or not: the handler ASKS whether a policy is listed instead of reading it until it is,
+  so a run that ends `Updated` leaves no `PimPolicyNotFound` record in `-ErrorVariable`. Each
+  `... within the 30-second wait ...` row adds exactly one -- that row's own record. With no `Failed`
+  row the error list is empty.
   **Failure looks like:** the owner row `Updated` while 5.4 shows the owner's settings on the member
-  policy (the fallback defect); a `Failed` row naming `PimPolicyReadFailed` or a 403 (a refusal, not
-  replication -- record it); more than four retry lines, or a delay sequence other than 2, 4, 8, 16. A
-  `Failed` eligibility row (`failed to add eligibility for ...`) means the group was too new for PIM
-  itself; the policy rows then fail too -- carry on with 5.3.
+  policy (the fallback defect); a `PimPolicyNotFound` count above `0` while both policy rows are
+  `Updated` (the wait left records behind); a `Failed` row naming `PimPolicyReadFailed` or a 403 (a
+  refusal, not replication -- record it, with any verbose line
+  `Sync-OERStructureGroup: could not ask whether pimPolicy (...) of new group 'oer-s62-new' is listed (...); reading it directly.`
+  from the log); more than four wait lines, or a delay sequence other than 2, 4, 8, 16. A `Failed`
+  eligibility row (`failed to add eligibility for ...`) means the group was too new for PIM itself;
+  the policy rows then fail too -- carry on with 5.3.
   **Result:**
 
 - [ ] **5.3 Only if 5.2 had a `Failed` row: re-run until it applies.** Otherwise write "not needed" as the result.
@@ -1018,7 +1053,10 @@ member policy, and the owner's settings landed there.
 - [ ] **6.2 A refused read, by a non-privileged identity in a window of its own: `PimPolicyReadFailed`.** Mark `[~]` with the reason if no such identity is available.
 
   A second window keeps this window's admin sign-in intact: the module keeps one credential per
-  process. This block writes the script and its inputs to the raw folder and opens it; on Windows
+  process. The script runs `Set-OERGroupPimPolicy` with `-WhatIf`: it reads the policy assignment
+  before it asks ShouldProcess, so a refused read reaches `PimPolicyReadFailed` exactly as a real call
+  would, and a sign-in that turns out to carry write rights still cannot write.
+  This block writes the script and its inputs to the raw folder and opens it; on Windows
   `Start-Process` opens a new console window, elsewhere open a second terminal and run
   `pwsh -NoProfile -NoExit -File` on the path it prints.
 
@@ -1038,16 +1076,21 @@ member policy, and the owner's settings landed there.
   In the new window, complete the device-code sign-in as the NON-privileged identity, then copy its
   output here (redacted).
 
-  **Expect:** `Signed in as:` the non-privileged identity -- not the admin. `Result objects: 0`.
-  `Errors published by Set-OERGroupPimPolicy: 1`, and that one is
+  **Expect:** `Signed in as:` the non-privileged identity -- not the admin. NO `What if:` line: a
+  refused read returns before ShouldProcess is asked. `Result objects: 0` (under `-WhatIf` it is `0`
+  in every case, so it proves nothing on its own). `Errors published by Set-OERGroupPimPolicy: 1`,
+  and that one is
   `ERROR [PimPolicyReadFailed,Set-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '<PimId>' ('member' access): <cause>. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.`
   The raw status line reads `403` (or another refusal status).
   **Failure looks like:** `PimPolicyNotFound` while the raw status is `403` -- a refusal collapsed into
   absence, the defect this branch fixes. `PimPolicyNotFound` with a raw status of `200, 0 assignment(s)`
   is a different finding: Graph HID the policy from this identity instead of refusing, and the module
   cannot tell that apart from absence -- record it as "cannot be verified, and therefore we do not
-  know". `Result objects: 1` means this identity COULD write: stop, and run 6.3. `GroupNotFound`, or a
-  sign-in that cannot complete (consent, conditional access), means no suitable identity: `[~]`.
+  know". A `What if: Performing the operation "Patch rule Expiration_EndUser_Assignment" ...` line
+  and no published error mean this identity COULD read the policy assignment, so it is not a refused
+  identity: nothing was written (`-WhatIf`), 6.3 still confirms it, and 6.2 is `[~]` for want of a
+  suitable identity. `GroupNotFound`, or a sign-in that cannot complete (consent, conditional
+  access), means no suitable identity either: `[~]`.
   **Result:**
 
 - [ ] **6.3 Nothing was written by the refused identity.** Back in this window.
@@ -1058,8 +1101,10 @@ member policy, and the owner's settings landed there.
   $P63.ActivationMaxHours -eq (Get-S62Baseline).member.ActivationMaxHours
   ```
 
-  **Expect:** the same value on both sides, and `True`.
-  **Failure looks like:** `2` on the right -- the refused identity changed the policy.
+  **Expect:** the same value on both sides, and `True` -- 6.2 ran under `-WhatIf`, so nothing it did
+  can have written.
+  **Failure looks like:** `2` on the right -- the policy changed although 6.2 ran under `-WhatIf`:
+  stop and record it.
   **Result:**
 
 ---
@@ -1204,15 +1249,19 @@ and deleting `oer-s62-rg` removes its role management policies.
   pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
   ```
 
-  **Expect:** the tenant is identified first, exactly as in 0.2 (the `Identified the test tenant`
-  line, no question under `-WhatIf`), and Phase 2 reports it is signed in to the confirmed test
-  tenant. Then `What if:` lines, and nothing else changed, for: deleting the resource group
-  `oer-s62-rg`; removing the member eligibility of `<IdEligible>` on `oer-s62-pim` and on
-  `oer-s62-new`; deleting the groups `oer-s62-new`, `oer-s62-pim` and `oer-s62-approvers`; deleting
-  the two users. Every name starts with `oer-s62`. Nothing was deleted, so both sweeps list what is
-  still there (the resource group; the two users and three groups); then
-  `WhatIf: nothing was created or removed.` and `Done.`
-  **Failure looks like:** any target without the prefix -- stop, do not run T.5.
+  **Expect:** the tenant is identified first, through the `Connect-OER` sign-in, exactly as in 0.2
+  (the `Identified the test tenant` and `Identified the test subscription` lines, no question under
+  `-WhatIf`); the later Phase 1 sign-in reports it is signed in to the confirmed test tenant. Then
+  `What if:` lines, and nothing else changed, for: deleting the resource group `oer-s62-rg` (its
+  target names `tag purpose = oer-s62-live-verification`); removing the member eligibility of
+  `<IdEligible>` on `oer-s62-pim` and on `oer-s62-new`; deleting the groups `oer-s62-new`,
+  `oer-s62-pim` and `oer-s62-approvers`; deleting the two users. Every name starts with `oer-s62`.
+  Nothing was deleted, so both sweeps list what is still there (the resource group; the two users and
+  three groups); then `WhatIf: nothing was created or removed.` and `Done.`
+  **Failure looks like:** any target without the prefix -- stop, do not run T.5. A warning
+  `Refusing to delete resource group oer-s62-rg: its 'purpose' tag is ...` means the resource group
+  does not carry the tag the script gave it: it may not be the test's -- find out whose it is before
+  T.5, which will refuse it the same way.
   **Result:**
 
 - [ ] **T.5 Remove every test object.**
@@ -1221,16 +1270,18 @@ and deleting `oer-s62-rg` removes its role management policies.
   pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown
   ```
 
-  **Expect:** the tenant is identified and the one question names the organization, its tenant id
-  and the subscription BEFORE anything is removed; the Phase 2 and the second Phase 1 sign-in each
-  report `... is signed in to the confirmed test tenant ...`. Then `Deletion of resource group oer-s62-rg accepted.`,
+  **Expect:** the tenant is identified through the `Connect-OER` sign-in and the one question names
+  the organization, its tenant id, and the subscription's display name and id BEFORE anything is
+  removed; the later Phase 1 sign-in reports `... is signed in to the confirmed test tenant ...`. No
+  `Refusing to delete resource group` warning. Then `Deletion of resource group oer-s62-rg accepted.`,
   one `Removed the member eligibility of principal <IdEligible> on ...` line for `oer-s62-pim` and one
   for `oer-s62-new`, `Deleted group ...` for the three groups and `Deleted user ...` for the two
   users. The Phase 2 sweep reports `no resource group starting with 'oer-s62' is left.` or at most
   `oer-s62-rg` in `Deleting` state (Azure deletes it asynchronously); the Phase 1 sweep reports
   `no user or group starting with 'oer-s62' is left.`; `Done.`
   **Failure looks like:** a sweep line `still present: ...` other than a `Deleting` resource group; an
-  error. Re-run T.5 (it only removes what is still there) and record both runs. An
+  error; a `Refusing to delete resource group oer-s62-rg` warning (see T.4 -- never delete it by hand
+  before knowing whose it is). Re-run T.5 (it only removes what is still there) and record both runs. An
   `Authorization_RequestDenied` on a deletion means a role is not active (see Setup): activate it and
   re-run T.5.
   **Result:**
