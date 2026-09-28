@@ -143,8 +143,10 @@ shapes the tests assume. They cannot prove the five things this file is for:
 **You need:**
 
 - A **test tenant** -- never a customer tenant -- with Microsoft Entra ID P2 or ID Governance
-  licensing (PIM for Groups), a Tenant Profile alias for it (`Get-OERConfiguration`) whose profile
-  names the commercial cloud, one verified domain, and one **test subscription**.
+  licensing (PIM for Groups), its tenant id, one verified domain, and one **test subscription**. A
+  Tenant Profile alias for it (`Get-OERConfiguration`) is optional: every sign-in names the tenant id,
+  and a profile that exists on the machine running this file must name that same tenant and the
+  commercial cloud, or nothing runs.
 - The **dedicated certificate identity** `oer-live-cc` ([README.md](README.md), first paragraph):
   an app whose only credential is a non-exportable certificate in `Cert:\CurrentUser\My`, with the
   Microsoft Graph application permissions and the Owner role on the test subscription that the
@@ -211,8 +213,8 @@ again for Phase 2. After EVERY sign-in it checks the identity and prints it as T
 tenant: True` -- and a `False` stops it before anything is written. Before its first write it also
 identifies the tenant positively: it reads the signed-in organization and refuses to go on --
 nothing written -- unless the organization's display name equals `-ExpectedTenantDisplayName`
-EXACTLY, `-UserDomain` is one of its verified domains, and the Tenant Profile's tenant id names the
-same organization. It then reads the subscription through the module and stops unless exactly one
+EXACTLY, `-UserDomain` is one of its verified domains, and `-TenantId` is the organization's id;
+a Tenant Profile for the alias, when one exists on the machine, must name the same tenant. It then reads the subscription through the module and stops unless exactly one
 subscription with that id and a display name comes back. Only then would it ask once for
 confirmation; with `-Unattended` -- a run with no operator at the keyboard -- it says instead that
 the question is not asked, since both checks passed (an operator at the keyboard drops
@@ -224,8 +226,8 @@ exists and only fills in what is missing. Read the `-WhatIf` plan first: every t
 the prefix `oer-s62`.
 
 ```powershell
-pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -WhatIf
-pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Unattended
+pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -WhatIf
+pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Unattended
 ```
 
 What it creates, all named with the prefix: two DISABLED users `oer-s62-approver` and
@@ -632,8 +634,8 @@ documents), re-run 0.3, and restore the policy ids with
   row (`oer-s62-pim <- <EligibleUpn>`, about 30 days out). No row reads `(none -- not created)`.
   **Failure looks like:** a `(none -- not created)` row, or the script stopped on an error -- fix the
   cause and re-run the script before 0.3. A `Refusing to run: ...` line from the tenant
-  identification means nothing was written: check `$OrgName` (exact, case-sensitive), `$Domain` and
-  the Tenant Profile before trying again -- never weaken the check. A warning that `oer-s62-new`
+  identification means nothing was written: check `$OrgName` (exact, case-sensitive), `$Domain`,
+  `$TenantId` and any Tenant Profile for the alias before trying again -- never weaken the check. A warning that `oer-s62-new`
   exists means a previous run was not torn down: run the Teardown's T.4 and T.5 first. A warning
   that `oer-s62-rg` exists without the `purpose` tag `oer-s62-live-verification` means the resource
   group was not created by the script: find out whose it is before any check writes to its Reader
@@ -1348,7 +1350,7 @@ and deleting `oer-s62-rg` removes its role management policies.
 - [ ] **T.4 Read the teardown plan.**
 
   ```powershell
-  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
+  pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
   ```
 
   **Expect:** both identity lines `True` after each of its two sign-ins; the tenant is identified
@@ -1370,7 +1372,7 @@ and deleting `oer-s62-rg` removes its role management policies.
 - [ ] **T.5 Remove every test object.**
 
   ```powershell
-  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -Unattended
+  pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -Unattended
   ```
 
   **Expect:** both identity lines `True` after each of its two sign-ins; the tenant is identified
