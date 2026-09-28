@@ -843,8 +843,10 @@ bug.
 This module manages **very high Entra ID privileges** across customer tenants. These rules are
 non-negotiable:
 
-1. **Claude and CI must never make sharp/live calls against a real tenant.** All live testing is
-   performed manually by the user with extreme care.
+1. **Claude never makes live calls against a customer tenant, and CI never authenticates.** Claude
+   may run a live-verification checklist against the operator's designated test tenant only as the
+   dedicated app identity whose only credential is a non-exportable certificate, only while the
+   operator has enabled that identity for the run, and never with any other sign-in.
 2. **Every test mocks `Get-AzToken`, `Connect-MgGraph`, `Connect-AzAccount`, and
    `Invoke-OERGraphRequest`.** Nothing in CI or tests authenticates for real.
 3. **Destructive cmdlets must support `-Confirm` and `-WhatIf`** via

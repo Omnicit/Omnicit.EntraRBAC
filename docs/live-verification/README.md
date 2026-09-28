@@ -1,11 +1,13 @@
 # Live verification checklists
 
 This folder holds the live-verification checklists for this module. Each one is written while a
-branch is in flight and is then run BY HAND, by Philip, against a real Entra ID tenant. Nothing in
-CI and nothing Claude runs ever authenticates -- the module carries Global-Admin-class privilege
-across customer tenants, so a live run is always a deliberate human act. The checklists record what
-was actually executed and what came back, which is what lets a later reader tell a verified claim
-from an assumed one.
+branch is in flight and is then run against the operator's designated test tenant, never a
+customer tenant. Nothing in CI ever authenticates. Claude runs a checklist only as the dedicated
+app identity whose only credential is a non-exportable certificate, only while the operator has
+enabled that identity for the run, and never with any other sign-in; otherwise Philip runs it by
+hand. The module carries Global-Admin-class privilege across customer tenants, so a live run is
+always a deliberate act the operator switches on. The checklists record what was actually executed
+and what came back, which is what lets a later reader tell a verified claim from an assumed one.
 
 That also makes this folder the one place in the repository where live tenant console output is
 pasted in on purpose. The rules below exist so the output can be kept without keeping the tenant
