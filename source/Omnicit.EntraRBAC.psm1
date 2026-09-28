@@ -171,8 +171,8 @@ Register-ArgumentCompleter -CommandName 'Add-OERAdministrativeUnitScopedRole', '
 # curated down to the roles assignable with administrative-unit scope, but a directory-role policy
 # governs the built-in role at the directory root, so every built-in role belongs here (backed by
 # Get-OERBuiltInDirectoryRoleName, offline, tenant-wide). Purely additive: custom directory-role names
-# and role definition ids still bind because no ValidateSet is attached. Step 4's assignment cmdlets
-# join this -CommandName list once they exist.
+# and role definition ids still bind because no ValidateSet is attached. Later directory-role
+# cmdlets that take -Role join this -CommandName list.
 Register-ArgumentCompleter -CommandName 'Get-OERDirectoryRoleManagementPolicy', 'Set-OERDirectoryRoleManagementPolicy' -ParameterName 'Role' -ScriptBlock {
     param($CommandName, $ParameterName, $WordToComplete, $CommandAst, $FakeBoundParameters)
     Resolve-OERBuiltInDirectoryRoleCompletion -WordToComplete $WordToComplete

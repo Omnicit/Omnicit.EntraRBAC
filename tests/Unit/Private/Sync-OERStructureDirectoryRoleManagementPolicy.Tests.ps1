@@ -57,7 +57,7 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy' {
     }
 
     It 'is Unchanged when the declaration matches the live policy, approvers declared by UPN and group name' {
-        # The G4 acceptance case: the live approvers carry object ids, the document names them, and the
+        # The live approvers carry object ids, the document names them by UPN and group name, and the
         # declared names are resolved to those ids before the diff, so nothing is written.
         InModuleScope $script:moduleName {
             Mock Get-OERDirectoryRoleManagementPolicy { New-DrmpLivePolicy }
@@ -184,7 +184,7 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy' {
     }
 
     It 'converges: the same document applied a second time is only Unchanged' {
-        # G11. The write mock applies what the real write path does to the live policy, including the
+        # The write mock applies what the real write path does to the live policy, including the
         # MFA / authentication-context exclusion: a non-empty authentication context clears MFA on
         # activation. The document declares only the context, so the cleared MFA must not reappear
         # as a difference on the second run.
@@ -213,7 +213,7 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy' {
     }
 }
 
-Describe 'Sync-OERStructureDirectoryRoleManagementPolicy fix round 1' {
+Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: an emptied approver side, and a read that fails without throwing' {
     BeforeEach {
         InModuleScope $script:moduleName {
             function script:Invoke-SyncDrmpViaCaller {
@@ -226,8 +226,8 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy fix round 1' {
     }
 
     It 'converges a declared empty groups side: the first run clears it, the second is only Unchanged' {
-        # G11 for Review Focus 2. The write mock does what the real write path does with a bound
-        # empty -ApproverGroup: it clears the group side and keeps the user side.
+        # A declared empty groups list beside a live user side. The write mock does what the real write
+        # path does with a bound empty -ApproverGroup: it clears the group side and keeps the user side.
         InModuleScope $script:moduleName {
             $script:LiveDrmp = [PSCustomObject]@{
                 PolicyId        = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'

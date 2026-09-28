@@ -959,15 +959,17 @@ BeforeAll {
         Resolve-OERDeclaredApprover.ps1 to the scanned set (a seventh document consumer), moving the
         scanned-file count from 13 to 14; it introduces no PSObject.Properties.Name chain of its own
         (it calls Test-OERDeclaredProperty throughout), so the chain-predicate figures below are
-        unchanged by its addition. Sprint 6 step 3 added Sync-OERStructureDirectoryRoleManagementPolicy.ps1.
+        unchanged by its addition. The directory-role policy section then added
+        Sync-OERStructureDirectoryRoleManagementPolicy.ps1.
         It is an eighth Sync-OERStructure* handler, selected by the glob, moving the scanned-file
         count from 14 to 15; it too carries no chain (every declared-value question it asks goes
         through Resolve-OERDeclaredApprover and Resolve-OERRoleManagementPolicyChange), so the chain
         figures are again unchanged. Re-measured with this gate's own counters on 2026-09-28, after
         that addition:
           - scanned files: 15 (the 8 Sync-OERStructure* handlers + the 7 named document consumers).
-          - source/**/*.ps1: 226 files (the 214 recorded at step 2 had gone stale: step 3's earlier
-            tasks had already brought the tree to 225 before this handler made it 226).
+          - source/**/*.ps1: 226 files (the 214 recorded with Resolve-OERDeclaredApprover.ps1 had gone
+            stale: the directory-role helpers and cmdlets added before this handler had already
+            brought the tree to 225, and this handler made it 226).
           - chain predicate, module-wide: 25.
           - of those, in-scope: exactly ONE -- the $PimResult check in Sync-OERStructureGroup.ps1
             that $script:declaredValueAllowlist documents below, keyed with its literal ('Applied').
@@ -1695,15 +1697,16 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
         <#
             Named-FILE control, not a bare count (fix round 2). CLAUDE.md ## Module Layout and
             ## declared-property in docs/development/rationale.md both treat the Sync-OERStructure*
-            family as a fixed cohort -- eight since Sprint 6 step 3: AccessPackage, AccessReview,
-            AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group, RoleAssignment and
-            RoleManagementPolicy. Fix round 2 added two non-Sync
+            family as a fixed cohort -- eight since the directory-role policy handler joined:
+            AccessPackage, AccessReview, AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group,
+            RoleAssignment and RoleManagementPolicy. Fix round 2 added two non-Sync
             document consumers; fix round 3 added the remaining three Resolve-OER*Change helpers that
             take a -Declared document node, which round 2 had left out while claiming to cover every
             such file; sprint 6 added Get-OEROmittedPruneCollection.ps1, which walks the whole document
             for Invoke-OERStructure's -Prune warning. Sprint 6 step 2 added
             Resolve-OERDeclaredApprover.ps1, which reads a declared approvers block before the
-            approval diffs. Sprint 6 step 3 added Sync-OERStructureDirectoryRoleManagementPolicy.ps1.
+            approval diffs. The directory-role policy section added
+            Sync-OERStructureDirectoryRoleManagementPolicy.ps1.
             Asserting the NAMES rather than the count says
             which file left the scan when one does -- a plain count told you only that "7" became "6", which is precisely the kind
             of silent narrowing this gate exists to stop. A file that appears means a new handler or

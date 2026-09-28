@@ -29,7 +29,7 @@ Describe 'Get-OERDirectoryRolePolicy' {
         }
     }
 
-    Context 'scope validation (R24): refuses a policy that is not a directory-role policy' {
+    Context 'scope validation: refuses a policy that is not a directory-role policy' {
         It 'throws NotDirectoryRolePolicy for a PIM for Groups policy (scopeType Group)' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 @{ id = 'Group_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'; scopeId = '33333333-3333-3333-3333-333333333333'; scopeType = 'Group'; rules = @() }

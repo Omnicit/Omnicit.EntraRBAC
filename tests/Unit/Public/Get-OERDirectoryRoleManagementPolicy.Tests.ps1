@@ -159,10 +159,10 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicy -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'DirectoryRole_pol1' }
         }
 
-        It 'rejects a PIM for Groups policy id as InvalidPolicyId and returns no object (R24)' {
+        It 'rejects a PIM for Groups policy id as InvalidPolicyId once its scope is read, and returns no object' {
             # Reproduces the real read path end to end: Get-OERDirectoryRolePolicy is NOT mocked
-            # here, so its own scopeId/scopeType check (added by R24) runs for real and this
-            # cmdlet's catch must translate the resulting NotDirectoryRolePolicy into InvalidPolicyId.
+            # here, so its own scopeId/scopeType check runs for real and this cmdlet's catch must
+            # translate the resulting NotDirectoryRolePolicy into InvalidPolicyId.
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 @{
                     id        = 'Group_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'

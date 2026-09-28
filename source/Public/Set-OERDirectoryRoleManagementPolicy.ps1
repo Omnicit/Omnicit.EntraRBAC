@@ -275,7 +275,8 @@ function Set-OERDirectoryRoleManagementPolicy {
         }
 
         # 3. Nothing to do. Bound approvers are a setting even though they only join $Setting once
-        #    the live stage is known (step 7); binding is all this needs, so it runs before any lookup.
+        #    the live stage is known (the approver section below); binding is all this needs, so it
+        #    runs before any lookup.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         $ApproversBound = $ApproverUserBound -or $ApproverGroupBound
@@ -286,7 +287,7 @@ function Set-OERDirectoryRoleManagementPolicy {
 
         # 4. An Azure Resource Manager policy id (piped from Get-OERRoleManagementPolicy, which emits
         #    the same type name) or anything else that cannot be a Graph policy id segment is refused
-        #    before any Graph call, the approver lookups of step 5 included.
+        #    before any Graph call, the approver lookups that follow included.
         if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId' -and $PolicyId -match '[/?#\s]') {
             if ($PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
                 Write-CmdletError -Message ([System.Exception]::new(
