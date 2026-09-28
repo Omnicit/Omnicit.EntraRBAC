@@ -84,11 +84,12 @@ function Set-OERDirectoryRoleManagementPolicy {
     'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065'.
     Binds from the pipeline by property name, so Get-OERDirectoryRoleManagementPolicy output pipes
     straight in. A value that starts with '/' looks like an Azure Resource Manager policy id and is
-    refused (InvalidPolicyId) before the policy is read, naming Set-OERRoleManagementPolicy as the
-    cmdlet for that id; a value containing an embedded '/', '?', '#' or whitespace is refused the
-    same way. Only the lookups of -ApproverUser and -ApproverGroup values, when given, run first. A policy Microsoft Graph answers with a scope other than a tenant-wide directory
-    scope -- a PIM for Groups policy, for example -- is refused as InvalidPolicyId after being read,
-    naming Set-OERGroupPimPolicy, and nothing is sent.
+    refused (InvalidPolicyId) before any Graph call -- ahead of the -ApproverUser and -ApproverGroup
+    lookups too -- naming Set-OERRoleManagementPolicy as the cmdlet for that id; a value containing
+    an embedded '/', '?', '#' or whitespace is refused the same way. A policy Microsoft Graph
+    answers with a scope other than a tenant-wide directory scope -- a PIM for Groups policy, for
+    example -- is refused as InvalidPolicyId after being read, naming Set-OERGroupPimPolicy, and
+    nothing is sent.
 
     .PARAMETER ActivationMaxHours
     Maximum end-user activation window in hours (1-24); sets the Expiration_EndUser_Assignment rule.
@@ -266,13 +267,42 @@ function Set-OERDirectoryRoleManagementPolicy {
             }
         }
 
-        # 3. Approvers are resolved to object ids before anything is read, all or nothing. The same
-        #    principal named twice (a UPN and its id, or an id in another letter case) is kept once,
-        #    in first-seen order; an empty or whitespace-only value is skipped, never resolved. Same
-        #    shape as Set-OERGroupPimPolicy.
+        # 3. Nothing to do. Bound approvers are a setting even though they only join $Setting once
+        #    the live stage is known (step 7); binding is all this needs, so it runs before any lookup.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         $ApproversBound = $ApproverUserBound -or $ApproverGroupBound
+        if ($Setting.Count -eq 0 -and -not $ApproversBound) {
+            Write-CmdletError -Message ([System.Exception]::new('No policy change was supplied. Specify at least one setting parameter.')) -ErrorId 'NothingToUpdate' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
+            return
+        }
+
+        # 4. An Azure Resource Manager policy id (piped from Get-OERRoleManagementPolicy, which emits
+        #    the same type name) or anything else that cannot be a Graph policy id segment is refused
+        #    before any Graph call, the approver lookups of step 5 included.
+        if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId' -and $PolicyId -match '[/?#\s]') {
+            if ($PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "The policy id '$PolicyId' looks like an Azure Resource Manager role " +
+                        'management policy id, not a Microsoft Graph directory-role policy id. ' +
+                        'Use Set-OERRoleManagementPolicy to update an Azure role policy by ARM id, ' +
+                        'or pass the Microsoft Graph policy id (for example ' +
+                        "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
+                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+            } else {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "The policy id '$PolicyId' is not a valid Microsoft Graph directory-role " +
+                        'policy id. Pass the Microsoft Graph policy id (for example ' +
+                        "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
+                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+            }
+            return
+        }
+
+        # 5. Approvers are resolved to object ids before the policy is read, all or nothing. The same
+        #    principal named twice (a UPN and its id, or an id in another letter case) is kept once,
+        #    in first-seen order; an empty or whitespace-only value is skipped, never resolved. Same
+        #    shape as Set-OERGroupPimPolicy.
         $ResolvedUser = [System.Collections.Generic.List[string]]::new()
         $ResolvedGroup = [System.Collections.Generic.List[string]]::new()
         $SeenUser = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -292,35 +322,6 @@ function Set-OERDirectoryRoleManagementPolicy {
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
-            return
-        }
-
-        # 4. Nothing to do. Bound approvers are a setting even though they only join $Setting once
-        #    the live stage is known (step 7).
-        if ($Setting.Count -eq 0 -and -not $ApproversBound) {
-            Write-CmdletError -Message ([System.Exception]::new('No policy change was supplied. Specify at least one setting parameter.')) -ErrorId 'NothingToUpdate' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
-            return
-        }
-
-        # 5. An Azure Resource Manager policy id (piped from Get-OERRoleManagementPolicy, which emits
-        #    the same type name) or anything else that cannot be a Graph policy id segment is refused
-        #    before the policy is read. Only the approver lookups of step 3, if any, precede it.
-        if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId' -and $PolicyId -match '[/?#\s]') {
-            if ($PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
-                Write-CmdletError -Message ([System.Exception]::new(
-                        "The policy id '$PolicyId' looks like an Azure Resource Manager role " +
-                        'management policy id, not a Microsoft Graph directory-role policy id. ' +
-                        'Use Set-OERRoleManagementPolicy to update an Azure role policy by ARM id, ' +
-                        'or pass the Microsoft Graph policy id (for example ' +
-                        "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
-                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
-            } else {
-                Write-CmdletError -Message ([System.Exception]::new(
-                        "The policy id '$PolicyId' is not a valid Microsoft Graph directory-role " +
-                        'policy id. Pass the Microsoft Graph policy id (for example ' +
-                        "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
-                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
-            }
             return
         }
 

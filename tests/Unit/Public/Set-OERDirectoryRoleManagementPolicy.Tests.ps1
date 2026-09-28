@@ -228,6 +228,15 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
         }
 
+        It 'refuses an Azure Resource Manager policy id as InvalidPolicyId before resolving any bound approver' {
+            Set-OERDirectoryRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' `
+                -ApproverUser 'person1@example.com' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
         It 'refuses a policy id with an embedded query or fragment character as InvalidPolicyId, with no Graph call' {
             Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_x?$expand=rules' -ActivationMaxHours 2 -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
