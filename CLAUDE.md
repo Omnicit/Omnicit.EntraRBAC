@@ -145,7 +145,7 @@ cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one need
 per-function PSScriptAnalyzer, and a unit test file for every exported function),
 `about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
 exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
-own call graph), `sourcehygiene.tests.ps1` (the eight static source gates --
+own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
 `Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
 tenant object ids, non-documentation email addresses and credentials out of every tracked file under
 `docs/`, `specs/`, `source/` and `tests/`, enumerating tracked files with `git ls-files` and reading
@@ -182,7 +182,7 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/AccessReview.Pipeline.Tests.ps1` -- cross-cmdlet pipeline suite.
 - `Unit/Public/AmbiguousName.Guard.Tests.ps1` -- asserts every public call site of an
   ambiguity-refusing `Resolve-OER*Id` helper surfaces the candidate ids instead of a first match.
-- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- asserts every `Set-OER*` cmdlet (all eleven)
+- `Unit/Public/NothingToUpdate.Cohort.Tests.ps1` -- asserts every `Set-OER*` cmdlet (all twelve)
   reports the no-updatable-property condition as `NothingToUpdate`, and that
   `Set-OERRoleManagementPolicy`'s separate "no rule differs" case keeps its distinct `NoChange` id.
 - `Unit/Public/GroupAliasOrder.Cohort.Tests.ps1` -- AST-driven: asserts every `source/Public/*Group*.ps1`
@@ -549,6 +549,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 |---|---|---|
 | `-Role` | `Resolve-OERRoleCompletion` (from `Get-OERCommonRoleName`) | Every cmdlet taking an Azure RBAC role name -- the registered list is in `suffix.ps1` |
 | `-RoleName` (alias `-Role`) | `Resolve-OERDirectoryRoleCompletion` (from `Get-OERCommonDirectoryRoleName`) | `Add`/`Remove-OERAdministrativeUnitScopedRole` |
+| `-Role` | `Resolve-OERBuiltInDirectoryRoleCompletion` (from `Get-OERBuiltInDirectoryRoleName`, tenant-wide built-in roles) | `Get`/`Set-OERDirectoryRoleManagementPolicy` |
 | `-TenantAlias` | `Resolve-OERTenantAliasCompletion` (profile `*.psd1` basenames on disk) | `Connect-OER`, `Get`/`Set`/`Remove-OERConfiguration` |
 
 **Rules for adding a completer:**
@@ -640,11 +641,21 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   exception -- do not migrate those two. `Why: docs/development/rationale.md#guid-predicate`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
   mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on
-  activation cannot both be in force. All three call sites -- the Graph group write path, the apply
-  diff, and the ARM patch builder -- take the DECISION from this helper and apply it in their own
-  idiom. Never re-implement the check inline. The ARM transport additionally passes
-  `-ResolveUnrequestedConflict` because it PATCHes the full rule set.
+  activation cannot both be in force. All call sites -- the Graph group write path, the apply
+  diff, and the shared rule-patch builder (`Resolve-OERPolicyRulePatch`) -- take the DECISION from
+  this helper and apply it in their own idiom. Never re-implement the check inline. The rule-patch
+  builder is shared by two callers that pass a different `-ResolveUnrequestedConflict`: the Azure
+  (ARM) policy path passes `$true` because ARM PATCHes the full rule set, so every apply run
+  re-validates a combination even when this call did not touch either side of it; the directory-role
+  (Graph) path passes `$false` because it patches one rule at a time and leaves an untouched
+  combination alone. `Get-OERPimRulePatchOrder` is the single owner of the authentication-context
+  PATCH order this conflict resolution requires, called by both `Set-OERGroupPimPolicy` and
+  `Set-OERDirectoryRoleManagementPolicy`.
   `Why: docs/development/rationale.md#mfa-authcontext-exclusion`
+- **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver, and
+  `Resolve-OERApproverInput` / `Resolve-OERGraphApproverSet` are the single owners of the Graph
+  approver-side semantics shared by `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`
+  -- never re-implement the carry/count/ApproverRequired decision inline.**
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
   cloud is read from it; never hardcode one of those hosts a second time. `source/Private/Invoke-OERArmRequest.ps1`
@@ -727,6 +738,11 @@ through the private `Get-OERPimGroupsGraphPath`, which owns the version constant
 policy paths migrate as ONE unit. `Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint
 availability in US Government and China clouds is not established -- a standing risk, not a bug --
 recorded at `Why: docs/development/rationale.md#sovereign-clouds`.
+
+**Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
+directory-role policy path is a string literal starting with `v1.0/`, routed through
+`Invoke-OERGraphRequest`, and never through `Get-OERPimGroupsGraphPath` -- that helper owns the
+PIM-for-Groups `beta` constant only, and a directory-role call site must not borrow it.
 
 ---
 
@@ -821,17 +837,19 @@ bug.
   therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
   by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Six rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
+- **Seven rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
   encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
   int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring; `Get-OERCloudEndpoint` as the sole
-  owner of the cloud-to-endpoint table; and `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
+  owner of the cloud-to-endpoint table; `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
   single owners of the apply engine's declared-value rule (no direct read of a node's
   `PSObject.Properties.Name` in a `Sync-OERStructure*` handler outside the named, reasoned
   allowlist -- flagged on the read itself, not on the `-contains`-family operator that might later
-  consume it, so an intermediate variable cannot hide the same defect). Two further gates in the
+  consume it, so an intermediate variable cannot hide the same defect); and the module never calling
+  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above).
+  Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
-  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- eight
+  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- nine
   `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
   exemption.
   `Why: docs/development/rationale.md#static-source-gates`
@@ -913,20 +931,32 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
 1. **Create the file:** `source/{Public|Private}/Verb-OERNoun.ps1`. Filename must match function
    name exactly.
 2. **If public:** add to `FunctionsToExport` in `source/Omnicit.EntraRBAC.psd1`.
-3. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
+3. **If public, update the surrounding cohorts and gates the new export joins:**
+   - README's `## Available Cmdlets` cohort (its `(N)` count and the "All NN exported cmdlets"
+     sentence) and the about topic's `COMMAND COHORTS` entry, held against each other by
+     `docsync.tests.ps1`/`about.tests.ps1`.
+   - A `Get-OERRequiredScopeMap` row naming the LEAST-privilege scope the new cmdlet needs, gated by
+     `requiredscope.tests.ps1` -- a new Graph path may also need a new endpoint rule there.
+   - A `Set-OER*` cmdlet joins `NothingToUpdate.Cohort.Tests.ps1`.
+   - A public call site of an ambiguity-refusing `Resolve-OER*Id` helper joins
+     `AmbiguousName.Guard.Tests.ps1`.
+   - A new `Sync-OERStructure*` handler, or a `Resolve-*Change` helper taking a `-Declared` document
+     node, joins the named file list in `tests/QA/sourcehygiene.tests.ps1` gate 8 -- the glob that
+     gate scans alone does not make a drop visible; the file must be named.
+4. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
    function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM.
-4. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
+5. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
    directly.
-5. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`
+6. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`
    in `source/Formats/Omnicit.EntraRBAC.Format.ps1xml`, and -- if a ScriptProperty member is needed
    -- register it inline with `Update-TypeData -Force` in `source/suffix.ps1` (and mirror it in the
    dev-mode `source/Omnicit.EntraRBAC.psm1` loader).
-6. **Add full comment-based help:** `.SYNOPSIS`, `.DESCRIPTION`, one `.PARAMETER` per parameter,
+7. **Add full comment-based help:** `.SYNOPSIS`, `.DESCRIPTION`, one `.PARAMETER` per parameter,
    at least one `.EXAMPLE`.
-7. **Add a unit test file:** `tests/Unit/{Public|Private}/Verb-OERNoun.Tests.ps1`. Import by
+8. **Add a unit test file:** `tests/Unit/{Public|Private}/Verb-OERNoun.Tests.ps1`. Import by
    module name in `BeforeAll`. Mock `Initialize-OERAuth` and `Invoke-OERGraphRequest`.
-8. **Keep the file ASCII-only** and UTF-8 without BOM.
-9. **Run `./build.ps1 -Tasks test`** before committing -- it is the authoritative gate.
+9. **Keep the file ASCII-only** and UTF-8 without BOM.
+10. **Run `./build.ps1 -Tasks test`** before committing -- it is the authoritative gate.
 
 ---
 

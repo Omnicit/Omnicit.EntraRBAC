@@ -267,13 +267,14 @@ only something to recognise.
 
 ## static-source-gates
 
-`tests/QA/sourcehygiene.tests.ps1` carries eight `Describe` blocks. Four machine-check a rule stated
+`tests/QA/sourcehygiene.tests.ps1` carries nine `Describe` blocks. Four machine-check a rule stated
 in CLAUDE.md; the fifth checks a rule stated only in this file, the sixth checks an invariant no rule
-states in prose, and the seventh (Task 6, issue #81) and eighth (Sprint 2) each machine-check a
-single-ownership rule CLAUDE.md ## Code Style states. They all run off one shared `BeforeAll` that
-enumerates and parses the tree once for the first six gates; the seventh and eighth each run their
-own additional parse pass, kept deliberately separate from that shared walk so a mistake in new
-detection logic cannot perturb the other gates' proven reachability closure or catch-clause scan.
+states in prose, the seventh (Task 6, issue #81) and eighth (Sprint 2) each machine-check a
+single-ownership rule CLAUDE.md ## Code Style states, and the ninth machine-checks the
+no-runtime-Az-cmdlet rule CLAUDE.md ## Dependencies states. They all run off one shared `BeforeAll`
+that enumerates and parses the tree once for the first six gates; the seventh, eighth and ninth each
+run their own additional parse pass, kept deliberately separate from that shared walk so a mistake in
+new detection logic cannot perturb the other gates' proven reachability closure or catch-clause scan.
 
 **1. Encoding.** Every authored `.ps1`/`.psd1`/`.psm1`/`.ps1xml` under `source/` and `tests/` must
 be ASCII-only and carry no UTF-8 BOM. It is a byte-level check because PSScriptAnalyzer cannot do
@@ -366,13 +367,25 @@ each with its own exemption or non-vacuity mechanism:
 (CLAUDE.md ## Code Style); no apply-document-walking file may read a document node's
 `PSObject.Properties.Name` directly outside a named, reasoned allowlist. The violation is flagged on
 the READ itself rather than on the `-contains`-family operator that might later consume it, so an
-intermediate variable cannot hide the same defect. Its scope control asserts the thirteen scanned
-files BY NAME rather than by count -- the seven `Sync-OERStructure*` handlers plus
-`Read-OERStructureDocument.ps1`, `Get-OEROmittedPruneCollection.ps1` and the four
-`Resolve-OER*Change` helpers that take a `-Declared` node -- because a bare count says only that
-thirteen became twelve, never which file left the scan.
+intermediate variable cannot hide the same defect. Its scope control asserts the fifteen scanned
+files BY NAME rather than by count -- the eight `Sync-OERStructure*` handlers (AccessPackage,
+AccessReview, AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group, RoleAssignment and
+RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`, `Get-OEROmittedPruneCollection.ps1`,
+`Resolve-OERDeclaredApprover.ps1` and the four `Resolve-OER*Change` helpers that take a `-Declared`
+node -- because a bare count says only that fifteen became fourteen, never which file left the scan.
 Two earlier rounds of that gate each claimed to cover every document consumer while missing some, so
-the named list is the finding, not the tidy-up.
+the named list is the finding, not the tidy-up. Sprint 6 step 2 added `Resolve-OERDeclaredApprover.ps1`
+(a document consumer, not a `Sync-OERStructure*` handler); Sprint 6 step 3 added
+`Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler).
+
+**9. Az context hygiene** (fix, stopping `Disconnect-OER` signing out the operator's own Az
+session). CLAUDE.md ## Dependencies states that no Az module is a dependency of this module and no
+Az cmdlet is invoked at run time at all; this gate proves it from the source with an AST walk,
+independently of what is installed. Every `CommandAst` whose name matches `-Az` is checked against a
+small allowlist covering AzAuth's own token surface and the module's internal `Invoke-AzTokenCall`
+helper -- anything else fails the gate, naming the file and line. Non-vacuity: more than 195 parsed
+files, more than 2700 `CommandAst` nodes, and at least one recognised `-Az`-shaped call still found,
+so a matcher that stopped matching cannot pass by finding nothing to complain about.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -955,12 +968,16 @@ and the policy ended with `{Justification}` and no context -- NEITHER the old pr
 requested one in force. A reconcile that leaves the tenant less protected than either the before or
 the after state is worse than no reconcile.
 
-The fix is a rule ordering applied in `Set-OERGroupPimPolicy` immediately before the patch loop --
-the loop is where transport sequencing belongs. When the rule set carries both rules, they are
-ordered by what the authentication-context rule DOES: `isEnabled = $false` goes FIRST, `isEnabled =
-$true` goes LAST. Every other rule keeps its emitted position. The ordering is deliberately NOT in
-`New-OERPimRuleSet`: that helper is a pure, shared builder owning rule SHAPE, and a rule set built
-for a different transport must not inherit this transport's sequencing.
+The fix is a rule ordering applied immediately before the patch loop -- the loop is where transport
+sequencing belongs. When the rule set carries both rules, they are ordered by what the
+authentication-context rule DOES: `isEnabled = $false` goes FIRST, `isEnabled = $true` goes LAST.
+Every other rule keeps its emitted position. The ordering is deliberately NOT in `New-OERPimRuleSet`:
+that helper is a pure, shared builder owning rule SHAPE, and a rule set built for a different
+transport must not inherit this transport's sequencing. It now has one owner, the private
+`Get-OERPimRulePatchOrder`, called immediately before the patch loop by both Microsoft Graph PIM
+write paths that PATCH one rule at a time: `Set-OERGroupPimPolicy` (where the ordering was first
+found and fixed) and `Set-OERDirectoryRoleManagementPolicy` (Sprint 6 step 3), which needs the exact
+same ordering for the same reason -- it too sends one PATCH per changed rule.
 
 Three consequences worth keeping in mind:
 
