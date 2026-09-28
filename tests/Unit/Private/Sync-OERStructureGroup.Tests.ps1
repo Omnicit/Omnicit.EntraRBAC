@@ -2491,6 +2491,71 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    Context 'pimPolicy approval -- emptying one approver side through the document' {
+        # End to end through the REAL diff and the REAL Set-OERGroupPimPolicy: only the transport is
+        # mocked. The live rule (beta shape) holds one user and one group; the document declares only
+        # the side to clear, as "[]". The PATCH body must keep the other side from the live rule and
+        # carry nothing on the cleared side -- which also proves the empty side reached Set as a BOUND
+        # empty list, since an unbound side would have been carried from the live rule instead.
+        It 'patches the rule with the live <Kept> kept and no <Cleared> when the document declares "approvers.<Side>": []' -ForEach @(
+            @{ Side = 'groups'; Kept = 'user'; Cleared = 'group'; KeptType = '#microsoft.graph.singleUser'; KeptId = 'user-1' }
+            @{ Side = 'users'; Kept = 'group'; Cleared = 'user'; KeptType = '#microsoft.graph.groupMembers'; KeptId = 'grp-1' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Side = $Side; KeptType = $KeptType; KeptId = $KeptId } {
+                param($Side, $KeptType, $KeptId)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                $script:Patches = [System.Collections.Generic.List[object]]::new()
+                $script:LiveApproval = @{
+                    id      = 'Approval_EndUser_Assignment'
+                    setting = @{
+                        isApprovalRequired               = $true
+                        isApprovalRequiredForExtension   = $false
+                        isRequestorJustificationRequired = $true
+                        approvalMode                     = 'SingleStage'
+                        approvalStages                   = @(@{
+                                approvalStageTimeOutInDays      = 1
+                                isApproverJustificationRequired = $true
+                                escalationTimeInMinutes         = 0
+                                isEscalationEnabled             = $false
+                                primaryApprovers                = @(
+                                    @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1'; description = 'Person One' }
+                                    @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1'; description = 'Approvers' }
+                                )
+                                escalationApprovers             = @()
+                            })
+                    }
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERGroupId { '44444444-4444-4444-4444-444444444444' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = '44444444-4444-4444-4444-444444444444'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERPimGroupPolicyId { 'pol-1' }
+                Mock Get-OERGroupPimPolicy {
+                    ConvertTo-OERGroupPimPolicy -Rules @($script:LiveApproval) -GroupId '44444444-4444-4444-4444-444444444444' -PolicyId 'pol-1' -AccessType 'member'
+                }
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'PATCH') { $script:Patches.Add($Body); return @{} }
+                    if ($Uri -like '*rules/Approval_EndUser_Assignment') { return $script:LiveApproval }
+                    return @{}
+                }
+                Mock Resolve-OERPrincipal { throw 'no approver value should need resolving: only an empty side is declared' }
+                $Item = ('{ "displayName": "role_sec_x", "members": null, "pimPolicy": { "member": { "approvers": { "' + $Side + '": [] } } } }') | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction Stop)
+                ($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                $Body = @(@($script:Patches) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' })
+                $Body.Count | Should -Be 1
+                $Body[0].setting.isApprovalRequired | Should -BeTrue
+                $Primary = @(@($Body[0].setting.approvalStages)[0].primaryApprovers)
+                $Primary.Count | Should -Be 1
+                $Primary[0].'@odata.type' | Should -Be $KeptType
+                $Primary[0].id | Should -Be $KeptId
+            }
+        }
+    }
+
     Context 'pimPolicy approval (requireApproval, approvers) -- step 4 approver name resolution' {
         It 'resolves approver names before the diff and converges' {
             InModuleScope $script:moduleName {

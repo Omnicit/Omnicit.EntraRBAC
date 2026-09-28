@@ -388,4 +388,39 @@ Describe 'Resolve-OERGroupPimPolicyChange approval (requireApproval, approvers)'
             $R.SetParams.ContainsKey('ApproverGroup') | Should -BeFalse
         }
     }
+
+    # A declared EMPTY side is a request to clear that side, not an undeclared one. Current is built
+    # with the real converter from a beta-shaped live rule holding one user and one group, and the
+    # document is real JSON, so "[]" arrives exactly as ConvertFrom-Json delivers it.
+    It 'sends an empty <Param> and no <Other> when the document declares "approvers.<Side>": [] against a live <Side> approver' -ForEach @(
+        @{ Side = 'groups'; Param = 'ApproverGroup'; Other = 'ApproverUser' }
+        @{ Side = 'users'; Param = 'ApproverUser'; Other = 'ApproverGroup' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Side = $Side; Param = $Param; Other = $Other } {
+            param($Side, $Param, $Other)
+            $Rules = @(
+                @{
+                    id      = 'Approval_EndUser_Assignment'
+                    setting = @{
+                        isApprovalRequired = $true
+                        approvalStages     = @(@{
+                                primaryApprovers = @(
+                                    @{ '@odata.type' = '#microsoft.graph.singleUser'; id = 'user-1' }
+                                    @{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'grp-1' }
+                                )
+                            })
+                    }
+                }
+            )
+            $Current = ConvertTo-OERGroupPimPolicy -Rules $Rules -GroupId 'g1' -PolicyId 'p1' -AccessType 'member'
+            $Declared = ('{ "approvers": { "' + $Side + '": [] } }') | ConvertFrom-Json
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeTrue
+            $R.SetParams.ContainsKey($Param) | Should -BeTrue
+            ($R.SetParams[$Param] -is [array]) | Should -BeTrue
+            @($R.SetParams[$Param]).Count | Should -Be 0
+            $R.SetParams.ContainsKey($Other) | Should -BeFalse
+            @($R.Changes) | Should -Contain "approvers($Side=[])"
+        }
+    }
 }
