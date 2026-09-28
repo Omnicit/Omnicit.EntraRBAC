@@ -161,3 +161,24 @@ Describe 'Test-OERStructure' {
         $Hit[0].Message | Should -Match 'Invoke-OERStructure -Prune removes every live entry'
     }
 }
+
+Describe 'Test-OERStructure help pointer to the worked example' {
+    # The help points at docs/examples/example-structure.json as showing every section the engine
+    # understands. Each schema section the example lacks must be named there as missing, and a
+    # section named as missing must really be missing -- so the sentence goes stale in neither
+    # direction when the example or the schema changes.
+    It 'names exactly the schema sections the worked example does not declare' {
+        $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
+        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantAlias') })
+        $ExamplePath = Join-Path $PSScriptRoot '../../../docs/examples/example-structure.json'
+        $Example = Get-Content -LiteralPath $ExamplePath -Raw | ConvertFrom-Json
+        $Missing = @($Sections | Where-Object { $Example.PSObject.Properties.Name -notcontains $_ } | Sort-Object)
+        $Help = (Get-Command -Module $script:moduleName -Name 'Test-OERStructure').Definition
+        $Help | Should -Match 'docs/examples/example-structure\.json'
+        # "except a and b, which are not in the example yet" (or "except a, which is ..."): the list
+        # between "except" and that phrase, split on commas and "and".
+        $Clause = [regex]::Match($Help, 'except\s+(?<List>[\w\s,]+?),\s+which\s+(?:is|are)\s+not\s+in\s+the\s+example\s+yet')
+        $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
+        ($Named -join ',') | Should -BeExactly ($Missing -join ',')
+    }
+}

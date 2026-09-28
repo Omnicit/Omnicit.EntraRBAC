@@ -63,10 +63,11 @@ function Invoke-OERStructure {
     Returns zero or more tagged Omnicit.EntraRBAC.StructureResult records, one per reconcile
     action. A one-line verbose summary of counts per Action is written after all sections.
 
-    A worked apply document showing every section this engine understands is kept in the repository
-    at docs/examples/example-structure.json, and the full export to apply walkthrough is documented
-    in the repository at docs/inventory-to-llm/README.md. Neither ships inside the installed module,
-    so clone or browse the repository to read them.
+    A worked apply document showing every section this engine understands, except
+    roleManagementPolicies and directoryRoleManagementPolicies, which are not in the example yet, is
+    kept in the repository at docs/examples/example-structure.json, and the full export to apply
+    walkthrough is documented in the repository at docs/inventory-to-llm/README.md. Neither ships
+    inside the installed module, so clone or browse the repository to read them.
 
     .PARAMETER Path
     Path to a JSON structure document file. Mutually exclusive with -Json and -InputObject.
