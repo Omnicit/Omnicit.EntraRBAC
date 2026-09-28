@@ -86,7 +86,9 @@ Naming the object in clear text would rebuild the mapping this file just forbade
 | `...061` | an Azure tenant id, ARM subscription converter tests | taken |
 | `...062` | a deliberately non-existent tenant alias suffix, base-path cohort test | taken |
 | `...063` | a directory role definition id in the directory-role PIM policy cmdlets' help examples and tests | taken |
-| `...064` and up | -- | **FREE. Allocate from here.** |
+| `...064` | a tenant id inside a directory-role policy id (the second segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
+| `...065` | a policy guid inside a directory-role policy id (the third segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
+| `...066` and up | -- | **FREE. Allocate from here.** |
 | `...099` | a deliberately non-existent object id, used in a checklist to prove a not-found path | taken |
 | `...0aa` | an assignment target principal id, access-package assignment tests | taken |
 | `...abc` | an administrative unit id, group-creation tests | taken |

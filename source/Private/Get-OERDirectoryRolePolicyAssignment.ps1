@@ -19,7 +19,7 @@ function Get-OERDirectoryRolePolicyAssignment {
     role's policy assignment in a single call.
 
     .EXAMPLE
-    Get-OERDirectoryRolePolicyAssignment -RoleDefinitionId 'aaaaaaaa-0000-0000-0000-000000000001'
+    Get-OERDirectoryRolePolicyAssignment -RoleDefinitionId '00000000-0000-0000-0000-000000000063'
     Returns the single policy assignment governing that directory role, with its policy and rules
     expanded.
 

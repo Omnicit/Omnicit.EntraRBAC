@@ -47,6 +47,9 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             $p.ActivationMaxHours | Should -Be 8
             $p.Approvers[0].Id | Should -Be 'bbbbbbbb-0000-0000-0000-000000000002'
             $p.Approvers[0].UserType | Should -Be 'Group'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment -Times 1 -Exactly -ParameterFilter {
+                $RoleDefinitionId -eq 'aaaaaaaa-0000-0000-0000-000000000001'
+            }
         }
 
         It 'leaves RoleName empty when -Role is a GUID' {
@@ -114,7 +117,12 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
 
         It 'reads the policy directly and converts its rules, leaving RoleName and RoleDefinitionId empty' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicy {
-                [PSCustomObject]@{ id = 'DirectoryRole_pol1'; rules = @([PSCustomObject]@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT4H' }) }
+                [PSCustomObject]@{
+                    id        = 'DirectoryRole_pol1'
+                    scopeId   = '/'
+                    scopeType = 'DirectoryRole'
+                    rules     = @([PSCustomObject]@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT4H' })
+                }
             }
             $p = Get-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_pol1'
             $p.ActivationMaxHours | Should -Be 4
@@ -144,11 +152,33 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
 
         It 'binds -PolicyId from a piped object exposing a PolicyId property' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicy {
-                [PSCustomObject]@{ id = 'DirectoryRole_pol1'; rules = @() }
+                [PSCustomObject]@{ id = 'DirectoryRole_pol1'; scopeId = '/'; scopeType = 'DirectoryRole'; rules = @() }
             }
             $Piped = [PSCustomObject]@{ PolicyId = 'DirectoryRole_pol1' }
             $Piped | Get-OERDirectoryRoleManagementPolicy | Out-Null
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicy -Times 1 -ParameterFilter { $PolicyId -eq 'DirectoryRole_pol1' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicy -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'DirectoryRole_pol1' }
+        }
+
+        It 'rejects a PIM for Groups policy id as InvalidPolicyId and returns no object (R24)' {
+            # Reproduces the real read path end to end: Get-OERDirectoryRolePolicy is NOT mocked
+            # here, so its own scopeId/scopeType check (added by R24) runs for real and this
+            # cmdlet's catch must translate the resulting NotDirectoryRolePolicy into InvalidPolicyId.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                @{
+                    id        = 'Group_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+                    scopeId   = '33333333-3333-3333-3333-333333333333'
+                    scopeType = 'Group'
+                    rules     = @()
+                }
+            }
+            $Piped = [PSCustomObject]@{
+                PolicyId = 'Group_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+            }
+            $Out = $Piped | Get-OERDirectoryRoleManagementPolicy -ErrorVariable e -ErrorAction SilentlyContinue
+            $Out | Should -BeNullOrEmpty
+            $Reported = @($e | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyId,Get-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Match 'Get-OERGroupPimPolicy'
         }
     }
 
@@ -176,7 +206,7 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             $Policies.Count | Should -Be 2
             ($Policies | Where-Object { $_.RoleDefinitionId -eq 'aaaaaaaa-0000-0000-0000-000000000001' }).RoleName | Should -Be 'Reports Reader'
             ($Policies | Where-Object { $_.RoleDefinitionId -eq 'aaaaaaaa-0000-0000-0000-000000000002' }).RoleName | Should -Be 'Global Reader'
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $All -and $Uri -like 'v1.0/roleManagement/directory/roleDefinitions*'
             }
         }

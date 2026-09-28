@@ -20,7 +20,10 @@ function Get-OERDirectoryRoleManagementPolicy {
     which also binds from the pipeline so this cmdlet's own output round-trips into
     Set-OERDirectoryRoleManagementPolicy). Pass -All to read every directory role's policy in a
     single paged assignment list plus one role-definition-name lookup, rather than one call per
-    role.
+    role. A PIM for Groups policy id passed to -PolicyId is refused (InvalidPolicyId) rather than
+    read as if it were a directory-role policy: Microsoft Graph serves every roleManagementPolicy
+    from the same collection regardless of what it governs, so Get-OERDirectoryRolePolicy checks
+    the policy's own scopeId and scopeType after reading it and this cmdlet reports the refusal.
 
     For least privilege, RoleManagement.Read.Directory is enough to read a policy; the module's
     default sign-in scope list already requests the broader RoleManagement.ReadWrite.Directory, so
@@ -36,11 +39,16 @@ function Get-OERDirectoryRoleManagementPolicy {
 
     .PARAMETER PolicyId
     The Microsoft Graph roleManagementPolicy id to read directly, for example
-    'DirectoryRole_00000000-0000-0000-0000-000000000063_11111111-1111-1111-1111-111111111111'.
+    'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065'.
     Binds from the pipeline by property name, so this cmdlet's own output pipes directly into
-    Set-OERDirectoryRoleManagementPolicy. A value that starts with '/' or contains '/', '?', '#' or
-    whitespace looks like an Azure Resource Manager policy id instead and is refused before any
-    Graph call, naming Get-OERRoleManagementPolicy as the cmdlet for that id.
+    Set-OERDirectoryRoleManagementPolicy. A value that starts with '/' looks like an Azure Resource
+    Manager policy id instead and is refused before any Graph call, naming
+    Get-OERRoleManagementPolicy as the cmdlet for that id; a value containing an embedded '/', '?',
+    '#' or whitespace is refused the same way, as simply not a valid directory-role policy id. A
+    syntactically valid id that Microsoft Graph answers with a scopeType other than 'Directory' or
+    'DirectoryRole' -- a PIM for Groups policy id, for example -- is also refused as InvalidPolicyId,
+    after being read, naming Get-OERGroupPimPolicy and Set-OERGroupPimPolicy as the cmdlets for
+    that id instead.
 
     .PARAMETER All
     Read the policy for every Microsoft Entra directory role in a single paged
@@ -57,11 +65,16 @@ function Get-OERDirectoryRoleManagementPolicy {
     Reads the PIM policy governing the built-in Reports Reader directory role.
 
     .EXAMPLE
+    Get-OERDirectoryRoleManagementPolicy -Role '00000000-0000-0000-0000-000000000063'
+    Reads the PIM policy for the directory role identified by its role definition id instead of
+    its display name.
+
+    .EXAMPLE
     Get-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' | Set-OERDirectoryRoleManagementPolicy -RequireApproval $true -ApproverGroup 'PIM Approvers'
     Reads a directory role policy and pipes its PolicyId into Set-OERDirectoryRoleManagementPolicy.
 
     .EXAMPLE
-    Get-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_00000000-0000-0000-0000-000000000063_11111111-1111-1111-1111-111111111111'
+    Get-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_00000000-0000-0000-0000-000000000064_00000000-0000-0000-0000-000000000065'
     Reads the policy directly by its Microsoft Graph policy id.
 
     .EXAMPLE
@@ -92,19 +105,33 @@ function Get-OERDirectoryRoleManagementPolicy {
     process {
         if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') {
             if ($PolicyId -match '[/?#\s]') {
-                Write-CmdletError -Message ([System.Exception]::new(
-                        "The policy id '$PolicyId' looks like an Azure Resource Manager role " +
-                        'management policy id, not a Microsoft Graph directory-role policy id. ' +
-                        'Use Get-OERRoleManagementPolicy to read an Azure role policy by ARM id, ' +
-                        'or pass the Microsoft Graph policy id (for example ' +
-                        "'DirectoryRole_<roleId>_<templateId>') to this cmdlet.")) `
-                    -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                if ($PolicyId.StartsWith('/', [System.StringComparison]::Ordinal)) {
+                    Write-CmdletError -Message ([System.Exception]::new(
+                            "The policy id '$PolicyId' looks like an Azure Resource Manager role " +
+                            'management policy id, not a Microsoft Graph directory-role policy id. ' +
+                            'Use Get-OERRoleManagementPolicy to read an Azure role policy by ARM id, ' +
+                            'or pass the Microsoft Graph policy id (for example ' +
+                            "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
+                        -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                } else {
+                    Write-CmdletError -Message ([System.Exception]::new(
+                            "The policy id '$PolicyId' is not a valid Microsoft Graph directory-role " +
+                            'policy id. Pass the Microsoft Graph policy id (for example ' +
+                            "'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.")) `
+                        -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet
+                }
                 return
             }
             try {
                 $Policy = Get-OERDirectoryRolePolicy -PolicyId $PolicyId
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('NotDirectoryRolePolicy', [System.StringComparison]::Ordinal)) {
+                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                        -ErrorId 'InvalidPolicyId' -Category InvalidArgument -TargetObject $PolicyId -Cmdlet $PSCmdlet `
+                        -InnerException $PSItem.Exception
+                    return
+                }
                 Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) `
                     -ErrorId 'PolicyReadFailed' -Category ReadError -TargetObject $PolicyId -Cmdlet $PSCmdlet `
                     -InnerException $PSItem.Exception
