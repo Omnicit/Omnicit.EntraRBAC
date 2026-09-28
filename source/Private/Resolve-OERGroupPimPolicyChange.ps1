@@ -12,7 +12,7 @@ function Resolve-OERGroupPimPolicyChange {
     Changes list. Enablement and notification-recipient lists are compared as order- and
     case-insensitive sets. The eligible-expiration and active-expiration rules are each treated as a
     unit (permanence plus duration) so a single PATCH never leaves them half-updated. A null Current
-    (the group is not PIM-onboarded or the policy could not be read) is treated as everything-changed.
+    (Graph does not list the policy yet, or it could not be read) is treated as everything-changed.
     Presence semantics apply: a field the document does not declare is never compared and never sent.
     A field present with an explicit JSON null counts as UNDECLARED too -- a key absent, an explicit
     null, and "leave the live value untouched" are the same three-way state -- matching the offline
@@ -54,8 +54,9 @@ function Resolve-OERGroupPimPolicyChange {
     object ids (see Resolve-OERDeclaredApprover).
 
     .PARAMETER Current
-    The current policy as returned by Get-OERGroupPimPolicy for the same access type, or null when the
-    group is not onboarded to PIM for Groups (in which case every declared field is considered changed).
+    The current policy as returned by Get-OERGroupPimPolicy for the same access type, or null when
+    Graph does not list it yet or it could not be read (in which case every declared field is
+    considered changed).
 
     .EXAMPLE
     Resolve-OERGroupPimPolicyChange -Declared $Doc.pimPolicy.member -Current (Get-OERGroupPimPolicy -Id $Gid -AccessType member)

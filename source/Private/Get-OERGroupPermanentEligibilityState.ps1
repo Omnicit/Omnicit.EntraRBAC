@@ -5,10 +5,11 @@ function Get-OERGroupPermanentEligibilityState {
 
     .DESCRIPTION
     Resolves the roleManagementPolicy governing a group's PIM-for-groups access (member or owner) via
-    the private Get-OERPimGroupPolicyId and inspects its Expiration_Admin_Eligibility rule. A group that
-    has not been onboarded to PIM for Groups has no policy: the lookup returns null or throws
-    (400 ResourceTypeNotSupported), which is treated as the expected no-policy signal (the throw is
-    removed from $Error). The result reports HasPolicy (whether a policy exists), the PolicyId, and
+    the private Get-OERPimGroupPolicyId and inspects its Expiration_Admin_Eligibility rule. A lookup
+    that returns null (Microsoft Graph lists no policy for that access type, in practice for a group
+    created moments ago) or throws is reported as no policy (the throw is removed from $Error). A group
+    that was never used with PIM for Groups is not such a case: Graph lists its policies before the
+    group is onboarded. The result reports HasPolicy (whether a policy is listed), the PolicyId, and
     PermanentAllowed (true only when the eligibility rule does NOT require expiration; a missing rule
     yields true so no unjustified policy write is attempted). This is a pure read used by the permanent
     self-heal in Add-OERGroupEligibility. The rules read is guarded: Invoke-OERGraphRequest already

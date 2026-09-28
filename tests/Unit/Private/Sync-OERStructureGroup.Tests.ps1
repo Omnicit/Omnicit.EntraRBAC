@@ -2764,10 +2764,10 @@ Describe 'Sync-OERStructureGroup' {
                 # no cmdlet named.
                 $Failed[0].Detail | Should -Not -Match 'retries'
                 $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
-                # This document declares no eligibility at all: a re-run cannot help.
-                $Failed[0].Detail | Should -Match 'The document declares no time-bound eligibility for the new group'
-                $Failed[0].Detail | Should -Match 'declare a time-bound eligibility entry for it'
-                $Failed[0].Detail | Should -Not -Match 'was not applied in this run'
+                $Failed[0].Detail | Should -BeExactly ("pimPolicy (member) not applied: Microsoft Graph does not list a " +
+                    "PIM-for-groups policy for 'member' access on group 'role_sec_x', created in this run, within the " +
+                    "30-second wait. A new group's policies can take a while to be listed (replication delay); " +
+                    're-running the same document usually applies them.')
                 # The Failed row carries the same record whether or not $Caller.WriteError ran; the
                 # narrowed -ErrorVariable count is what proves it reached the caller.
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
@@ -2778,8 +2778,17 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'does not tell a group whose time-bound eligibility this run applied that a re-run cannot help' {
-            InModuleScope $script:moduleName {
+        It 'never advises about eligibility when the wait runs out, <Case>' -ForEach @(
+            @{ Case = 'the document declaring no eligibility'; Eligibility = $null; AddFails = $false }
+            @{ Case = 'the declared eligibility applied in this run'; Eligibility = 30; AddFails = $false }
+            @{ Case = 'the declared eligibility failed in this run'; Eligibility = 30; AddFails = $true }
+        ) {
+            # Graph lists a group's policies whether or not it was ever onboarded, and the first policy
+            # update onboards it (Microsoft Graph documentation, "Onboarding groups to PIM for Groups"),
+            # so an unlisted policy is replication whatever the document declares: the message names
+            # replication and a re-run, and never tells the operator to declare or add an eligibility.
+            InModuleScope $script:moduleName -Parameters @{ Eligibility = $Eligibility; AddFails = $AddFails } {
+                param($Eligibility, $AddFails)
                 function Invoke-SyncGroupViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
@@ -2788,7 +2797,11 @@ Describe 'Sync-OERStructureGroup' {
                 Mock Resolve-OERGroupId { $null }
                 Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
                 Mock Start-Sleep { $script:Slept.Add($Seconds) }
-                Mock Add-OERGroupEligibility { }
+                if ($AddFails) {
+                    Mock Add-OERGroupEligibility { throw 'the group is too new for PIM for Groups' }
+                } else {
+                    Mock Add-OERGroupEligibility { }
+                }
                 Mock Get-OERPimGroupPolicyId { $null }
                 Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
                 Mock Set-OERGroupPimPolicy { }
@@ -2798,56 +2811,20 @@ Describe 'Sync-OERStructureGroup' {
                 $Item = [PSCustomObject]@{
                     displayName = 'role_sec_x'
                     members     = $null
-                    eligibility = @([PSCustomObject]@{ principal = 'person9@example.com'; durationDays = 30 })
                     pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
                 }
+                if ($null -ne $Eligibility) {
+                    $Item | Add-Member -NotePropertyName eligibility -NotePropertyValue @(
+                        [PSCustomObject]@{ principal = 'person9@example.com'; durationDays = $Eligibility })
+                }
                 $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
-                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
-                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match '^set time-bound member eligibility' }).Count | Should -Be 1
                 $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(member\)' })
                 $Failed.Count | Should -Be 1
                 $Failed[0].Detail | Should -Match 'within the 30-second wait'
+                $Failed[0].Detail | Should -Match 'replication delay'
                 $Failed[0].Detail | Should -Match 're-running the same document usually applies them'
-                $Failed[0].Detail | Should -Not -Match 'declares no time-bound eligibility'
-                $Failed[0].Detail | Should -Not -Match 'was not applied in this run'
-                $Failed[0].Detail | Should -Not -Match 'retries'
-                $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
-            }
-        }
-
-        It 'tells a group whose declared time-bound eligibility failed in this run that a re-run usually helps, not to declare one' {
-            InModuleScope $script:moduleName {
-                function Invoke-SyncGroupViaCaller {
-                    [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
-                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
-                }
-                Mock Resolve-OERGroupId { $null }
-                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
-                Mock Start-Sleep { $script:Slept.Add($Seconds) }
-                Mock Add-OERGroupEligibility { throw 'the group is too new for PIM for Groups' }
-                Mock Get-OERPimGroupPolicyId { $null }
-                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
-                Mock Set-OERGroupPimPolicy { }
-                Mock Initialize-OERAuth { }
-                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
-                Mock Resolve-OERStructureDefault { $null }
-                $Item = [PSCustomObject]@{
-                    displayName = 'role_sec_x'
-                    members     = $null
-                    eligibility = @([PSCustomObject]@{ principal = 'person9@example.com'; durationDays = 30 })
-                    pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 }
-                }
-                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
-                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
-                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match '^failed to add eligibility' }).Count | Should -Be 1
-                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(member\)' })
-                $Failed.Count | Should -Be 1
-                $Failed[0].Detail | Should -Match 'within the 30-second wait'
-                $Failed[0].Detail | Should -Match 'The time-bound eligibility the document declares for the new group was not applied in this run'
-                $Failed[0].Detail | Should -Match 'a re-run that applies it first usually applies the policy too'
-                $Failed[0].Detail | Should -Not -Match 'declare a time-bound eligibility entry'
-                $Failed[0].Detail | Should -Not -Match 'Add-OERGroupEligibility'
+                $Failed[0].Detail | Should -Not -Match 'eligibility'
+                $Failed[0].Detail | Should -Not -Match 'onboard'
             }
         }
 

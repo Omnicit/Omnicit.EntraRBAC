@@ -114,7 +114,7 @@ Describe 'Set-OERGroupPimPolicy' {
         $Result.PSObject.TypeNames[0]    | Should -Be 'Omnicit.EntraRBAC.GroupPimPolicyResult'
     }
 
-    It 'errors when the group is not onboarded to PIM' {
+    It 'errors when Graph lists no policy for the group' {
         Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         Set-OERGroupPimPolicy -Id 'gid-1' -ActivationMaxHours 8 -Confirm:$false -ErrorVariable err -ErrorAction SilentlyContinue | Out-Null
@@ -129,6 +129,7 @@ Describe 'Set-OERGroupPimPolicy' {
         $Message = @($Err).Exception.Message -join ' '
         $Message | Should -BeLike '*replication delay*'
         $Message | Should -Not -BeLike '*Add-OERGroupEligibility*'
+        $Message | Should -Not -BeLike '*eligibility*'
     }
 
     It 'reports PimPolicyReadFailed, not PimPolicyNotFound, when the policy lookup is refused' {

@@ -47,7 +47,7 @@ Invoke-OERStructure -Path .\proposal.json         # apply
 
 ## Groups schema -- pimPolicy
 
-PIM-onboarded groups carry a `pimPolicy` object in the inventory and apply document. The field
+Groups carry a `pimPolicy` object in the inventory and apply document. The field
 names below are the DOCUMENT field names the apply engine reads -- they are not the
 `Set-OERGroupPimPolicy` parameter names, which spell some of the same settings differently (for
 example the document field `activationEnablement` is sent through the `-ActivationEnabledRules`
@@ -136,12 +136,13 @@ this page used to document (`activationEnabledRules`, `activeEnabledRules`,
 `eligibleAlertRecipients`, `activeAlertRecipients`, `activationAlertRecipients`) -- is reported as a
 `Warning` by `Test-OERStructure`, with a "did you mean" hint at the current name for those five.
 
-Groups that are not onboarded to PIM for Groups carry no `pimPolicy` in the inventory. A
-`pimPolicy` declared for such a group is not silently skipped: the apply reports that access type
-`Failed` (`PimPolicyNotFound`) until the group has a policy, which a time-bound `eligibility` entry
-declared in the same group entry provides -- the engine applies that eligibility entry first, ahead
-of `pimPolicy`. For a group created by the same apply run, the engine waits up to about 30 seconds
-for its policies to appear before it reports `Failed`.
+A group that was never used with PIM for Groups carries a `pimPolicy` too: Microsoft Graph lists its
+policies before the group is onboarded. Applying a `pimPolicy` that changes such a group's policy
+onboards the group to PIM for Groups, and that cannot be undone (Microsoft Graph documentation,
+"Onboarding groups to PIM for Groups"). A `pimPolicy` whose policy Graph does not list yet -- in
+practice a group created moments ago -- is not silently skipped: the apply reports that access type
+`Failed` (`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same
+apply run, the engine first waits up to about 30 seconds for its policies to be listed.
 
 ## Access package assignment policy schema
 

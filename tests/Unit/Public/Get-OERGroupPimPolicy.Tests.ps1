@@ -41,11 +41,13 @@ Describe 'Get-OERGroupPimPolicy' {
         $Record = @($err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' })
         $Record.Count | Should -Be 1
         $Record[0].Exception.Message | Should -BeExactly (
-            "Group 'gid-1' has no PIM-for-groups policy for 'owner' access yet. A group created moments ago can " +
-            'take a short while before Microsoft Graph lists its policies (replication delay), and re-running ' +
-            'usually succeeds. A group never used with PIM for Groups gets its policies when it is first ' +
-            'onboarded, for example by its first eligibility.')
+            "Microsoft Graph does not list a PIM-for-groups policy for 'owner' access on group 'gid-1' yet. A " +
+            'group created moments ago can take a short while before its policies are listed (replication ' +
+            'delay), and re-running usually succeeds.')
         $Record[0].Exception.Message | Should -Not -Match 'Add-OERGroupEligibility'
+        # Graph lists the policies of a group never used with PIM for Groups, so no advice to add an
+        # eligibility: replication is the one cause this message can have.
+        $Record[0].Exception.Message | Should -Not -Match 'eligibility'
     }
 
     It 'reports a FAILED policy-assignment lookup as PimPolicyReadFailed, never as PimPolicyNotFound' {

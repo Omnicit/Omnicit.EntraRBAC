@@ -17,10 +17,12 @@ function Set-OERGroupPimPolicy {
     and rejected; a declined rule is not a failure and is not listed here either). A rule the mutual-
     exclusion reconcile sent on the caller's behalf IS reported, with the value actually sent, even
     though its own parameter was never bound -- see the reconcile paragraph below. This summary is not
-    a read of the resulting policy state; use Get-OERGroupPimPolicy for that. A group that has no PIM-
-    for-groups policy assignment for the requested access type -- never onboarded, or onboarded moments
-    ago and not yet listed by Graph (replication delay) -- produces a non-terminating PimPolicyNotFound
-    error; re-running usually succeeds once the group's first eligibility has onboarded it. A refused
+    a read of the resulting policy state; use Get-OERGroupPimPolicy for that. A group whose policy
+    assignment for the requested access type Microsoft Graph does not list -- in practice a group
+    created moments ago (replication delay) -- produces a non-terminating PimPolicyNotFound error;
+    re-running usually succeeds. Graph lists the policies of a group that was never used with PIM for
+    Groups too, and the first update of such a policy onboards the group to PIM for Groups, which
+    cannot be undone (Microsoft Graph documentation, "Onboarding groups to PIM for Groups"). A refused
     read of that policy assignment (insufficient permission, throttling, a dead transport, ...) is a
     DIFFERENT, non-terminating PimPolicyReadFailed error: whether the group has a policy is unknown,
     which is not the same as it having none, so nothing is changed either way. When Graph rejects one
@@ -360,10 +362,9 @@ function Set-OERGroupPimPolicy {
         if (-not $PolicyId) {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access yet. A group created " +
-                    'moments ago can take a short while before Microsoft Graph lists its policies (replication ' +
-                    'delay), and re-running usually succeeds. A group never used with PIM for Groups gets its ' +
-                    'policies when it is first onboarded, for example by its first eligibility.')) `
+                    "Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group " +
+                    "'$GroupId' yet. A group created moments ago can take a short while before its policies are " +
+                    'listed (replication delay), and re-running usually succeeds.')) `
                 -ErrorId 'PimPolicyNotFound' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
             return
         }

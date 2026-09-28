@@ -37,18 +37,21 @@ function Sync-OERStructureGroup {
         dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
         run that would remove the last remaining owner reports a Skipped record instead of firing a
         call Microsoft Graph rejects.
-    3. Reconcile time-bound eligibility entries (those with durationDays) -- the first one onboards the
-       group to PIM so that a roleManagementPolicy is created. Each entry is matched on the
-       (principal, accessType) pair and its declared window is diffed against the live schedule
+    3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
+       request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
+       on the (principal, accessType) pair and its declared window is diffed against the live schedule
        instance by Resolve-OERGroupEligibilityChange, so a changed durationDays or a member/owner
        switch is re-issued instead of being reported Unchanged. Add-OERGroupEligibility is called with
        -Action adminAssign when the eligibility is absent and -Action adminUpdate when it already
        exists and only its window or permanence differs, since Microsoft Graph rejects an adminAssign
        against a principal that is already eligible.
     4. Apply pimPolicy (e.g. ActivationMaxHours, AllowPermanentEligibility, and approval on activation
-       via requireApproval/approvers) -- must come after the first time-bound eligibility so the
-       policy exists. A declared approver (a UPN or a group display name) is resolved to an object id
-       before the diff, for each access type in turn; an approver that does not resolve reports Failed
+       via requireApproval/approvers) -- after the time-bound eligibility entries. Microsoft Graph
+       lists a group's policies whether or not the group was ever used with PIM for Groups, and the
+       first policy update onboards the group, which cannot be undone (Microsoft Graph documentation,
+       "Onboarding groups to PIM for Groups"). A declared approver (a UPN or a group display name) is
+       resolved to an object id before the diff, for each access type in turn; an approver that does
+       not resolve reports Failed
        for that access type ONLY -- the other access type (member/owner) and every later step still run.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, and waits while it does not -- one shared budget of at most about
@@ -57,14 +60,11 @@ function Sync-OERStructureGroup {
        instead of retrying the policy read, is what keeps a run that ends Updated free of
        PimPolicyNotFound records in the caller's -ErrorVariable. Once the budget is spent with nothing
        listed, that access type reports Failed, with a PimPolicyNotFound error record and a
-       replication-delay message naming a re-run -- plus, when the document declares no time-bound
-       eligibility for the group, that a re-run alone does not help and the document needs a
-       time-bound eligibility entry, or, when it declares one that this run did not apply, that a
-       re-run which applies it first usually applies the policy too -- and the loop moves to the next
-       access type. A refused lookup (a 403, for
-       example) stops the wait at once and falls through to the single policy read, which reports the
-       precise error. A group that already existed never waits: its missing policy is a fact, not a
-       timing issue, and the single read decides it as for any other group.
+       replication-delay message naming a re-run, and the loop moves to the next access type. A
+       refused lookup (a 403, for example) stops the wait at once and falls through to the single
+       policy read, which reports the precise error. A group that already existed never waits: its
+       missing policy is a fact, not a timing issue, and the single read decides it as for any other
+       group.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -614,11 +614,6 @@ function Sync-OERStructureGroup {
         }
 
         # Step 3: time-bound eligibility
-        # Whether this step applied a time-bound eligibility (an add or an update that succeeded) in
-        # this run. Consulted only by step 4's message for a new group whose policy never got listed:
-        # PIM for Groups onboards a group with its first eligibility. With none DECLARED a re-run
-        # cannot help; with one declared but not applied here, a re-run that applies it first can.
-        $TimeBoundApplied = $false
         foreach ($EEntry in $TimeBoundEntries) {
             $EPrinRef = $EEntry.principal
             $EPrinId  = Resolve-OERStructurePrincipal -Reference $EPrinRef
@@ -655,7 +650,6 @@ function Sync-OERStructureGroup {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                     continue
                 }
-                $TimeBoundApplied = $true
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "set time-bound $($EChange.AccessType) eligibility for '$EPrinRef' ($($EChange.DurationDays) days): $($EChange.Detail)"
             } else {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would set time-bound $($EChange.AccessType) eligibility for '$EPrinRef': $($EChange.Detail)"
@@ -747,16 +741,11 @@ function Sync-OERStructureGroup {
                     if (-not $PollRefused -and -not $ListedPolicyId) {
                         # No retry count here: the budget is shared, so an owner that finds it spent by
                         # member would otherwise read "after 0 retries".
+                        # No advice about eligibility: Graph lists a group's policies whether or not it was
+                        # ever onboarded, and the first policy update onboards it (Microsoft Graph
+                        # documentation, "Onboarding groups to PIM for Groups"), so an unlisted policy
+                        # here is replication and a re-run is the remedy, whatever the document declares.
                         $Message = "pimPolicy ($AccessType) not applied: Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group '$Name', created in this run, within the 30-second wait. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them."
-                        # Only a document that declares NO time-bound eligibility is told to declare one.
-                        # One that declares an eligibility this run did not apply (it failed, for
-                        # example, since the group was too new) is told a re-run usually helps: the
-                        # re-run applies the eligibility first, which onboards the group.
-                        if ($TimeBoundEntries.Count -eq 0) {
-                            $Message += ' The document declares no time-bound eligibility for the new group, and PIM for Groups onboards a group with its first eligibility, so a re-run alone does not help: declare a time-bound eligibility entry for it.'
-                        } elseif (-not $TimeBoundApplied) {
-                            $Message += ' The time-bound eligibility the document declares for the new group was not applied in this run, so the group may not be onboarded to PIM for Groups yet; a re-run that applies it first usually applies the policy too.'
-                        }
                         $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($Message),
                             'PimPolicyNotFound',
@@ -768,8 +757,8 @@ function Sync-OERStructureGroup {
                     }
                 }
 
-                # Read the current policy for this access type (best-effort -- the group may not be
-                # onboarded, or the read may be refused). A failure leaves $CurrentPolicy null, the diff
+                # Read the current policy for this access type (best-effort -- Graph may not list it
+                # yet, or the read may be refused). A failure leaves $CurrentPolicy null, the diff
                 # treats every declared field as changed, and the Set call reports its own error. Never
                 # retried here: the wait above is the only one.
                 $CurrentPolicy = $null
