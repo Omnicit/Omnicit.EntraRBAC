@@ -17,8 +17,8 @@ function ConvertTo-OERGroupPimPolicy {
     (so a beta-read group approver, which carries id and no groupId, still matches a declared group id)
     -- an absent approval rule or stage gives a genuinely empty array, never a one-element array holding
     $null. This private converter is the single owner of the PIM-for-groups policy READ shape and is
-    used by Get-OERGroupPimPolicy. The patch summary that Set-OERGroupPimPolicy returns is a different
-    shape owned by ConvertTo-OERGroupPimPolicyResult.
+    used by Get-OERGroupPimPolicy and Get-OERListedGroupPimPolicy. The patch summary that
+    Set-OERGroupPimPolicy returns is a different shape owned by ConvertTo-OERGroupPimPolicyResult.
 
     .PARAMETER Rules
     The rules collection read from the group's roleManagementPolicy, one object per policy rule.

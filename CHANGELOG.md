@@ -33,8 +33,9 @@ owner policy was not yet listed to its MEMBER policy, so owner settings, a perma
 opening included, could land on the member policy: review the member policies of groups onboarded by
 an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
 and a group created in the same run gets up to 30 seconds for its policies to appear. During that
-wait, a `404 ResourceNotFound` from Microsoft Graph counts as a policy not listed yet, not as a
-failed read. `Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
+wait, a `404 ResourceNotFound` from Microsoft Graph, on the listing of a policy or on the read of
+it, counts as a policy not there yet rather than a failed read. `Test-OERStructure` warns about
+unknown keys in `groups` and `pimPolicy`.
 `Invoke-OERStructure` no longer returns the eligibility request among its results when it adds a
 PIM eligibility to a group.
 

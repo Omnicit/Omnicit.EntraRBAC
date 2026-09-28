@@ -142,7 +142,8 @@ onboards the group to PIM for Groups, and that cannot be undone (Microsoft Graph
 "Onboarding groups to PIM for Groups"). A `pimPolicy` whose policy Graph does not list yet -- in
 practice a group created moments ago -- is not silently skipped: the apply reports that access type
 `Failed` (`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same
-apply run, the engine first waits up to about 30 seconds for its policies to be listed.
+apply run, the engine first waits up to about 30 seconds for its policies to be listed and
+readable.
 
 ## Access package assignment policy schema
 
