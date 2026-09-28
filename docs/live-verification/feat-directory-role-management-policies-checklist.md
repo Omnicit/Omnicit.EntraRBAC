@@ -19,21 +19,36 @@ first, and only then run the line that writes. Every apply goes through the `Inv
 defined in Setup, which runs `Invoke-OERStructure -WhatIf` unless `-Apply` is passed; the section has
 no `-Prune` and no check passes it. Every other object any command or document names was created by
 the prerequisite script for this file and carries the prefix `oer-s63`; the only other policy
-written is the Reader role management policy at the resource group `oer-s63-rg` (section 5, and T.1
-and T.3 put it back).
+written is the Reader role management policy at the resource group `oer-s63-rg` (section 5). That
+policy outlives its resource group, so the prerequisite script records its raw rule set too, in the
+Reader record beside the baseline file (1.4 checks that record), and its teardown restores it IN FULL
+from that record -- activation hours, approval and approvers alike -- before the resource group is
+deleted (T.3). T.1 also puts the activation hours back through the module, but the teardown does not
+depend on it.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s63/` --
 the helpers write every document, every raw Graph read and a results log there, the prerequisite
-script writes the baseline file there, and the folder is git-ignored. The baseline file holds real
-object ids: never copy it, or any part of it, into a tracked file. What goes into a `Result:` below
-is redacted first, per [README.md](README.md): object ids become
-`00000000-0000-0000-0000-0000000000NN` in first-appearance order for THIS file (the same id always
-gets the same placeholder -- several checks turn on two ids being the same or different). That
-includes the two role definition ids: a built-in role's template id is the same in every tenant, but
-it is version-4 shaped and is redacted like any other id. A directory-role policy id,
-`DirectoryRole_<tenant id>_<policy id>`, gets a placeholder for each of its two ids. Every user
-principal name on the test domain becomes a `personN@example.com` address, and no credential and no
-bearer token is ever pasted. The test objects' display names and the two role names may stay.
+script writes the baseline file and the Reader record there, and the folder is git-ignored. Both
+files hold real object ids: never copy either, or any part of it, into a tracked file. What goes into
+a `Result:` below is redacted first, per [README.md](README.md):
+
+- **Object ids** become `00000000-0000-0000-0000-0000000000NN` in first-appearance order for THIS
+  file (the same id always gets the same placeholder -- several checks turn on two ids being the
+  same or different). That includes the two role definition ids: a built-in role's template id is the
+  same in every tenant, but it is version-4 shaped and is redacted like any other id. It includes the
+  approver ids the prerequisite script prints on its `approver on it:` lines, and the ids its sweep
+  lines print.
+- **The tenant id** becomes `<TenantId>` and **the subscription id** `<SubscriptionId>`, wherever
+  they appear: in the script's `Mode:` and `Identified ...` lines, inside every Azure Resource Manager
+  path (`/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/...`), and as the first half of a
+  directory-role policy id, which becomes `DirectoryRole_<TenantId>_00000000-0000-0000-0000-0000000000NN`.
+- **The organization display name** becomes `<test tenant>`, the **subscription display name**
+  `<test subscription>`, the **verified domain** `<test domain>`, the tenant alias `<Alias>`, and the
+  local path of the clone `<Repo>`. Every user principal name on the test domain becomes a
+  `personN@example.com` address.
+- **No credential, no bearer token, no application id and no certificate thumbprint** is ever pasted.
+
+The test objects' display names and the two role names may stay.
 **Never render an error record** (`Format-List` on `$Error[0]`, on a `-ErrorVariable`, or on a catch
 variable): a raw Graph failure's record carries the bearer token. Every block below prints the error
 id and message only. The helpers name test objects and policies instead of printing their ids wherever
@@ -206,6 +221,7 @@ $RoleMCR = 'Message Center Reader'
 $RgScope = "/subscriptions/$SubId/resourceGroups/$Prefix-rg"
 $Raw     = Join-Path $Repo 'docs/live-verification/raw/s63'
 $BaselinePath = Join-Path $Raw 'baseline-directory-policies.json'   # written by the prerequisite script
+$ReaderRecordPath = Join-Path $Raw 'baseline-azure-reader-policy.json'   # written by the prerequisite script
 
 Set-Location $Repo
 git remote get-url origin
@@ -243,7 +259,7 @@ that the question is not asked, since both checks passed. Every later sign-in mu
 organization too. It ends with a summary of names and REAL object ids -- redact those before pasting
 (check 0.2). It is idempotent: a second run creates nothing that exists and only fills in what is
 missing. Read the `-WhatIf` plan first: every target must carry the prefix `oer-s63`, apart from the
-baseline file it would write.
+baseline file and the Reader record it would write.
 
 ```powershell
 pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -ModulePath $ModulePsd1 -WhatIf
@@ -255,11 +271,17 @@ What it creates, all named with the prefix: two DISABLED users `oer-s63-approver
 passwords never printed); the security group `oer-s63-approvers` with `oer-s63-approver` as its only
 member; and the resource group `oer-s63-rg`, tagged `purpose = oer-s63-live-verification`, with
 nothing assigned at it, whose Reader role management policy is this file's Azure regression policy.
-That policy must start at its defaults -- approval off, no approver -- and the script reads it after
-creating or finding the resource group: a resource group deleted and created again under the same
-name gets its Reader policy back as it was left, so an earlier run's leftovers are reported approver
-by approver and, with `-Unattended` on the test's own resource group, restored at once. A read of an
-object the script has just created is retried on a 404.
+A resource group deleted and created again under the same name gets its Reader policy back as it was
+left, so the script checks that policy after creating or finding the resource group, against the
+**Reader record** `raw/s63/baseline-azure-reader-policy.json`. When there is no record yet, the policy
+must be at its defaults -- approval off, no approver; leftovers are reported approver by approver
+and, with `-Unattended` on the test's own resource group, restored at once -- activation hours other
+than 8 (the Azure default) are warned about, and then its raw rule set is written to the record.
+When the record exists, the script compares the live policy with it -- activation hours, approval
+and approvers, and every rule by id -- and, with `-Unattended` on the test's own resource group,
+restores the recorded rule set at once. Its teardown restores the policy IN FULL from that record
+before it deletes the resource group. A read of an object the script has just created is retried on
+a 404.
 
 What it records: the two directory roles are FIXED in the script, and it refuses any other name. It
 resolves each by display name (exactly one built-in role definition) and reads its policy through
@@ -297,7 +319,10 @@ if (-not ($S63AppOk -and $S63TenantOk)) { throw 'The identity check failed: noth
 **The helpers.** Paste this block as it stands. The raw reads use `Invoke-MgGraphRequest` on the
 Microsoft Graph context `Connect-OER` set up: independent of the module's own read and write code,
 and the same query the prerequisite script used for the baseline file, so the rules compare shape for
-shape.
+shape. The Reader policy at `oer-s63-rg` is read raw the way the script reads it for the Reader
+record: through the module's own Azure Resource Manager transport, inside the module's scope. Rules
+are compared exactly as the script compares them: key order and list order ignored, an absent
+property and a null one the same, and a `claimValue` of `''` the same as null.
 
 ```powershell
 function Get-S63Name {
@@ -561,19 +586,30 @@ function Show-S63RawSettings {
 function ConvertTo-S63Canonical {
     # The same comparison the prerequisite script makes: every dictionary's keys sorted and every list
     # sorted by its own canonical JSON, so two reads of one rule compare equal whatever the key order
-    # and whatever the order of enabledRules, recipients or approvers. '@odata.context' is dropped.
+    # and whatever the order of enabledRules, recipients or approvers. '@odata.context' is dropped. Two
+    # spellings of "no value" compare as one, exactly as in the script: a property whose value is null
+    # is dropped (null and absent are the same), and a claimValue of '' is read as null -- the module
+    # disables an authentication context by sending '' and reads null and '' alike.
     param([AllowNull()][object]$Value)
     if ($null -eq $Value) { return $null }
     if ($Value -is [System.Collections.IDictionary]) {
         $Out = [ordered]@{}
         $Keys = @($Value.Keys | ForEach-Object { [string]$_ } | Where-Object { $_ -notmatch '@odata\.context$' } | Sort-Object -CaseSensitive)
-        foreach ($Key in $Keys) { $Out[$Key] = ConvertTo-S63Canonical -Value $Value[$Key] }
+        foreach ($Key in $Keys) {
+            $Item = $Value[$Key]
+            if ($Key -ceq 'claimValue' -and $Item -is [string] -and $Item.Length -eq 0) { $Item = $null }
+            if ($null -eq $Item) { continue }
+            $Out[$Key] = ConvertTo-S63Canonical -Value $Item
+        }
         return $Out
     }
     if ($Value -is [System.Management.Automation.PSCustomObject]) {
         $Out = [ordered]@{}
         foreach ($Key in @($Value.PSObject.Properties.Name | Where-Object { $_ -notmatch '@odata\.context$' } | Sort-Object -CaseSensitive)) {
-            $Out[$Key] = ConvertTo-S63Canonical -Value $Value.$Key
+            $Item = $Value.$Key
+            if ($Key -ceq 'claimValue' -and $Item -is [string] -and $Item.Length -eq 0) { $Item = $null }
+            if ($null -eq $Item) { continue }
+            $Out[$Key] = ConvertTo-S63Canonical -Value $Item
         }
         return $Out
     }
@@ -622,6 +658,34 @@ function Show-S63BaselineDiff {
             $Label, $Name, ([string]$Entry['policyId'] -eq $Live.PolicyId), @($Live.Rules).Count, @($Entry['rules']).Count, $Diff.Count,
             $(if ($Diff.Count) { ' (' + ($Diff -join ', ') + ')' } else { '' }))
     }
+}
+
+function Show-S63ReaderRecordDiff {
+    # The Reader policy at oer-s63-rg against the Reader record the prerequisite script wrote: whether
+    # the record names this policy, and every rule that differs, compared as the script compares. The
+    # raw rules are read through the module's own Azure Resource Manager transport inside the module's
+    # scope -- as the script reads them for the record -- since the module has no public read that
+    # returns raw rules and this file signs in to no Az module. Saved as <Label>-reader-raw.json.
+    param([Parameter(Mandatory)][string]$Label)
+    try {
+        $Record = Get-Content -LiteralPath $ReaderRecordPath -Raw -ErrorAction Stop | ConvertFrom-Json -AsHashtable
+        $Policy = Get-OERRoleManagementPolicy -Role Reader -Scope $RgScope -ErrorAction Stop
+        $Json = & (Get-Module Omnicit.EntraRBAC) {
+            param([string]$PolicyId)
+            ConvertTo-Json -InputObject @((Invoke-OERArmRequest -Path "$PolicyId`?api-version=2020-10-01").properties.rules) -Depth 30 -Compress
+        } ([string]$Policy.PolicyId)
+    } catch {
+        Write-Host "--- $($Label): Reader record read FAILED: $($PSItem.Exception.Message)"
+        $global:Error.Clear()
+        return
+    }
+    Set-Content -Path (Join-Path $Raw "$Label-reader-raw.json") -Value $Json -Encoding utf8NoBOM
+    $Parsed = $Json | ConvertFrom-Json -AsHashtable
+    $Live = @($Parsed | Where-Object { $null -ne $_ })
+    $Diff = @(Get-S63RuleDiff -Live $Live -Baseline @($Record['rules']))
+    Write-Host ('--- {0}: Reader at oer-s63-rg: the record names this policy: {1}; rules live {2}, recorded {3}; differing from the record: {4}{5}' -f
+        $Label, ([string]$Record['policyId'] -eq [string]$Policy.PolicyId), $Live.Count, @($Record['rules']).Count, $Diff.Count,
+        $(if ($Diff.Count) { ' (' + ($Diff -join ', ') + ')' } else { '' }))
 }
 
 function Invoke-S63Check {
@@ -785,7 +849,7 @@ Write-Host "(b) Get by role definition id -- result objects: $($B.Count)"
 Show-Published -Record $ErrB -Cmdlet 'Get-OERDirectoryRoleManagementPolicy'
 # (c) Set by name under -WhatIf: the lookup runs before ShouldProcess, so a refused lookup takes the
 # path a real call would take, and an identity that turns out to have write rights still writes nothing.
-$C = @(Set-OERDirectoryRoleManagementPolicy -Role $In.RoleName -ActivationMaxHours 2 -WhatIf -ErrorAction SilentlyContinue -ErrorVariable ErrC)
+$C = @(Set-OERDirectoryRoleManagementPolicy -Role $In.RoleName -ActivationMaxHours $In.ProbeHours -WhatIf -ErrorAction SilentlyContinue -ErrorVariable ErrC)
 Write-Host "(c) Set by name, -WhatIf -- result objects: $($C.Count)"
 Show-Published -Record $ErrC -Cmdlet 'Set-OERDirectoryRoleManagementPolicy'
 # The same two reads outside the module. Only the HTTP status is taken from a failure; nothing else in
@@ -824,10 +888,12 @@ prints a policy as `<Reports Reader>` or a test object by its name, the helper h
 the id.
 
 **Run order.** Section 0, then section 1 before ANY other check -- 1.1 proves the baseline file the
-Teardown restores matches the live policies, and 1.4 records what T.1 puts back. Then sections 2, 3
-and 4 in order: each starts from the state the one before it leaves, and 2.8 needs Message Center
-Reader untouched, which it is until 3.3. Section 5 after section 3 (5.2 expects Message Center Reader
-at 3.3's value), section 6 at any time after 0.3. Teardown last. If the window is closed part-way,
+Teardown restores matches the live policies, and 1.4 proves the same of the Reader record and keeps
+the activation hours T.1 puts back. Then sections 2, 3 and 4 in order: each starts from the state the
+one before it leaves, and 2.8 needs Message Center Reader untouched, which it is until 3.3. Section 5
+after section 3 (5.2 expects Message Center Reader at 3.3's value), section 6 at any time after
+section 1 (6.2 compares two values read around 6.1, so it holds wherever section 6 runs). Teardown
+last. If the window is closed part-way,
 paste the Setup blocks again (variables, sign-in, helpers, documents), re-run 0.3, then set
 `$ArmPolicyId = (Get-Content (Join-Path $Raw '1.4-arm-baseline.json') -Raw | ConvertFrom-Json).PolicyId`
 and, from section 4 on, `$AcId = Get-Content (Join-Path $Raw '4.1-acid.txt')`. A raw read answering
@@ -880,13 +946,16 @@ sign-in block again.
   re-import; nothing below means anything until this passes.
   **Result:**
 
-- [ ] **0.2 The prerequisite script ran, every test object exists, and the baseline file is written.** Paste its summary table, redacted.
+- [ ] **0.2 The prerequisite script ran, every test object exists, and the baseline file and the Reader record are written.** Paste its output and summary table, redacted per the redaction rules at the top: `<TenantId>`, `<SubscriptionId>`, `<test tenant>`, `<test subscription>`, `<test domain>`, `<Alias>`, `<Repo>`, `personN@example.com`, and a placeholder for every object id -- the summary's, the `approver on it:` lines' and the sweep lines' alike.
 
   **Expect:** the `-WhatIf` run names only `oer-s63` targets, plus one
   `What if: Performing the operation "Write the baseline file: ..." on target "<your-clone>\docs\live-verification\raw\s63\baseline-directory-policies.json".`
-  line when no baseline file exists yet. The real run prints, before any sign-in,
+  line when no baseline file exists yet, and one
+  `What if: Performing the operation "Write the Reader record: ..." on target "<your-clone>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json".`
+  line when no Reader record exists yet (only when the resource group exists already -- a `-WhatIf`
+  run does not create it). The real run prints, before any sign-in,
   `Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Baseline file: ... (exists: False)`
-  (`True` on a later run). After EACH of its three sign-ins it printed the two identity lines,
+  and `Reader record: ... (exists: False)` (`True` on a later run). After EACH of its three sign-ins it printed the two identity lines,
   `... identity check: session app id is oer-live-cc: True` and
   `... identity check: tenant is the test tenant: True`. Before any write it printed
   `Identified the test tenant: organization '<your-test-tenant-display-name>', tenant id <id>, verified domain <your-verified-domain>.`,
@@ -900,14 +969,20 @@ sign-in block again.
   `Wrote the baseline file (<n> + <m> rules): <path>`. On a later run instead:
   `The baseline file exists (captured <time>); comparing the live rules with it. ...`, then for each
   role `the baseline names the same role definition and policy: True` and
-  `rules differing from the baseline: 0`, and no warning. After the resource group line:
-  `Setup: Reader policy at oer-s63-rg: approval required False, approvers 0; at its defaults (approval off, no approver): True`
-  (or, with leftovers from an earlier run, one `approver on it:` line per approver, a warning,
-  `Restored the Reader role management policy at resource group 'oer-s63-rg' to its defaults.` and a
-  read again ending `True` -- record every line). The summary has one row each for the two users, the
-  group `oer-s63-approvers`, the resource group, one `group member` row
+  `rules differing from the baseline: 0`, and no warning. After the resource group line, on a first
+  run: `No Reader record yet at ...; this run captures it.`,
+  `Setup: Reader policy at oer-s63-rg: approval required False, approvers 0, activation max hours 8; at its defaults (approval off, no approver): True`,
+  NO warning, and `Wrote the Reader record (<n> rules): <path>`. On a later run instead:
+  `Setup: the Reader record (captured <time>) names this policy: True`, the same `Setup: Reader policy ...`
+  line, and
+  `Setup: Reader policy at oer-s63-rg against its record: activation max hours 8 (record 8), approval required False (record False), approvers 0 (record 0); rules differing from the record: 0`.
+  (With leftovers from an earlier run: `approver on it:` lines, a warning, a `Restored the Reader role
+  management policy at resource group 'oer-s63-rg' ...` line -- `to its defaults.` without a record,
+  `from its record.` with one -- and a read again: record every line.) The summary has one row each for
+  the two users, the group `oer-s63-approvers`, the resource group, one `group member` row
   (`oer-s63-approvers <- <ApproverUpn>`), one `directory role (built-in, fixed)` and one
-  `directory role policy` row per role, and one `baseline file (written by this run)` row (or
+  `directory role policy` row per role, one `baseline file (written by this run)` row (or
+  `(existed; 0 rule(s) differing)`) and one `Reader record (written by this run)` row (or
   `(existed; 0 rule(s) differing)`). No row reads `(none -- not created)`. It ends `Done.`
   **Failure looks like:** a `(none -- not created)` row, or the script stopped on an error -- fix the
   cause and re-run it before 0.3. A `Refusing to run: ...` line from the tenant identification means
@@ -916,8 +991,12 @@ sign-in block again.
   policy "is being recorded with approval required or approvers on it", or a non-zero
   `rules differing from the baseline`: an earlier run did not finish its teardown, or someone changed
   the role's settings. Stop -- no check may write to the policy before this is understood; a leftover
-  baseline file is restored with the script's `-Teardown`. A refusal naming a directory role that is
-  not one of the two, or a user `oer-s63-nobody@...` that exists: stop and record it.
+  baseline file is restored with the script's `-Teardown`. A warning that the Reader policy "allows
+  <n> activation hour(s), not 8" (no record yet), or "differs from its record" and was not restored,
+  or that "the Reader record names another policy": the Azure test policy does not start where this
+  file assumes -- stop, and let the script's `-Teardown` restore it from the record, or move a foreign
+  record aside, before section 5. A refusal naming a directory role that is not one of the two, or a
+  user `oer-s63-nobody@...` that exists: stop and record it.
   **Result:**
 
 - [ ] **0.3 Record the object ids every later check compares against.** Read-only.
@@ -1003,7 +1082,7 @@ holds, and T.4 compares with what 1.1 saves.
   baseline: record them; 2.8 is then `[~]`, and the approver counts below change.
   **Result:**
 
-- [ ] **1.2 A role definition id, a name in another letter case, and a name no role has.** Read-only.
+- [ ] **1.2 A role definition id, a name in another letter case, a name no role has, and the policy id.** Read-only; before the first write, so every read compares with 1.1.
 
   ```powershell
   Invoke-S63Call -Cmdlet Get-OERDirectoryRoleManagementPolicy -Splat @{ Role = $RoleIdRR } -Label '1.2a by role definition id'
@@ -1013,6 +1092,12 @@ holds, and T.4 compares with what 1.1 saves.
   $L = $S63Out | Select-Object -First 1
   'PolicyId is the one by name: {0}; RoleName as typed: {1}' -f ($L.PolicyId -eq $PolicyIdRR), ($L.RoleName -ceq $RoleRR.ToLowerInvariant())
   Invoke-S63Call -Cmdlet Get-OERDirectoryRoleManagementPolicy -Splat @{ Role = "$Prefix-no-such-role" } -Label '1.2c a name no role has'
+  Invoke-S63Call -Cmdlet Get-OERDirectoryRoleManagementPolicy -Splat @{ PolicyId = $PolicyIdRR } -Label '1.2d by policy id'
+  $D = $S63Out | Select-Object -First 1
+  $Was12 = (Get-Content -Path (Join-Path $Raw '1.1-module-view.json') -Raw | ConvertFrom-Json).rr
+  $Same12 = [bool]$D -and (@((Get-S63ModuleView -Policy $D).GetEnumerator() | Where-Object { [string]$_.Value -cne [string]$Was12.($_.Key) }).Count -eq 0)
+  'PolicyId is the one by name: {0}; RoleName empty: {1}; RoleDefinitionId empty: {2}; Scope: {3}; every setting equals 1.1''s: {4}' -f
+      ($D.PolicyId -eq $PolicyIdRR), [string]::IsNullOrEmpty($D.RoleName), [string]::IsNullOrEmpty($D.RoleDefinitionId), $D.Scope, $Same12
   ```
 
   **Expect:** (a) exactly ONE request, `GET v1.0/policies/roleManagementPolicyAssignments` -- a GUID
@@ -1022,11 +1107,19 @@ holds, and T.4 compares with what 1.1 saves.
   matched the name in another letter case. (c) exactly one request,
   `GET v1.0/roleManagement/directory/roleDefinitions`; no object; one published error,
   `ERROR [RoleDefinitionNotFound,Get-OERDirectoryRoleManagementPolicy]: No Microsoft Entra directory role definition named 'oer-s63-no-such-role' was found. Use Tab completion on -Role, or pass the role definition id directly.`
+  (d) exactly ONE request, `GET v1.0/policies/roleManagementPolicies/<Reports Reader>` -- the policy
+  itself, with its rules expanded; no role lookup and no assignment read; one object, no warning, no
+  error; the line prints `PolicyId is the one by name: True; RoleName empty: True; RoleDefinitionId empty: True; Scope: /; every setting equals 1.1's: True`
+  -- the policy's own scope passed the module's directory-scope check, and the same rules project to
+  the same settings whichever way the policy was found.
   **Failure looks like:** a role-definition request in (a), or a different policy id; in (b)
   `RoleDefinitionNotFound` -- Graph's filter is case-sensitive for role definitions: not a module
   defect (the module passes the name as typed), but record it as a finding, since the help promises a
   server-side lookup; in (c) `RoleDefinitionReadFailed` (a lookup that answered is not a refused one)
-  or an object.
+  or an object. In (d) an `InvalidPolicyId` error -- Graph answered this directory-role policy with a
+  `scopeType` other than `Directory` or `DirectoryRole`, or a `scopeId` other than `/`, which the
+  module's scope check refuses: record the message, it names what Graph returned; a `PolicyReadFailed`;
+  or a setting that differs from 1.1 (the two reads project the same rules differently).
   **Result:**
 
 - [ ] **1.3 `-All`: every directory role's policy, each named.** Read-only.
@@ -1052,7 +1145,7 @@ holds, and T.4 compares with what 1.1 saves.
   `RoleName` rows (a policy for a role definition the name list lacks: record the count).
   **Result:**
 
-- [ ] **1.4 The Reader role management policy at `oer-s63-rg` -- the Azure baseline for section 5.** Read-only.
+- [ ] **1.4 The Reader role management policy at `oer-s63-rg` -- the Azure baseline for section 5, against the Reader record.** Read-only.
 
   ```powershell
   $Arm0 = Get-OERRoleManagementPolicy -Role Reader -Scope $RgScope -ErrorAction Stop
@@ -1061,14 +1154,21 @@ holds, and T.4 compares with what 1.1 saves.
       $Arm0.ActivationMaxHours, $Arm0.RequireApproval, @($Arm0.Approvers | Where-Object { $_ }).Count
   [ordered]@{ PolicyId = $Arm0.PolicyId; ActivationMaxHours = $Arm0.ActivationMaxHours; RequireApproval = $Arm0.RequireApproval
       ApproverCount = @($Arm0.Approvers | Where-Object { $_ }).Count } | ConvertTo-Json | Set-Content -Path (Join-Path $Raw '1.4-arm-baseline.json') -Encoding utf8NoBOM
+  Show-S63ReaderRecordDiff -Label '1.4'
   ```
 
-  **Expect:** `Scope is RgScope: True; RoleName Reader; ActivationMaxHours <n>; RequireApproval False; approvers 0`
-  -- the defaults, which the prerequisite script checked (0.2). Record `<n>`: 5.1 and 5.3 assume it
-  is neither `2` nor `3`, and T.1 puts it back.
+  **Expect:** `Scope is RgScope: True; RoleName Reader; ActivationMaxHours 8; RequireApproval False; approvers 0`
+  -- the defaults, which the prerequisite script checked before it wrote the Reader record (0.2);
+  then `--- 1.4: Reader at oer-s63-rg: the record names this policy: True; rules live <n>, recorded <n>; differing from the record: 0`.
+  The record, not this check, is what the Teardown restores; T.1 uses the activation hours printed
+  here. 5.1 and 5.3 assume they are neither `2` nor `3`.
   **Failure looks like:** a read error (the ARM token or the Owner role is missing -- see Stop
-  conditions), or approval on or an approver present: the prerequisite script's check did not run --
-  run it again (with `-Unattended` it restores the leftovers) before any check writes to the policy.
+  conditions); approval on, an approver present, or activation hours other than 8 -- 0.2 then warned,
+  and those settings are what the record holds and the Teardown restores: record them, and do not go
+  on to section 5 before they are understood; a count above `0` or `the record names this policy:
+  False` -- the policy moved since setup, or the record is not this resource group's: run the
+  prerequisite script again (with `-Unattended` it restores the policy from its record) before any
+  check writes to the policy.
   **Result:**
 
 ---
@@ -1533,7 +1633,10 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
   `on activation: MFA True, justification True, ticket True; AuthenticationContextId ''`. Raw:
   `enabledRules [Justification, MultiFactorAuthentication, Ticketing]` and
   `AuthenticationContext_EndUser_Assignment: isEnabled False, claimValue ...` -- **record exactly
-  what `claimValue` came back as** (`''` or `(null)`): T.1 lists that rule if it differs from 1.1's.
+  what `claimValue` came back as** (`''` or `(null)`). Either is fine: the module sends `''` to
+  disable a context and reads `''` and null alike, and the comparisons in 1.1, T.1 and T.4 (and the
+  prerequisite script's teardown) do the same, so a disabled context never counts as "not back at its
+  baseline" over which of the two Graph stores.
   **Failure looks like:** the enablement PATCH first -- Graph then refuses it with
   `MfaAndAcrsConflict` (a `PolicyRulesRejected` naming `Enablement_EndUser_Assignment`), and the policy
   is left with the context disabled and MFA off: neither protection in force, the defect
@@ -1603,7 +1706,10 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
 The directory-role code shares the rule builder, the policy projection and the diff with the Azure
 path, each given a mode whose default is the Azure behaviour. This section runs the Azure path
 through them once more, on the Reader policy at `oer-s63-rg`, and runs one document holding both
-sections.
+sections. It changes that policy's activation hours (to 2, then 3), its approval and its approvers.
+The policy outlives its resource group, so none of this may survive the run: the prerequisite
+script's teardown restores the whole recorded rule set from the Reader record 1.4 checked -- whether
+or not T.1 has put the hours back, and also after a run that stops part-way here (T.3).
 
 - [ ] **5.1 `Set-OERRoleManagementPolicy -ActivationMaxHours 2` on the Reader policy at `oer-s63-rg`.**
 
@@ -1699,10 +1805,13 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   and reads Reports Reader's policy by name and by role definition id, and runs the Set by name with
   `-WhatIf`: the lookup runs before ShouldProcess, so a refused lookup takes the path a real call
   would, and a sign-in that turns out to carry write rights still cannot write. This block records
-  the activation hours for 6.2, writes the script and its inputs to the raw folder and runs it.
+  the activation hours for 6.2 -- whatever they are when section 6 runs -- picks for the Set a value
+  that differs from them, writes the script and its inputs to the raw folder and runs it.
 
   ```powershell
   $Before61 = (Get-OERDirectoryRoleManagementPolicy -Role $RoleRR -ErrorAction Stop).ActivationMaxHours
+  $Probe61 = if ($Before61 -eq 2) { 5 } else { 2 }
+  "activation hours before 6.1: $Before61; the refused Set asks for: $Probe61"
   $RefusedReadPath = Join-Path $Raw '6.1-refused-read.ps1'
   [ordered]@{
       TenantId           = $TenantId
@@ -1710,13 +1819,16 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
       Thumbprint         = $Thumbprint
       RoleName           = $RoleRR
       RoleId             = $RoleIdRR
+      ProbeHours         = $Probe61
       PSModulePathPrefix = (Resolve-Path (Join-Path $Repo 'output/module')).Path + [System.IO.Path]::PathSeparator + (Resolve-Path (Join-Path $Repo 'output/RequiredModules')).Path
   } | ConvertTo-Json | Set-Content -Path (Join-Path $Raw '6.1-input.json') -Encoding utf8NoBOM
   Set-Content -Path $RefusedReadPath -Value $RefusedReadScript -Encoding utf8NoBOM
   pwsh -NoProfile -File $RefusedReadPath
   ```
 
-  **Expect:** `identity check: session app id is oer-live-cc-noperm: True`, `identity check: tenant
+  **Expect:** first, in this window, `activation hours before 6.1: <n>; the refused Set asks for: <m>`
+  with `<m>` different from `<n>` (`<n>` is 1.1's value when section 6 runs before 2.4, `3` after
+  it). Then, from the second process: `identity check: session app id is oer-live-cc-noperm: True`, `identity check: tenant
   is the test tenant: True`, and `the token carries application permissions: 0`. (a)
   `result objects: 0`, `Errors published by Get-OERDirectoryRoleManagementPolicy: 1`,
   `ERROR [RoleDefinitionReadFailed,Get-OERDirectoryRoleManagementPolicy]: Looking up the Microsoft Entra directory role 'Reports Reader' failed, so whether it exists could not be determined: <cause>`.
@@ -1740,30 +1852,37 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
 
   ```powershell
   $After61 = (Get-OERDirectoryRoleManagementPolicy -Role $RoleRR -ErrorAction Stop).ActivationMaxHours
-  '{0} -> {1}: {2}' -f $Before61, $After61, ($After61 -eq $Before61)
+  '{0} -> {1}: {2}; the value the refused Set asked for: {3}' -f $Before61, $After61, ($After61 -eq $Before61), $Probe61
   ```
 
-  **Expect:** `3 -> 3: True` -- 6.1's Set ran under `-WhatIf` and asked for `2`.
-  **Failure looks like:** `2` on the right: stop and record it.
+  **Expect:** the same value on both sides of the arrow -- 6.1's first line printed it -- then
+  `: True`; the right side is not the value the refused Set asked for. This holds whenever section 6
+  runs: both sides are read in this run, around 6.1, and 6.1's Set ran under `-WhatIf`.
+  **Failure looks like:** the right side equals the value the refused Set asked for, or differs from
+  the left in any other way: stop and record it.
   **Result:**
 
 ---
 
 ### Teardown
 
-The Reader policy's activation hours go back first, through the module (T.1) -- the prerequisite
-script restores that policy's APPROVAL only. Then the prerequisite script restores both
-directory-role policies from the baseline file, rule by rule, and stops before deleting anything if
-either is not back at its baseline; then it restores the Reader policy's approval to its defaults
-BEFORE it deletes the resource group (the policy outlives the resource group and comes back as it was
-left when the name is used again); then it deletes the group and the users.
+The prerequisite script's teardown restores everything this file wrote, and does not depend on any
+step here: first both directory-role policies from the baseline file, rule by rule, stopping before
+anything is deleted if either is not back at its baseline; then the Reader policy at `oer-s63-rg`, IN
+FULL from the Reader record -- activation hours, approval and approvers -- stopping before the
+resource group is deleted if it is not back at its record (the policy outlives the resource group and
+comes back as it was left when the name is used again); then the resource group, the group and the
+users. T.1 reads what it will restore, and also puts the Reader policy's activation hours back through
+the module first -- one more pass through the module's Azure write path, not something the teardown
+needs.
 
-- [ ] **T.1 What the teardown will restore, and the Reader policy's activation hours put back.**
+- [ ] **T.1 What the teardown will restore, and the Reader policy's activation hours put back through the module.**
 
   The restore plan, read-only, and the plan for the activation hours:
 
   ```powershell
   Show-S63BaselineDiff -Label 'T.1'
+  Show-S63ReaderRecordDiff -Label 'T.1 before'
   $ArmBase = Get-Content -Path (Join-Path $Raw '1.4-arm-baseline.json') -Raw | ConvertFrom-Json
   Invoke-S63Call -Cmdlet Set-OERRoleManagementPolicy -Splat @{ Role = 'Reader'; Scope = $RgScope; ActivationMaxHours = [int]$ArmBase.ActivationMaxHours; WhatIf = $true } -Label 'T.1 plan'
   ```
@@ -1774,20 +1893,29 @@ left when the name is used again); then it deletes the group and the users.
   Invoke-S63Call -Cmdlet Set-OERRoleManagementPolicy -Splat @{ Role = 'Reader'; Scope = $RgScope; ActivationMaxHours = [int]$ArmBase.ActivationMaxHours; Confirm = $false } -Label 'T.1 write'
   $AT1 = Get-OERRoleManagementPolicy -Role Reader -Scope $RgScope -ErrorAction Stop
   'Reader at oer-s63-rg: ActivationMaxHours {0} (1.4: {1}): {2}' -f $AT1.ActivationMaxHours, $ArmBase.ActivationMaxHours, ($AT1.ActivationMaxHours -eq $ArmBase.ActivationMaxHours)
+  Show-S63ReaderRecordDiff -Label 'T.1 after'
   ```
 
-  **Expect:** `--- T.1: Reports Reader: the baseline names this policy: True; ...; differing from the baseline: <n> (...)`
+  **Expect:** `--- T.1: Reports Reader: the baseline names this policy: True; ...; differing from the baseline: 5 (...)`
   listing exactly `Approval_EndUser_Assignment`, `Enablement_EndUser_Assignment`,
-  `Expiration_EndUser_Assignment`, `Expiration_Admin_Eligibility` and `Expiration_Admin_Assignment`,
-  plus `AuthenticationContext_EndUser_Assignment` only when the `claimValue` 4.2 recorded differs from
-  1.1's baseline (say which); then `Message Center Reader: ... differing from the baseline: 2 (Approval_EndUser_Assignment, Expiration_EndUser_Assignment)`.
+  `Expiration_EndUser_Assignment`, `Expiration_Admin_Eligibility` and `Expiration_Admin_Assignment`
+  -- not `AuthenticationContext_EndUser_Assignment`: 4.4 left the context disabled as it was at 1.1,
+  and a `claimValue` of `''` compares equal to the baseline's null; then
+  `Message Center Reader: ... differing from the baseline: 2 (Approval_EndUser_Assignment, Expiration_EndUser_Assignment)`.
   Nothing else: no `Notification_*` rule, no `Enablement_Admin_Assignment`. Then
+  `--- T.1 before: Reader at oer-s63-rg: the record names this policy: True; ...; differing from the record: 2 (...)`,
+  naming `Expiration_EndUser_Assignment` and `Approval_EndUser_Assignment`, and
   `What if: Performing the operation "Update rules: Expiration_EndUser_Assignment" on target "role management policy '<ArmPolicyId>'".`
-  The write: one ARM `PATCH`, no error, and the last line ends `: True`.
+  The write: one ARM `PATCH`, no error, the hours line ends `: True`, and
+  `--- T.1 after: ... differing from the record: 1 (Approval_EndUser_Assignment)` -- approval and
+  approvers are left for the teardown, which restores them from the record.
   **Failure looks like:** a rule no check wrote -- something else changed the policy, or Graph
   changed a rule by itself: record it; the teardown restores it from the file all the same, and T.4
-  shows whether it could. A `NoChange` error in the write: the hours already match 1.4 (5.x did not
-  apply).
+  shows whether it could. `AuthenticationContext_EndUser_Assignment` listed: its `isEnabled` or
+  `claimValue` differs for real (not merely `''` against null) -- 4.4 did not disable the context; record
+  it. A `NoChange` error in the write: the hours already match 1.4 (5.x did not apply). If this write
+  fails or is skipped, carry on: `T.1 after` then still lists `Expiration_EndUser_Assignment`, and
+  T.3 restores it from the record.
   **Result:**
 
 - [ ] **T.2 Read the teardown plan.**
@@ -1796,28 +1924,37 @@ left when the name is used again); then it deletes the group and the users.
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -ModulePath $ModulePsd1 -Teardown -WhatIf
   ```
 
-  **Expect:** `Mode: RESTORE and REMOVE. ...` and the `Directory roles (fixed): ... (exists: True)`
-  line; both identity lines `True` after each of its two sign-ins; the tenant and the subscription
-  identified through the `Connect-OER` sign-in, as in 0.2, no question under `-WhatIf`. Then, for each
-  role, `Teardown: directory role '<role>': the baseline names the same role definition and policy: True`,
+  **Expect:** `Mode: RESTORE and REMOVE. ...`, the `Directory roles (fixed): ... (exists: True)` line
+  and `Reader record: ... (exists: True)`; both identity lines `True` after each of its two sign-ins;
+  the tenant and the subscription identified through the `Connect-OER` sign-in, as in 0.2, no question
+  under `-WhatIf`. Then, for each role,
+  `Teardown: directory role '<role>': the baseline names the same role definition and policy: True`,
   `... rules differing from the baseline: <n> (...)` with exactly T.1's lists, one
   `What if: Performing the operation "Restore rule <rule id> from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role '<role>'".`
-  line per listed rule -- in the baseline's rule order, except that
-  `AuthenticationContext_EndUser_Assignment`, when listed together with
-  `Enablement_EndUser_Assignment`, comes FIRST (the baseline has the context disabled) -- and
-  `Teardown: directory role '<role>': restored: not attempted (WhatIf)`. Then the Reader policy read
-  `Teardown, before the restore: Reader policy at oer-s63-rg: approval required True, approvers 2; ...: False`
-  with two `approver on it:` lines (5.3's), and `What if:` lines for its restore to defaults and for
+  line per listed rule, in the baseline's rule order, and
+  `Teardown: directory role '<role>': restored: not attempted (WhatIf)`. Then the Reader policy:
+  `Teardown, before the restore: Reader policy at oer-s63-rg: approval required True, approvers 2, activation max hours <1.4's hours>; ...: False`
+  with two `approver on it:` lines (5.3's), `Teardown: the Reader record names this policy: True`,
+  `Teardown, before the restore: Reader policy at oer-s63-rg against its record: activation max hours <1.4's hours> (record <1.4's hours>), approval required True (record False), approvers 2 (record 0); rules differing from the record: 1 (Approval_EndUser_Assignment)`
+  (`2`, with `Expiration_EndUser_Assignment` and the hours line showing 3, if T.1's write did not
+  happen), then
+  `What if: Performing the operation "Restore from its record before the resource group is deleted: the recorded rule set, in one Azure Resource Manager PATCH" on target "Reader role management policy at resource group 'oer-s63-rg'".`,
+  `Teardown: Reader policy at oer-s63-rg: restored: not attempted (WhatIf)`, and a `What if:` line for
   deleting the resource group `oer-s63-rg` (its target names `tag purpose = oer-s63-live-verification`);
   the Phase 2 sweep lists the resource group as still present. After the Phase 1 sign-in, `What if:`
   lines for deleting the group `oer-s63-approvers` and the two users, the sweep listing the three, then
-  `WhatIf: nothing was created, restored, removed or written.` and `Done.`
-  **Failure looks like:** any target without the prefix other than the two roles' policies; a
-  directory role other than the two; a rule list that differs from T.1's -- stop, do not run T.3. A
-  `Refusing the teardown: the baseline file ... does not exist` line: the file is gone -- find it
-  (`-BaselinePath`) before anything else; never delete the approvers while the policies may still name
-  them. A warning `Refusing to delete resource group oer-s63-rg: its 'purpose' tag is ...`: find out
-  whose it is first.
+  `WhatIf: nothing was created, restored, removed or written.` and `Done.` Paste the output redacted
+  per the rules at the top -- the `Mode:`, `Identified ...` and sweep lines carry the tenant and
+  subscription ids, the organization and the domain; the `approver on it:` lines carry object ids.
+  **Failure looks like:** any target without the prefix other than the two roles' policies and the
+  Reader policy at `oer-s63-rg`; a directory role other than the two; a rule list that differs from
+  T.1's -- stop, do not run T.3. A `Refusing the teardown: the baseline file ... does not exist` line:
+  the file is gone -- find it (`-BaselinePath`) before anything else; never delete the approvers while
+  the policies may still name them. `the Reader record names this policy: False`: the record is not
+  this resource group's, and T.3 would stop before deleting it -- find the right record. A warning
+  `There is no Reader record at ...`: the record is gone, and the teardown would restore approval
+  only -- find it (it sits beside the baseline file) before T.3. A warning
+  `Refusing to delete resource group oer-s63-rg: its 'purpose' tag is ...`: find out whose it is first.
   **Result:**
 
 - [ ] **T.3 Restore both policies and remove every test object.**
@@ -1829,21 +1966,30 @@ left when the name is used again); then it deletes the group and the users.
   **Expect:** both identity lines `True` after each sign-in; `Unattended run: the confirmation
   question is not asked; ...` before anything is changed. For each role, the lines T.2 printed, then
   one `Restored rule <rule id> of '<role>'.` per listed rule in the same order, no warning, and
-  `Teardown: directory role '<role>': restored: True`. Then the Reader policy:
-  `Teardown, before the restore: ...`, `Restored the Reader role management policy at resource group 'oer-s63-rg' to its defaults.`,
-  `Teardown, read again after the restore: Reader policy at oer-s63-rg: approval required False, approvers 0; at its defaults (approval off, no approver): True`,
-  and `Deletion of resource group oer-s63-rg accepted.` The Phase 2 sweep reports
+  `Teardown: directory role '<role>': restored: True`. Then the Reader policy: the three
+  `Teardown, before the restore: ...` / `the Reader record names this policy: True` lines T.2 printed,
+  `Restored the Reader role management policy at resource group 'oer-s63-rg' from its record.`,
+  `Teardown, read again after the restore: Reader policy at oer-s63-rg against its record: activation max hours <1.4's hours> (record <1.4's hours>), approval required False (record False), approvers 0 (record 0); rules differing from the record: 0`,
+  `Teardown: Reader policy at oer-s63-rg: restored: True`, and only then
+  `Deletion of resource group oer-s63-rg accepted.` The Phase 2 sweep reports
   `no resource group starting with 'oer-s63' is left.` or at most `oer-s63-rg` in `Deleting` state.
   After the Phase 1 sign-in: `Deleted group oer-s63-approvers.`, `Deleted user ...` for both users,
   and the sweep `no user or group starting with 'oer-s63' is left.` (Graph's list can lag a moment
-  behind the deletes -- T.5 reads it again); `Done.`
+  behind the deletes -- T.5 reads it again); `Done.` The Reader policy cannot be read once its
+  resource group is gone, so the `read again after the restore` line is its read-back: record it. Paste
+  the output redacted per the rules at the top, as for T.2.
   **Failure looks like:** `Microsoft Graph refused to restore rule ...` or `restored: False` with a
   `still differing:` line -- the script then stops with `... is not back at its baseline after the
   restore. Nothing was deleted ...`: record Graph's message and look at the policy before running T.3
-  again. The Reader policy read after the restore ending `False` stops the script the same way,
-  before the resource group is deleted. A `Refusing ...` line. An `Authorization_RequestDenied` or a
-  403 on a restore or a deletion: a missing permission -- stop and name it (see Stop conditions). Re-run
-  T.3 after a fix (it only restores what differs and removes what is still there) and record both runs.
+  again. For the Reader policy, `restored: False` stops the script with `... is not back at its record
+  after the restore. The resource group was NOT deleted ...`, and a record naming another policy stops
+  it with `Refusing to restore the Reader role management policy ...` -- both before the resource group
+  is deleted. A warning `There is no Reader record at ...` means only approval was restored: the
+  activation hours and every other setting are not verified -- record it and restore the policy by
+  hand from 1.4's values before the name `oer-s63-rg` is used again. A `Refusing ...` line. An
+  `Authorization_RequestDenied` or a 403 on a restore or a deletion: a missing permission -- stop and
+  name it (see Stop conditions). Re-run T.3 after a fix (it only restores what differs and removes what
+  is still there) and record both runs.
   **Result:**
 
 - [ ] **T.4 Read both directory-role policies back, through the module and raw, against the baseline.**
@@ -1903,12 +2049,15 @@ left when the name is used again); then it deletes the group and the users.
   or any count above `0`.
   **Result:**
 
-- [ ] **T.6 Redact, then clean up.** Only once T.4 printed `True` twice and `0` twice: the raw folder holds the baseline file, the only record of the original rules. Move what the results above need from `docs/live-verification/raw/s63/` into this file, redacted per [README.md](README.md), then delete the folder.
+- [ ] **T.6 Redact, then clean up.** Only once T.4 printed `True` twice and `0` twice, and T.3 printed `Teardown: Reader policy at oer-s63-rg: restored: True`: the raw folder holds the baseline file and the Reader record, the only records of the original rules. Move what the results above need from `docs/live-verification/raw/s63/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
-  Ids to `00000000-0000-0000-0000-0000000000NN` -- the two role definition ids and both halves of
-  each directory-role policy id included -- user principal names to `personN@example.com`, no
-  credential, no bearer token, and nothing copied out of the baseline file. That includes the output
-  of 6.1's second process.
+  Object ids to `00000000-0000-0000-0000-0000000000NN` -- the two role definition ids and the policy
+  half of each directory-role policy id included -- the tenant id to `<TenantId>`, the subscription id
+  to `<SubscriptionId>`, the organization, subscription name and domain to `<test tenant>`,
+  `<test subscription>` and `<test domain>`, user principal names to `personN@example.com`; no
+  credential, no bearer token, no application id, no thumbprint, and nothing copied out of the baseline
+  file or the Reader record. That includes the output of 6.1's second process and of both
+  prerequisite-script runs.
 
   ```powershell
   Remove-Item -LiteralPath $Raw -Recurse -Force
@@ -1918,4 +2067,11 @@ left when the name is used again); then it deletes the group and the users.
 
   **Expect:** `raw/s63 exists after: False`; `git status` shows only this checklist as modified;
   nothing under `raw/` is ever staged.
+  **Failure looks like:** `raw/s63 exists after: True` -- a file in it is still open (an editor, or
+  a second PowerShell window): close it and run the block again. `git status` listing anything under `docs/live-verification/raw/`, or
+  any file besides this checklist -- unstage it and find out how it got there. A value a scan of this
+  file still finds -- a GUID that is not a `00000000-...` placeholder, an address outside
+  `example.com`, the tenant or subscription id, the organization or domain name -- means redaction
+  is not finished: redact it before the commit, and if it was a credential, rotate it
+  ([README.md](README.md), "Credentials").
   **Result:**
