@@ -27,8 +27,8 @@ function Get-OERInventory {
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
     has at least one owner. The Groups pimPolicy projection carries requireApproval and, only while it
     is true, approvers as object ids (a display name is not guaranteed to resolve) -- approvers are
-    omitted while requireApproval is false or unset, since the apply engine ignores declared approvers
-    in that case and the offline validator would otherwise warn on every exported document.
+    omitted while requireApproval is false, since the apply engine ignores declared approvers in that
+    case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
