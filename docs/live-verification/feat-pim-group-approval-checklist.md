@@ -81,8 +81,10 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   shared budget of 2, 4, 8 and 16 seconds per group item before its single policy read ("fix: ask
   whether a new group's PIM policy is listed instead of retrying the read") -- so a run that ends
   `Updated` leaves no `PimPolicyNotFound` record behind. With the budget spent it reports `Failed`
-  with a replication message, which adds, when the run applied no time-bound eligibility to the
-  group, that a re-run alone does not help; a refused lookup is never waited on.
+  with a replication message. When the document declares no time-bound eligibility for the group,
+  the message adds that a re-run alone does not help; when it declares one that the run did not
+  apply, it adds that a re-run which applies it first usually applies the policy too. A refused
+  lookup is never waited on.
 - **E. Unknown keys in `groups[]` items and `pimPolicy` blocks warn** ("feat: warn about unknown keys
   in groups and pimPolicy blocks"). `Test-OERStructure` reports each as a Warning, with a
   `Did you mean '<current name>'?` suffix for the five field names the inventory README used to
@@ -947,8 +949,9 @@ member policy, and the owner's settings landed there.
   3. The member policy: `Updated` `pimPolicy (member) set: activationMaxHours=2` -- or `Failed`
      `pimPolicy (member) not applied: Microsoft Graph does not list a PIM-for-groups policy for 'member' access on group 'oer-s62-new', created in this run, within the 30-second wait. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them.`
      with a matching `ERROR [PimPolicyNotFound,Invoke-OERStructure]: pimPolicy (member) not applied: ...` line.
-     If row 2 was `Failed` instead, so the run applied no time-bound eligibility, that text goes on:
-     `This run applied no time-bound eligibility to the new group, and PIM for Groups onboards a group with its first eligibility, so a re-run alone does not help: declare a time-bound eligibility entry for it.`
+     If row 2 was `Failed` instead, so the declared eligibility was not applied, that text goes on:
+     `The time-bound eligibility the document declares for the new group was not applied in this run, so the group may not be onboarded to PIM for Groups yet; a re-run that applies it first usually applies the policy too.`
+     -- which is exactly what 5.3 does.
   4. The owner policy: `Updated` `pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[<IdApprover>],groups=[<IdApprovers>])`
      -- or the same `Failed` text and error line for `'owner'` access.
 

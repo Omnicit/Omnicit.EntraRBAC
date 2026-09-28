@@ -57,9 +57,11 @@ function Sync-OERStructureGroup {
        instead of retrying the policy read, is what keeps a run that ends Updated free of
        PimPolicyNotFound records in the caller's -ErrorVariable. Once the budget is spent with nothing
        listed, that access type reports Failed, with a PimPolicyNotFound error record and a
-       replication-delay message naming a re-run -- plus, when this run applied no time-bound
-       eligibility to the group, that a re-run alone does not help and the document needs a time-bound
-       eligibility entry -- and the loop moves to the next access type. A refused lookup (a 403, for
+       replication-delay message naming a re-run -- plus, when the document declares no time-bound
+       eligibility for the group, that a re-run alone does not help and the document needs a
+       time-bound eligibility entry, or, when it declares one that this run did not apply, that a
+       re-run which applies it first usually applies the policy too -- and the loop moves to the next
+       access type. A refused lookup (a 403, for
        example) stops the wait at once and falls through to the single policy read, which reports the
        precise error. A group that already existed never waits: its missing policy is a fact, not a
        timing issue, and the single read decides it as for any other group.
@@ -614,8 +616,8 @@ function Sync-OERStructureGroup {
         # Step 3: time-bound eligibility
         # Whether this step applied a time-bound eligibility (an add or an update that succeeded) in
         # this run. Consulted only by step 4's message for a new group whose policy never got listed:
-        # PIM for Groups onboards a group with its first eligibility, so without one a re-run cannot
-        # help.
+        # PIM for Groups onboards a group with its first eligibility. With none DECLARED a re-run
+        # cannot help; with one declared but not applied here, a re-run that applies it first can.
         $TimeBoundApplied = $false
         foreach ($EEntry in $TimeBoundEntries) {
             $EPrinRef = $EEntry.principal
@@ -746,8 +748,14 @@ function Sync-OERStructureGroup {
                         # No retry count here: the budget is shared, so an owner that finds it spent by
                         # member would otherwise read "after 0 retries".
                         $Message = "pimPolicy ($AccessType) not applied: Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group '$Name', created in this run, within the 30-second wait. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them."
-                        if (-not $TimeBoundApplied) {
-                            $Message += ' This run applied no time-bound eligibility to the new group, and PIM for Groups onboards a group with its first eligibility, so a re-run alone does not help: declare a time-bound eligibility entry for it.'
+                        # Only a document that declares NO time-bound eligibility is told to declare one.
+                        # One that declares an eligibility this run did not apply (it failed, for
+                        # example, since the group was too new) is told a re-run usually helps: the
+                        # re-run applies the eligibility first, which onboards the group.
+                        if ($TimeBoundEntries.Count -eq 0) {
+                            $Message += ' The document declares no time-bound eligibility for the new group, and PIM for Groups onboards a group with its first eligibility, so a re-run alone does not help: declare a time-bound eligibility entry for it.'
+                        } elseif (-not $TimeBoundApplied) {
+                            $Message += ' The time-bound eligibility the document declares for the new group was not applied in this run, so the group may not be onboarded to PIM for Groups yet; a re-run that applies it first usually applies the policy too.'
                         }
                         $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($Message),
