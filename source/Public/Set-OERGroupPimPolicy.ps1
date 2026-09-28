@@ -289,33 +289,20 @@ function Set-OERGroupPimPolicy {
 
         # Approvers are resolved to object ids before anything else, all or nothing: one value that
         # does not resolve refuses the whole call before the group is even looked up, so nothing is
-        # sent. The same principal named twice (a UPN and its id, or an id in another letter case)
-        # is kept once, in first-seen order. Same shape as Set-OERRoleManagementPolicy. An empty or
-        # whitespace-only value is skipped, never resolved -- the same rule Resolve-OERDeclaredApprover
-        # applies to a document.
+        # sent. Resolve-OERApproverInput owns the rules (a blank value is skipped, the same principal
+        # named twice is kept once in first-seen order) and is shared with
+        # Set-OERDirectoryRoleManagementPolicy; the refusal is reported here, under this cmdlet's id.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
-        $ResolvedUser = [System.Collections.Generic.List[string]]::new()
-        $ResolvedGroup = [System.Collections.Generic.List[string]]::new()
-        $SeenUser = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $SeenGroup = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $Value = $null
         try {
-            foreach ($Value in @($ApproverUser)) {
-                if ([string]::IsNullOrWhiteSpace($Value)) { continue }
-                $PrincipalId = [string](Resolve-OERPrincipal -User $Value).PrincipalId
-                if ($SeenUser.Add($PrincipalId)) { $ResolvedUser.Add($PrincipalId) }
-            }
-            foreach ($Value in @($ApproverGroup)) {
-                if ([string]::IsNullOrWhiteSpace($Value)) { continue }
-                $PrincipalId = [string](Resolve-OERPrincipal -Group $Value).PrincipalId
-                if ($SeenGroup.Add($PrincipalId)) { $ResolvedGroup.Add($PrincipalId) }
-            }
+            $ApproverInput = Resolve-OERApproverInput -User $ApproverUser -Group $ApproverGroup
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
+            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
             return
         }
+        $ResolvedUser = $ApproverInput.User
+        $ResolvedGroup = $ApproverInput.Group
 
         # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
         $GroupId = $null
@@ -516,34 +503,22 @@ function Set-OERGroupPimPolicy {
                 return
             }
 
-            # Only the first stage counts (PIM uses one), read through the single approver reader so
-            # a beta { id } approver is understood. A bound side replaces that side; the unbound side
-            # is the live ids of that kind. A live approver of any OTHER kind (requestorManager, for
-            # example) belongs to neither side, so no parameter replaces it: it is kept as the raw
-            # object it was read as, and sent back unchanged.
-            $LiveStage = $null
-            if ($null -ne $LiveApprovalRule -and $null -ne $LiveApprovalRule.setting) {
-                $LiveStage = @($LiveApprovalRule.setting.approvalStages) | Where-Object { $null -ne $_ } | Select-Object -First 1
-            }
-            $LivePrimary = @()
-            if ($null -ne $LiveStage) {
-                $LivePrimary = @(@($LiveStage.primaryApprovers) | ForEach-Object { ConvertFrom-OERGraphApprover -Approver $_ })
-                $LiveOther = @(@($LiveStage.primaryApprovers) | Where-Object {
-                        $null -ne $_ -and (ConvertFrom-OERGraphApprover -Approver $_).UserType -eq ''
-                    })
-            }
-            $EffUser = @(if ($ApproverUserBound) { $ResolvedUser } else { $LivePrimary | Where-Object { $_.UserType -eq 'User' -and $_.Id } | ForEach-Object { $_.Id } })
-            $EffGroup = @(if ($ApproverGroupBound) { $ResolvedGroup } else { $LivePrimary | Where-Object { $_.UserType -eq 'Group' -and $_.Id } | ForEach-Object { $_.Id } })
-            # Supplying approvers implies approval. The live isApprovalRequired never decides here:
+            # The Graph approver semantics -- first stage only, a bound side replaces that side, the
+            # unbound side and any approver of another kind (requestorManager, for example) are
+            # carried from the live rule, supplying approvers implies approval, and the approver
+            # count -- are owned by Resolve-OERGraphApproverSet, shared with
+            # Set-OERDirectoryRoleManagementPolicy. The live isApprovalRequired never decides here:
             # this block only runs when -RequireApproval or an approver parameter is bound.
-            $EffRequired = if ($ApproversBound) { $true } else { $RequireApproval }
-
-            # With approvers bound, what will be sent is the two effective sides plus the carried
-            # other-kind approvers; otherwise the live primary approvers go out as they are. Every
-            # kind is counted either way.
-            $EffApproverCount = if ($ApproversBound) { $EffUser.Count + $EffGroup.Count + $LiveOther.Count } else { $LivePrimary.Count }
-            if ($EffRequired -and $EffApproverCount -eq 0) {
-                $NoApproverMessage = if ($ApproversBound) {
+            $ApproverSet = Resolve-OERGraphApproverSet -LiveApprovalRule $LiveApprovalRule `
+                -UserBound $ApproverUserBound -GroupBound $ApproverGroupBound `
+                -ResolvedUser $ResolvedUser -ResolvedGroup $ResolvedGroup `
+                -RequireApprovalBound ($PSBoundParameters.ContainsKey('RequireApproval')) -RequireApproval $RequireApproval
+            $EffUser = @($ApproverSet.EffUser)
+            $EffGroup = @($ApproverSet.EffGroup)
+            $LiveOther = @($ApproverSet.LiveOther)
+            $EffRequired = $ApproverSet.EffRequired
+            if ($ApproverSet.NoApprover) {
+                $NoApproverMessage = if ($ApproverSet.NoApproverReason -eq 'Bound') {
                     "Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, PIM policy '$PolicyId' would have none. Pass at least one approver."
                 } else {
                     "Approval cannot be required with no approver: PIM policy '$PolicyId' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup."
