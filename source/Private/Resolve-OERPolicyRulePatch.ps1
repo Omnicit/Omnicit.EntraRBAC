@@ -12,14 +12,20 @@ function Resolve-OERPolicyRulePatch {
     compared, field by field, against the rule it was cloned from (Test-RuleEquivalent); a clone that
     ends up materially identical to its source -- for example a caller re-asserting a value the policy
     already has -- is dropped back to the original rule object and its id is left out of
-    ChangedRuleId, so a genuine no-op never triggers an ARM write. It returns a single object with two
-    members: Rules -- the COMPLETE rules set in original order (genuinely changed rules replaced by
-    their modified clones, everything else -- including a touched-but-unchanged rule -- passed through
-    as the original) -- and ChangedRuleId -- the ids that actually changed. The full set is returned
-    because ARM's roleManagementPolicies PATCH validates the submitted rules as a whole and rejects a
-    partial array on a default policy with "InvalidPolicy"; sending the complete set is the
-    verified-working shape, and returning one object (not a bare array) avoids array-unwrap nesting at
-    the call site. Pure in-memory; no network or state change.
+    ChangedRuleId, so a genuine no-op never triggers an ARM write. It returns a single object with
+    three members: Rules -- the COMPLETE rules set in original order (genuinely changed rules replaced
+    by their modified clones, everything else -- including a touched-but-unchanged rule -- passed
+    through as the original); ChangedRuleId -- the ids that actually changed; and ConflictResolution --
+    the Resolve-OERPimActivationConflict decision this call applied to the MFA / authentication-context
+    exclusion (its Action is None when nothing was reconciled), which a caller can use to warn about
+    the side it cleared; the ARM caller ignores it. The full set is returned because ARM's
+    roleManagementPolicies PATCH validates the submitted rules as a whole and rejects a partial array
+    on a default policy with "InvalidPolicy"; sending the complete set is the verified-working shape,
+    and returning one object (not a bare array) avoids array-unwrap nesting at the call site.
+    Microsoft Entra directory-role policies in Microsoft Graph v1.0 share the rule ids and field names,
+    so the Graph directory-role write path reuses this builder through -ApproverShape Graph and
+    -ResolveUnrequestedConflict $false and PATCHes the changed rules one at a time. The defaults keep
+    the ARM behaviour exactly. Pure in-memory; no network or state change.
 
     .PARAMETER CurrentRule
     The policy's current rules array (from a GET of the policy).
@@ -30,16 +36,37 @@ function Resolve-OERPolicyRulePatch {
     (resolved approver objects), AuthenticationContextId, AllowPermanentEligibility, EligibleDuration,
     AllowPermanentActiveAssignment, ActiveDuration, RequireMfaOnActiveAssignment,
     RequireJustificationOnActiveAssignment, NotificationRule (builder objects).
-    PrimaryApprovers must already be resolved approver objects ({ id; userType; isBackup }) -- the
-    caller resolves names via Resolve-OERPrincipal. EligibleDuration and ActiveDuration each accept
-    either a whole day count (for example 365) or a raw ISO 8601 duration (for example 'P365D'),
-    normalized through Resolve-OERDurationInput so a day count from an apply document and an ISO
-    string read back from Get-OERRoleManagementPolicy both work.
+    PrimaryApprovers must already be resolved approver objects in the shape -ApproverShape names: ARM
+    { id; userType; isBackup }, or Graph v1.0 singleUser { userId } / groupMembers { groupId } as
+    New-OERApproverObject builds them -- the caller resolves names first. EligibleDuration and
+    ActiveDuration each accept either a whole day count (for example 365) or a raw ISO 8601 duration
+    (for example 'P365D'), normalized through Resolve-OERDurationInput so a day count from an apply
+    document and an ISO string read back from Get-OERRoleManagementPolicy both work.
+
+    .PARAMETER ApproverShape
+    Which approver shape the live rules and PrimaryApprovers carry, and so which key decides whether
+    two approver sets are equal. Arm (the default) keys an approver on id, userType and isBackup.
+    Graph reads each approver through ConvertFrom-OERGraphApprover, the single reader of a Graph
+    approver, and keys it on that object id (lower-cased), its User or Group kind, and isBackup; a
+    v1.0 approver carries no id or userType, so under the ARM key every v1.0 approver would read as
+    equal to every other and a changed approver list would never be written.
+
+    .PARAMETER ResolveUnrequestedConflict
+    Whether to clear MFA on activation when the resulting policy would combine it with an enabled
+    authentication context although the caller asked for neither side (default $true). The ARM
+    transport keeps the default because it PATCHes the FULL rule set, so ARM rejects a pre-existing
+    invalid combination even on an unrelated change. The Graph directory-role transport passes $false:
+    it patches one rule at a time and leaves an untouched combination alone (the Graph convention).
 
     .EXAMPLE
     Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ AllowPermanentEligibility = $true }
     Returns an object whose Rules is the full set with Expiration_Admin_Eligibility.isExpirationRequired
     set to false, and whose ChangedRuleId is @('Expiration_Admin_Eligibility').
+
+    .EXAMPLE
+    Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ PrimaryApprovers = @(New-OERApproverObject -Spec @{ Group = $GroupId }) } -ApproverShape Graph -ResolveUnrequestedConflict $false
+    Compares the live Graph approvers with the declared group by object id and reports
+    Approval_EndUser_Assignment in ChangedRuleId only when the approver set actually differs.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Pure in-memory rule-overlay builder; returns an object and performs no state change, so ShouldProcess does not apply.')]
@@ -51,7 +78,12 @@ function Resolve-OERPolicyRulePatch {
         [object[]]$CurrentRule,
 
         [Parameter(Mandatory)]
-        [hashtable]$Setting
+        [hashtable]$Setting,
+
+        [ValidateSet('Arm', 'Graph')]
+        [string]$ApproverShape = 'Arm',
+
+        [bool]$ResolveUnrequestedConflict = $true
     )
 
     # Index the current rules by id.
@@ -104,7 +136,9 @@ function Resolve-OERPolicyRulePatch {
     # notificationRecipients compare as order-insensitive string sets; primaryApprovers and
     # escalationApprovers compare as order-insensitive sets keyed on approver id (ARM does not preserve
     # the order of any of these). Every other array compares element by element in order; every other
-    # object recurses; every other scalar compares with -eq.
+    # object recurses; every other scalar compares with -eq. The approver key depends on the shape
+    # (-ApproverShape), which Test-RuleEquivalent receives as -Shape and hands on, by name, to every
+    # recursive call and to Test-ApproverSetEqual.
     function Get-RuleFieldName ([object]$Rule) {
         if ($null -eq $Rule) { return @() }
         if ($Rule -is [System.Collections.IDictionary]) { return @($Rule.Keys) }
@@ -129,8 +163,19 @@ function Resolve-OERPolicyRulePatch {
         return $true
     }
 
-    function Test-ApproverSetEqual ([object[]]$Left, [object[]]$Right) {
-        $Describe = { param($Approver) ('{0}|{1}|{2}' -f [string](Get-RuleFieldValue $Approver 'id'), [string](Get-RuleFieldValue $Approver 'userType'), [bool](Get-RuleFieldValue $Approver 'isBackup')) }
+    function Test-ApproverSetEqual ([object[]]$Left, [object[]]$Right, [string]$Shape) {
+        # ARM keys an approver on id|userType|isBackup. A Graph approver carries its object id as
+        # userId / groupId (beta-style reads: id) and its kind in @odata.type, so it is read through
+        # the single Graph approver reader instead. The id is lower-cased so the key itself is
+        # canonical; the -ne comparison below is already case-insensitive, so the same object id in a
+        # different letter case never reads as a change either way. description is part of neither key.
+        $Describe = if ($Shape -eq 'Graph') {
+            { param($Approver)
+                $Read = ConvertFrom-OERGraphApprover -Approver $Approver
+                '{0}|{1}|{2}' -f ([string]$Read.Id).ToLowerInvariant(), [string]$Read.UserType, [bool](Get-RuleFieldValue $Approver 'isBackup') }
+        } else {
+            { param($Approver) ('{0}|{1}|{2}' -f [string](Get-RuleFieldValue $Approver 'id'), [string](Get-RuleFieldValue $Approver 'userType'), [bool](Get-RuleFieldValue $Approver 'isBackup')) }
+        }
         $LeftSorted = @(@($Left) | Where-Object { $null -ne $_ } | ForEach-Object { & $Describe $_ } | Sort-Object)
         $RightSorted = @(@($Right) | Where-Object { $null -ne $_ } | ForEach-Object { & $Describe $_ } | Sort-Object)
         if ($LeftSorted.Count -ne $RightSorted.Count) { return $false }
@@ -140,7 +185,7 @@ function Resolve-OERPolicyRulePatch {
         return $true
     }
 
-    function Test-RuleEquivalent ([object]$Left, [object]$Right) {
+    function Test-RuleEquivalent ([object]$Left, [object]$Right, [string]$Shape) {
         if ($null -eq $Left -and $null -eq $Right) { return $true }
         if ($null -eq $Left -or $null -eq $Right) { return $false }
 
@@ -149,7 +194,7 @@ function Resolve-OERPolicyRulePatch {
             $RightItem = @($Right)
             if ($LeftItem.Count -ne $RightItem.Count) { return $false }
             for ($Index = 0; $Index -lt $LeftItem.Count; $Index++) {
-                if (-not (Test-RuleEquivalent -Left $LeftItem[$Index] -Right $RightItem[$Index])) { return $false }
+                if (-not (Test-RuleEquivalent -Left $LeftItem[$Index] -Right $RightItem[$Index] -Shape $Shape)) { return $false }
             }
             return $true
         }
@@ -185,10 +230,10 @@ function Resolve-OERPolicyRulePatch {
                     if (-not (Test-StringSetEqual -Left @($LeftValue) -Right @($RightValue))) { return $false }
                 }
                 '^(primaryApprovers|escalationApprovers)$' {
-                    if (-not (Test-ApproverSetEqual -Left @($LeftValue) -Right @($RightValue))) { return $false }
+                    if (-not (Test-ApproverSetEqual -Left @($LeftValue) -Right @($RightValue) -Shape $Shape)) { return $false }
                 }
                 default {
-                    if (-not (Test-RuleEquivalent -Left $LeftValue -Right $RightValue)) { return $false }
+                    if (-not (Test-RuleEquivalent -Left $LeftValue -Right $RightValue -Shape $Shape)) { return $false }
                 }
             }
         }
@@ -275,7 +320,9 @@ function Resolve-OERPolicyRulePatch {
     # at the same time. The DECISION is owned by Resolve-OERPimActivationConflict, shared with the
     # Graph PIM-for-groups write path; only the mutation idiom below is ARM-specific.
     # -ResolveUnrequestedConflict is passed because this transport PATCHes the FULL rule set, so ARM
-    # rejects a pre-existing invalid combination even on an unrelated change.
+    # rejects a pre-existing invalid combination even on an unrelated change. It is a parameter
+    # (default $true, the ARM behaviour) because the Graph directory-role transport passes $false: it
+    # patches one rule at a time and leaves an untouched combination alone (the Graph convention).
     $AcrsRule = if ($Touched.ContainsKey('AuthenticationContext_EndUser_Assignment')) { $Touched['AuthenticationContext_EndUser_Assignment'] }
     elseif ($ById.ContainsKey('AuthenticationContext_EndUser_Assignment')) { $ById['AuthenticationContext_EndUser_Assignment'] }
     $EnablementRule = if ($Touched.ContainsKey('Enablement_EndUser_Assignment')) { $Touched['Enablement_EndUser_Assignment'] }
@@ -285,7 +332,7 @@ function Resolve-OERPolicyRulePatch {
         EffectiveAuthContextEnabled     = [bool]$AcrsRule.isEnabled
         EffectiveAuthContextId          = [string]$AcrsRule.claimValue
         EffectiveActivationEnabledRules = @($EnablementRule.enabledRules)
-        ResolveUnrequestedConflict      = $true
+        ResolveUnrequestedConflict      = $ResolveUnrequestedConflict
     }
     if ($Setting.ContainsKey('AuthenticationContextId') -and -not [string]::IsNullOrEmpty([string]$Setting.AuthenticationContextId)) {
         $ConflictParams.CallerRequestsAuthContext = $true
@@ -321,7 +368,7 @@ function Resolve-OERPolicyRulePatch {
         $Id = [string]$Rule.id
         if ($Id -and $Touched.ContainsKey($Id)) {
             $Clone = $Touched[$Id]
-            if (Test-RuleEquivalent -Left $Clone -Right $Rule) {
+            if (Test-RuleEquivalent -Left $Clone -Right $Rule -Shape $ApproverShape) {
                 # Touched but not actually changed (e.g. the caller re-asserted a value the policy
                 # already had): pass the ORIGINAL rule through and leave the id out of ChangedRuleId,
                 # so Set-OERRoleManagementPolicy's NoChange guard can see a genuine no-op. The full
@@ -337,7 +384,8 @@ function Resolve-OERPolicyRulePatch {
     }
 
     [PSCustomObject]@{
-        Rules         = $FullRule.ToArray()
-        ChangedRuleId = $ChangedRuleId.ToArray()
+        Rules              = $FullRule.ToArray()
+        ChangedRuleId      = $ChangedRuleId.ToArray()
+        ConflictResolution = $Resolution
     }
 }

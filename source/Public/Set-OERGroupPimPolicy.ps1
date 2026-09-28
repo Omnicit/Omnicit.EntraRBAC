@@ -632,41 +632,8 @@ function Set-OERGroupPimPolicy {
 
         $Rules = New-OERPimRuleSet @RuleParams
 
-        # Graph validates the MFA / authentication-context exclusion ASYMMETRICALLY, so the order in
-        # which these two rules are PATCHed is load-bearing, not incidental. Each rule is a separate
-        # PATCH, so whichever goes second is validated against the state the first one left:
-        #   - ENABLING an authentication context while MFA is still on is ACCEPTED (that acceptance is
-        #     the defect issue #54 exists to reconcile);
-        #   - ENABLING MFA while an authentication context is still on is REJECTED, observed live as
-        #     'MfaAndAcrsConflict: The Mfa and Acrs policy settings cannot be enabled simultaneously.'
-        # A run that disabled the context AFTER sending MFA therefore lost the MFA rule to that
-        # rejection and left the policy with NEITHER protection in force.
-        # Order by what the authentication-context rule DOES, not by a fixed sequence: a rule that
-        # DISABLES the context goes FIRST (the Acrs side is already off when MFA is switched on), a
-        # rule that ENABLES it goes LAST (the MFA flag is already gone by then). Both orderings avoid
-        # a transient combination Graph rejects. This applies to any caller reaching the patch loop
-        # with both rules built -- the reconcile above is only one of the ways that happens.
-        # New-OERPimRuleSet is a shared, transport-free builder that owns rule SHAPE, not wire order:
-        # do not move this there, and do not "tidy" it back into a fixed order.
-        if ($null -ne $Rules) {
-            $Ordered = @($Rules)
-            $AcAt = -1
-            $EnAt = -1
-            for ($Index = 0; $Index -lt $Ordered.Count; $Index++) {
-                if ($Ordered[$Index].id -eq 'AuthenticationContext_EndUser_Assignment') { $AcAt = $Index }
-                elseif ($Ordered[$Index].id -eq 'Enablement_EndUser_Assignment') { $EnAt = $Index }
-            }
-            if ($AcAt -ge 0 -and $EnAt -ge 0) {
-                $AcMustLead = -not [bool]$Ordered[$AcAt].isEnabled
-                $AcLeadsNow = $AcAt -lt $EnAt
-                if ($AcMustLead -ne $AcLeadsNow) {
-                    $Swap = $Ordered[$AcAt]
-                    $Ordered[$AcAt] = $Ordered[$EnAt]
-                    $Ordered[$EnAt] = $Swap
-                    $Rules = $Ordered
-                }
-            }
-        }
+        # The MFA / authentication-context PATCH order is load-bearing; Get-OERPimRulePatchOrder owns it (see its help).
+        if ($null -ne $Rules) { $Rules = @(Get-OERPimRulePatchOrder -Rule @($Rules)) }
 
         # $Sent tracks the rule ids that actually passed ShouldProcess this run -- a rule declined at
         # an interactive -Confirm prompt is built (it is in $Rules) but never sent, and must not be
