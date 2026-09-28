@@ -44,6 +44,7 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   Supplying approvers implies approval is required; requiring approval with no approver at all is
   refused with `ApproverRequired`. Stage fields the cmdlet has no parameter for carry over from the
   live stage, and a policy with no stage gets a 1-day timeout with approver justification required.
+  A side declared EMPTY clears that side and keeps the other ("test: pin that a document can empty one approver side"; live in 3.6-3.8).
   The summary object reports `RequireApproval`, `ApproverUser` and `ApproverGroup` as SENT (object
   ids, the carried side included). Every user and group approver goes out in the Graph BETA shape
   ("fix: send PIM for Groups approvers in the Graph beta shape"): `@odata.type`, `id` and
@@ -144,31 +145,36 @@ shapes the tests assume. They cannot prove the five things this file is for:
 - A **test tenant** -- never a customer tenant -- with Microsoft Entra ID P2 or ID Governance
   licensing (PIM for Groups), a Tenant Profile alias for it (`Get-OERConfiguration`) whose profile
   names the commercial cloud, one verified domain, and one **test subscription**.
-- One admin account in that tenant that can create users and security groups, grant PIM-for-Groups
-  eligibility, change PIM-for-Groups policies, create resource groups and change role management
-  policies in the subscription. Global Administrator plus Owner on the test subscription covers all
-  of it. **Every role has to be ACTIVE for the whole run, teardown included** -- with PIM, activate
-  them before the first block, for the longest window the policy allows, and re-activate before the
-  Teardown if they could lapse. A directory role that is not active shows up as
-  `Authorization_RequestDenied` or a 403 on a policy write, and on the teardown's deletions.
-- For check 6.2 only: a **non-privileged identity** in the same tenant -- an ordinary user with no
-  directory role, no PIM role and no ownership of the test group -- that you can sign in as. Without
-  one, 6.2 is marked `[~]` with the reason.
+- The **dedicated certificate identity** `oer-live-cc` ([README.md](README.md), first paragraph):
+  an app whose only credential is a non-exportable certificate in `Cert:\CurrentUser\My`, with the
+  Microsoft Graph application permissions and the Owner role on the test subscription that the
+  operator's identity script grants. Every sign-in below is app-only, as that identity -- never
+  interactive, never a device code, never a cached context and never a person's account. **The
+  operator enables it for the run and disables it right after**; a sign-in answering
+  "application is disabled" means it was not enabled: stop there. Its application permissions need
+  no role activation. A missing permission shows up as `Authorization_RequestDenied` or a 403 on the
+  app path: stop and name it -- never go around it with another sign-in.
+- For check 6.2 only: the second app `oer-live-cc-noperm` -- the same certificate, no API permission
+  and no role.
 - The prerequisite script `Initialize-OerS62Prereq.ps1`. It is kept OUTSIDE this repository and is
-  never committed; it is run by hand, by the operator, and never by Claude or CI.
+  never committed; it signs in as the certificate identity, and never runs in CI.
 - PowerShell 7 and a clone of this repository on this branch.
 
 **Variables, build and module path.** Paste into one PowerShell 7 window and keep that window for
 the whole file.
 
 ```powershell
-$Repo    = '<your-clone-of-Omnicit.EntraRBAC>'   # the clone whose origin is github.com/Omnicit/Omnicit.EntraRBAC
-$Prereq  = '<path-to-Initialize-OerS62Prereq.ps1>'
-$Alias   = '<your-test-tenant-alias>'
-$OrgName = '<your-test-tenant-display-name>'   # the organization display name, exactly as Graph reports it
-$SubId   = '<your-test-subscription-id>'
-$Domain  = '<your-verified-domain>'
-$Prefix  = 'oer-s62'
+$Repo        = '<your-clone-of-Omnicit.EntraRBAC>'   # the clone whose origin is github.com/Omnicit/Omnicit.EntraRBAC
+$Prereq      = '<path-to-Initialize-OerS62Prereq.ps1>'
+$Alias       = '<your-test-tenant-alias>'
+$OrgName     = '<your-test-tenant-display-name>'   # the organization display name, exactly as Graph reports it
+$SubId       = '<your-test-subscription-id>'   # the subscription where the certificate identity is Owner
+$Domain      = '<your-verified-domain>'
+$TenantId    = '<your-test-tenant-id>'
+$AppId       = '<oer-live-cc-application-id>'
+$NoPermAppId = '<oer-live-cc-noperm-application-id>'
+$Thumbprint  = '<certificate-thumbprint>'   # in Cert:\CurrentUser\My; never exported, its key never read
+$Prefix      = 'oer-s62'
 $ApproverUpn   = "$Prefix-approver@$Domain"
 $EligibleUpn   = "$Prefix-eligible@$Domain"
 $ApproversName = "$Prefix-approvers"
@@ -196,24 +202,30 @@ New-Item -ItemType Directory -Path $Raw -Force | Out-Null
 ```
 
 **Create the test objects.** The script runs in its own process, so this window keeps its own
-sign-in. It signs in three times: `Connect-OER` first, only to identify the tenant and read the
-subscription; then Microsoft Graph for Phase 1; then `Connect-OER` again for Phase 2. Before its
-first write it identifies the tenant positively: it reads the signed-in organization and refuses to
-go on -- nothing written -- unless the organization's display name equals
-`-ExpectedTenantDisplayName` EXACTLY, `-UserDomain` is one of its verified domains, and the Tenant
-Profile's tenant id (or domain) names the same organization. It then reads the subscription through
-the module and stops unless exactly one subscription with that id and a display name comes back.
-Only then does it ask once for confirmation, naming the organization display name, the tenant id,
-and the subscription's display name and id; every later sign-in must land in that same
-organization too. It tags the resource group it creates `purpose = oer-s62-live-verification`, and
-its teardown deletes the resource group only while that tag is still there. It ends with a summary
-of names and REAL object ids -- redact those before pasting (check 0.2). It is idempotent: a second run creates
-nothing that exists and only fills in what is missing. The `-WhatIf` line is optional (it still
-signs in and identifies the tenant, and asks nothing).
+sign-in. It signs in three times, every time app-only as the certificate identity: `Connect-OER`
+first, only to identify the tenant and read the subscription; then Microsoft Graph for Phase 1
+(disconnecting first: `Connect-OER` leaves its raw access token in the Graph SDK's process cache,
+which a later `Connect-MgGraph` would otherwise try to read as an MSAL cache); then `Connect-OER`
+again for Phase 2. After EVERY sign-in it checks the identity and prints it as True/False only --
+`identity check: session app id is oer-live-cc: True` and `identity check: tenant is the test
+tenant: True` -- and a `False` stops it before anything is written. Before its first write it also
+identifies the tenant positively: it reads the signed-in organization and refuses to go on --
+nothing written -- unless the organization's display name equals `-ExpectedTenantDisplayName`
+EXACTLY, `-UserDomain` is one of its verified domains, and the Tenant Profile's tenant id names the
+same organization. It then reads the subscription through the module and stops unless exactly one
+subscription with that id and a display name comes back. Only then would it ask once for
+confirmation; with `-Unattended` -- a run with no operator at the keyboard -- it says instead that
+the question is not asked, since both checks passed (an operator at the keyboard drops
+`-Unattended` and is asked). Every later sign-in must land in that same organization too. It tags
+the resource group it creates `purpose = oer-s62-live-verification`, and its teardown deletes the
+resource group only while that tag is still there. It ends with a summary of names and REAL object
+ids -- redact those before pasting (check 0.2). It is idempotent: a second run creates nothing that
+exists and only fills in what is missing. Read the `-WhatIf` plan first: every target must carry
+the prefix `oer-s62`.
 
 ```powershell
-pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -WhatIf
-pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1
+pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -WhatIf
+pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Unattended
 ```
 
 What it creates, all named with the prefix: two DISABLED users `oer-s62-approver` and
@@ -231,7 +243,23 @@ and warns while a group `oer-s62-new` exists (check 5 must create it).
 ```powershell
 Import-Module Omnicit.EntraRBAC -Force
 $ErrorActionPreference = 'Continue'   # module code reads the GLOBAL preference; Stop would end a run at its first Failed row
-Connect-OER -TenantAlias $Alias -IncludeARM
+# App-only, as the certificate identity. The certificate's private key is used, never read out.
+$null = Connect-OER -TenantId $TenantId -ClientId $AppId -Certificate (Get-Item -LiteralPath "Cert:\CurrentUser\My\$Thumbprint") -IncludeARM -ErrorAction Stop
+# The identity check, BEFORE anything else: printed as True/False, never as the ids. The client and
+# tenant ids come from the claims of the token Connect-OER obtained; the service principal's display
+# name is read so a client id of some other app cannot pass.
+$S62Context = Get-MgContext
+try {
+    $S62Sp = Invoke-MgGraphRequest -Method GET -OutputType PSObject -ErrorAction Stop -Uri "v1.0/servicePrincipals(appId='$AppId')?`$select=displayName"
+} catch {
+    Write-Host "--- reading the session's own service principal FAILED: $($PSItem.Exception.Message)"
+    $global:Error.Clear()
+}
+$S62AppOk    = ([string]$S62Context.ClientId -eq $AppId) -and ([string]$S62Sp.displayName -ceq 'oer-live-cc')
+$S62TenantOk = ([string]$S62Context.TenantId -eq $TenantId)
+Write-Host "identity check: session app id is oer-live-cc: $S62AppOk"
+Write-Host "identity check: tenant is the test tenant: $S62TenantOk"
+if (-not ($S62AppOk -and $S62TenantOk)) { throw 'The identity check failed: nothing below may run.' }
 
 function Invoke-S62Check {
     # Writes the document to the raw folder, validates it offline, then runs Invoke-OERStructure on
@@ -382,7 +410,7 @@ function Restore-S62Policy {
 }
 ```
 
-**The documents, and the script check 6.2 runs in a second window.** Paste this block as it
+**The documents, and the script check 6.2 runs in a process of its own.** Paste this block as it
 stands -- every here-string must close at column 0. The checks name each document by its `$Docs`
 key and describe it.
 
@@ -417,6 +445,23 @@ $Docs.PimDropUser = @"
       "pimPolicy": {
         "member": { "requireApproval": true, "approvers": { "users": [] } },
         "owner":  { "requireApproval": true, "approvers": { "users": [ "$ApproverUpn" ], "groups": [ "$ApproversName" ] } }
+      }
+    }
+  ]
+}
+"@
+
+$Docs.PimDropGroup = @"
+{
+  "version": "1.0",
+  "tenantAlias": "$Alias",
+  "groups": [
+    {
+      "displayName": "$PimName",
+      "members": null,
+      "pimPolicy": {
+        "member": { "requireApproval": true, "approvers": { "users": [] } },
+        "owner":  { "requireApproval": true, "approvers": { "groups": [] } }
       }
     }
   ]
@@ -477,23 +522,24 @@ $Docs.OldNames = @"
 "@
 
 $RefusedReadScript = @'
-# Check 6.2 -- runs in a window of its own, signed in as the NON-privileged identity. Written by the
-# checklist; its inputs come from 6.2-input.json beside it.
+# Check 6.2 -- runs in a process of its own, signed in app-only as oer-live-cc-noperm: the same
+# certificate as oer-live-cc, and no API permission at all. Written by the checklist; its inputs come
+# from 6.2-input.json beside it. An app-only session has no v1.0/me: the session's own ids, from the
+# claims of the token it obtained, identify it, printed as True/False only.
 $ErrorActionPreference = 'Continue'
 $In = Get-Content -Path (Join-Path $PSScriptRoot '6.2-input.json') -Raw | ConvertFrom-Json
 $env:PSModulePath = $In.PSModulePathPrefix + [System.IO.Path]::PathSeparator + $env:PSModulePath
 Import-Module Omnicit.EntraRBAC -Force
-Write-Host 'Sign in as the NON-privileged identity, not the admin account. A private browser window keeps the admin session out of the way.'
-Connect-OER -TenantAlias $In.Alias -DeviceCode -Force
-try {
-    $Me = Invoke-MgGraphRequest -Method GET -OutputType PSObject -ErrorAction Stop -Uri 'v1.0/me?$select=userPrincipalName'
-    Write-Host "Signed in as: $($Me.userPrincipalName)"
-} catch {
-    Write-Host "Could not read the signed-in user: $($PSItem.Exception.Message)"
-}
+$null = Connect-OER -TenantId $In.TenantId -ClientId $In.NoPermAppId -Certificate (Get-Item -LiteralPath "Cert:\CurrentUser\My\$($In.Thumbprint)") -ErrorAction Stop
+$Ctx = Get-MgContext
+Write-Host "identity check: session app id is oer-live-cc-noperm: $([string]$Ctx.ClientId -eq $In.NoPermAppId)"
+Write-Host "identity check: tenant is the test tenant: $([string]$Ctx.TenantId -eq $In.TenantId)"
+Write-Host "identity check: the token carries application permissions: $(@($Ctx.Scopes | Where-Object { $_ }).Count)"
 # -WhatIf: the policy-assignment read happens BEFORE ShouldProcess, so a refused read takes the same
 # PimPolicyReadFailed path, and an identity that turns out to have write rights still writes nothing.
-$Result = @(Set-OERGroupPimPolicy -Group $In.PimName -ActivationMaxHours 2 -WhatIf -ErrorAction SilentlyContinue -ErrorVariable SetError)
+# The group is named by its object id, which the module passes through without a Graph read -- this
+# identity could not read the group by name, and the check is about the policy-assignment read.
+$Result = @(Set-OERGroupPimPolicy -Group $In.PimId -ActivationMaxHours 2 -WhatIf -ErrorAction SilentlyContinue -ErrorVariable SetError)
 Write-Host "Result objects: $($Result.Count)"
 $Published = @($SetError | Where-Object { @(([string]$_.FullyQualifiedErrorId) -split ',') -contains 'Set-OERGroupPimPolicy' })
 Write-Host "Errors published by Set-OERGroupPimPolicy: $($Published.Count)"
@@ -513,7 +559,7 @@ try {
 Write-Host "Raw status of the policy-assignment read for this identity: $Status"
 $Error.Clear()
 Disconnect-OER
-Write-Host 'Done. Copy the lines above into check 6.2, then close this window.'
+Write-Host 'Done. Copy the lines above into check 6.2.'
 '@
 ```
 
@@ -526,7 +572,7 @@ records and `<ArmPolicyId>` the one 1.2 records; `<IdNew>` is the id of the grou
 
 **Run order.** Section 0, then section 1 before ANY other check -- it is the baseline the Teardown
 restores. Section 2 before 3 (3 starts from the state 2 leaves), and 3 before 8 (8 expects the state
-3.4 leaves). Sections 4, 5 and 6 at any time after 1; section 7 at any time (offline). Teardown last.
+3.4 and 3.7 leave). Sections 4, 5 and 6 at any time after 1; section 7 at any time (offline). Teardown last.
 If the window is closed part-way, paste the Setup blocks again (variables, sign-in and helpers,
 documents), re-run 0.3, and restore the policy ids with
 `$PolicyIdMember = (Get-S62Baseline).member.PolicyId; $PolicyIdOwner = (Get-S62Baseline).owner.PolicyId`.
@@ -569,11 +615,15 @@ documents), re-run 0.3, and restore the policy ids with
 
 - [ ] **0.2 The prerequisite script ran and every test object exists.** Paste its summary table, redacted.
 
-  **Expect:** before any write the run printed
+  **Expect:** after EACH of its three sign-ins the run printed the two identity lines,
+  `... identity check: session app id is oer-live-cc: True` and
+  `... identity check: tenant is the test tenant: True`. Before any write it printed
   `Identified the test tenant: organization '<your-test-tenant-display-name>', tenant id <id>, verified domain <your-verified-domain>.`
   and `Identified the test subscription: '<your-test-subscription-name>' (<your-test-subscription-id>).`,
-  asked once with a question naming that organization, its tenant id, and the subscription's display
-  name and id, and later printed `Phase 1 is signed in to the confirmed test tenant ...` and
+  then `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
+  (an operator at the keyboard, without `-Unattended`, is asked once instead, the question naming
+  that organization, its tenant id, and the subscription's display name and id), and later printed
+  `Phase 1 is signed in to the confirmed test tenant ...` and
   `Phase 2 (Connect-OER) is signed in to the confirmed test tenant ...`. No warning about
   `oer-s62-new`, and none about the `purpose` tag of `oer-s62-rg`. The run ends with `Done.` and no
   error; the summary has one row each for the two
@@ -860,6 +910,57 @@ The `owner` block is unchanged.
   **Failure looks like:** `Updated` for the member policy again.
   **Result:**
 
+Document `$Docs.PimDropGroup`: the member block as in `$Docs.PimDropUser` (already applied), and an
+`owner` block that declares only `"approvers": { "groups": [] }` -- the GROUP side declared empty, the
+user side not declared. The owner policy holds `<IdApprover>` and `<IdApprovers>` since 2.3. This is
+the live counterpart of the unit pin "test: pin that a document can empty one approver side".
+
+- [ ] **3.6 The plan for emptying the owner policy's group side.**
+
+  ```powershell
+  Invoke-S62Check -Id '3.6' -Json $Docs.PimDropGroup -Include Groups
+  ```
+
+  **Expect:** `Valid = True`, `0` findings. One line
+  `What if: Performing the operation "Set PIM policy (owner): approvers(groups=[])" on target "oer-s62-pim".`
+  Exactly three results: `Unchanged` `group properties match`; `Unchanged`
+  `pimPolicy (member) already matches`; `Skipped` `would set pimPolicy (owner): approvers(groups=[])`.
+  **Failure looks like:** `users=[...]` inside the owner change -- the diff would send the side the
+  document did not declare; or no owner change at all -- the empty side was read as undeclared.
+  **Result:**
+
+- [ ] **3.7 Apply it: the owner policy loses the group, and the live user stays.**
+
+  ```powershell
+  Invoke-S62Check -Id '3.7' -Json $Docs.PimDropGroup -Include Groups -Apply
+  $P37 = Get-OERGroupPimPolicy -Group $PimName -AccessType owner -ErrorAction Stop
+  Write-Host ('--- owner: RequireApproval {0}, approvers {1}' -f $P37.RequireApproval, @($P37.Approvers).Count)
+  $P37.Approvers | Sort-Object UserType | Format-Table Id, UserType, DisplayName -AutoSize | Out-Host
+  Show-S62RawApproval -PolicyId $PolicyIdOwner -Label '3.7-owner-raw'
+  ```
+
+  **Expect:** no warning, no error; three results: `Unchanged` `group properties match`; `Unchanged`
+  `pimPolicy (member) already matches`; `Updated` `pimPolicy (owner) set: approvers(groups=[])`. The
+  owner policy: `RequireApproval` `True` with exactly ONE approver, `User` `<IdApprover>` -- carried
+  from the live rule although the document did not declare the user side. The raw owner read:
+  `isApprovalRequired = True`, `primary approvers: 1`, the `#microsoft.graph.singleUser` approver
+  `<IdApprover>` and no `#microsoft.graph.groupMembers` row.
+  **Failure looks like:** the owner row `Failed` with `ApproverRequired` in its detail, or `0`
+  approvers left -- the undeclared user side was sent empty instead of carried; or the group still
+  there -- the empty group side never reached the PATCH.
+  **Result:**
+
+- [ ] **3.8 That document converges too.**
+
+  ```powershell
+  Invoke-S62Check -Id '3.8' -Json $Docs.PimDropGroup -Include Groups -Apply
+  ```
+
+  **Expect:** three `Unchanged` rows (`group properties match`, `pimPolicy (member) already matches`,
+  `pimPolicy (owner) already matches`), no warning, no error.
+  **Failure looks like:** `Updated` for the owner policy again.
+  **Result:**
+
 ---
 
 ### 4. The apply document -- a `roleManagementPolicies[]` approver named by UPN and group name converges
@@ -1053,34 +1154,32 @@ member policy, and the owner's settings landed there.
   (`ResourceTypeNotSupported`) was read as a refusal.
   **Result:**
 
-- [ ] **6.2 A refused read, by a non-privileged identity in a window of its own: `PimPolicyReadFailed`.** Mark `[~]` with the reason if no such identity is available.
+- [ ] **6.2 A refused read, by `oer-live-cc-noperm` in a process of its own: `PimPolicyReadFailed`.**
 
-  A second window keeps this window's admin sign-in intact: the module keeps one credential per
-  process. The script runs `Set-OERGroupPimPolicy` with `-WhatIf`: it reads the policy assignment
-  before it asks ShouldProcess, so a refused read reaches `PimPolicyReadFailed` exactly as a real call
-  would, and a sign-in that turns out to carry write rights still cannot write.
-  This block writes the script and its inputs to the raw folder and opens it; on Windows
-  `Start-Process` opens a new console window, elsewhere open a second terminal and run
-  `pwsh -NoProfile -NoExit -File` on the path it prints.
+  A second process keeps this window's sign-in intact: the module keeps one credential per process.
+  The script signs in app-only as `oer-live-cc-noperm` -- the same certificate, no API permission --
+  and runs `Set-OERGroupPimPolicy` with `-WhatIf`: it reads the policy assignment before it asks
+  ShouldProcess, so a refused read reaches `PimPolicyReadFailed` exactly as a real call would, and a
+  sign-in that turns out to carry write rights still cannot write. It names the group by its object
+  id, which the module passes through without a Graph read.
+  This block writes the script and its inputs to the raw folder and runs it.
 
   ```powershell
   $RefusedReadPath = Join-Path $Raw '6.2-refused-read.ps1'
   [ordered]@{
-      Alias              = $Alias
-      PimName            = $PimName
+      TenantId           = $TenantId
+      NoPermAppId        = $NoPermAppId
+      Thumbprint         = $Thumbprint
       PimId              = $PimId
       PSModulePathPrefix = (Resolve-Path (Join-Path $Repo 'output/module')).Path + [System.IO.Path]::PathSeparator + (Resolve-Path (Join-Path $Repo 'output/RequiredModules')).Path
   } | ConvertTo-Json | Set-Content -Path (Join-Path $Raw '6.2-input.json') -Encoding utf8NoBOM
   Set-Content -Path $RefusedReadPath -Value $RefusedReadScript -Encoding utf8NoBOM
-  $RefusedReadPath
-  Start-Process -FilePath pwsh -ArgumentList @('-NoExit', '-NoProfile', '-File', ('"{0}"' -f $RefusedReadPath))
+  pwsh -NoProfile -File $RefusedReadPath
   ```
 
-  In the new window, complete the device-code sign-in as the NON-privileged identity, then copy its
-  output here (redacted).
-
-  **Expect:** `Signed in as:` the non-privileged identity -- not the admin. NO `What if:` line: a
-  refused read returns before ShouldProcess is asked. `Result objects: 0` (under `-WhatIf` it is `0`
+  **Expect:** `identity check: session app id is oer-live-cc-noperm: True`, `identity check: tenant
+  is the test tenant: True`, and `the token carries application permissions: 0`. NO `What if:` line:
+  a refused read returns before ShouldProcess is asked. `Result objects: 0` (under `-WhatIf` it is `0`
   in every case, so it proves nothing on its own). `Errors published by Set-OERGroupPimPolicy: 1`,
   and that one is
   `ERROR [PimPolicyReadFailed,Set-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '<PimId>' ('member' access): <cause>. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.`
@@ -1092,11 +1191,11 @@ member policy, and the owner's settings landed there.
   know". A `What if: Performing the operation "Patch rule Expiration_EndUser_Assignment" ...` line
   and no published error mean this identity COULD read the policy assignment, so it is not a refused
   identity: nothing was written (`-WhatIf`), 6.3 still confirms it, and 6.2 is `[~]` for want of a
-  suitable identity. `GroupNotFound`, or a sign-in that cannot complete (consent, conditional
-  access), means no suitable identity either: `[~]`.
+  suitable identity. A `False` identity line, or a sign-in answering "application is disabled", means
+  the run is not the one this check describes: stop and report it, never retry with another sign-in.
   **Result:**
 
-- [ ] **6.3 Nothing was written by the refused identity.** Back in this window.
+- [ ] **6.3 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
 
   ```powershell
   $P63 = Get-OERGroupPimPolicy -Group $PimName -AccessType member -ErrorAction Stop
@@ -1158,8 +1257,8 @@ is applied: validation only.
   **Expect:** no published error (in particular no `InventoryPartial`); one group, `oer-s62-pim`. In
   its `pimPolicy`: `member` has `"requireApproval": true` and `"approvers": { "groups": [ "<IdApprovers>" ] }`
   with NO `users` key (3.4 emptied that side); `owner` has `"requireApproval": true` and
-  `"approvers": { "users": [ "<IdApprover>" ], "groups": [ "<IdApprovers>" ] }`. Every approver is an
-  object id -- never a UPN or a display name.
+  `"approvers": { "users": [ "<IdApprover>" ] }` with NO `groups` key (3.7 emptied that side). Every
+  approver is an object id -- never a UPN or a display name.
   **Failure looks like:** `requireApproval` missing, `approvers` missing while `requireApproval` is
   true, or an approver written as a name.
   **Result:**
@@ -1238,7 +1337,7 @@ and deleting `oer-s62-rg` removes its role management policies.
   `isApprovalRequired = False`. Where 1.x recorded approvers, exactly those. Where it recorded none --
   the expected case -- the approvers the checks left stay on the approval-off stage, and that is the
   one expected difference: the member policy keeps `Group` `<IdApprovers>` (3.4), the owner policy
-  and the Azure policy keep `<IdApprover>` and `<IdApprovers>`. No module call can empty an approver
+  keeps `User` `<IdApprover>` (3.7), and the Azure policy keeps `<IdApprover>` and `<IdApprovers>`. No module call can empty an approver
   list while turning approval off (see "What this file does not check"); with approval off none of
   them is ever asked, and T.5 deletes all three policies with their group and resource group. Record
   the residue.
@@ -1249,12 +1348,13 @@ and deleting `oer-s62-rg` removes its role management policies.
 - [ ] **T.4 Read the teardown plan.**
 
   ```powershell
-  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
+  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
   ```
 
-  **Expect:** the tenant is identified first, through the `Connect-OER` sign-in, exactly as in 0.2
-  (the `Identified the test tenant` and `Identified the test subscription` lines, no question under
-  `-WhatIf`); the later Phase 1 sign-in reports it is signed in to the confirmed test tenant. Then
+  **Expect:** both identity lines `True` after each of its two sign-ins; the tenant is identified
+  first, through the `Connect-OER` sign-in, exactly as in 0.2 (the `Identified the test tenant` and
+  `Identified the test subscription` lines, no question under `-WhatIf`); the later Phase 1 sign-in
+  reports it is signed in to the confirmed test tenant. Then
   `What if:` lines, and nothing else changed, for: deleting the resource group `oer-s62-rg` (its
   target names `tag purpose = oer-s62-live-verification`); removing the member eligibility of
   `<IdEligible>` on `oer-s62-pim` and on `oer-s62-new`; deleting the groups `oer-s62-new`,
@@ -1270,12 +1370,14 @@ and deleting `oer-s62-rg` removes its role management policies.
 - [ ] **T.5 Remove every test object.**
 
   ```powershell
-  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown
+  pwsh -NoProfile -File $Prereq -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -Unattended
   ```
 
-  **Expect:** the tenant is identified through the `Connect-OER` sign-in and the one question names
-  the organization, its tenant id, and the subscription's display name and id BEFORE anything is
-  removed; the later Phase 1 sign-in reports `... is signed in to the confirmed test tenant ...`. No
+  **Expect:** both identity lines `True` after each of its two sign-ins; the tenant is identified
+  through the `Connect-OER` sign-in and, BEFORE anything is removed, the run prints
+  `Unattended run: the confirmation question is not asked; ...` (an operator at the keyboard, without
+  `-Unattended`, is asked once instead); the later Phase 1 sign-in reports
+  `... is signed in to the confirmed test tenant ...`. No
   `Refusing to delete resource group` warning. Then `Deletion of resource group oer-s62-rg accepted.`,
   one `Removed the member eligibility of principal <IdEligible> on ...` line for `oer-s62-pim` and one
   for `oer-s62-new`, `Deleted group ...` for the three groups and `Deleted user ...` for the two
@@ -1285,8 +1387,8 @@ and deleting `oer-s62-rg` removes its role management policies.
   **Failure looks like:** a sweep line `still present: ...` other than a `Deleting` resource group; an
   error; a `Refusing to delete resource group oer-s62-rg` warning (see T.4 -- never delete it by hand
   before knowing whose it is). Re-run T.5 (it only removes what is still there) and record both runs. An
-  `Authorization_RequestDenied` on a deletion means a role is not active (see Setup): activate it and
-  re-run T.5.
+  `Authorization_RequestDenied` or a 403 on a deletion means the certificate identity lacks a
+  permission: stop and name it (see Setup) -- never finish the deletion with another sign-in.
   **Result:**
 
 - [ ] **T.6 Read back through the module that everything is gone.**
@@ -1311,7 +1413,8 @@ and deleting `oer-s62-rg` removes its role management policies.
   ```
 
   **Expect:** no `Removed` row anywhere (no check used `-Prune`). The `Created`/`Updated` rows are
-  exactly: `3.4` `Updated` for `pimPolicy (member)`; `4.2` `Updated` for `Reader @ <RgScope>` (absent
+  exactly: `3.4` `Updated` for `pimPolicy (member)`; `3.7` `Updated` for `pimPolicy (owner)`; `4.2`
+  `Updated` for `Reader @ <RgScope>` (absent
   if 4.2 reported `Unchanged`); and for `oer-s62-new` across 5.2 and 5.3 one `Created`, one eligibility
   `Updated` and one `Updated` per access type. The count line prints `0`: every row of every run names
   an `oer-s62` object (an Azure row names the scope `.../resourceGroups/oer-s62-rg`). The only writes
@@ -1321,12 +1424,15 @@ and deleting `oer-s62-rg` removes its role management policies.
   above `0`.
   **Result:**
 
-- [ ] **T.8 Read back through Microsoft Graph that no user or group is left.** The module has no user read, so this signs in separately, read-only, at the very end.
+- [ ] **T.8 Read back through Microsoft Graph that no user or group is left.** The module has no user read, so this signs in to Microsoft Graph directly, as the same certificate identity, read-only, at the very end.
 
   ```powershell
-  $TenantId = (Get-OERConfiguration -TenantAlias $Alias).TenantId
+  # Disconnect first: Connect-OER left its raw access token in the Graph SDK's process cache, which
+  # Connect-MgGraph would otherwise try to read as an MSAL cache. Disconnect-OER empties it.
   Disconnect-OER
-  Connect-MgGraph -TenantId $TenantId -Scopes 'User.Read.All', 'Group.Read.All' -ContextScope Process -NoWelcome
+  Connect-MgGraph -ClientId $AppId -TenantId $TenantId -CertificateThumbprint $Thumbprint -ContextScope Process -NoWelcome
+  "identity check: session app id is oer-live-cc: $([string](Get-MgContext).ClientId -eq $AppId)"
+  "identity check: tenant is the test tenant: $([string](Get-MgContext).TenantId -eq $TenantId)"
   $F = [uri]::EscapeDataString("startswith(userPrincipalName,'$Prefix')")
   @((Invoke-MgGraphRequest -Uri "v1.0/users?`$filter=$F&`$select=id,userPrincipalName").value).Count
   $F = [uri]::EscapeDataString("startswith(displayName,'$Prefix')")
@@ -1335,7 +1441,7 @@ and deleting `oer-s62-rg` removes its role management policies.
   $Error.Clear()   # a failed raw Graph call leaves an ErrorRecord that can carry the bearer token -- README.md, "Credentials"
   ```
 
-  **Expect:** `0`, `0`. The two users now sit in Deleted items for 30 days, which is Entra ID's
+  **Expect:** both identity lines `True`, then `0`, `0`. The two users now sit in Deleted items for 30 days, which is Entra ID's
   design; they hold no role, membership or eligibility, and the next prerequisite run can create the
   same names again. The deleted security groups are gone for good.
   **Failure looks like:** any count above `0`.
@@ -1344,7 +1450,7 @@ and deleting `oer-s62-rg` removes its role management policies.
 - [ ] **T.9 Redact, then clean up.** Move what the results above need from `docs/live-verification/raw/s62/` into this file, redacted per [README.md](README.md), then delete the folder.
 
   Ids to `00000000-0000-0000-0000-0000000000NN`, user principal names to `personN@example.com`, no
-  credential, no bearer token -- and that includes the second window's output from 6.2.
+  credential, no bearer token -- and that includes the output of 6.2's second process.
 
   ```powershell
   Remove-Item -LiteralPath $Raw -Recurse -Force
