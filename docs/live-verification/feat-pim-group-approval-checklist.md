@@ -81,11 +81,13 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   (`Get-OERPimGroupPolicyId`, which answers a silent nothing while it is not) and waits with one
   shared budget of 2, 4, 8 and 16 seconds per group item before its single policy read ("fix: ask
   whether a new group's PIM policy is listed instead of retrying the read") -- so a run that ends
-  `Updated` leaves no `PimPolicyNotFound` record behind. With the budget spent it reports `Failed`
-  with a replication message. When the document declares no time-bound eligibility for the group,
-  the message adds that a re-run alone does not help; when it declares one that the run did not
-  apply, it adds that a re-run which applies it first usually applies the policy too. A refused
-  lookup is never waited on.
+  `Updated` leaves no `PimPolicyNotFound` record behind. While it waits, a `404 ResourceNotFound`
+  counts as not listed yet: a group PIM does not know yet answers the question that way, which this
+  file's first run measured ("fix: wait through a 404 for the policy of a group created in the same
+  run"). With the budget spent it reports `Failed` with a replication message that names a re-run
+  and gives no advice about eligibility: Graph lists a group's policies whether or not it was ever
+  onboarded (Microsoft Graph documentation, "Onboarding groups to PIM for Groups"). A refused lookup
+  is never waited on, and neither is a group that already existed, a 404 included.
 - **E. Unknown keys in `groups[]` items and `pimPolicy` blocks warn** ("feat: warn about unknown keys
   in groups and pimPolicy blocks"). `Test-OERStructure` reports each as a Warning, with a
   `Did you mean '<current name>'?` suffix for the five field names the inventory README used to
@@ -104,8 +106,9 @@ shapes the tests assume. They cannot prove the five things this file is for:
    run -- for PIM for Groups AND for an Azure role management policy (checks 3, 4).
 3. That a group created in the same run gets each access type's settings on ITS OWN policy, and what
    the retry actually looks like against real replication (check 5).
-4. That a real refusal reaches the operator as `PimPolicyReadFailed`, and a real not-onboarded group
-   as `PimPolicyNotFound` (check 6).
+4. That a real refusal reaches the operator as `PimPolicyReadFailed` (check 6). A group Graph lists
+   no policy for cannot be produced on demand -- see check 6.1 -- so `PimPolicyNotFound` is proven by
+   the unit suites only.
 5. That an exported inventory carries approval as ids and re-applies as `Unchanged` (check 8).
 
 ## What this file does not check, and why
@@ -135,6 +138,10 @@ shapes the tests assume. They cannot prove the five things this file is for:
   resource group.
 - **The approval fields of an Azure policy in `Get-OERInventory`**, and the ARM whole-list approver
   semantics of `Set-OERRoleManagementPolicy`. Not changed by this branch.
+- **`PimPolicyNotFound` from `Get-`/`Set-OERGroupPimPolicy`.** Microsoft Graph lists policies even for
+  a group never used with PIM for Groups (6.1), so the only group without a listed policy is one
+  created moments ago, which check 5 drives through the apply engine's wait instead. Unit-pinned in
+  the `Get-OERGroupPimPolicy` and `Set-OERGroupPimPolicy` suites.
 
 ---
 
@@ -234,8 +241,10 @@ What it creates, all named with the prefix: two DISABLED users `oer-s62-approver
 `oer-s62-eligible` on your domain (display names `OER S62 Approver` and `OER S62 Eligible`, random
 passwords never printed); the security group `oer-s62-approvers` with the approver user as its only
 member; the security group `oer-s62-pim` with no members, onboarded to PIM for Groups by a 30-day
-member eligibility for the eligible user (that first eligibility is what creates its member and
-owner policies); and the resource group `oer-s62-rg`, with nothing assigned at it, whose Reader role
+member eligibility for the eligible user (Graph lists a group's member and owner policies before it
+is onboarded too, but their ids change when it is -- Microsoft Graph documentation, "Onboarding
+groups to PIM for Groups" -- so 1.1 records them after the prerequisite script has run); and the
+resource group `oer-s62-rg`, with nothing assigned at it, whose Reader role
 management policy is this file's Azure test policy. It refuses to run while a user
 `oer-s62-nobody@<your-verified-domain>` exists (check 2.1 relies on that name resolving to nothing),
 and warns while a group `oer-s62-new` exists (check 5 must create it).
@@ -804,7 +813,7 @@ Nothing below this section may run before it: the Teardown restores exactly what
   agrees: `isApprovalRequired = False`, `primary approvers: 0`. Record each policy's
   `ActivationMaxHours`, `approvalMode`, stage count, stage timeout and approver justification as
   printed -- 2.4 shows which of them carry over.
-  **Failure looks like:** `PimPolicyNotFound` for either access type (the group is not onboarded:
+  **Failure looks like:** `PimPolicyNotFound` for either access type (Graph does not list the policy:
   re-run the prerequisite script), the same policy id twice, or approvers already present (record
   them; the Teardown restores them, and 2.1's first line then prints a `What if:` line instead of
   `ApproverRequired`).
@@ -1592,7 +1601,7 @@ Document `$Docs.ArmApproval`: one `roleManagementPolicies` item, scope `<RgScope
 ### 5. A group created in the same run -- each access type gets its own policy
 
 Document `$Docs.NewGroup`: a group `oer-s62-new` that does not exist yet, `"members": null`, one
-time-bound eligibility (`<EligibleUpn>`, `"durationDays": 30`, member access) to onboard it, and a
+time-bound eligibility (`<EligibleUpn>`, `"durationDays": 30`, member access), and a
 nested `pimPolicy` with DIFFERENT settings per access type: `member` `"activationMaxHours": 2`;
 `owner` `"activationMaxHours": 3`, `"requireApproval": true` and the same two approvers as section 3.
 Before this branch, an owner lookup that ran before Graph listed the owner policy fell back to the
@@ -1648,13 +1657,13 @@ member policy, and the owner's settings landed there.
 
   **Expect:** in this order, all Item `oer-s62-new`:
   1. `Created` `created group oer-s62-new (<IdNew>)`.
-  2. `Updated` `set time-bound member eligibility for '<EligibleUpn>' (30 days): time-bound member eligibility (30 days) is absent`.
+  2. `Updated` `set time-bound member eligibility for '<EligibleUpn>' (30 days): time-bound member eligibility (30 days) is absent`
+     -- or `Failed` `failed to add eligibility for '<EligibleUpn>': ResourceNotFound: ...`: the group
+     is too new for PIM itself, and the eligibility has no wait. Then carry on with 5.3.
   3. The member policy: `Updated` `pimPolicy (member) set: activationMaxHours=2` -- or `Failed`
      `pimPolicy (member) not applied: Microsoft Graph does not list a PIM-for-groups policy for 'member' access on group 'oer-s62-new', created in this run, within the 30-second wait. A new group's policies can take a while to be listed (replication delay); re-running the same document usually applies them.`
-     with a matching `ERROR [PimPolicyNotFound,Invoke-OERStructure]: pimPolicy (member) not applied: ...` line.
-     If row 2 was `Failed` instead, so the declared eligibility was not applied, that text goes on:
-     `The time-bound eligibility the document declares for the new group was not applied in this run, so the group may not be onboarded to PIM for Groups yet; a re-run that applies it first usually applies the policy too.`
-     -- which is exactly what 5.3 does.
+     with a matching `ERROR [PimPolicyNotFound,Invoke-OERStructure]: pimPolicy (member) not applied: ...` line,
+     and nothing about eligibility.
   4. The owner policy: `Updated` `pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[<IdApprover>],groups=[<IdApprovers>])`
      -- or the same `Failed` text and error line for `'owner'` access.
 
@@ -1663,20 +1672,27 @@ member policy, and the owner's settings landed there.
   across BOTH access types together, with the delays `2`, `4`, `8`, `16` in that order and `<n>`
   counting within each access type -- one budget per group item, spent by whichever access type needs
   it first (an owner that finds the budget spent fails at once, with the same
-  `within the 30-second wait` text and no retry count). Record every wait line, and whether the path
-  was exercised at all. No warning. The last line prints `0` when both policy rows are `Updated`,
-  wait lines or not: the handler ASKS whether a policy is listed instead of reading it until it is,
-  so a run that ends `Updated` leaves no `PimPolicyNotFound` record in `-ErrorVariable`. Each
-  `... within the 30-second wait ...` row adds exactly one -- that row's own record. With no `Failed`
-  row the error list is empty.
+  `within the 30-second wait` text and no retry count). A look that Graph answers with 404 while the
+  group is too new for PIM is one of those waits, and the log shows it just before the wait line:
+  `[Get-OERPimGroupPolicyId] Microsoft Graph answered 404 ResourceNotFound for the policy assignments of group '<IdNew>'; reporting them as not listed yet.`
+  Record every wait line and every 404 line, and whether the path was exercised at all: the waits
+  between the first 404 and the first look that lists the policy bound how long the 404 lasted. No
+  warning. The last line prints `0` when both policy rows are `Updated`, wait lines or not: the
+  handler ASKS whether a policy is listed instead of reading it until it is, and a 404 is declared
+  as an answer on that question, so a run that ends `Updated` leaves no `PimPolicyNotFound` and no
+  `ResourceNotFound` record in `-ErrorVariable`. Each `... within the 30-second wait ...` row adds
+  exactly one -- that row's own record. The first policy update onboards the group, and its policy
+  ids change when it does, so the owner's policy id in the log can differ from the member's first
+  look; 5.4 reads which policy each access type ended on.
   **Failure looks like:** the owner row `Updated` while 5.4 shows the owner's settings on the member
   policy (the fallback defect); a `PimPolicyNotFound` count above `0` while both policy rows are
   `Updated` (the wait left records behind); a `Failed` row naming `PimPolicyReadFailed` or a 403 (a
   refusal, not replication -- record it, with any verbose line
   `Sync-OERStructureGroup: could not ask whether pimPolicy (...) of new group 'oer-s62-new' is listed (...); reading it directly.`
-  from the log); more than four wait lines, or a delay sequence other than 2, 4, 8, 16. A `Failed`
-  eligibility row (`failed to add eligibility for ...`) means the group was too new for PIM itself;
-  the policy rows then fail too -- carry on with 5.3.
+  from the log; that line naming `ResourceNotFound` means the 404 was not waited on, the defect
+  this file's first run found); more than four wait lines, or a delay sequence other than 2, 4, 8,
+  16. If the budget runs out while Graph still answers 404, record how many looks it answered 404
+  and do not change the budget: that is a decision for the operator.
   **Result:** FAIL -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
   (app-only), every output below passed through the run's redaction first. The member policy row is
   the failure this check names: `Failed` with `PimPolicyReadFailed` instead of a wait. Row 1
@@ -1874,8 +1890,9 @@ member policy, and the owner's settings landed there.
   (`eligibility for '<EligibleUpn>' (member) already matches`) or, if it failed in 5.2, `Updated`; and
   `Updated` with 5.2's detail text for each access type that failed there. The group now exists, so no
   retry line appears: a policy still not listed shows as `Failed`
-  `pimPolicy (<type>) update failed: Group '<IdNew>' has no PIM-for-groups policy for '<type>' access yet. ...`
-  with an error line whose id starts with `PimPolicyNotFound` -- wait a minute and run this block
+  `pimPolicy (<type>) update failed: Microsoft Graph does not list a PIM-for-groups policy for '<type>' access on group '<IdNew>' yet. ...`
+  with an error line whose id starts with `PimPolicyNotFound` (or, while Graph still answers 404 for
+  the group, `PimPolicyReadFailed` naming `ResourceNotFound`) -- wait a minute and run this block
   again. Record every run.
   **Failure looks like:** the same `Failed` row after several minutes and runs.
   **Result:** PASS -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
@@ -2019,18 +2036,26 @@ member policy, and the owner's settings landed there.
 
 ### 6. A refused policy read is not a missing policy
 
-- [~] **6.1 A group that was never onboarded: `PimPolicyNotFound`.** `-WhatIf` only; the refusal comes before any write.
+- [~] **6.1 A group Graph lists no policy for: `PimPolicyNotFound` -- cannot be produced live, so this box is `[~]` by design.** `-WhatIf` only, ALWAYS.
 
   ```powershell
   Set-OERGroupPimPolicy -Group $ApproversName -ActivationMaxHours 2 -WhatIf -ErrorAction SilentlyContinue -ErrorVariable E61
   Show-S62Error -Record $E61 -Cmdlet Set-OERGroupPimPolicy
   ```
 
-  **Expect:** no `What if:` line, no object, and exactly one published error,
-  `PimPolicyNotFound,Set-OERGroupPimPolicy`:
-  `Group '<IdApprovers>' has no PIM-for-groups policy for 'member' access yet. A group created moments ago can take a short while before Microsoft Graph lists its policies (replication delay), and re-running usually succeeds. A group never used with PIM for Groups gets its policies when it is first onboarded, for example by its first eligibility.`
-  **Failure looks like:** `PimPolicyReadFailed` -- Graph's answer for a never-onboarded group
-  (`ResourceTypeNotSupported`) was read as a refusal.
+  **Expect:** this check cannot show `PimPolicyNotFound`, and its box stays `[~]`. Microsoft Graph
+  lists a member and an owner policy for a group that was never used with PIM for Groups: PIM
+  onboards a group automatically on its first policy update or its first eligibility or assignment
+  request, that cannot be undone, and the policy ids change when it does (Microsoft Graph
+  documentation, PIM for Groups API overview, "Onboarding groups to PIM for Groups"). So no group in
+  the tenant is in the state `PimPolicyNotFound` reports, apart from one created moments ago, which
+  check 5 covers through the apply engine's wait. The call is kept as the record of that: it prints
+  one `What if: Performing the operation "Patch rule Expiration_EndUser_Assignment" on target "PIM policy <a policy of oer-s62-approvers>".`
+  line and publishes no error. **Never run it without `-WhatIf`**: the PATCH would onboard
+  `oer-s62-approvers` to PIM for Groups. `PimPolicyNotFound` itself is unit-pinned in the
+  `Get-OERGroupPimPolicy` and `Set-OERGroupPimPolicy` suites.
+  **Failure looks like:** `PimPolicyReadFailed` (a refusal where Graph should have listed the
+  policy), or anything written.
   **Result:** Cannot be verified, and therefore we do not know how the module answers a group that
   has no PIM policy: this tenant has no such group to try it on. `oer-s62-approvers` was never used
   with PIM for Groups, yet Graph lists a member and an owner policy assignment for it (neither
