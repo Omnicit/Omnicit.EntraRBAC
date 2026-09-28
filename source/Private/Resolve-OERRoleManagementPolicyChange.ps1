@@ -206,23 +206,34 @@ function Resolve-OERRoleManagementPolicyChange {
             @()
         }
 
+        # Directory-role caller only: re-wrap both sides as genuine [string[]] before they are
+        # compared or sent. The if-statement assignments above unroll a declared [] to $null, and
+        # Test-ApproverSetEqual reads @($null) as ONE entry, so a declared empty side would never
+        # equal an empty live side and would report a change -- and a Failed NoChange write -- on
+        # every run.
+        if ($SendDeclaredApproverSideOnly) {
+            $DeclUser  = [string[]]@($DeclUser | Where-Object { $_ })
+            $DeclGroup = [string[]]@($DeclGroup | Where-Object { $_ })
+        }
+        # ARM path (switch not set), left unchanged in this step: the same unrolling means a
+        # declared empty side is compared as @($null) and never converges against an empty live
+        # side. That defect is reported as a finding outside this step.
         $UserChanged  = $HasDeclUser  -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclUser  -CurrentApprover $CurUser))
         $GroupChanged = $HasDeclGroup -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclGroup -CurrentApprover $CurGroup))
         if (($UserChanged -or $GroupChanged) -and $SendDeclaredApproverSideOnly) {
             # Microsoft Graph (the directory-role caller): Set-OERDirectoryRoleManagementPolicy
             # replaces only the side it is bound for and carries the other from the live rule, so
             # only a DECLARED side is sent -- the seeded side computed above is never bound. An
-            # explicit empty list is a declared side and clears it. Same shape as
-            # Resolve-OERGroupPimPolicyChange's approver branch. The [string[]] re-wrap matters for
-            # that empty list: $DeclUser/$DeclGroup are assigned from an if statement, which unrolls
-            # an empty array to $null, and the clear must reach the Set cmdlet as an empty list.
+            # explicit empty list is a declared side and clears it, reaching the Set cmdlet as the
+            # empty [string[]] built above. Same shape as Resolve-OERGroupPimPolicyChange's approver
+            # branch.
             $Parts = [System.Collections.Generic.List[string]]::new()
             if ($HasDeclUser) {
-                $SetParams.ApproverUser = [string[]]@($DeclUser | Where-Object { $_ })
+                $SetParams.ApproverUser = $DeclUser
                 $Parts.Add("users=[$($DeclUser -join ',')]")
             }
             if ($HasDeclGroup) {
-                $SetParams.ApproverGroup = [string[]]@($DeclGroup | Where-Object { $_ })
+                $SetParams.ApproverGroup = $DeclGroup
                 $Parts.Add("groups=[$($DeclGroup -join ',')]")
             }
             $Changes.Add("approvers($($Parts -join ','))")

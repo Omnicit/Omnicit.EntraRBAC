@@ -212,3 +212,69 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy' {
         }
     }
 }
+
+Describe 'Sync-OERStructureDirectoryRoleManagementPolicy fix round 1' {
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncDrmpViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureDirectoryRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Initialize-OERAuth {}
+        }
+    }
+
+    It 'converges a declared empty groups side: the first run clears it, the second is only Unchanged' {
+        # G11 for Review Focus 2. The write mock does what the real write path does with a bound
+        # empty -ApproverGroup: it clears the group side and keeps the user side.
+        InModuleScope $script:moduleName {
+            $script:LiveDrmp = [PSCustomObject]@{
+                PolicyId        = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
+                Scope           = '/'
+                RequireApproval = $true
+                Approvers       = @(
+                    [PSCustomObject]@{ Id = 'aaaaaaaa-0000-0000-0000-000000000001'; UserType = 'User'; DisplayName = 'Person One' }
+                    [PSCustomObject]@{ Id = 'bbbbbbbb-0000-0000-0000-000000000002'; UserType = 'Group'; DisplayName = 'Approvers' }
+                )
+            }
+            Mock Get-OERDirectoryRoleManagementPolicy { $script:LiveDrmp }
+            Mock Set-OERDirectoryRoleManagementPolicy {
+                if ($PesterBoundParameters.ContainsKey('ApproverGroup')) {
+                    $Kept = @($script:LiveDrmp.Approvers | Where-Object { $_.UserType -ne 'Group' })
+                    $New = @($ApproverGroup | Where-Object { $_ } | ForEach-Object { [PSCustomObject]@{ Id = $_; UserType = 'Group'; DisplayName = $_ } })
+                    $script:LiveDrmp.Approvers = @($Kept + $New)
+                }
+            }
+            $Item = '{ "role": "Reports Reader", "approvers": { "groups": [] } }' | ConvertFrom-Json
+            $First  = @(Invoke-SyncDrmpViaCaller -Item $Item)
+            $Second = @(Invoke-SyncDrmpViaCaller -Item $Item)
+            @($First).Action  | Should -Be @('Updated')
+            @($Second).Action | Should -Be @('Unchanged')
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                $PesterBoundParameters.ContainsKey('ApproverGroup') -and @($ApproverGroup).Count -eq 0 -and
+                -not $PesterBoundParameters.ContainsKey('ApproverUser')
+            }
+            @($script:LiveDrmp.Approvers | Where-Object { $_.UserType -eq 'User' }).Count | Should -Be 1
+        }
+    }
+
+    It 'reports Failed and writes nothing when the read writes a non-terminating error and returns nothing' {
+        # The real Get-OERDirectoryRoleManagementPolicy reports a missing role or policy as a
+        # NON-terminating error and returns nothing. Only -ErrorAction Stop on the read turns that
+        # into the handler's catch; without it the policy stays $null and a role-only entry, which
+        # declares nothing to compare, would be reported Unchanged.
+        InModuleScope $script:moduleName {
+            Mock Get-OERDirectoryRoleManagementPolicy {
+                Write-Error -Message "Directory role 'Reports Reader' was not found." -ErrorId 'RoleDefinitionNotFound' -Category ObjectNotFound
+            }
+            Mock Set-OERDirectoryRoleManagementPolicy {}
+            $Item = '{ "role": "Reports Reader" }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -Match 'could not read'
+            $Records[0].Detail | Should -Match 'was not found'
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+        }
+    }
+}
