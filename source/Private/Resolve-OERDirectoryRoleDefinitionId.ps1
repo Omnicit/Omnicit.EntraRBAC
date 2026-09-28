@@ -5,22 +5,25 @@ function Resolve-OERDirectoryRoleDefinitionId {
 
     .DESCRIPTION
     Returns the unifiedRoleDefinition id for a directory role, given either its display name or its
-    id. When -Role is a GUID it is returned verbatim (treated as an id) with no Graph call. Otherwise
-    a filtered v1.0/roleManagement/directory/roleDefinitions query is issued through
-    Invoke-OERGraphRequest, which covers both built-in and custom role definitions -- unlike
-    Resolve-OERDirectoryRoleId, this helper never activates a directory role from its template: a
-    role definition already exists for every role, activated or not, so no POST is ever made and no
-    call ever targets v1.0/directoryRoles. Exactly one match returns that definition's id; no match
-    returns $null; more than one match throws an ErrorRecord with ErrorId 'AmbiguousName' listing the
-    candidate ids, since a caller-supplied display name is not guaranteed unique. The display name is
-    escaped through ConvertTo-OERODataFilterValue, which doubles embedded single quotes and
-    percent-encodes the value so reserved characters (including a space) survive transport. A Graph
-    transport or permission failure is not caught here and propagates to the caller unchanged.
+    id. When -Role is a GUID it is returned lower-cased (treated as an id) with no Graph call: the
+    callers put it into a roleDefinitionId eq '...' OData filter, where Microsoft Graph's handling
+    of letter case is not established, so the id always goes out in the lower-case form Graph
+    itself returns. Otherwise a filtered v1.0/roleManagement/directory/roleDefinitions query is
+    issued through Invoke-OERGraphRequest, which covers both built-in and custom role definitions
+    -- unlike Resolve-OERDirectoryRoleId, this helper never activates a directory role from its
+    template: a role definition already exists for every role, activated or not, so no POST is
+    ever made and no call ever targets v1.0/directoryRoles. Exactly one match returns that
+    definition's id; no match returns $null; more than one match throws an ErrorRecord with
+    ErrorId 'AmbiguousName' listing the candidate ids, since a caller-supplied display name is not
+    guaranteed unique. The display name is escaped through ConvertTo-OERODataFilterValue, which
+    doubles embedded single quotes and percent-encodes the value so reserved characters (including
+    a space) survive transport. A Graph transport or permission failure is not caught here and
+    propagates to the caller unchanged.
 
     .PARAMETER Role
     The directory role definition display name or id to resolve. Mandatory: an empty string is
     rejected at parameter binding, the same as a missing value. If the value is a GUID it is returned
-    verbatim (treated as an id) with no Graph call. Otherwise escaped through
+    lower-cased (treated as an id) with no Graph call. Otherwise escaped through
     ConvertTo-OERODataFilterValue (quote-doubling plus percent-encoding) before the OData filter is
     built.
 
@@ -31,8 +34,8 @@ function Resolve-OERDirectoryRoleDefinitionId {
 
     .EXAMPLE
     Resolve-OERDirectoryRoleDefinitionId -Role '11111111-1111-1111-1111-111111111111'
-    Returns '11111111-1111-1111-1111-111111111111' unchanged, since the value is already a GUID and
-    no Graph call is made.
+    Returns '11111111-1111-1111-1111-111111111111' with no Graph call, since the value is already a
+    GUID; a GUID typed in upper case comes back lower-cased.
     #>
     [OutputType([string])]
     [CmdletBinding()]
@@ -40,7 +43,7 @@ function Resolve-OERDirectoryRoleDefinitionId {
         [Parameter(Mandatory)]
         [string]$Role
     )
-    if (Test-OERGuid -Value $Role) { return $Role }
+    if (Test-OERGuid -Value $Role) { return $Role.ToLowerInvariant() }
     $Escaped = ConvertTo-OERODataFilterValue -Value $Role
     $Response = Invoke-OERGraphRequest -Uri "v1.0/roleManagement/directory/roleDefinitions?`$filter=displayName eq '$Escaped'&`$select=id,displayName"
     $Candidates = @($Response.value | Where-Object { $null -ne $_ })

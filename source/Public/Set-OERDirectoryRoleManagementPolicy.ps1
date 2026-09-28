@@ -81,10 +81,11 @@ function Set-OERDirectoryRoleManagementPolicy {
 
     .PARAMETER Role
     The directory role: display name (e.g. 'Reports Reader') or role definition GUID. A GUID is
-    used verbatim with no lookup; a name is resolved through Resolve-OERDirectoryRoleDefinitionId,
-    which refuses a name that matches more than one role definition (AmbiguousRoleName). No match
-    is RoleDefinitionNotFound; a refused lookup is RoleDefinitionReadFailed. The returned RoleName
-    is the name as typed, or empty when a GUID was given.
+    used as the id, lower-cased, with no lookup; a name is resolved through
+    Resolve-OERDirectoryRoleDefinitionId, which refuses a name that matches more than one role
+    definition (AmbiguousRoleName). No match is RoleDefinitionNotFound; a refused lookup is
+    RoleDefinitionReadFailed. The returned RoleName is the name as typed, or empty when a GUID was
+    given.
 
     .PARAMETER PolicyId
     The Microsoft Graph roleManagementPolicy id to update directly, for example

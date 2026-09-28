@@ -32,12 +32,13 @@ function Get-OERDirectoryRoleManagementPolicy {
 
     .PARAMETER Role
     The directory role: display name (e.g. 'Reports Reader') or role definition GUID. A GUID is
-    used verbatim with no lookup; a name is resolved through Resolve-OERDirectoryRoleDefinitionId,
-    which refuses a name that matches more than one role definition (AmbiguousRoleName). No match
-    is RoleDefinitionNotFound; a refused lookup is RoleDefinitionReadFailed. Each is a
-    non-terminating error, and nothing is returned for that role. The returned RoleName is the
-    name as typed, or empty when a GUID was given. Tab-completion offers the built-in Microsoft
-    Entra directory roles; any other built-in or custom role name is still accepted.
+    used as the id, lower-cased, with no lookup; a name is resolved through
+    Resolve-OERDirectoryRoleDefinitionId, which refuses a name that matches more than one role
+    definition (AmbiguousRoleName). No match is RoleDefinitionNotFound; a refused lookup is
+    RoleDefinitionReadFailed. Each is a non-terminating error, and nothing is returned for that
+    role. The returned RoleName is the name as typed, or empty when a GUID was given.
+    Tab-completion offers the built-in Microsoft Entra directory roles; any other built-in or
+    custom role name is still accepted.
 
     .PARAMETER PolicyId
     The Microsoft Graph roleManagementPolicy id to read directly, for example

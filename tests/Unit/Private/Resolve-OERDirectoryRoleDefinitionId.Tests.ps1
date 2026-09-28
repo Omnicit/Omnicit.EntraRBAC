@@ -31,11 +31,21 @@ Describe 'Resolve-OERDirectoryRoleDefinitionId' {
         }
     }
 
-    It 'returns a GUID Role verbatim without a Graph call' {
+    It 'returns a GUID Role as the id without a Graph call' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         InModuleScope $script:moduleName {
             Resolve-OERDirectoryRoleDefinitionId -Role '11111111-1111-1111-1111-111111111111' |
-                Should -Be '11111111-1111-1111-1111-111111111111'
+                Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'returns an upper-case GUID Role lower-cased, without a Graph call' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        InModuleScope $script:moduleName {
+            # -BeExactly: -Be compares strings without regard to letter case.
+            Resolve-OERDirectoryRoleDefinitionId -Role 'AAAAAAAA-0000-0000-0000-00000000000A' |
+                Should -BeExactly 'aaaaaaaa-0000-0000-0000-00000000000a'
         }
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
     }

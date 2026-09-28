@@ -61,6 +61,23 @@ Describe 'Get-OERDirectoryRoleManagementPolicy' {
             $p.RoleName | Should -BeNullOrEmpty
         }
 
+        It 'filters the assignment read on the lower-cased id when -Role is an upper-case GUID' {
+            # Neither the resolver nor the assignment helper is mocked, so the filter checked here is
+            # the one that would reach Microsoft Graph. -clike and -BeExactly: -like and -Be ignore
+            # letter case.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                @{ value = @(@{ policyId = 'pol1'; roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'; policy = @{ rules = @() } }) }
+            }
+            $p = Get-OERDirectoryRoleManagementPolicy -Role 'AAAAAAAA-0000-0000-0000-000000000001'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -clike "v1.0/policies/roleManagementPolicyAssignments?*roleDefinitionId eq 'aaaaaaaa-0000-0000-0000-000000000001'*"
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -like 'v1.0/roleManagement/directory/roleDefinitions*'
+            }
+            $p.RoleDefinitionId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+        }
+
         It 'reports RoleDefinitionNotFound exactly once and never reads a policy when the resolver finds no role' {
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { $null }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERDirectoryRolePolicyAssignment { }
