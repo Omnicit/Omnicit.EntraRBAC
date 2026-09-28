@@ -9,10 +9,12 @@ function Add-OERGroupEligibility {
     (the default) creates a new eligibility, while adminUpdate changes an existing one -- the
     Invoke-OERStructure apply engine passes adminUpdate when re-issuing an eligibility whose declared
     duration or permanence has drifted from the live schedule, since Microsoft Graph rejects an
-    adminAssign against a principal that is already eligible. The first eligible assignment also
-    onboards the group to PIM for Groups, after which its activation policy exists and can be configured
-    with Set-OERGroupPimPolicy. The target group is given by -Group (display name or object id, resolved
-    via Resolve-OERGroupId). The principal is named with -User (user principal name or object id),
+    adminAssign against a principal that is already eligible. The first eligibility request onboards
+    the group to PIM for Groups if it was not onboarded yet, which cannot be undone (Microsoft Graph
+    documentation, "Onboarding groups to PIM for Groups"); its activation policy is listed, and can be
+    configured with Set-OERGroupPimPolicy, either way. The target group is given by -Group (display
+    name or object id, resolved via Resolve-OERGroupId). The principal is named with -User (user
+    principal name or object id),
     -GroupPrincipal (group display name or object id), or -ServicePrincipal (service principal display
     name or object id), or supplied as a raw object id with -PrincipalId. Supply exactly one. Note that
     -Group is the TARGET group whose access is granted, while -GroupPrincipal is the group that becomes
@@ -63,10 +65,11 @@ function Add-OERGroupEligibility {
     auto-opens the governing PIM-for-groups policy. Mutually exclusive with -DurationDays. Before
     submitting the request the cmdlet checks the group's PIM-for-groups policy and, if permanent
     eligibility is not yet allowed, automatically opens it with a loud warning (see
-    Set-OERGroupPimPolicy -AllowPermanentEligibility for the manual equivalent). If the group has not
-    been onboarded to PIM for Groups yet (no policy exists) the cmdlet writes a GroupNotOnboarded
-    error and skips the POST -- onboard the group first with a time-bound eligibility (e.g.
-    -DurationDays 365) then re-run the permanent assignment. If the policy open fails (e.g. due to
+    Set-OERGroupPimPolicy -AllowPermanentEligibility for the manual equivalent). If Microsoft Graph
+    does not list the group's policy for that access type yet (in practice a group created moments
+    ago; a group never used with PIM for Groups does list its policies) the cmdlet writes a
+    GroupNotOnboarded error and skips the POST -- re-run the permanent assignment after a short while.
+    If the policy open fails (e.g. due to
     insufficient permissions) the cmdlet writes a PolicyOpenFailed error and skips the POST -- run
     Set-OERGroupPimPolicy with -AllowPermanentEligibility directly or supply -DurationDays instead.
 
@@ -216,7 +219,7 @@ function Add-OERGroupEligibility {
                 Write-Verbose "[Add-OERGroupEligibility] Could not pre-check the PIM-for-groups policy: $($PSItem.Exception.Message). Proceeding; Microsoft Graph will enforce the policy."
             }
             if ($GroupState -and -not $GroupState.HasPolicy) {
-                Write-CmdletError -Message ([System.Exception]::new("Group '$GroupId' is not yet onboarded to PIM for Groups, so its $AccessType activation policy does not exist and cannot be opened for permanent eligibility. Onboard it first with a time-bound eligibility (Add-OERGroupEligibility -Group '$GroupId' -PrincipalId '$ResolvedPrincipalId' -AccessType $AccessType -DurationDays 365), then re-run the permanent assignment.")) -ErrorId 'GroupNotOnboarded' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
+                Write-CmdletError -Message ([System.Exception]::new("Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group '$GroupId' yet, so it cannot be opened for permanent eligibility. A group created moments ago can take a short while before its policies are listed (replication delay); re-run the permanent assignment after a short while.")) -ErrorId 'GroupNotOnboarded' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
                 return
             }
             if ($GroupState -and $GroupState.HasPolicy -and -not $GroupState.PermanentAllowed) {

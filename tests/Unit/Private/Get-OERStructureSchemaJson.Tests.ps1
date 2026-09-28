@@ -463,6 +463,73 @@ Describe 'Get-OERStructureSchemaJson' {
     }
 }
 
+Describe 'Get-OERStructureSchemaJson group pimPolicy approval' {
+    It 'declares requireApproval and approvers identically in both the definitions block and the flat pimPolicy block' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $DefProps = $Schema.definitions.pimPolicyBlock.properties
+            $FlatProps = $Schema.properties.groups.items.properties.pimPolicy.properties
+
+            $DefProps.requireApproval.type | Should -Be 'boolean'
+            $FlatProps.requireApproval.type | Should -Be 'boolean'
+
+            $DefProps.approvers.type | Should -Be 'object'
+            $FlatProps.approvers.type | Should -Be 'object'
+            $DefProps.approvers.properties.users.items.type | Should -Be 'string'
+            $DefProps.approvers.properties.groups.items.type | Should -Be 'string'
+            $FlatProps.approvers.properties.users.items.type | Should -Be 'string'
+            $FlatProps.approvers.properties.groups.items.type | Should -Be 'string'
+
+            # The flat pimPolicy fields must equal the definitions block fields for these two keys.
+            ($FlatProps.requireApproval | ConvertTo-Json -Compress) |
+                Should -Be ($DefProps.requireApproval | ConvertTo-Json -Compress)
+            ($FlatProps.approvers | ConvertTo-Json -Compress -Depth 6) |
+                Should -Be ($DefProps.approvers | ConvertTo-Json -Compress -Depth 6)
+        }
+    }
+
+    It 'documents the requireApproval-false precedence on the pimPolicy approvers block' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Schema.definitions.pimPolicyBlock.properties.approvers.description | Should -Match 'requireApproval'
+            $Schema.properties.groups.items.properties.pimPolicy.properties.approvers.description | Should -Match 'requireApproval'
+        }
+    }
+
+    It 'validates a document declaring requireApproval and approvers on both the nested and flat forms' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Json = @'
+{
+  "version": "1.0",
+  "groups": [
+    {
+      "displayName": "g1",
+      "pimPolicy": {
+        "member": { "requireApproval": true, "approvers": { "users": ["person1@example.com"], "groups": ["Sec Approvers"] } },
+        "owner": { "requireApproval": false }
+      }
+    },
+    {
+      "displayName": "g2",
+      "pimPolicy": { "requireApproval": true, "approvers": { "groups": ["Sec Approvers"] } }
+    }
+  ]
+}
+'@
+            Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+        }
+    }
+
+    It 'rejects a non-boolean requireApproval' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "pimPolicy": { "requireApproval": "yes" } } ] }'
+            Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+}
+
 Describe 'Get-OERStructureSchemaJson eligibility accessType' {
     It 'declares accessType on the eligibility item with the member/owner enum' {
         InModuleScope Omnicit.EntraRBAC {

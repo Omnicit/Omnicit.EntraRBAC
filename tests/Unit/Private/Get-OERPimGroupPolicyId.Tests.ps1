@@ -48,7 +48,7 @@ Describe 'Get-OERPimGroupPolicyId' {
         }
     }
 
-    It 'falls back to the first assignment when no assignment matches the requested access type' {
+    It 'returns $null when no assignment matches the requested access type' {
         # Get-OERPimGroupPolicyId.ps1:38. This helper is the sole policy-id resolver behind both
         # Get- and Set-OERGroupPimPolicy, so a regression here silently targets the wrong policy
         # and mis-applies high-privilege PIM rules.
@@ -59,7 +59,37 @@ Describe 'Get-OERPimGroupPolicyId' {
             ) }
         }
         InModuleScope $script:moduleName {
-            Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' | Should -Be 'pol-first'
+            Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'returns $null for owner, never the member policy id, when only the member assignment exists' {
+        # A no-match must never fall back to whatever assignment happens to be first: right after a
+        # group is created, one access type's assignment can be listed before the other, and a
+        # fallback here returned the MEMBER policy for an OWNER lookup (owner settings were then
+        # written to the member policy with no error).
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                @{ policyId = 'pol-member'; roleDefinitionId = 'member' }
+            ) }
+        }
+        InModuleScope $script:moduleName {
+            $Result = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'owner'
+            $Result | Should -BeNullOrEmpty
+            $Result | Should -Not -Be 'pol-member'
+        }
+    }
+
+    It 'returns $null for member, never the owner policy id, when only the owner assignment exists' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                @{ policyId = 'pol-owner'; roleDefinitionId = 'owner' }
+            ) }
+        }
+        InModuleScope $script:moduleName {
+            $Result = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member'
+            $Result | Should -BeNullOrEmpty
+            $Result | Should -Not -Be 'pol-owner'
         }
     }
 
@@ -119,6 +149,86 @@ Describe 'Get-OERPimGroupPolicyId not-onboarded contract' {
                     [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
             }
             { Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' } |
+                Should -Throw -ErrorId 'Authorization_RequestDenied'
+        }
+    }
+}
+
+Describe 'Get-OERPimGroupPolicyId -NotFoundAsUnlisted (the new-group wait)' {
+    # Measured live 2026-09-28: a group PIM does not know yet answers the assignment query with 404
+    # ResourceNotFound. Only the apply engine's wait for a group created in the same run passes this
+    # switch; every other caller keeps the contract it always had, in which a 404 throws.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:NotFoundMarker = {
+                param([int]$Status)
+                $Marker = [PSCustomObject]@{
+                    ExpectedErrorCode = 'ResourceNotFound'; StatusCode = $Status
+                    Message           = 'ResourceNotFound: The resource is not found.'
+                    Uri               = 'beta/x'
+                }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+        }
+    }
+
+    It 'declares ResourceNotFound on the request only when the switch is set' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } }
+        InModuleScope $script:moduleName {
+            $null = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member'
+            $null = Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' -NotFoundAsUnlisted
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            @($ExpectedErrorCode) -contains 'ResourceNotFound'
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter {
+            @($ExpectedErrorCode) -contains 'ResourceTypeNotSupported'
+        }
+    }
+
+    It 'returns $null for a 404 ResourceNotFound, with no error record and a verbose line' {
+        InModuleScope $script:moduleName {
+            Mock Invoke-OERGraphRequest { & $script:NotFoundMarker -Status 404 }
+            $Err = $null
+            $Out = @(Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' -NotFoundAsUnlisted `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+            # 'return $null' emits one $null element; nothing else may come out besides the verbose line.
+            @($Out | Where-Object { $null -ne $_ -and $_ -isnot [System.Management.Automation.VerboseRecord] }).Count | Should -Be 0
+            @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '404 ResourceNotFound' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 0
+        }
+    }
+
+    It 'still throws ResourceNotFound that did not come with a 404' {
+        InModuleScope $script:moduleName {
+            Mock Invoke-OERGraphRequest { & $script:NotFoundMarker -Status 400 }
+            { Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' -NotFoundAsUnlisted } |
+                Should -Throw -ErrorId 'ResourceNotFound'
+        }
+    }
+
+    It 'still throws a 404 for a caller that does not pass the switch' {
+        InModuleScope $script:moduleName {
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('ResourceNotFound: The resource is not found.'),
+                    'ResourceNotFound',
+                    [System.Management.Automation.ErrorCategory]::OperationStopped, $null)
+            }
+            { Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' } | Should -Throw -ErrorId 'ResourceNotFound'
+        }
+    }
+
+    It 'still throws a refusal with the switch set' {
+        InModuleScope $script:moduleName {
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges'),
+                    'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+            }
+            { Get-OERPimGroupPolicyId -GroupId 'g1' -AccessType 'member' -NotFoundAsUnlisted } |
                 Should -Throw -ErrorId 'Authorization_RequestDenied'
         }
     }

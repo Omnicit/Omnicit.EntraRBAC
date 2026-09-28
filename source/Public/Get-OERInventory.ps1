@@ -25,7 +25,10 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner.
+    has at least one owner. The Groups pimPolicy projection carries requireApproval and, only while it
+    is true, approvers as object ids (a display name is not guaranteed to resolve) -- approvers are
+    omitted while requireApproval is false, since the apply engine ignores declared approvers in that
+    case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
@@ -318,6 +321,23 @@ function Get-OERInventory {
                 if (@($Policy.ActiveEnabledRules).Count -gt 0 -or $HasActiveRule) {
                     $Block.activeEnablement = @($Policy.ActiveEnabledRules)
                 }
+                if ($null -ne $Policy.RequireApproval) { $Block.requireApproval = [bool]$Policy.RequireApproval }
+                # Approvers project as object ids, the same as the roleManagementPolicies projection:
+                # an id resolves verbatim through the apply engine's declared-approver resolution,
+                # whereas a display name may not. Exported only while approval is required, since the
+                # apply engine ignores declared approvers whenever requireApproval is false and
+                # Test-OERStructureSchema would otherwise warn about that combination on every
+                # exported document that carries an approval-gated policy.
+                if ($Policy.RequireApproval -eq $true) {
+                    $PimApproverUser  = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
+                    $PimApproverGroup = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
+                    if ($PimApproverUser.Count -gt 0 -or $PimApproverGroup.Count -gt 0) {
+                        $PimApproverProj = [ordered]@{}
+                        if ($PimApproverUser.Count -gt 0)  { $PimApproverProj.users = $PimApproverUser }
+                        if ($PimApproverGroup.Count -gt 0) { $PimApproverProj.groups = $PimApproverGroup }
+                        $Block.approvers = [PSCustomObject]$PimApproverProj
+                    }
+                }
                 $Notif = [ordered]@{}
                 if ($Policy.Notifications) {
                     if (@($Policy.Notifications.EligibleAlert).Count -gt 0)   { $Notif.eligibleAlert = @($Policy.Notifications.EligibleAlert) }
@@ -418,29 +438,32 @@ function Get-OERInventory {
                 $MemberPim = $null
                 $OwnerPim  = $null
                 # ASK FIRST WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
-                # the answer. Most groups in a real tenant are not onboarded to PIM for Groups, and
-                # for those Get-OERGroupPimPolicy correctly reports a non-terminating
-                # PimPolicyNotFound -- which -ErrorAction Stop turns into TWO records per call, four
-                # per group, in the CALLER's -ErrorVariable. That collection is filled by the ENGINE
-                # from the error stream, so neither the catch below nor any other catch in this
-                # module can reach those records: the only way not to have them is not to provoke
-                # them. Measured offline on 100 groups with 96 not onboarded, driving the real
-                # wrapper and the real cmdlets with only the transport stubbed: 384 records for an
-                # entirely clean read, on every tenant, unconditionally -- it does not depend on
-                # whether the assignments call answers 200-empty or 400, since
-                # Get-OERPimGroupPolicyId returns $null either way.
+                # the answer. For a group whose policy Graph does not list (an empty assignments
+                # collection, or 400 ResourceTypeNotSupported) Get-OERGroupPimPolicy correctly
+                # reports a non-terminating PimPolicyNotFound -- which -ErrorAction Stop turns into
+                # TWO records per call, four per group, in the CALLER's -ErrorVariable. That
+                # collection is filled by the ENGINE from the error stream, so neither the catch
+                # below nor any other catch in this module can reach those records: the only way not
+                # to have them is not to provoke them. Measured offline on 100 groups, 96 of them
+                # answering with no listed policy, driving the real wrapper and the real cmdlets with
+                # only the transport stubbed: 384 records for an entirely clean read -- it does not
+                # depend on whether the assignments call answers 200-empty or 400, since
+                # Get-OERPimGroupPolicyId returns $null either way. A group that was never used with
+                # PIM for Groups is NOT such a group: Graph lists its policies before the group is
+                # onboarded (measured live 2026-09-28), so its policy is read and exported like any
+                # other.
                 #
                 # NOT -ErrorAction Ignore on the reads below. That would silence a genuine 403 or 429
-                # along with the not-onboarded case and leave the operator with a document quietly
+                # along with the not-listed case and leave the operator with a document quietly
                 # missing PIM policy it had no permission to read. Get-OERPimGroupPolicyId declares
-                # ResourceTypeNotSupported to the transport, so "not onboarded" comes back as a
-                # silent $null with nothing raised anywhere, while every OTHER failure still throws.
+                # ResourceTypeNotSupported to the transport, so it comes back as a silent $null with
+                # nothing raised anywhere, while every OTHER failure still throws.
                 # A throw here is therefore NOT an answer: the read runs anyway and reports through
                 # the path below. Only a confident $null skips it.
                 #
                 # AND THE PATH BELOW HAS TO TELL THE TWO APART, which is the whole point of the pair
                 # of ids Get-OERGroupPimPolicy now emits. Suppressing PimPolicyNotFound is right --
-                # a group that was never onboarded is not a finding -- but the same cmdlet used to
+                # a policy Graph does not list is not a finding -- but the same cmdlet used to
                 # answer PimPolicyNotFound for a refusal as well, so this suppression swallowed the
                 # refusal with it. Measured: a 403 on the policy-id lookup for 96 of 100 groups
                 # produced 0 error records, 0 warnings, and pimPolicy absent from all 96 -- an

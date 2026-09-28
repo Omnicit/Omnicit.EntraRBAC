@@ -410,3 +410,36 @@ Describe 'Invoke-OERStructure omitted-collection prune warning' {
         $Engine[0] | Should -Not -BeLike '*catalogs*'
     }
 }
+
+Describe 'Invoke-OERStructure output for a group that gains PIM eligibility' {
+    # Add-OERGroupEligibility returns the eligibility request it made, and the group handler's output IS
+    # Invoke-OERStructure's result list. Undiscarded, that request object stood among the result rows
+    # (measured live 2026-09-28: a row reading only 'Action : adminAssign'). The real group handler
+    # runs here; only the calls it makes are mocked.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Add-OERGroupEligibility {
+            $Request = [PSCustomObject]@{ Id = 'req-1'; Action = $Action; Status = 'Provisioned' }
+            $Request.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupEligibility')
+            $Request
+        }
+    }
+
+    It 'returns only result rows when it adds a time-bound and a permanent eligibility' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": null, "eligibility": [ ' +
+            '{ "principal": "person9@example.com", "durationDays": 30 }, { "principal": "person10@example.com" } ] } ] }'
+        $r = @(Invoke-OERStructure -Json $Json -Include Groups -Confirm:$false -WarningAction SilentlyContinue)
+        # Both call sites ran -- the time-bound entry and the permanent one.
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupEligibility -Times 1 -Exactly -ParameterFilter { $DurationDays -eq 30 }
+        Should -Invoke -ModuleName $script:moduleName Add-OERGroupEligibility -Times 2 -Exactly
+        @($r | Where-Object { $_.PSObject.TypeNames[0] -ne 'Omnicit.EntraRBAC.StructureResult' }).Count | Should -Be 0
+        @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'eligibility' }).Count | Should -Be 2
+    }
+}

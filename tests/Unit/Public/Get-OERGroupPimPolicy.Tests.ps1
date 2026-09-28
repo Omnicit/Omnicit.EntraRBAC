@@ -32,6 +32,24 @@ Describe 'Get-OERGroupPimPolicy' {
         $err.FullyQualifiedErrorId | Should -Match 'PimPolicyNotFound'
     }
 
+    It 'words PimPolicyNotFound as Set-OERGroupPimPolicy does: replication delay first, no cmdlet named' {
+        # A group created moments ago reaches this branch too, and the same condition must not read
+        # differently from the two cmdlets.
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { $null }
+        $err = $null
+        Get-OERGroupPimPolicy -Id 'gid-1' -AccessType owner -ErrorVariable err -ErrorAction SilentlyContinue | Out-Null
+        $Record = @($err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' })
+        $Record.Count | Should -Be 1
+        $Record[0].Exception.Message | Should -BeExactly (
+            "Microsoft Graph does not list a PIM-for-groups policy for 'owner' access on group 'gid-1' yet. A " +
+            'group created moments ago can take a short while before its policies are listed (replication ' +
+            'delay), and re-running usually succeeds.')
+        $Record[0].Exception.Message | Should -Not -Match 'Add-OERGroupEligibility'
+        # Graph lists the policies of a group never used with PIM for Groups, so no advice to add an
+        # eligibility: replication is the one cause this message can have.
+        $Record[0].Exception.Message | Should -Not -Match 'eligibility'
+    }
+
     It 'reports a FAILED policy-assignment lookup as PimPolicyReadFailed, never as PimPolicyNotFound' {
         # THE DISTINCTION THIS CMDLET OWNS. Get-OERPimGroupPolicyId returns $null only where it
         # LEARNED there is no assignment; a 403, a throttle or a dead transport throws instead. Both
@@ -195,7 +213,7 @@ Describe 'Get-OERGroupPimPolicy' {
         } -ParameterFilter { $Uri -match 'roleManagementPolicies/pol-1/rules' }
         $Result = Get-OERGroupPimPolicy -Id 'gid-1'
         $Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimPolicy'
-        @($Result.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,Notifications,Rules'
+        @($Result.PSObject.Properties.Name) -join ',' | Should -Be 'GroupId,PolicyId,AccessType,ActivationMaxHours,AuthenticationContextId,ActivationEnabledRules,AllowPermanentEligibility,EligibleDuration,EligibleDurationDays,AllowPermanentActive,ActiveDuration,ActiveDurationDays,ActiveEnabledRules,RequireApproval,Approvers,Notifications,Rules'
     }
 
     Context 'paging (-All opt-in, Task 7 closes PR36 deliberately-not-fixed item 3)' {

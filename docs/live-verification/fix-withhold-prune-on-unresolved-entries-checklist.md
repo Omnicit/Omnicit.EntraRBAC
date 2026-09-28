@@ -3689,7 +3689,7 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
 
 ### Teardown
 
-- [ ] **T.1 Read the teardown plan.**
+- [x] **T.1 Read the teardown plan.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown -WhatIf
@@ -3702,9 +3702,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   catalog, the eligibilities on `oer-s61-pim` (A and B after 6.2), the administrative unit, the
   five groups, the app registration and the three users. Every name starts with `oer-s61`.
   **Failure looks like:** any target without the prefix -- stop, do not run T.2.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected.
 
-- [ ] **T.2 Remove every test object.**
+- [x] **T.2 Remove every test object.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantAlias $Alias -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -ModulePath $ModulePsd1 -Teardown
@@ -3722,9 +3722,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   an error. Re-run T.2 (it only removes what is still there) and record both runs. An
   `Authorization_RequestDenied` on a deletion means a role is not active (see Setup): activate it
   and re-run T.2.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected.
 
-- [ ] **T.3 Read back through the module that everything is gone.**
+- [x] **T.3 Read back through the module that everything is gone.**
 
   ```powershell
   Get-OERGroup -Filter "startswith(displayName,'$Prefix')" -ErrorAction Continue
@@ -3738,9 +3738,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   print nothing. If the resource group is still listed as `Deleting`, re-read after a few minutes
   and record when it went.
   **Failure looks like:** any object listed.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected.
 
-- [ ] **T.4 Read back through Microsoft Graph that no user, app registration or service principal is
+- [x] **T.4 Read back through Microsoft Graph that no user, app registration or service principal is
   left.** The module has no user or application read, so this signs in separately, read-only, at
   the very end.
 
@@ -3761,9 +3761,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   30 days, which is Entra ID's design; they hold no role, membership or eligibility, and the next
   prerequisite run can create the same names again.
   **Failure looks like:** any count above `0`.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected.
 
-- [ ] **T.5 No object outside the prefix was touched, and nothing but the five controls was
+- [x] **T.5 No object outside the prefix was touched, and nothing but the five controls was
   removed.**
 
   ```powershell
@@ -3782,9 +3782,9 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
   or written.
   **Failure looks like:** any other `Removed` row (record which check and whether 0.3's state was
   restored); an `Updated` row for user A's eligibility (2.1's note); a row outside the prefix.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected. 6.3b and 6.4b were denied by the tenant, so three `Removed` rows was the expected outcome.
 
-- [ ] **T.6 Redact, then clean up.** Move what the results above need from
+- [x] **T.6 Redact, then clean up.** Move what the results above need from
   `docs/live-verification/raw/s61/` into this file, redacted per [README.md](README.md) -- ids to
   `00000000-0000-0000-0000-0000000000NN`, user principal names to `personN@example.com`, no
   credential, no bearer token. Then delete the folder.
@@ -3796,4 +3796,4 @@ Document `$Docs.MembersOmitted`, used by 7.1, 7.2 and 7.6:
 
   **Expect:** `git status` shows only this checklist as modified; nothing under `raw/` is ever
   staged.
-  **Result:**
+  **Result:** Run by the operator on 2026-09-24. Output was not preserved; the operator reports every step completed as expected.

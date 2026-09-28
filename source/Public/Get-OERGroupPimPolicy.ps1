@@ -9,13 +9,19 @@ function Get-OERGroupPimPolicy {
     Omnicit.EntraRBAC.GroupPimPolicy shape by the private ConvertTo-OERGroupPimPolicy, the single owner
     of this read shape: friendly properties ActivationMaxHours, AuthenticationContextId,
     ActivationEnabledRules, AllowPermanentEligibility, EligibleDuration, EligibleDurationDays,
-    AllowPermanentActive, ActiveDuration, ActiveDurationDays, ActiveEnabledRules, and a Notifications
-    object carrying EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw
-    Rules array. A group that has not been onboarded to PIM for Groups (no policy assignment) produces a
-    non-terminating PimPolicyNotFound error. A policy-assignment lookup that FAILED rather than
-    answering -- a 403, a throttle, a dead transport -- is a different fact and is reported separately
-    as a non-terminating PimPolicyReadFailed error, so a caller suppressing the ordinary
-    not-onboarded case does not suppress a refusal along with it.
+    AllowPermanentActive, ActiveDuration, ActiveDurationDays, ActiveEnabledRules, RequireApproval
+    (whether activation requires approval, or $null when the policy has no approval rule at all),
+    Approvers (the first approval stage's primary approvers, each an Id/UserType/DisplayName object --
+    a genuinely empty array when there is no approval rule), and a Notifications object carrying
+    EligibleAlert, ActiveAlert, and ActivationAlert recipient lists -- alongside the raw Rules array. A
+    group whose policy assignment for the requested access type Microsoft Graph does not list -- in
+    practice a group created moments ago (replication delay) -- produces a non-terminating
+    PimPolicyNotFound error, worded as Set-OERGroupPimPolicy words it: re-running usually succeeds. A
+    group that was never used with PIM for Groups is not such a group: Graph lists its policies before
+    the group is onboarded, so they are read like any other. A policy-assignment lookup that FAILED
+    rather than answering -- a 403, a throttle, a dead transport -- is a different fact and is
+    reported separately as a non-terminating PimPolicyReadFailed error, so a caller suppressing the
+    ordinary not-listed case does not suppress a refusal along with it.
 
     .PARAMETER Group
     The target group whose PIM-for-groups activation policy is read, given as a display name or object id
@@ -82,15 +88,15 @@ function Get-OERGroupPimPolicy {
 
         # A FAILED LOOKUP IS NOT AN ABSENT POLICY (issue #76). Get-OERPimGroupPolicyId returns $null
         # only where it LEARNED there is no policy assignment: an empty assignments collection, or
-        # the 400 ResourceTypeNotSupported it declares to the transport as an expected answer for a
-        # group that was never onboarded. Every OTHER outcome -- 403, 429, 500, a dead transport --
+        # the 400 ResourceTypeNotSupported it declares to the transport as an expected answer. Every
+        # OTHER outcome -- 403, 429, 500, a dead transport, and a 404 here, where no wait asks for one --
         # still throws, and that is a different fact: "I was not allowed to look" or "I could not
         # look", never "there is nothing there".
         #
         # Collapsing the two into one PimPolicyNotFound is what let a live 403 on the policy-id
         # lookup for 96 groups reach the operator as ZERO error records and an inventory silently
-        # short of every PIM policy: a caller that suppresses the ordinary not-onboarded case --
-        # which is most groups in most tenants -- suppressed the refusal along with it. The two
+        # short of every PIM policy: a caller that suppresses the ordinary not-listed case
+        # suppressed the refusal along with it. The two
         # answers now carry DIFFERENT error ids so a caller can suppress one and surface the other.
         # PimPolicyNotFound keeps its exact meaning and its exact id for the genuinely absent case.
         $PolicyId = $null
@@ -108,8 +114,13 @@ function Get-OERGroupPimPolicy {
             return
         }
         if (-not $PolicyId) {
+            # The same wording as Set-OERGroupPimPolicy for the same condition: a group created moments
+            # ago reaches this branch too (replication delay), so the likely cause comes first.
             Write-CmdletError `
-                -Message ([System.Exception]::new("Group '$GroupId' has no PIM-for-groups policy for '$AccessType' access. Onboard it first with Add-OERGroupEligibility.")) `
+                -Message ([System.Exception]::new(
+                    "Microsoft Graph does not list a PIM-for-groups policy for '$AccessType' access on group " +
+                    "'$GroupId' yet. A group created moments ago can take a short while before its policies are " +
+                    'listed (replication delay), and re-running usually succeeds.')) `
                 -ErrorId 'PimPolicyNotFound' -Category ObjectNotFound -TargetObject $GroupId -Cmdlet $PSCmdlet
             return
         }

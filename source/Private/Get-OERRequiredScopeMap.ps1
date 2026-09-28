@@ -432,8 +432,8 @@ function Get-OERRequiredScopeMap {
         }
         @{
             Cmdlet = 'Set-OERGroupPimPolicy'; Transport = 'Graph'
-            GraphScope = 'AuthenticationContext.Read.All', 'Group.Read.All', 'RoleManagementPolicy.ReadWrite.AzureADGroup'
-            Note = 'AuthenticationContext.Read.All is used only to validate a supplied -AuthenticationContextId against the tenant. Without it, that validation degrades to a warning and the write still succeeds.'
+            GraphScope = 'Application.Read.All', 'AuthenticationContext.Read.All', 'Group.Read.All', 'RoleManagementPolicy.ReadWrite.AzureADGroup', 'User.ReadBasic.All'
+            Note = 'AuthenticationContext.Read.All is used only to validate a supplied -AuthenticationContextId against the tenant. Without it, that validation degrades to a warning and the write still succeeds. User.ReadBasic.All and Application.Read.All are used only to resolve -ApproverUser and -ApproverGroup values through the shared principal resolver, which can also reach service principals; the same pair the Set-OERRoleManagementPolicy row lists.'
         }
         @{
             Cmdlet = 'Set-OERResourceGroup'; Transport = 'Arm'
