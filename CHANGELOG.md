@@ -35,6 +35,8 @@ an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `Pi
 and a group created in the same run gets up to 30 seconds for its policies to appear. During that
 wait, a `404 ResourceNotFound` from Microsoft Graph counts as a policy not listed yet, not as a
 failed read. `Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
+`Invoke-OERStructure` no longer returns the eligibility request among its results when it adds a
+PIM eligibility to a group.
 
 ## [1.0.1] - 2026-09-23
 

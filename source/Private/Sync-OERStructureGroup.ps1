@@ -645,7 +645,9 @@ function Sync-OERStructureGroup {
             $EAction = if ($EChange.Reason -eq 'Absent') { 'adminAssign' } else { 'adminUpdate' }
             if ($Caller.ShouldProcess($Name, "Add time-bound $($EChange.AccessType) eligibility for '$EPrinId' ($($EChange.DurationDays) days)")) {
                 try {
-                    Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction -Confirm:$false -ErrorAction Stop
+                    # Discarded: the request object Add-OERGroupEligibility returns is not a result row,
+                    # and this handler's output IS Invoke-OERStructure's result list.
+                    $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction -Confirm:$false -ErrorAction Stop
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $Caller.WriteError($PSItem)
@@ -829,7 +831,8 @@ function Sync-OERStructureGroup {
             $EAction = if ($EChange.Reason -eq 'Absent') { 'adminAssign' } else { 'adminUpdate' }
             if ($Caller.ShouldProcess($Name, "Add permanent $($EChange.AccessType) eligibility for '$EPrinId'")) {
                 try {
-                    Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
+                    # Discarded, as in step 3: the returned request object is not a result row.
+                    $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $Caller.WriteError($PSItem)
