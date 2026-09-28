@@ -7,12 +7,14 @@ function Invoke-OERStructure {
     The top-level apply engine for Phase 5 JSON Orchestration. Reads a structure document from
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
     if invalid), authenticates, then iterates every declared section in dependency order --
-    Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, RoleAssignments,
-    RoleManagementPolicies -- and calls the matching Sync-OERStructure* handler for each item.
+    Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
+    DirectoryRoleManagementPolicies, RoleAssignments, RoleManagementPolicies -- and calls the matching
+    Sync-OERStructure* handler for each item.
 
     Dependency order: Groups must exist before AUs can reference them as members; Catalogs before
-    AccessPackages; all Entra sections before the Azure sections that may reference Entra objects.
-    The engine always follows this order regardless of the key order in the JSON document.
+    AccessPackages; all Entra sections, the PIM settings of Microsoft Entra directory roles included,
+    before the Azure sections that may reference Entra objects. The engine always follows this order
+    regardless of the key order in the JSON document.
 
     Administrative unit pre-pass: a group can also be created INTO an administrative unit
     (New-OERGroup -AdministrativeUnit), which is the reverse dependency from the one above. Before
@@ -50,6 +52,9 @@ function Invoke-OERStructure {
     selected (via -Include) or -IncludeARM is explicitly set, Initialize-OERAuth is called with
     -IncludeARM so the ARM token is acquired up front. For a pure Entra document that does not
     include those sections and does not pass -IncludeARM, no ARM token is requested.
+    DirectoryRoleManagementPolicies is NOT an ARM section: the PIM settings of a Microsoft Entra
+    directory role are applied through Microsoft Graph only, so a document holding that section
+    never requests an ARM token on its account.
 
     RoleAssignments scope grouping: the engine groups declared role assignment items by their
     scope string and passes -ReconcileScope on the first item of each unique scope. This signals
@@ -105,7 +110,7 @@ function Invoke-OERStructure {
     findings.
 
     .PARAMETER Include
-    Restricts the sections the engine dispatches. Defaults to all seven sections. Pass a subset
+    Restricts the sections the engine dispatches. Defaults to all eight sections. Pass a subset
     to limit the apply run (for example -Include Groups,Catalogs to skip Azure sections).
 
     .PARAMETER TenantId
@@ -150,8 +155,8 @@ function Invoke-OERStructure {
         [Alias('Inventory', 'Document')]
         [object]$InputObject,
         [switch]$Prune,
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies')]
-        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies'),
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'RoleAssignments', 'RoleManagementPolicies')]
+        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'RoleAssignments', 'RoleManagementPolicies'),
         [string]$TenantId,
         [switch]$IncludeARM
     )
@@ -186,7 +191,8 @@ function Invoke-OERStructure {
         # -- 4. Decide ARM ---------------------------------------------------------------
         # ARM is needed only when an Azure section is BOTH selected via -Include AND actually
         # declared in the document (so a pure-Entra document on the default -Include does not force
-        # an ARM token), or when -IncludeARM is explicit.
+        # an ARM token), or when -IncludeARM is explicit. directoryRoleManagementPolicies is
+        # deliberately absent from both tests: directory-role PIM settings are Graph-only.
         $AzureInInclude = ($Include -contains 'RoleAssignments') -or ($Include -contains 'RoleManagementPolicies')
         $AzureInDoc     = ($Document.PSObject.Properties.Name -contains 'roleAssignments') -or
                           ($Document.PSObject.Properties.Name -contains 'roleManagementPolicies')
@@ -203,15 +209,18 @@ function Invoke-OERStructure {
 
         # Section map: Include name -> document key -> handler name. This list IS the hardcoded
         # dependency order: groups -> administrativeUnits -> catalogs -> accessPackages ->
-        # accessReviews -> roleAssignments -> roleManagementPolicies.
+        # accessReviews -> directoryRoleManagementPolicies -> roleAssignments ->
+        # roleManagementPolicies. The directory-role policies are the last Entra (Graph) section, so
+        # they run after everything their approvers may name and before the Azure sections.
         $SectionOrder = @(
-            [PSCustomObject]@{ IncludeName = 'Groups';                 DocKey = 'groups';                 Handler = 'Sync-OERStructureGroup' }
-            [PSCustomObject]@{ IncludeName = 'AdministrativeUnits';    DocKey = 'administrativeUnits';    Handler = 'Sync-OERStructureAdministrativeUnit' }
-            [PSCustomObject]@{ IncludeName = 'Catalogs';               DocKey = 'catalogs';               Handler = 'Sync-OERStructureCatalog' }
-            [PSCustomObject]@{ IncludeName = 'AccessPackages';         DocKey = 'accessPackages';         Handler = 'Sync-OERStructureAccessPackage' }
-            [PSCustomObject]@{ IncludeName = 'AccessReviews';          DocKey = 'accessReviews';          Handler = 'Sync-OERStructureAccessReview' }
-            [PSCustomObject]@{ IncludeName = 'RoleAssignments';        DocKey = 'roleAssignments';        Handler = 'Sync-OERStructureRoleAssignment' }
-            [PSCustomObject]@{ IncludeName = 'RoleManagementPolicies'; DocKey = 'roleManagementPolicies'; Handler = 'Sync-OERStructureRoleManagementPolicy' }
+            [PSCustomObject]@{ IncludeName = 'Groups';                          DocKey = 'groups';                          Handler = 'Sync-OERStructureGroup' }
+            [PSCustomObject]@{ IncludeName = 'AdministrativeUnits';             DocKey = 'administrativeUnits';             Handler = 'Sync-OERStructureAdministrativeUnit' }
+            [PSCustomObject]@{ IncludeName = 'Catalogs';                        DocKey = 'catalogs';                        Handler = 'Sync-OERStructureCatalog' }
+            [PSCustomObject]@{ IncludeName = 'AccessPackages';                  DocKey = 'accessPackages';                  Handler = 'Sync-OERStructureAccessPackage' }
+            [PSCustomObject]@{ IncludeName = 'AccessReviews';                   DocKey = 'accessReviews';                   Handler = 'Sync-OERStructureAccessReview' }
+            [PSCustomObject]@{ IncludeName = 'DirectoryRoleManagementPolicies'; DocKey = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+            [PSCustomObject]@{ IncludeName = 'RoleAssignments';                 DocKey = 'roleAssignments';                 Handler = 'Sync-OERStructureRoleAssignment' }
+            [PSCustomObject]@{ IncludeName = 'RoleManagementPolicies';          DocKey = 'roleManagementPolicies';          Handler = 'Sync-OERStructureRoleManagementPolicy' }
         )
 
         # Per-scope tracking for the RoleAssignments section, so the scope-wide reconcile/prune pass
@@ -288,7 +297,10 @@ function Invoke-OERStructure {
                     # and unusable in a run over many entries. Most sections identify an entry by
                     # displayName; the two ARM sections carry none and are labelled by role, target
                     # principal and scope, matching what Sync-OERStructureRoleAssignment and
-                    # Sync-OERStructureRoleManagementPolicy compose for their own rows. The literal
+                    # Sync-OERStructureRoleManagementPolicy compose for their own rows. A
+                    # directoryRoleManagementPolicies entry carries only role, so the same branch
+                    # labels it by role alone, as Sync-OERStructureDirectoryRoleManagementPolicy
+                    # labels its own rows. The literal
                     # stays as the last resort, since -Item is a mandatory non-empty string and a
                     # document entry carrying neither field must not turn this catch into a binding
                     # failure that loses the original error.

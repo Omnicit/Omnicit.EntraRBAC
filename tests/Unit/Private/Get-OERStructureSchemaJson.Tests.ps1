@@ -779,6 +779,7 @@ Describe 'Get-OERStructureSchemaJson nullable accessReviews recurrence' {
                 '/properties/administrativeUnits/items/properties/members'
                 '/properties/administrativeUnits/items/properties/scopedRoles'
                 '/properties/catalogs/items/properties/description'
+                '/properties/directoryRoleManagementPolicies/items/properties/authenticationContextId'
                 '/properties/groups/items/properties/description'
                 '/properties/groups/items/properties/members'
                 '/properties/groups/items/properties/pimPolicy/properties/authenticationContextId'
@@ -790,6 +791,84 @@ Describe 'Get-OERStructureSchemaJson nullable accessReviews recurrence' {
             $GroupProps = $Schema.properties.groups.items.properties
             $GroupProps.owners.type      | Should -Be 'array'
             $GroupProps.eligibility.type | Should -Be 'array'
+        }
+    }
+}
+
+Describe 'Get-OERStructureSchemaJson directory role management policies' {
+    # directoryRoleManagementPolicies[] is roleManagementPolicies[] without scope: a directory role
+    # policy always lives at tenant scope, so role is the only required key.
+    It 'declares directoryRoleManagementPolicies at the root as an array of objects requiring only role, with no scope' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Schema.properties.PSObject.Properties.Name | Should -Contain 'directoryRoleManagementPolicies'
+            $Section = $Schema.properties.directoryRoleManagementPolicies
+            $Section.type | Should -BeExactly 'array'
+            $Section.items.type | Should -BeExactly 'object'
+            @($Section.items.required) | Should -Be @('role')
+            $Section.items.properties.PSObject.Properties.Name | Should -Not -Contain 'scope'
+        }
+    }
+
+    It 'types every directory field exactly like the matching roleManagementPolicies field' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Azure = $Schema.properties.roleManagementPolicies.items.properties
+            $Directory = $Schema.properties.directoryRoleManagementPolicies.items.properties
+            # Everything but the description text: type, bounds and nested shape.
+            function Get-TypeShape {
+                param([object]$Node)
+                if ($Node -isnot [PSCustomObject]) { return $Node }
+                $Out = [ordered]@{}
+                foreach ($Prop in $Node.PSObject.Properties) {
+                    if ($Prop.Name -eq 'description') { continue }
+                    $Out[$Prop.Name] = Get-TypeShape -Node $Prop.Value
+                }
+                [PSCustomObject]$Out
+            }
+            $Expected = @($Azure.PSObject.Properties.Name | Where-Object { $_ -ne 'scope' })
+            @($Directory.PSObject.Properties.Name) | Should -Be $Expected
+            foreach ($Name in $Expected) {
+                (Get-TypeShape -Node $Directory.$Name | ConvertTo-Json -Depth 10 -Compress) |
+                    Should -BeExactly (Get-TypeShape -Node $Azure.$Name | ConvertTo-Json -Depth 10 -Compress) -Because "'$Name' carries the same type in both sections"
+            }
+        }
+    }
+
+    It 'documents on approvers that only the declared side is replaced and that requireApproval false wins' {
+        InModuleScope $script:moduleName {
+            $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.directoryRoleManagementPolicies.items.properties
+            $Props.approvers.description | Should -Match 'requireApproval false TAKES PRECEDENCE'
+            $Props.approvers.description | Should -Match 'Only the declared side is replaced'
+            $Props.approvers.description | Should -Match 'object id'
+            $Props.authenticationContextId.description | Should -Match 'NOT DECLARED'
+        }
+    }
+
+    It 'validates a fully populated directory role management policy entry' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Doc = @'
+{ "version": "1.0", "directoryRoleManagementPolicies": [ {
+  "role": "Reports Reader",
+  "allowPermanentEligibility": false, "eligibleDurationDays": 365,
+  "allowPermanentActiveAssignment": false, "activeDurationDays": 180,
+  "activationMaxHours": 4, "requireMfaOnActivation": true,
+  "requireJustificationOnActivation": true, "requireTicketOnActivation": false,
+  "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "Approvers" ] },
+  "authenticationContextId": null,
+  "requireMfaOnActiveAssignment": false, "requireJustificationOnActiveAssignment": true } ] }
+'@
+            Test-Json -Json $Doc -Schema (Get-OERStructureSchemaJson) | Should -BeTrue
+        }
+    }
+
+    It 'rejects a directory entry without role, and one with activationMaxHours outside 1-24' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            Test-Json -Json '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "activationMaxHours": 4 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeFalse
+            Test-Json -Json '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "activationMaxHours": 25 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeFalse
         }
     }
 }
