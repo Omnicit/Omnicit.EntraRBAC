@@ -32,8 +32,9 @@ display name is reported `Failed`. Earlier versions could resolve the OWNER poli
 owner policy was not yet listed to its MEMBER policy, so owner settings, a permanent-eligibility
 opening included, could land on the member policy: review the member policies of groups onboarded by
 an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
-and a group created in the same run gets up to 30 seconds for its policies to appear.
-`Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
+and a group created in the same run gets up to 30 seconds for its policies to appear. During that
+wait, a `404 ResourceNotFound` from Microsoft Graph counts as a policy not listed yet, not as a
+failed read. `Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`.
 
 ## [1.0.1] - 2026-09-23
 

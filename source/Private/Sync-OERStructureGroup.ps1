@@ -56,15 +56,17 @@ function Sync-OERStructureGroup {
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, and waits while it does not -- one shared budget of at most about
        30 seconds (2 + 4 + 8 + 16 s) per group item, spent by whichever access type needs it first --
-       since a brand-new group's policy assignments can take a moment to be listed. Asking first,
-       instead of retrying the policy read, is what keeps a run that ends Updated free of
-       PimPolicyNotFound records in the caller's -ErrorVariable. Once the budget is spent with nothing
-       listed, that access type reports Failed, with a PimPolicyNotFound error record and a
-       replication-delay message naming a re-run, and the loop moves to the next access type. A
-       refused lookup (a 403, for example) stops the wait at once and falls through to the single
-       policy read, which reports the precise error. A group that already existed never waits: its
-       missing policy is a fact, not a timing issue, and the single read decides it as for any other
-       group.
+       since a brand-new group's policy assignments can take a moment to be listed. While it waits, a
+       404 ResourceNotFound from that question counts as not listed yet (Get-OERPimGroupPolicyId
+       -NotFoundAsUnlisted): a group PIM does not know yet answers 404, not an empty list (measured
+       live 2026-09-28). Asking first, instead of retrying the policy read, is what keeps a run that
+       ends Updated free of PimPolicyNotFound records in the caller's -ErrorVariable. Once the budget
+       is spent with nothing listed, that access type reports Failed, with a PimPolicyNotFound error
+       record and a replication-delay message naming a re-run, and the loop moves to the next access
+       type. A refused lookup (a 403, for example) stops the wait at once and falls through to the
+       single policy read, which reports the precise error. A group that already existed never waits,
+       a 404 included: its missing policy is a fact, not a timing issue, and the single read decides
+       it as for any other group.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
@@ -715,17 +717,20 @@ function Sync-OERStructureGroup {
                 # deposits its PimPolicyNotFound records in the caller's -ErrorVariable on every attempt
                 # (the engine collects them from the error stream before any catch here runs), so a run
                 # that ended Updated still handed the caller a list of errors. The poll spends the shared
-                # $PolicyRetryDelays budget until an id is listed or the budget is empty. A throw from it
-                # (403, 429, ...) is a refusal, not replication: polling stops at once and the read below
-                # reports the precise error. A group that already existed never polls and never sleeps:
-                # its missing policy is a fact, not a timing issue.
+                # $PolicyRetryDelays budget until an id is listed or the budget is empty. A 404
+                # ResourceNotFound is the answer of a group PIM does not know yet (measured live), so the
+                # poll asks with -NotFoundAsUnlisted: a 404 comes back as the same silent $null and is
+                # waited on, never raised. Every other throw (403, 429, ...) is a refusal, not
+                # replication: polling stops at once and the read below reports the precise error. A
+                # group that already existed never polls and never sleeps, a 404 included: its missing
+                # policy is a fact, not a timing issue.
                 if ($CreatedThisRun) {
                     $ListedPolicyId = $null
                     $PollRefused = $false
                     $Waits = 0
                     while ($true) {
                         try {
-                            $ListedPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $AccessType
+                            $ListedPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $AccessType -NotFoundAsUnlisted
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
                             $PollRefused = $true
