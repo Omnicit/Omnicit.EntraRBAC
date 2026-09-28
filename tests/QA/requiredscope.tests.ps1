@@ -260,6 +260,17 @@ BeforeAll {
         only for RoleManagement.ReadWrite.Directory there. Without the exclusion this entry would
         also demand AdministrativeUnit.ReadWrite.All, which is more than the API needs.
 
+        The policies/roleManagementPolic* entries below are split in two by literal shape rather
+        than by one shared rule, because the two systems behind that path use different Graph
+        permissions entirely. PIM for Groups literals are unversioned -- Get-OERPimGroupsGraphPath
+        owns their 'beta' prefix, so the literal at the call site never carries it -- while every
+        directory-role literal is typed as a plain 'v1.0/...' string. The prefix alone therefore
+        tells the two apart: the PIM-for-Groups rule excludes anything starting 'v1.0/policies/
+        roleManagementPolic' and the directory-role rule matches only that prefix. Both permission
+        tables, and the roleDefinitions rule below, were confirmed against Microsoft Learn (List
+        roleManagementPolicyAssignments, Update unifiedRoleManagementPolicyRule, List
+        roleDefinitions).
+
         Every pattern below was confirmed against a published Microsoft Learn permissions table.
         =====================================================================================
     #>
@@ -308,10 +319,23 @@ BeforeAll {
             Write    = '^PrivilegedEligibilitySchedule\.ReadWrite\.AzureADGroup$'
         }
         @{
-            Endpoint = 'policies/roleManagementPolicies*'
+            Endpoint = 'policies/roleManagementPolicies* (PIM for Groups, unversioned)'
             Match    = 'policies/roleManagementPolic'
+            NotMatch = 'v1.0/policies/roleManagementPolic'
             Read     = '^RoleManagementPolicy\.(Read|ReadWrite)\.AzureADGroup$'
             Write    = '^RoleManagementPolicy\.ReadWrite\.AzureADGroup$'
+        }
+        @{
+            Endpoint = 'policies/roleManagementPolicies*, policies/roleManagementPolicyAssignments* (directory roles, v1.0)'
+            Match    = 'v1.0/policies/roleManagementPolic'
+            Read     = '^(RoleManagementPolicy|RoleManagement)\.(Read|ReadWrite)\.Directory$'
+            Write    = '^(RoleManagementPolicy|RoleManagement)\.ReadWrite\.Directory$'
+        }
+        @{
+            Endpoint = 'roleManagement/directory/roleDefinitions'
+            Match    = 'v1.0/roleManagement/directory/roleDefinitions'
+            Read     = '^RoleManagement\.(Read|ReadWrite)\.Directory$'
+            Write    = '^RoleManagement\.ReadWrite\.Directory$'
         }
         @{
             Endpoint = 'groups'
