@@ -106,6 +106,14 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Get-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Get-OERDirectoryRoleManagementPolicy -Role 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OERGroupEligibility'; Resolver = 'Resolve-OERGroupId'
             ErrorId = 'AmbiguousGroupName'; Pre = @{}
             Invoke = {

@@ -336,7 +336,7 @@ Remove-OERConfiguration -TenantAlias contoso -Confirm
 
 ## Available Cmdlets
 
-All 90 exported cmdlets, grouped by the area they manage. The groups below are for orientation
+All 91 exported cmdlets, grouped by the area they manage. The groups below are for orientation
 only -- **they are not permission boundaries**, so this section makes no claim about scopes. Ask
 `Get-OERRequiredScope` instead; see [Permissions](#permissions).
 
@@ -420,6 +420,11 @@ Access review definitions and instances for access packages.
 - `Get-OERAccessReviewInstance`, `Get-OERAccessReviewInstanceDecision`
 - `Stop-OERAccessReviewInstance`, `Invoke-OERAccessReviewInstanceDecision`,
   `Send-OERAccessReviewReminder`
+
+### Directory roles (1)
+
+- `Get-OERDirectoryRoleManagementPolicy` -- read the PIM settings (role management policy) of a
+  Microsoft Entra directory role
 
 ### Azure inventory and RBAC (7)
 

@@ -39,6 +39,14 @@ unknown keys in `groups` and `pimPolicy`.
 `Invoke-OERStructure` no longer returns the eligibility request among its results when it adds a
 PIM eligibility to a group.
 
+`Get-OERDirectoryRoleManagementPolicy` reads the PIM role management policy of a Microsoft Entra
+directory role -- activation length, MFA, justification, ticket and approval requirements,
+authentication context, eligible and active permanence, and notifications -- by role name or id
+(`-Role`), by its Microsoft Graph policy id (`-PolicyId`), or for every directory role at once
+(`-All`). It returns the same tagged `Omnicit.EntraRBAC.RoleManagementPolicy` object
+`Get-OERRoleManagementPolicy` returns for an Azure role, with `Scope` always `/`, so the two read
+paths share tooling and output handling. No Azure Resource Manager token is required.
+
 ## [1.0.1] - 2026-09-23
 
 Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:
