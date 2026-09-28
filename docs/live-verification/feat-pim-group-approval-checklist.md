@@ -1693,7 +1693,11 @@ member policy, and the owner's settings landed there.
   this file's first run found); more than four wait lines, or a delay sequence other than 2, 4, 8,
   16. If the budget runs out while Graph still answers 404, record how many looks it answered 404
   and do not change the budget: that is a decision for the operator.
-  **Result:** FAIL -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
+  **Result:** Run 2 (2026-09-28, at `85d4144`, after the 404-wait fix): FAIL again, differently -- the
+  policy was LISTED on the first look and the reads right after it answered 404, so the wait never
+  ran; see "Run 2: 5.2" at the end of this file.
+
+  Run 1: FAIL -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
   (app-only), every output below passed through the run's redaction first. The member policy row is
   the failure this check names: `Failed` with `PimPolicyReadFailed` instead of a wait. Row 1
   `Created`. Row 2 `Failed` with `ResourceNotFound` -- the group too new for PIM itself, the case
@@ -2785,3 +2789,815 @@ and deleting `oer-s62-rg` removes its role management policies.
   raw/s62 exists after: False
    M docs/live-verification/feat-pim-group-approval-checklist.md
   ```
+
+---
+
+## Run 2 -- 2026-09-28, at `85d4144`: the prerequisites, section 5 and the Teardown after the 404-wait fix
+
+Run by Claude Code as the certificate identity `oer-live-cc` (app-only), after "fix: wait through a
+404 for the policy of a group created in the same run", "fix: keep the eligibility request out of
+the apply results" and "fix: stop advising an eligibility when a PIM for Groups policy is not
+listed". Run 1 had torn everything down, so the prerequisite script created new objects; 0.1, 0.3,
+1.1 and 1.2 were re-run read-only to record them and the baseline the Teardown restores; X.1 is a
+read-only check this run added; then section 5 and the Teardown. Every identity line of every
+sign-in is True. Every output below passed through the run's redaction first. Placeholders from
+`...13` on are run 2's objects. `...01`, `...03`, `...07` and `person1` to `person3` in
+this section are the SAME identifiers as in run 1: run 1's approver user and approver group
+(deleted, but still named on the Azure policy -- see 1.2), the Reader role definition id, and the
+test UPNs, which the prerequisite script re-creates under the same names.
+
+### Run 2: prerequisite script -- PASS after a re-run
+
+The `-WhatIf` plan named only `oer-s62` targets (five `What if:` lines). The first real run created
+the two users and both groups and then stopped: its read of the members of `oer-s62-approvers`, a
+group it had created a second earlier, answered `404 Request_ResourceNotFound` -- the same
+replication delay section 5 is about, here in the test scaffolding. The error shows the HTTP
+response, not the request, so no token. The script completes what exists, so the re-run added the
+member, granted the eligibility and created the resource group, tagged.
+
+```text
+# -WhatIf
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person1@example.com".
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person2@example.com".
+What if: Performing the operation "Create security group" on target "oer-s62-approvers".
+What if: Performing the operation "Create security group" on target "oer-s62-pim".
+[oer-s62] Skipping the member of oer-s62-approvers: the group does not exist yet.
+[oer-s62] Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Phase 2 (Connect-OER) is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] Skipping the eligibility: oer-s62-pim does not exist yet.
+What if: Performing the operation "Create in swedencentral" on target "resource group 'oer-s62-rg' in subscription '<SubscriptionId>'".
+[oer-s62] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+Kind           Name                                     Id
+----           ----                                     --
+user           person1@example.com (none -- not created)
+user           person2@example.com (none -- not created)
+group          oer-s62-approvers                        (none -- not created)
+group          oer-s62-pim                              (none -- not created)
+resource group oer-s62-rg                               (none -- not created)
+[oer-s62] WhatIf: nothing was created or removed.
+[oer-s62] Done.
+# real run 1 (stopped)
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+[oer-s62] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] Created user person1@example.com (disabled).
+[oer-s62] Created user person2@example.com (disabled).
+[oer-s62] Created group oer-s62-approvers.
+[oer-s62] Created group oer-s62-pim.
+Invoke-MgGraphRequest: <Vault>\Initialize-OerS62Prereq.ps1:329:5
+Line |
+ 329 |      Invoke-MgGraphRequest @Params
+     |      ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | GET https://graph.microsoft.com/v1.0/groups/00000000-0000-0000-0000-000000000013/members?$select=id HTTP/1.1 404
+     | Not Found Cache-Control: no-cache Transfer-Encoding: chunked Vary: Accept-Encoding Strict-Transport-Security:
+     | max-age=31536000 request-id: 00000000-0000-0000-0000-000000000014 client-request-id:
+     | 00000000-0000-0000-0000-000000000015 x-ms-ags-diagnostic: {"ServerInfo":{"DataCenter":"Sweden
+     | Central","Slice":"E","Ring":"3","ScaleUnit":"000","RoleInstance":"GVX0EPF00004FE8"}} x-ms-resource-unit: 2 Date:
+     | Mon, 28 Sep 2026 10:53:33 GMT Content-Type: application/json
+     | {"error":{"code":"Request_ResourceNotFound","message":"Resource '00000000-0000-0000-0000-000000000013' does not
+     | exist or one of its queried reference-property objects are not
+     | present.","innerError":{"date":"2026-09-28T10:53:34","request-id":"00000000-0000-0000-0000-000000000014","client-request-id":"00000000-0000-0000-0000-000000000015"}}}
+# real run 2
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+[oer-s62] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] User person1@example.com exists.
+[oer-s62] User person2@example.com exists.
+[oer-s62] Group oer-s62-approvers exists.
+[oer-s62] Group oer-s62-pim exists.
+[oer-s62] Added person1@example.com to oer-s62-approvers.
+[oer-s62] Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Phase 2 (Connect-OER) is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] Granted person2@example.com a 30-day member eligibility on oer-s62-pim.
+[oer-s62] Created resource group oer-s62-rg in swedencentral, tagged purpose = oer-s62-live-verification.
+[oer-s62] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+Kind                                               Name                                                          Id
+----                                               ----                                                          --
+user                                               person1@example.com                      00000000-0000-0000-0000-000000000016
+user                                               person2@example.com                      00000000-0000-0000-0000-000000000017
+group                                              oer-s62-approvers                                             00000000-0000-0000-0000-000000000013
+group                                              oer-s62-pim                                                   00000000-0000-0000-0000-000000000018
+resource group                                     oer-s62-rg                                                    /subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg
+group member                                       oer-s62-approvers <- person1@example.com 00000000-0000-0000-0000-000000000016
+PIM eligibility (member, ends 10/28/2026 10:54:02) oer-s62-pim <- person2@example.com       00000000-0000-0000-0000-000000000018_member_00000000-0000-0000-0000-000000000017
+[oer-s62] Done.
+```
+
+### Run 2: 0.1 and 0.3 -- PASS
+
+The session ran the branch build at this commit. 0.3 recorded the new ids; its first run did not
+write the state file the harness keeps between processes, so it was run again with that one line
+added.
+
+```text
+Omnicit.EntraRBAC 1.0.2 from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2
+Name                         CommandType
+----                         -----------
+ConvertFrom-OERGraphApprover    Function
+Resolve-OERDeclaredApprover     Function
+RequireApproval
+ApproverUser
+ApproverGroup
+True
+# 0.3
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+PrincipalId                          UserPrincipalName
+-----------                          -----------------
+00000000-0000-0000-0000-000000000016 person1@example.com
+PrincipalId                          AccessType StartDateTime       EndDateTime
+-----------                          ---------- -------------       -----------
+00000000-0000-0000-0000-000000000017 member     2026-09-28 10:54:02 2026-10-28 10:54:02
+0
+0
+True
+True
+True
+True
+--- state saved: True
+```
+
+### Run 2: 1.1 and 1.2 -- PASS, with the Azure policy carrying run 1's approvers
+
+1.1 and 1.2 were first run in separate processes, where 1.2 cannot find the baseline object 1.1
+builds; re-run together, as in run 1. The two group policies: `ActivationMaxHours` 8, approval
+off, no approver. The Reader policy at the NEW `oer-s62-rg` already names two approvers, with
+approval off: `...01` and `...03`, run 1's approver user and approver group. A read-only check
+(below) found both deleted from the directory and neither an object of run 2. Deleting a resource
+group does not delete its role management policy: the policy is named by the role definition id
+(`...07`, Reader), and one created again under the same path finds it as it was left. T.3's
+sentence that T.5 deletes the policies "with their group and resource group" holds for the group
+policies, not for the Azure one.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== member: PolicyId Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000019, ActivationMaxHours 8, RequireApproval False, approvers 0
+--- 1.1-member-raw: policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000019, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 0
+=== owner: PolicyId Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000020, ActivationMaxHours 8, RequireApproval False, approvers 0
+--- 1.1-owner-raw: policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000020, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 0
+True
+PolicyId           : /subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000007
+Scope              : /subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg
+RoleName           : Reader
+ActivationMaxHours : 8
+RequireApproval    : False
+Id                                   UserType DisplayName
+--                                   -------- -----------
+00000000-0000-0000-0000-000000000001 User
+00000000-0000-0000-0000-000000000003 Group
+{
+  "member": {
+    "PolicyId": "Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000019",
+    "ActivationMaxHours": 8,
+    "RequireApproval": false,
+    "Approvers": []
+  },
+  "owner": {
+    "PolicyId": "Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000020",
+    "ActivationMaxHours": 8,
+    "RequireApproval": false,
+    "Approvers": []
+  },
+  "arm": {
+    "PolicyId": "/subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000007",
+    "RequireApproval": false,
+    "Approvers": [
+      {
+        "Id": "00000000-0000-0000-0000-000000000001",
+        "UserType": "User",
+        "DisplayName": ""
+      },
+      {
+        "Id": "00000000-0000-0000-0000-000000000003",
+        "UserType": "Group",
+        "DisplayName": ""
+      }
+    ]
+  }
+}
+# read-only check of the approvers on the Azure policy
+--- Reader policy at the new oer-s62-rg: RequireApproval False, approvers 2
+--- approver 00000000-0000-0000-0000-000000000001 (User): exists in the directory now: False; is the approver or the approvers group this run created: False
+--- approver 00000000-0000-0000-0000-000000000003 (Group): exists in the directory now: False; is the approver or the approvers group this run created: False
+```
+
+### Run 2: X.1 (read-only, added in this run) -- a group never used with PIM for Groups carries a pimPolicy
+
+`Get-OERInventory` of `oer-s62-approvers`, which nothing ever onboarded: one group read,
+carrying a `pimPolicy` block (the member and owner defaults), and Graph lists both policy
+assignments, neither policy ever modified. This is what "fix: stop advising an eligibility when a
+PIM for Groups policy is not listed" now says in the inventory README and in the help of
+`Export-OERInventory`. The first attempt ran before the ids were restored and stopped on an empty
+group id; the output is the second.
+
+```text
+--- errors published by Get-OERInventory: 0 (other records collected, not shown: 0)
+--- inventory: groups read 1; carrying pimPolicy 1
+--- the pimPolicy the inventory exported:
+{
+  "member": {
+    "activationMaxHours": 8,
+    "activationEnablement": [
+      "Justification"
+    ],
+    "allowPermanentEligibility": false,
+    "eligibleDurationDays": 365,
+    "allowPermanentActive": false,
+    "activeDurationDays": 180,
+    "activeEnablement": [
+      "Justification"
+    ],
+    "requireApproval": false
+  },
+  "owner": {
+    "activationMaxHours": 8,
+    "activationEnablement": [
+      "Justification"
+    ],
+    "allowPermanentEligibility": false,
+    "eligibleDurationDays": 365,
+    "allowPermanentActive": false,
+    "activeDurationDays": 180,
+    "activeEnablement": [
+      "Justification"
+    ],
+    "requireApproval": false
+  }
+}
+--- raw policy assignments listed for the approvers group: 2 (member, owner)
+--- member policy: ever modified: False
+--- owner policy: ever modified: False
+```
+
+### Run 2: 5.1 -- PASS
+
+
+```text
+What if: Performing the operation "Create group" on target "oer-s62-new".
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== 5.1 -- raw/s62/5.1.json
+--- offline validation: Valid = True, findings = 0
+--- Invoke-OERStructure -Include Groups -WhatIf
+--- warnings, in the order written: 0
+--- errors: 0
+--- results: 3
+Section : groups
+Item    : oer-s62-new
+Action  : Skipped
+Detail  : would create group oer-s62-new
+Section : groups
+Item    : oer-s62-new
+Action  : Skipped
+Detail  : would configure eligibility for 'person2@example.com' after group is created
+Section : groups
+Item    : oer-s62-new
+Action  : Skipped
+Detail  : would configure pimPolicy after group is created
+--- action counts: Skipped=3
+```
+
+### Run 2: 5.2 -- FAIL, differently: the first look LISTED the policies, and the reads after it answered 404
+
+Row 1 `Created`. Row 2 `Failed`: the eligibility answered `ResourceNotFound` (the group too
+new for PIM itself). Rows 3 and 4, member and owner: `Failed` with `PimPolicyReadFailed` naming
+`ResourceNotFound`. The verbose log shows why the 404 wait did not help: for each access type the
+wait's question (log lines 13 and 22) came back with the policy LISTED -- no 404 line, no wait line
+-- and the policy read right after it (lines 15 and 24) and `Set-OERGroupPimPolicy`'s own lookup
+(lines 19 and 28) answered 404. Graph listed the new group's policy assignments on one request and
+answered 404 for the same request a second later: the replicas disagree while the group is new, so
+"listed once" does not mean "readable next". The wait waits only for the first listing, so it cannot
+cover this. The `PimPolicyNotFound` count is `0`. How long the 404 lasted: the whole apply took
+about 4 seconds, from 12:57:21 to 12:57:25 local time, and every read of the group's policies after
+the first look answered 404; 5.3, started at 12:58:20, read and wrote everything. So at least about
+3 seconds after creation, and gone within about a minute. The budget was not reached, and it was not
+changed.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== 5.2 -- raw/s62/5.2.json
+--- offline validation: Valid = True, findings = 0
+--- Invoke-OERStructure -Include Groups -Confirm:$false -Verbose
+Invoke-OERStructure: <harness>\_signin.ps1:51:14
+Line |
+  51 |      $Out = @(Invoke-OERStructure @Splat 3>&1 4>&1)
+     |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | ResourceNotFound: The resource is not found.
+Invoke-OERStructure: <harness>\_signin.ps1:51:14
+Line |
+  51 |      $Out = @(Invoke-OERStructure @Splat 3>&1 4>&1)
+     |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('member'
+     | access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not
+     | the same as the group having none, so nothing was changed.
+Invoke-OERStructure: <harness>\_signin.ps1:51:14
+Line |
+  51 |      $Out = @(Invoke-OERStructure @Splat 3>&1 4>&1)
+     |               ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('owner'
+     | access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not
+     | the same as the group having none, so nothing was changed.
+--- step-4 retry lines: 0 (all 29 verbose lines are in 5.2-verbose.log)
+--- warnings, in the order written: 0
+--- errors: 49
+    ERROR []:
+    ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+    ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound,Add-OERGroupEligibility]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound,Invoke-OERStructure]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [PimPolicyReadFailed,Get-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('member' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [PimPolicyReadFailed,Set-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('member' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.
+    ERROR [PimPolicyReadFailed,Invoke-OERStructure]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('member' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [PimPolicyReadFailed,Get-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('owner' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so no policy is reported for it.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [ResourceNotFound]: ResourceNotFound: The resource is not found.
+    ERROR []:
+    ERROR [PimPolicyReadFailed,Set-OERGroupPimPolicy]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('owner' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.
+    ERROR [PimPolicyReadFailed,Invoke-OERStructure]: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('owner' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is not the same as the group having none, so nothing was changed.
+--- results: 4
+Section : groups
+Item    : oer-s62-new
+Action  : Created
+Detail  : created group oer-s62-new (00000000-0000-0000-0000-000000000021)
+Section : groups
+Item    : oer-s62-new
+Action  : Failed
+Detail  : failed to add eligibility for 'person2@example.com': ResourceNotFound: The resource is not found.
+Section : groups
+Item    : oer-s62-new
+Action  : Failed
+Detail  : pimPolicy (member) update failed: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('member' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which
+          is not the same as the group having none, so nothing was changed.
+Section : groups
+Item    : oer-s62-new
+Action  : Failed
+Detail  : pimPolicy (owner) update failed: Could not read the PIM-for-groups policy assignment for group '00000000-0000-0000-0000-000000000021' ('owner' access): ResourceNotFound: The resource is not found.. Whether this group has a policy is UNKNOWN, which is
+           not the same as the group having none, so nothing was changed.
+--- action counts: Created=1, Failed=3
+PimPolicyNotFound records in -ErrorVariable: 0
+# 5.2-verbose.log, redacted, with line numbers:
+ 1: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+ 2: [Invoke-OERGraphRequest] GET v1.0/groups?$filter=displayName eq 'oer-s62-new'&$select=id,displayName
+ 3: Performing the operation "Create group" on target "oer-s62-new".
+ 4: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+ 5: [Invoke-OERGraphRequest] GET v1.0/groups?$filter=displayName eq 'oer-s62-new'&$select=id,displayName
+ 6: [Invoke-OERGraphRequest] POST v1.0/groups
+ 7: [Invoke-OERGraphRequest] GET v1.0/users?$filter=userPrincipalName eq 'person2%40example.com'&$select=id,userPrincipalName
+ 8: Performing the operation "Add time-bound member eligibility for '00000000-0000-0000-0000-000000000017' (30 days)" on target "oer-s62-new".
+ 9: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+10: [Add-OERGroupEligibility] Resolved group to '00000000-0000-0000-0000-000000000021'.
+11: [Add-OERGroupEligibility] Resolved principal to '00000000-0000-0000-0000-000000000017'.
+12: [Invoke-OERGraphRequest] POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests
+13: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+14: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+15: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+16: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s62-new".
+17: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+18: [Set-OERGroupPimPolicy] Resolved group to '00000000-0000-0000-0000-000000000021'.
+19: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+20: [Invoke-OERGraphRequest] GET v1.0/users?$filter=userPrincipalName eq 'person1%40example.com'&$select=id,userPrincipalName
+21: [Invoke-OERGraphRequest] GET v1.0/groups?$filter=displayName eq 'oer-s62-approvers'&$select=id,displayName
+22: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+23: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+24: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+25: Performing the operation "Set PIM policy (owner): activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000016],groups=[00000000-0000-0000-0000-000000000013])" on target "oer-s62-new".
+26: [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+27: [Set-OERGroupPimPolicy] Resolved group to '00000000-0000-0000-0000-000000000021'.
+28: [Invoke-OERGraphRequest] GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '00000000-0000-0000-0000-000000000021' and scopeType eq 'Group'
+29: Invoke-OERStructure complete. 4 record(s): Created=1, Failed=3
+```
+
+### Run 2: 5.3 -- PASS
+
+Needed, after 5.2's three `Failed` rows; one run, about a minute after 5.2, applied the
+eligibility and both policies. Four result rows and nothing else: the eligibility request no longer
+appears among them ("fix: keep the eligibility request out of the apply results"). No retry line, no
+warning, no error.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== 5.3 -- raw/s62/5.3.json
+--- offline validation: Valid = True, findings = 0
+--- Invoke-OERStructure -Include Groups -Confirm:$false -Verbose
+--- step-4 retry lines: 0 (all 39 verbose lines are in 5.3-verbose.log)
+--- warnings, in the order written: 0
+--- errors: 0
+--- results: 4
+Section : groups
+Item    : oer-s62-new
+Action  : Unchanged
+Detail  : group properties match
+Section : groups
+Item    : oer-s62-new
+Action  : Updated
+Detail  : set time-bound member eligibility for 'person2@example.com' (30 days): time-bound member eligibility (30 days) is absent
+Section : groups
+Item    : oer-s62-new
+Action  : Updated
+Detail  : pimPolicy (member) set: activationMaxHours=2
+Section : groups
+Item    : oer-s62-new
+Action  : Updated
+Detail  : pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000016],groups=[00000000-0000-0000-0000-000000000013])
+--- action counts: Unchanged=1, Updated=3
+# 5.3-verbose.log, redacted, the writes:
+Performing the operation "Add time-bound member eligibility for '00000000-0000-0000-0000-000000000017' (30 days)" on target "oer-s62-new".
+[Invoke-OERGraphRequest] POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests
+Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s62-new".
+[Invoke-OERGraphRequest] PATCH beta/policies/roleManagementPolicies/Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000022/rules/Expiration_EndUser_Assignment
+Performing the operation "Set PIM policy (owner): activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000016],groups=[00000000-0000-0000-0000-000000000013])" on target "oer-s62-new".
+[Invoke-OERGraphRequest] PATCH beta/policies/roleManagementPolicies/Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023/rules/Expiration_EndUser_Assignment
+[Invoke-OERGraphRequest] PATCH beta/policies/roleManagementPolicies/Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023/rules/Approval_EndUser_Assignment
+Invoke-OERStructure complete. 4 record(s): Unchanged=1, Updated=3
+```
+
+### Run 2: 5.4 -- PASS
+
+Two assignments on two different policy ids; member PT2H, approval off; owner PT3H, approval on, the
+two approvers; the module agrees.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+roleDefinitionId policyId
+---------------- --------
+member           Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000022
+owner            Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023
+--- member: policy Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000022, activation maximumDuration PT2H
+--- 5.4-member-raw: policy Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000022, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 0
+--- owner: policy Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023, activation maximumDuration PT3H
+--- 5.4-owner-raw: policy Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023, isApprovalRequired = True, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 2
+odataType                     id                                   userId groupId description
+---------                     --                                   ------ ------- -----------
+#microsoft.graph.singleUser   00000000-0000-0000-0000-000000000016                OER S62 Approver
+#microsoft.graph.groupMembers 00000000-0000-0000-0000-000000000013                oer-s62-approvers
+--- member (module): PolicyId Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000022, ActivationMaxHours 2, RequireApproval False, approvers 0
+--- owner (module): PolicyId Group_00000000-0000-0000-0000-000000000021_00000000-0000-0000-0000-000000000023, ActivationMaxHours 3, RequireApproval True, approvers 2
+```
+
+### Run 2: 5.5 -- PASS
+
+Four Unchanged rows.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== 5.5 -- raw/s62/5.5.json
+--- offline validation: Valid = True, findings = 0
+--- Invoke-OERStructure -Include Groups -Confirm:$false
+--- warnings, in the order written: 0
+--- errors: 0
+--- results: 4
+Section : groups
+Item    : oer-s62-new
+Action  : Unchanged
+Detail  : group properties match
+Section : groups
+Item    : oer-s62-new
+Action  : Unchanged
+Detail  : eligibility for 'person2@example.com' (member) already matches
+Section : groups
+Item    : oer-s62-new
+Action  : Unchanged
+Detail  : pimPolicy (member) already matches
+Section : groups
+Item    : oer-s62-new
+Action  : Unchanged
+Detail  : pimPolicy (owner) already matches
+--- action counts: Unchanged=4
+```
+
+### Run 2: T.1 -- PASS
+
+The three targets are 1.x's policy ids. For the Azure policy the plan restores the baseline
+approvers -- run 1's residue, `...01` and `...03` -- and its approval step reports `NoChange`,
+the case the check says to record and carry on from.
+
+```text
+What if: Performing the operation "Patch rule Approval_EndUser_Assignment" on target "PIM policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000019".
+What if: Performing the operation "Patch rule Approval_EndUser_Assignment" on target "PIM policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000020".
+What if: Performing the operation "Update rules: Approval_EndUser_Assignment" on target "role management policy '/subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000007'".
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+--- member: restoring RequireApproval = False
+--- errors published by Set-OERGroupPimPolicy: 0 (other records collected, not shown: 0)
+--- owner: restoring RequireApproval = False
+--- errors published by Set-OERGroupPimPolicy: 0 (other records collected, not shown: 0)
+--- arm: restoring the baseline approvers (1 user(s), 1 group(s))
+--- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+--- arm: restoring RequireApproval = False
+--- errors published by Set-OERRoleManagementPolicy: 1 (other records collected, not shown: 0)
+    ERROR [NoChange,Set-OERRoleManagementPolicy]: No applicable policy rule changed.
+```
+
+### Run 2: T.2 -- PASS
+
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+--- member: restoring RequireApproval = False
+--- errors published by Set-OERGroupPimPolicy: 0 (other records collected, not shown: 0)
+--- owner: restoring RequireApproval = False
+--- errors published by Set-OERGroupPimPolicy: 0 (other records collected, not shown: 0)
+--- arm: restoring the baseline approvers (1 user(s), 1 group(s))
+--- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+--- arm: restoring RequireApproval = False
+--- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+```
+
+### Run 2: T.3 -- PASS for the group policies; the Azure policy lost one of run 1's approvers
+
+Both group policies: approval off, the same policy id, `ActivationMaxHours` 8, no approver -- this
+run never wrote them. The Azure policy: approval off, the same policy id, and ONE approver,
+`...01` (run 1's deleted approver user, now with a display name), where the baseline had two: T.2
+sent both ids without an error and Azure kept only the user. Both are residue of run 1 and neither
+exists in the directory; what is left stays on an approval-off stage, where no one is asked.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+=== member: RequireApproval False (baseline False), ActivationMaxHours 8 (baseline 8), same policy id: True
+--- T.3-member-raw: policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000019, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 0
+=== owner: RequireApproval False (baseline False), ActivationMaxHours 8 (baseline 8), same policy id: True
+--- T.3-owner-raw: policy Group_00000000-0000-0000-0000-000000000018_00000000-0000-0000-0000-000000000020, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+    primary approvers: 0
+=== arm: RequireApproval False (baseline False), same policy id: True
+Id                                   UserType DisplayName
+--                                   -------- -----------
+00000000-0000-0000-0000-000000000001 User     OER S62 Approver
+```
+
+### Run 2: T.4 -- PASS
+
+Eight `What if:` lines, every one naming an `oer-s62` target; the resource group carries the
+tag.
+
+```text
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+What if: Performing the operation "Delete the resource group (Azure completes it asynchronously)" on target "resource group 'oer-s62-rg' in subscription '<SubscriptionName>' (tag purpose = oer-s62-live-verification)".
+What if: Performing the operation "Remove the member eligibility of principal 00000000-0000-0000-0000-000000000017" on target "oer-s62-pim".
+What if: Performing the operation "Remove the member eligibility of principal 00000000-0000-0000-0000-000000000017" on target "oer-s62-new".
+[oer-s62] Phase 2 sweep, still present: resource group oer-s62-rg (Succeeded -- Azure deletes a resource group asynchronously; re-read in a few minutes)
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+What if: Performing the operation "Delete security group (its PIM-for-Groups policies go with it)" on target "oer-s62-new".
+What if: Performing the operation "Delete security group (its PIM-for-Groups policies go with it)" on target "oer-s62-pim".
+What if: Performing the operation "Delete security group (its PIM-for-Groups policies go with it)" on target "oer-s62-approvers".
+What if: Performing the operation "Delete test user" on target "person1@example.com".
+What if: Performing the operation "Delete test user" on target "person2@example.com".
+[oer-s62] Phase 1 sweep, still present: users 'person1@example.com' (00000000-0000-0000-0000-000000000016)
+[oer-s62] Phase 1 sweep, still present: users 'person2@example.com' (00000000-0000-0000-0000-000000000017)
+[oer-s62] Phase 1 sweep, still present: groups 'oer-s62-approvers' (00000000-0000-0000-0000-000000000013)
+[oer-s62] Phase 1 sweep, still present: groups 'oer-s62-new' (00000000-0000-0000-0000-000000000021)
+[oer-s62] Phase 1 sweep, still present: groups 'oer-s62-pim' (00000000-0000-0000-0000-000000000018)
+[oer-s62] WhatIf: nothing was created or removed.
+[oer-s62] Done.
+```
+
+### Run 2: T.5 -- PASS on the second run
+
+Run 1 removed everything; its sweep, right after the deletions, still listed four of the five
+objects, as in run 1. T.6 then read nothing left, and run 2 found nothing to remove, with both
+sweeps clean.
+
+```text
+# run 1
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+[oer-s62] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+WARNING: Deleting resource group 'oer-s62-rg' permanently deletes ALL resources it contains.
+[oer-s62] Deletion of resource group oer-s62-rg accepted.
+WARNING: Removing PIM member eligibility for principal '00000000-0000-0000-0000-000000000017' from group '00000000-0000-0000-0000-000000000018'. The principal loses the ability to activate this member access.
+[oer-s62] Removed the member eligibility of principal 00000000-0000-0000-0000-000000000017 on oer-s62-pim.
+WARNING: Removing PIM member eligibility for principal '00000000-0000-0000-0000-000000000017' from group '00000000-0000-0000-0000-000000000021'. The principal loses the ability to activate this member access.
+[oer-s62] Removed the member eligibility of principal 00000000-0000-0000-0000-000000000017 on oer-s62-new.
+[oer-s62] Phase 2 sweep: no resource group starting with 'oer-s62' is left.
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] Deleted group oer-s62-new.
+[oer-s62] Deleted group oer-s62-pim.
+[oer-s62] Deleted group oer-s62-approvers.
+[oer-s62] Deleted user person1@example.com.
+[oer-s62] Deleted user person2@example.com.
+[oer-s62] Phase 1 sweep, still present: users 'person1@example.com' (00000000-0000-0000-0000-000000000016)
+[oer-s62] Phase 1 sweep, still present: users 'person2@example.com' (00000000-0000-0000-0000-000000000017)
+[oer-s62] Phase 1 sweep, still present: groups 'oer-s62-approvers' (00000000-0000-0000-0000-000000000013)
+[oer-s62] Phase 1 sweep, still present: groups 'oer-s62-pim' (00000000-0000-0000-0000-000000000018)
+[oer-s62] Done.
+# run 2
+Tenant Profile for the alias on this machine: False
+[oer-s62] Omnicit.EntraRBAC 1.0.2 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.0.2.
+[oer-s62] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+[oer-s62] Mode: REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s62', expected organization '<OrgName>'.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+[oer-s62] Tenant identification and Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+[oer-s62] Identified the test tenant: organization '<OrgName>', tenant id <TenantId>, verified domain <Domain>.
+[oer-s62] Identified the test subscription: '<SubscriptionName>' (<SubscriptionId>).
+[oer-s62] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+[oer-s62] Resource group oer-s62-rg does not exist.
+[oer-s62] Group oer-s62-pim does not exist.
+[oer-s62] Group oer-s62-new does not exist.
+[oer-s62] Phase 2 sweep: no resource group starting with 'oer-s62' is left.
+[oer-s62] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+[oer-s62] Phase 1 identity check: session app id is oer-live-cc: True
+[oer-s62] Phase 1 identity check: tenant is the test tenant: True
+[oer-s62] Phase 1 is signed in to the confirmed test tenant '<OrgName>' (<TenantId>).
+[oer-s62] Group oer-s62-new does not exist.
+[oer-s62] Group oer-s62-pim does not exist.
+[oer-s62] Group oer-s62-approvers does not exist.
+[oer-s62] User person1@example.com does not exist.
+[oer-s62] User person2@example.com does not exist.
+[oer-s62] Phase 1 sweep: no user or group starting with 'oer-s62' is left.
+[oer-s62] Done.
+```
+
+### Run 2: T.6 -- PASS
+
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+Get-OERGroup: <harness>\T.6.ps1:1:1
+Line |
+   1 |  Get-OERGroup -Filter "startswith(displayName,'$Prefix')" -ErrorAction ...
+     |  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | No group found for 'startswith(displayName,'oer-s62')'.
+```
+
+### Run 2: T.7 -- PASS: the count line prints 0
+
+No `Removed` row; the `Created`/`Updated` rows are exactly 5.2's `Created` and 5.3's three
+`Updated` (section 5 is all this run applied). The count line prints `0`: every row names an
+`oer-s62` object, with no stray eligibility request among them.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+CheckId Section Item        Action  Detail
+------- ------- ----        ------  ------
+5.2     groups  oer-s62-new Created created group oer-s62-new (00000000-0000-0000-0000-000000000021)
+5.3     groups  oer-s62-new Updated set time-bound member eligibility for 'person2@example.com' (30 days): time-bound member eligibility (30 days) is absent
+5.3     groups  oer-s62-new Updated pimPolicy (member) set: activationMaxHours=2
+5.3     groups  oer-s62-new Updated pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000016],groups=[00000000-0000-0000-0000-000000000013])
+0
+```
+
+### Run 2: T.8 -- PASS
+
+Both identity lines True, then 0 and 0.
+
+```text
+Tenant Profile for the alias on this machine: False
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+identity check: session app id is oer-live-cc: True
+identity check: tenant is the test tenant: True
+0
+0
+ClientId               : <AppId>
+TenantId               : <TenantId>
+Scopes                 : {RoleManagementPolicy.ReadWrite.Directory, PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup, RoleEligibilitySchedule.ReadWrite.Directory, AuthenticationContext.Read.All...}
+AuthType               : AppOnly
+TokenCredentialType    : ClientCertificate
+CertificateThumbprint  : <Thumbprint>
+CertificateSubjectName :
+SendCertificateChain   : False
+Account                :
+LoginHint              :
+HomeAccountId          :
+AppName                : oer-live-cc
+ContextScope           : Process
+Certificate            :
+PSHostVersion          : 7.6.6
+ManagedIdentityId      :
+ClientSecret           :
+Environment            : Global
+WamEnabled             : False
+```
+
+### Run 2: T.9 -- PASS
+
+The results above were written from the raw folder with the placeholder rules in this section's
+first paragraph, and a scan found no value from the test environment, no id that is not a
+placeholder, and no address on the test domain. Then the folder was deleted.
+
+```text
+raw/s62 files deleted: 48
+raw/s62 exists after: False
+ M docs/live-verification/feat-pim-group-approval-checklist.md
+```
