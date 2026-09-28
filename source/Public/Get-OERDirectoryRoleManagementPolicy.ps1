@@ -33,9 +33,11 @@ function Get-OERDirectoryRoleManagementPolicy {
     .PARAMETER Role
     The directory role: display name (e.g. 'Reports Reader') or role definition GUID. A GUID is
     used verbatim with no lookup; a name is resolved through Resolve-OERDirectoryRoleDefinitionId,
-    which throws when the name matches more than one role definition. Tab-completion offers the
-    built-in Microsoft Entra directory roles; any other built-in or custom role name is still
-    accepted.
+    which refuses a name that matches more than one role definition (AmbiguousRoleName). No match
+    is RoleDefinitionNotFound; a refused lookup is RoleDefinitionReadFailed. Each is a
+    non-terminating error, and nothing is returned for that role. The returned RoleName is the
+    name as typed, or empty when a GUID was given. Tab-completion offers the built-in Microsoft
+    Entra directory roles; any other built-in or custom role name is still accepted.
 
     .PARAMETER PolicyId
     The Microsoft Graph roleManagementPolicy id to read directly, for example
@@ -55,7 +57,8 @@ function Get-OERDirectoryRoleManagementPolicy {
     roleManagementPolicyAssignments list call, plus one paged role-definitions list to supply each
     policy's RoleName. A failure reading the names is reported with Write-Warning and leaves
     RoleName empty on every returned object; the policies themselves still come from the
-    authoritative assignment read, whose own failure is a terminating read error for the call.
+    authoritative assignment read, whose own failure is a non-terminating PolicyReadFailed error
+    that returns no policy at all.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.

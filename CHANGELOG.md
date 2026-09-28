@@ -40,14 +40,16 @@ unknown keys in `groups` and `pimPolicy`.
 PIM eligibility to a group.
 
 `Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and update
-a Microsoft Entra directory role's PIM settings -- activation length, MFA, justification, ticket,
-approval and approvers, authentication context, permanence and notifications -- by role, by
-policy id, or with `-All`, returning the same `Omnicit.EntraRBAC.RoleManagementPolicy` object as
-the Azure cmdlets, `Scope` `/`, no Azure Resource Manager token needed. A new apply-document
-section, `directoryRoleManagementPolicies[]`, applies after access reviews and before the Azure
-sections, not yet exported by `Get-OERInventory`. Approvers by UPN or group name converge, a
-declared side replaces only that side, MFA and an authentication context are reconciled, and
-`-Role` tab-completes built-in role names.
+a directory role's PIM settings, by role or by policy id; Get also reads every directory role with
+`-All`. Both return the same `Omnicit.EntraRBAC.RoleManagementPolicy` object as the Azure cmdlets,
+`Scope` `/`, and need no Azure token. Unlike `Set-OERRoleManagementPolicy`, approvers are replaced
+per side (`-ApproverUser` keeps the group approvers and vice versa; an empty list clears that
+side), and an MFA and authentication-context combination the call does not touch is left alone.
+The new apply-document section `directoryRoleManagementPolicies[]` runs between access reviews and
+the Azure sections and is not yet exported by `Get-OERInventory`; approvers named by UPN or group
+name are resolved first, so a re-run reports `Unchanged`. `-Role` tab-completes built-in role
+names. `Get-OERRequiredScope` lists the least-privilege Graph permissions; delegated callers need
+the Privileged Role Administrator role to change a policy.
 
 ## [1.0.1] - 2026-09-23
 
