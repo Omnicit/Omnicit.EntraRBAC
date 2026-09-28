@@ -84,10 +84,18 @@ it. Commits are named by SUBJECT, never by hash: the hashes change when the bran
   `Updated` leaves no `PimPolicyNotFound` record behind. While it waits, a `404 ResourceNotFound`
   counts as not listed yet: a group PIM does not know yet answers the question that way, which this
   file's first run measured ("fix: wait through a 404 for the policy of a group created in the same
-  run"). With the budget spent it reports `Failed` with a replication message that names a re-run
-  and gives no advice about eligibility: Graph lists a group's policies whether or not it was ever
-  onboarded (Microsoft Graph documentation, "Onboarding groups to PIM for Groups"). A refused lookup
-  is never waited on, and neither is a group that already existed, a 404 included.
+  run"). Run 2 found the next step flapping too: a policy listed on the first look answered its read
+  with 404 a second later. The engine therefore reads a listed policy itself, through the private
+  `Get-OERListedGroupPimPolicy`, which declares that 404 the same way, and a 404 there starts over
+  from the listing within the same budget. `Set-OERGroupPimPolicy` is unchanged, and for a new group
+  it is called only once the wait has read the policy or been refused ("fix: start the new-group
+  policy wait over when a listed policy answers 404"). With
+  the budget spent it reports `Failed` with `PimPolicyNotFound` and a replication message that names
+  a re-run and gives no advice about eligibility: Graph lists a group's policies whether or not it
+  was ever onboarded (Microsoft Graph documentation, "Onboarding groups to PIM for Groups"). A
+  refused lookup or read is never waited on, and neither is a group that already existed, a 404
+  included. A 404 inside `Set-OERGroupPimPolicy`'s own lookup, after the wait has read the policy,
+  is not waited on either: it is that call's `Failed` row, and a re-run applies it.
 - **E. Unknown keys in `groups[]` items and `pimPolicy` blocks warn** ("feat: warn about unknown keys
   in groups and pimPolicy blocks"). `Test-OERStructure` reports each as a Warning, with a
   `Did you mean '<current name>'?` suffix for the five field names the inventory README used to
@@ -319,7 +327,7 @@ function Invoke-S62Check {
 
     if ($VerboseLog) {
         $VerboseRecords | ForEach-Object { $_.Message } | Set-Content -Path (Join-Path $Raw "$Id-verbose.log") -Encoding utf8NoBOM
-        $global:S62Retry = @($VerboseRecords | Where-Object { $_.Message -like '*is not listed yet; retry*' } | ForEach-Object { $_.Message })
+        $global:S62Retry = @($VerboseRecords | Where-Object { $_.Message -match '; retry \d+ in \d+ s\.$' } | ForEach-Object { $_.Message })
         Write-Host "--- step-4 retry lines: $($S62Retry.Count) (all $($VerboseRecords.Count) verbose lines are in $Id-verbose.log)"
         $S62Retry | ForEach-Object { Write-Host "    VERBOSE: $_" }
     }
@@ -1668,7 +1676,9 @@ member policy, and the owner's settings landed there.
 - [ ] **5.2 Apply it, with the verbose stream captured for the retry lines.**
 
   ```powershell
+  "5.2 started (UTC): $([datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))"
   Invoke-S62Check -Id '5.2' -Json $Docs.NewGroup -Include Groups -Apply -VerboseLog
+  "5.2 ended (UTC): $([datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))"
   "PimPolicyNotFound records in -ErrorVariable: $(@($S62Error | Where-Object { [string]$_.FullyQualifiedErrorId -like 'PimPolicyNotFound*' }).Count)"
   ```
 
@@ -1684,32 +1694,50 @@ member policy, and the owner's settings landed there.
   4. The owner policy: `Updated` `pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[<IdApprover>],groups=[<IdApprovers>])`
      -- or the same `Failed` text and error line for `'owner'` access.
 
-  The wait lines are zero to four
-  `Sync-OERStructureGroup: pimPolicy (<member or owner>) of new group 'oer-s62-new' is not listed yet; retry <n> in <s> s.`,
+  The wait lines are zero to four, each one of
+  `Sync-OERStructureGroup: pimPolicy (<member or owner>) of new group 'oer-s62-new' is not listed yet; retry <n> in <s> s.`
+  or
+  `Sync-OERStructureGroup: pimPolicy (<member or owner>) of new group 'oer-s62-new' is listed but its read answers 404; retry <n> in <s> s.`,
   across BOTH access types together, with the delays `2`, `4`, `8`, `16` in that order and `<n>`
   counting within each access type -- one budget per group item, spent by whichever access type needs
   it first (an owner that finds the budget spent fails at once, with the same
-  `within the 30-second wait` text and no retry count). A look that Graph answers with 404 while the
-  group is too new for PIM is one of those waits, and the log shows it just before the wait line:
-  `[Get-OERPimGroupPolicyId] Microsoft Graph answered 404 ResourceNotFound for the policy assignments of group '<IdNew>'; reporting them as not listed yet.`
-  Record every wait line and every 404 line, and whether the path was exercised at all: the waits
-  between the first 404 and the first look that lists the policy bound how long the 404 lasted. No
-  warning. The last line prints `0` when both policy rows are `Updated`, wait lines or not: the
-  handler ASKS whether a policy is listed instead of reading it until it is, and a 404 is declared
-  as an answer on that question, so a run that ends `Updated` leaves no `PimPolicyNotFound` and no
-  `ResourceNotFound` record in `-ErrorVariable`. Each `... within the 30-second wait ...` row adds
-  exactly one -- that row's own record. The first policy update onboards the group, and its policy
-  ids change when it does, so the owner's policy id in the log can differ from the member's first
-  look; 5.4 reads which policy each access type ended on.
+  `within the 30-second wait` text and no retry count). A 404 is one of those waits, and the log
+  shows it just before the wait line: on the listing,
+  `[Get-OERPimGroupPolicyId] Microsoft Graph answered 404 ResourceNotFound for the policy assignments of group '<IdNew>'; reporting them as not listed yet.`,
+  and on the read of a listed policy,
+  `[Get-OERListedGroupPimPolicy] Microsoft Graph answered 404 ResourceNotFound for policy '<PolicyId>' of group '<IdNew>'; reporting it as not readable yet.`
+  A wait after a read's 404 is followed by a new listing, never by a second read of the same id.
+  Record every wait line and every 404 line, with the start and end times the block prints, and
+  whether the path was exercised at all: the waits between the first 404 and the first read that
+  succeeds bound how long the 404 lasted. No warning. The errors line prints `0` when both policy
+  rows are `Updated`, wait lines or not: the listing and the read both declare the 404 as an
+  answer, so a run that ends `Updated` leaves no record at all in `-ErrorVariable`. Each
+  `... within the 30-second wait ...` row adds exactly one -- that row's own `PimPolicyNotFound`
+  record. The first policy update onboards the group, and its policy ids change when it does, so
+  the owner's policy id in the log can differ from the member's first look; 5.4 reads which policy
+  each access type ended on.
+
+  5.2 passes on either of two outcomes: both policy rows `Updated`, after the wait or without it;
+  or a policy row `Failed` with `PimPolicyNotFound` and the replication message above, followed by a
+  5.3 re-run that reports it `Updated`. Write which of the two it was. A third outcome is accepted by
+  decision and recorded exactly: `Failed` `pimPolicy (<type>) update failed: Could not read the PIM-for-groups policy assignment ...`
+  with `PimPolicyReadFailed` lines from `Set-OERGroupPimPolicy` and `Invoke-OERStructure` naming
+  `ResourceNotFound`, AFTER the log shows the wait read that policy (an
+  `[Invoke-OERGraphRequest] GET .../policies/roleManagementPolicies/<PolicyId>/rules` line with no
+  `[Get-OERListedGroupPimPolicy]` 404 line after it). That 404 came from
+  `Set-OERGroupPimPolicy`'s own lookup, which does not wait; copy the row and every error line
+  verbatim, then re-run in 5.3.
   **Failure looks like:** the owner row `Updated` while 5.4 shows the owner's settings on the member
-  policy (the fallback defect); a `PimPolicyNotFound` count above `0` while both policy rows are
-  `Updated` (the wait left records behind); a `Failed` row naming `PimPolicyReadFailed` or a 403 (a
-  refusal, not replication -- record it, with any verbose line
+  policy (the fallback defect); any error record while both policy rows are `Updated` (the wait left
+  records behind); a `Failed` row naming `PimPolicyReadFailed` or a 403 with no successful read of
+  that policy in the log (a refusal, not replication -- record it, with any verbose line
   `Sync-OERStructureGroup: could not ask whether pimPolicy (...) of new group 'oer-s62-new' is listed (...); reading it directly.`
-  from the log; that line naming `ResourceNotFound` means the 404 was not waited on, the defect
-  this file's first run found); more than four wait lines, or a delay sequence other than 2, 4, 8,
-  16. If the budget runs out while Graph still answers 404, record how many looks it answered 404
-  and do not change the budget: that is a decision for the operator.
+  or
+  `Sync-OERStructureGroup: could not read the listed pimPolicy (...) of new group 'oer-s62-new' (...); reading it directly.`
+  from the log; either line naming `ResourceNotFound` means a 404 was not waited on, the defect
+  this file's first two runs found); more than four wait lines, or a delay sequence other than 2, 4,
+  8, 16. If the budget runs out while Graph still answers 404, record how many looks and reads it
+  answered 404 and do not change the budget: that is a decision for the operator.
   **Result:** Run 2 (2026-09-28, at `85d4144`, after the 404-wait fix): FAIL again, differently -- the
   policy was LISTED on the first look and the reads right after it answered 404, so the wait never
   ran; see "Run 2: 5.2" at the end of this file.
@@ -1904,6 +1932,7 @@ member policy, and the owner's settings landed there.
 - [x] **5.3 Only if 5.2 had a `Failed` row: re-run until it applies.** Otherwise write "not needed" as the result.
 
   ```powershell
+  "5.3 started (UTC): $([datetime]::UtcNow.ToString('yyyy-MM-dd HH:mm:ss'))"
   Invoke-S62Check -Id '5.3' -Json $Docs.NewGroup -Include Groups -Apply -VerboseLog
   ```
 
