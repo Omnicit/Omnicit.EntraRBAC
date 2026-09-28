@@ -39,13 +39,15 @@ unknown keys in `groups` and `pimPolicy`.
 `Invoke-OERStructure` no longer returns the eligibility request among its results when it adds a
 PIM eligibility to a group.
 
-`Get-OERDirectoryRoleManagementPolicy` reads the PIM role management policy of a Microsoft Entra
-directory role -- activation length, MFA, justification, ticket and approval requirements,
-authentication context, eligible and active permanence, and notifications -- by role name or id
-(`-Role`), by its Microsoft Graph policy id (`-PolicyId`), or for every directory role at once
-(`-All`). It returns the same tagged `Omnicit.EntraRBAC.RoleManagementPolicy` object
-`Get-OERRoleManagementPolicy` returns for an Azure role, with `Scope` always `/`, so the two read
-paths share tooling and output handling. No Azure Resource Manager token is required.
+`Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and update
+a Microsoft Entra directory role's PIM settings -- activation length, MFA, justification, ticket,
+approval and approvers, authentication context, permanence and notifications -- by role, by
+policy id, or with `-All`, returning the same `Omnicit.EntraRBAC.RoleManagementPolicy` object as
+the Azure cmdlets, `Scope` `/`, no Azure Resource Manager token needed. A new apply-document
+section, `directoryRoleManagementPolicies[]`, applies after access reviews and before the Azure
+sections, not yet exported by `Get-OERInventory`. Approvers by UPN or group name converge, a
+declared side replaces only that side, MFA and an authentication context are reconciled, and
+`-Role` tab-completes built-in role names.
 
 ## [1.0.1] - 2026-09-23
 
