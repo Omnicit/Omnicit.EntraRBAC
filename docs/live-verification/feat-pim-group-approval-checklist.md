@@ -132,10 +132,13 @@ shapes the tests assume. They cannot prove the five things this file is for:
 - **Exhausting the retry budget on purpose.** Check 5 records whatever real replication produces. If
   Graph lists both policies at once, the retry path is not exercised live and is pinned only by the
   `Sync-OERStructureGroup` suite -- say so on 5.2's result line.
-- **Restoring an EMPTY approver list with approval off.** No module call can express it: binding an
-  approver side implies approval, and `Set-OERGroupPimPolicy` refuses approval with no approver. T.3
-  records what is left on an approval-off stage, and T.5 deletes the policies with their group and
-  resource group.
+- **Restoring an EMPTY approver list with approval off through a module cmdlet.** No module call can
+  express it: binding an approver side implies approval, and `Set-OERGroupPimPolicy` refuses
+  approval with no approver. T.3 records what is left on an approval-off stage. The group policies go
+  with their groups in T.5. The Azure policy does NOT go with its resource group -- run 2 found it,
+  with run 1's approvers still on it, on a resource group created again under the same name -- so
+  the prerequisite script's `-Teardown` restores it to its defaults itself, through the module's own
+  ARM transport, BEFORE it deletes the resource group, and reads it again (T.4, T.5).
 - **The approval fields of an Azure policy in `Get-OERInventory`**, and the ARM whole-list approver
   semantics of `Set-OERRoleManagementPolicy`. Not changed by this branch.
 - **`PimPolicyNotFound` from `Get-`/`Set-OERGroupPimPolicy`.** Microsoft Graph lists policies even for
@@ -245,7 +248,13 @@ member eligibility for the eligible user (Graph lists a group's member and owner
 is onboarded too, but their ids change when it is -- Microsoft Graph documentation, "Onboarding
 groups to PIM for Groups" -- so 1.1 records them after the prerequisite script has run); and the
 resource group `oer-s62-rg`, with nothing assigned at it, whose Reader role
-management policy is this file's Azure test policy. It refuses to run while a user
+management policy is this file's Azure test policy. That policy must start at its defaults --
+approval off, no approver -- and the script reads it after creating or finding the resource group:
+a resource group deleted and created again under the same name gets its Reader policy back as it
+was left, so an earlier run's leftovers are reported approver by approver and, with `-Unattended`
+on the test's own resource group, restored at once (an operator at the keyboard is asked). A read of
+a group the script has just created is retried on a 404, which Graph answers for a few seconds after
+a create. It refuses to run while a user
 `oer-s62-nobody@<your-verified-domain>` exists (check 2.1 relies on that name resolving to nothing),
 and warns while a group `oer-s62-new` exists (check 5 must create it).
 
@@ -677,7 +686,13 @@ documents), re-run 0.3, and restore the policy ids with
   (an operator at the keyboard, without `-Unattended`, is asked once instead, the question naming
   that organization, its tenant id, and the subscription's display name and id), and later printed
   `Phase 1 is signed in to the confirmed test tenant ...` and
-  `Phase 2 (Connect-OER) is signed in to the confirmed test tenant ...`. No warning about
+  `Phase 2 (Connect-OER) is signed in to the confirmed test tenant ...`. After the resource group
+  line: `Setup: Reader policy at oer-s62-rg: approval required False, approvers 0; at its defaults
+  (approval off, no approver): True`. If it printed `False` instead, with one `approver on it:` line
+  per approver left from an earlier run, the next lines are a warning naming the leftovers,
+  `Restored the Reader role management policy at resource group 'oer-s62-rg' to its defaults.` and
+  the read again, ending `True` -- record every line. A read of a group created moments ago may print
+  `... failed (attempt n of 6, likely replication delay): ... 404 ...` before it succeeds. No warning about
   `oer-s62-new`, and none about the `purpose` tag of `oer-s62-rg`. The run ends with `Done.` and no
   error; the summary has one row each for the two
   users, the groups `oer-s62-approvers` and `oer-s62-pim` and the resource group `oer-s62-rg`, one
@@ -851,10 +866,12 @@ Nothing below this section may run before it: the Teardown restores exactly what
   ```
 
   **Expect:** `Scope` is `<RgScope>`, `RoleName` `Reader`, `RequireApproval` `False` and no approvers
-  -- the Azure default for a new resource group. The baseline file holds `member`, `owner` and `arm`,
-  each with its `PolicyId`, `RequireApproval` and `Approvers`.
+  -- the defaults, which the prerequisite script has checked (0.2). The baseline file holds `member`,
+  `owner` and `arm`, each with its `PolicyId`, `RequireApproval` and `Approvers`.
   **Failure looks like:** a read error (the ARM token or the Owner role is missing -- see Setup), or
-  approval already on (record it: 4.2 may then report `Unchanged`, and the Teardown restores it).
+  approval on or an approver present: the prerequisite script's check did not run or its restore
+  was declined -- record it, and run the script again (with `-Unattended` it restores the leftovers)
+  before any check writes to the policy.
   **Result:** PASS -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
   (app-only), every output below passed through the run's redaction first. The Reader policy at
   `oer-s62-rg`: approval off, no approver. The baseline file holds member, owner and arm. (Same
@@ -2375,8 +2392,11 @@ is applied: validation only.
 ### Teardown
 
 The approval changes are undone FIRST, while the objects still exist, then the prerequisite script
-removes everything. Deleting `oer-s62-pim` and `oer-s62-new` removes their PIM-for-Groups policies,
-and deleting `oer-s62-rg` removes its role management policies.
+removes everything. Deleting `oer-s62-pim` and `oer-s62-new` removes their PIM-for-Groups policies.
+Deleting `oer-s62-rg` does NOT remove its Reader role management policy -- it outlives the resource
+group and is found as it was left when the name is used again (run 2) -- so the prerequisite
+script's `-Teardown` restores that policy to its defaults, approval off and no approver, BEFORE it
+deletes the resource group, and reads it again (T.5).
 
 - [x] **T.1 The restore plan.** `-WhatIf`.
 
@@ -2457,10 +2477,13 @@ and deleting `oer-s62-rg` removes its role management policies.
   `isApprovalRequired = False`. Where 1.x recorded approvers, exactly those. Where it recorded none --
   the expected case -- the approvers the checks left stay on the approval-off stage, and that is the
   one expected difference: the member policy keeps `Group` `<IdApprovers>` (3.4), the owner policy
-  keeps `User` `<IdApprover>` (3.7), and the Azure policy keeps `<IdApprover>` and `<IdApprovers>`. No module call can empty an approver
-  list while turning approval off (see "What this file does not check"); with approval off none of
-  them is ever asked, and T.5 deletes all three policies with their group and resource group. Record
-  the residue.
+  keeps `User` `<IdApprover>` (3.7), and the Azure policy keeps `<IdApprover>` and `<IdApprovers>`. No
+  module call can empty an approver list while turning approval off (see "What this file does not
+  check"); with approval off none of them is ever asked. The two group policies go with their groups
+  in T.5. The Azure policy does NOT go with its resource group: deleting a resource group leaves its
+  Reader policy behind, and one created again under the same name finds it as it was left (run 2).
+  So T.5 restores it to its defaults -- approval off, no approver -- BEFORE it deletes the resource
+  group, and reads it again. Record the residue here.
   **Failure looks like:** `RequireApproval` `True` on any of the three, a changed policy id, or a
   changed `ActivationMaxHours`.
   **Result:** PASS -- 2026-09-28, run by Claude Code as the certificate identity `oer-live-cc`
@@ -2507,8 +2530,11 @@ and deleting `oer-s62-rg` removes its role management policies.
   **Expect:** both identity lines `True` after each of its two sign-ins; the tenant is identified
   first, through the `Connect-OER` sign-in, exactly as in 0.2 (the `Identified the test tenant` and
   `Identified the test subscription` lines, no question under `-WhatIf`); the later Phase 1 sign-in
-  reports it is signed in to the confirmed test tenant. Then
-  `What if:` lines, and nothing else changed, for: deleting the resource group `oer-s62-rg` (its
+  reports it is signed in to the confirmed test tenant. Then, BEFORE the resource group's line, a read
+  `Teardown, before the restore: Reader policy at oer-s62-rg: approval required ..., approvers <n>; at its defaults (approval off, no approver): <True or False>`
+  (with one `approver on it:` line per approver) and
+  `What if: Performing the operation "Restore to its defaults before the resource group is deleted: approval off, no approver" on target "Reader role management policy at resource group 'oer-s62-rg'".`
+  Then `What if:` lines, and nothing else changed, for: deleting the resource group `oer-s62-rg` (its
   target names `tag purpose = oer-s62-live-verification`); removing the member eligibility of
   `<IdEligible>` on `oer-s62-pim` and on `oer-s62-new`; deleting the groups `oer-s62-new`,
   `oer-s62-pim` and `oer-s62-approvers`; deleting the two users. Every name starts with `oer-s62`.
@@ -2565,13 +2591,21 @@ and deleting `oer-s62-rg` removes its role management policies.
   `Unattended run: the confirmation question is not asked; ...` (an operator at the keyboard, without
   `-Unattended`, is asked once instead); the later Phase 1 sign-in reports
   `... is signed in to the confirmed test tenant ...`. No
-  `Refusing to delete resource group` warning. Then `Deletion of resource group oer-s62-rg accepted.`,
+  `Refusing to delete resource group` warning. Then, BEFORE the resource group is deleted, the Azure
+  policy restore: the read `Teardown, before the restore: Reader policy at oer-s62-rg: ...` (the
+  residue T.3 recorded, one `approver on it:` line per approver),
+  `Restored the Reader role management policy at resource group 'oer-s62-rg' to its defaults.` and the
+  read again,
+  `Teardown, read again after the restore: Reader policy at oer-s62-rg: approval required False, approvers 0; at its defaults (approval off, no approver): True`.
+  Then `Deletion of resource group oer-s62-rg accepted.`,
   one `Removed the member eligibility of principal <IdEligible> on ...` line for `oer-s62-pim` and one
   for `oer-s62-new`, `Deleted group ...` for the three groups and `Deleted user ...` for the two
   users. The Phase 2 sweep reports `no resource group starting with 'oer-s62' is left.` or at most
   `oer-s62-rg` in `Deleting` state (Azure deletes it asynchronously); the Phase 1 sweep reports
   `no user or group starting with 'oer-s62' is left.`; `Done.`
-  **Failure looks like:** a sweep line `still present: ...` other than a `Deleting` resource group; an
+  **Failure looks like:** the read after the restore ending `False` -- the script then stops with
+  `... is not at its defaults after the restore. The resource group was NOT deleted ...`: look at the
+  policy before running T.5 again; a sweep line `still present: ...` other than a `Deleting` resource group; an
   error; a `Refusing to delete resource group oer-s62-rg` warning (see T.4 -- never delete it by hand
   before knowing whose it is). Re-run T.5 (it only removes what is still there) and record both runs. An
   `Authorization_RequestDenied` or a 403 on a deletion means the certificate identity lacks a
