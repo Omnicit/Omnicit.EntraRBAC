@@ -104,6 +104,23 @@ BeforeAll {
         @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = $Id; description = $Name }
     }
 
+    # A rule as JSON with its keys sorted at every level, so a PATCH body can be compared with the
+    # live rule it must equal whatever order either hashtable enumerates its keys in.
+    function ConvertTo-CanonicalJson ($Value) {
+        function ConvertTo-SortedNode ($Node) {
+            if ($Node -is [System.Collections.IDictionary]) {
+                $Sorted = [ordered]@{}
+                foreach ($Key in @($Node.Keys | Sort-Object)) { $Sorted[[string]$Key] = ConvertTo-SortedNode $Node[$Key] }
+                return $Sorted
+            }
+            if ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+                return , @(foreach ($Item in $Node) { ConvertTo-SortedNode $Item })
+            }
+            $Node
+        }
+        ConvertTo-SortedNode $Value | ConvertTo-Json -Depth 20 -Compress
+    }
+
     # The PATCH bodies sent, in order, and the primary approvers of the approval rule sent.
     function Get-SentRule ([string]$Id) { @($script:Calls | Where-Object { $_.RuleId -eq $Id }) }
     function Get-SentPrimaryApprover {
@@ -119,6 +136,8 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
         $script:LiveRules = New-TestRuleSet
         $script:Calls = [System.Collections.Generic.List[object]]::new()
         $script:RejectRuleId = @()
+        # A rule id here is accepted on its first PATCH and rejected on every later one.
+        $script:RejectRepeatRuleId = @()
 
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
         # Anything not matched by a filtered mock below is a call this cmdlet must not make.
@@ -156,6 +175,9 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
             $RuleId = ($Uri -split '/')[-1]
             $script:Calls.Add([pscustomobject]@{ Uri = $Uri; RuleId = $RuleId; Body = $Body })
             if ($script:RejectRuleId -contains $RuleId) { throw "Graph rejected rule '$RuleId'." }
+            if ($script:RejectRepeatRuleId -contains $RuleId -and @($script:Calls | Where-Object { $_.RuleId -eq $RuleId }).Count -gt 1) {
+                throw "Graph rejected the repeated PATCH of rule '$RuleId'."
+            }
             @{}
         }
         # An id resolves to itself (letter case preserved, as the real resolver returns a GUID
@@ -584,6 +606,102 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
                 -WarningAction SilentlyContinue -WarningVariable Warn
             @($script:Calls.RuleId) | Should -Be @('Expiration_EndUser_Assignment')
             $Warn | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'MFA and authentication context rules sent together, and one of them rejected' {
+        It '<Direction>: puts the accepted <First> back to its live version when <Second> is rejected' -TestCases @(
+            @{
+                Direction = 'context to MFA'
+                LiveSplat = @{ AuthContextEnabled = $true; AuthContextClaim = 'c1' }
+                Splat     = @{ RequireMfaOnActivation = $true }
+                First     = 'AuthenticationContext_EndUser_Assignment'
+                Second    = 'Enablement_EndUser_Assignment'
+                Mfa       = $false
+                Context   = 'c1'
+            }
+            @{
+                Direction = 'MFA to context'
+                LiveSplat = @{ ActivationEnabledRules = @('MultiFactorAuthentication', 'Justification') }
+                Splat     = @{ AuthenticationContextId = 'c1' }
+                First     = 'Enablement_EndUser_Assignment'
+                Second    = 'AuthenticationContext_EndUser_Assignment'
+                Mfa       = $true
+                Context   = $null
+            }
+        ) {
+            $script:LiveRules = New-TestRuleSet @LiveSplat
+            $LiveFirst = @($script:LiveRules | Where-Object { $_.id -eq $First })[0]
+            $script:RejectRuleId = @($Second)
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' @Splat -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+            # The pair in patch order, then exactly one compensating PATCH, of the first rule.
+            @($script:Calls.RuleId) | Should -Be @($First, $Second, $First)
+            (ConvertTo-CanonicalJson $script:Calls[0].Body) | Should -Not -Be (ConvertTo-CanonicalJson $LiveFirst)
+            (ConvertTo-CanonicalJson $script:Calls[2].Body) | Should -Be (ConvertTo-CanonicalJson $LiveFirst) -Because 'the compensating PATCH sends the rule exactly as it was read'
+            $script:Calls[2].Uri | Should -Be "v1.0/policies/roleManagementPolicies/$($script:PolicyId)/rules/$First"
+            # Neither rule of the pair is reported as changed, and the object shows both as read.
+            @($Result.ChangedRuleIds).Count | Should -Be 0
+            $Result.RequireMfaOnActivation | Should -Be $Mfa
+            $Result.AuthenticationContextId | Should -Be $Context
+            $Rejected = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERDirectoryRoleManagementPolicy' })
+            $Rejected.Count | Should -Be 1
+            $Rejected[0].Exception.Message | Should -BeLike "*rejected 1 of 2 rule(s): $Second.*"
+            $Rejected[0].Exception.Message | Should -BeLike "*Rule '$First', which Microsoft Graph had accepted, was put back to its value before this call*"
+            $Rejected[0].Exception.Message | Should -BeLike '*activation keeps the protection it had before the call.*'
+        }
+
+        It '<Direction>: keeps <First> in ChangedRuleIds and says what activation now requires when putting it back fails too' -TestCases @(
+            @{
+                Direction = 'context to MFA'
+                LiveSplat = @{ AuthContextEnabled = $true; AuthContextClaim = 'c1' }
+                Splat     = @{ RequireMfaOnActivation = $true }
+                First     = 'AuthenticationContext_EndUser_Assignment'
+                Second    = 'Enablement_EndUser_Assignment'
+                Mfa       = $false
+                Context   = $null
+                Requires  = 'neither multi-factor authentication nor an authentication context'
+            }
+            @{
+                Direction = 'context c1 to c2'
+                LiveSplat = @{ AuthContextEnabled = $true; AuthContextClaim = 'c1' }
+                Splat     = @{ AuthenticationContextId = 'c2'; RequireJustificationOnActivation = $false }
+                First     = 'Enablement_EndUser_Assignment'
+                Second    = 'AuthenticationContext_EndUser_Assignment'
+                Mfa       = $false
+                Context   = 'c1'
+                Requires  = "authentication context 'c1', but not multi-factor authentication"
+            }
+        ) {
+            $script:LiveRules = New-TestRuleSet @LiveSplat
+            $script:RejectRuleId = @($Second)
+            $script:RejectRepeatRuleId = @($First)
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' @Splat -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn
+            @($script:Calls.RuleId) | Should -Be @($First, $Second, $First)
+            @($Result.ChangedRuleIds) | Should -Be @($First)
+            $Result.RequireMfaOnActivation | Should -Be $Mfa
+            $Result.AuthenticationContextId | Should -Be $Context
+            $Rejected = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERDirectoryRoleManagementPolicy' })
+            $Rejected.Count | Should -Be 1
+            $Rejected[0].Exception.Message | Should -BeLike "*rejected 1 of 2 rule(s): $Second.*"
+            $Rejected[0].Exception.Message | Should -BeLike "*putting it back to its value before this call failed too*"
+            $Rejected[0].Exception.Message | Should -BeLike "*activation of this role now requires $Requires.*"
+            $Rejected[0].Exception.Message | Should -BeLike '*Run the same command again, or run Set-OERDirectoryRoleManagementPolicy with -RequireMfaOnActivation or -AuthenticationContextId set to the protection this role needs.*'
+            $Rejected[0].Exception.Message | Should -Not -BeLike '*keeps the protection*'
+            ($Warn -join ' ') | Should -BeLike "*Rule '$First'*could not be put back*"
+        }
+
+        It 'sends no compensating PATCH when the FIRST rule of the pair is rejected' {
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1'
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireMfaOnActivation $true -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+            @($script:Calls.RuleId) | Should -Be @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            @($Result.ChangedRuleIds) | Should -Be @('Enablement_EndUser_Assignment')
+            $Rejected = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERDirectoryRoleManagementPolicy' })
+            $Rejected.Count | Should -Be 1
+            $Rejected[0].Exception.Message | Should -Not -BeLike '*put back*'
         }
     }
 

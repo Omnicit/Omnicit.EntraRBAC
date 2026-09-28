@@ -30,7 +30,14 @@ function Set-OERDirectoryRoleManagementPolicy {
     the others: the cmdlet returns the policy object with the rejected rule at its live value and
     only the accepted rule ids in ChangedRuleIds, and then writes a non-terminating
     PolicyRulesRejected error naming the rejected rules, so a partial apply is detectable with
-    -ErrorAction Stop or $?. The returned object is the same Omnicit.EntraRBAC.RoleManagementPolicy
+    -ErrorAction Stop or $?. The authentication-context rule and the activation enablement rule are
+    the exception, since together they decide whether activation requires MFA or an authentication
+    context: when both are sent and Microsoft Graph accepts the first but rejects the second, the
+    first is PATCHed straight back to its live value, so activation keeps the protection it had
+    before the call instead of being left with neither. That rule is then left out of
+    ChangedRuleIds as well, and the error says it was put back. Should putting it back fail too,
+    the rule stays in ChangedRuleIds and the error states what activation of the role now requires
+    and how to set it. The returned object is the same Omnicit.EntraRBAC.RoleManagementPolicy
     that Get-OERDirectoryRoleManagementPolicy returns, with Scope '/', plus ChangedRuleIds.
 
     Approvers follow the Microsoft Graph semantics of Set-OERGroupPimPolicy, not the whole-list
@@ -445,6 +452,28 @@ function Set-OERDirectoryRoleManagementPolicy {
         # 11. One confirmation for the call, then one PATCH per rule. A rejected rule does not stop
         #     the others.
         if ($PSCmdlet.ShouldProcess("directory role management policy '$ResolvedPolicyId'", "Update rules: $($SendIds -join ', ')")) {
+            $LiveById = @{}
+            foreach ($LiveRule in $Rules) { if ($LiveRule.id) { $LiveById[[string]$LiveRule.id] = $LiveRule } }
+
+            # The authentication-context rule and the activation enablement rule together decide
+            # whether activation requires MFA or an authentication context, so when both are sent
+            # they are applied together or not at all. Should Microsoft Graph accept the first (in
+            # patch order) and reject the second, the first is PATCHed straight back to its live
+            # version: left half-applied, the pair can leave activation with NEITHER control -- a
+            # context disabled for an MFA flag that never arrived, or MFA cleared for a context that
+            # never arrived. Every changed rule is a clone of a live one (the patch builder refuses a
+            # rule the policy lacks), so the live version is always there to send back. A rejected
+            # FIRST half needs nothing: the second was then validated against an unchanged policy.
+            $PairIds = @($SendIds | Where-Object { $_ -in @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment') })
+            $PairFirst = $null
+            $PairSecond = $null
+            if ($PairIds.Count -eq 2) {
+                $PairFirst = $PairIds[0]
+                $PairSecond = $PairIds[1]
+            }
+            $Restored = $null
+            $RestoreError = $null
+
             $Accepted = [System.Collections.Generic.List[string]]::new()
             $Failed = [System.Collections.Generic.List[string]]::new()
             foreach ($Rule in $ToSend) {
@@ -461,14 +490,26 @@ function Set-OERDirectoryRoleManagementPolicy {
                     $Failed.Add($RuleId)
                     Write-Warning "Rule '$RuleId' of directory role management policy '$ResolvedPolicyId' was not applied: $($PSItem.Exception.Message)"
                 }
+
+                if ($RuleId -eq $PairSecond -and $Failed.Contains($RuleId) -and $Accepted.Contains($PairFirst)) {
+                    $LiveBody = $LiveById[$PairFirst] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
+                    try {
+                        Invoke-OERGraphRequest -Method PATCH -Uri ('v1.0/policies/roleManagementPolicies/{0}/rules/{1}' -f $ResolvedPolicyId, $PairFirst) -Body $LiveBody | Out-Null
+                        [void]$Accepted.Remove($PairFirst)
+                        $Restored = $PairFirst
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $RestoreError = $PSItem.Exception.Message
+                        Write-Warning "Rule '$PairFirst' of directory role management policy '$ResolvedPolicyId' could not be put back to its value before this call: $RestoreError"
+                    }
+                }
             }
 
-            # What was accepted, overlaid on the live rules: a rejected rule keeps its live version.
-            $LiveById = @{}
-            foreach ($LiveRule in $Rules) { if ($LiveRule.id) { $LiveById[[string]$LiveRule.id] = $LiveRule } }
+            # What was accepted, overlaid on the live rules: a rejected rule, and a rule put back
+            # above, keeps its live version.
             $Effective = @(foreach ($PlannedRule in @($Plan.Rules)) {
                     $PlannedId = [string]$PlannedRule.id
-                    if ($Failed.Contains($PlannedId) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
+                    if (($Failed.Contains($PlannedId) -or $PlannedId -eq $Restored) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
                 })
             $ConvertParams = @{
                 Rules         = $Effective
@@ -481,16 +522,35 @@ function Set-OERDirectoryRoleManagementPolicy {
                 $ConvertParams.RoleName = $RoleNameOut
                 $ConvertParams.RoleDefinitionId = $RoleDefinitionId
             }
-            ConvertTo-OERRoleManagementPolicy @ConvertParams
+            $PolicyOut = ConvertTo-OERRoleManagementPolicy @ConvertParams
+            $PolicyOut
 
             # A rejected rule is a partially applied PIM policy change on a directory role. A warning
             # alone leaves $? true and does not trip -ErrorAction Stop, so write a non-terminating
             # error AFTER the object, so a caller that traps the error has still received it.
             if ($Failed.Count -gt 0) {
-                Write-CmdletError -Message ([System.Exception]::new(
-                        "Directory role management policy '$ResolvedPolicyId' was not fully applied. Microsoft Graph " +
-                        "rejected $($Failed.Count) of $($ToSend.Count) rule(s): $($Failed -join ', '). Run " +
-                        "Get-OERDirectoryRoleManagementPolicy -PolicyId '$ResolvedPolicyId' to read the resulting state.")) `
+                $Message = "Directory role management policy '$ResolvedPolicyId' was not fully applied. Microsoft Graph " +
+                    "rejected $($Failed.Count) of $($ToSend.Count) rule(s): $($Failed -join ', ')."
+                if ($Restored) {
+                    $Message += " Rule '$Restored', which Microsoft Graph had accepted, was put back to its value before " +
+                        "this call, since it and '$PairSecond' together decide whether activation requires multi-factor " +
+                        'authentication or an authentication context: activation keeps the protection it had before the call.'
+                } elseif ($RestoreError) {
+                    # What activation requires now, read from the object just returned.
+                    $Protection = if ($PolicyOut.RequireMfaOnActivation) {
+                        'multi-factor authentication, but no authentication context'
+                    } elseif ($PolicyOut.AuthenticationContextId) {
+                        "authentication context '$($PolicyOut.AuthenticationContextId)', but not multi-factor authentication"
+                    } else {
+                        'neither multi-factor authentication nor an authentication context'
+                    }
+                    $Message += " Rule '$PairFirst' had been accepted, and putting it back to its value before this call " +
+                        "failed too ($RestoreError), so it stays changed: activation of this role now requires $Protection. " +
+                        'Run the same command again, or run Set-OERDirectoryRoleManagementPolicy with ' +
+                        '-RequireMfaOnActivation or -AuthenticationContextId set to the protection this role needs.'
+                }
+                $Message += " Run Get-OERDirectoryRoleManagementPolicy -PolicyId '$ResolvedPolicyId' to read the resulting state."
+                Write-CmdletError -Message ([System.Exception]::new($Message)) `
                     -ErrorId 'PolicyRulesRejected' -Category WriteError -TargetObject $ResolvedPolicyId -Cmdlet $PSCmdlet
             }
         }
