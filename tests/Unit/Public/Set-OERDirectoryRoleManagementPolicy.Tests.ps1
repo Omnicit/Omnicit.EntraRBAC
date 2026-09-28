@@ -1,0 +1,624 @@
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+
+    $script:PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+    $script:RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+    $script:User1 = 'bbbbbbbb-0000-0000-0000-000000000001'
+    $script:User2 = 'bbbbbbbb-0000-0000-0000-000000000002'
+    $script:GroupA = 'cccccccc-0000-0000-0000-000000000001'
+    $script:GroupB = 'cccccccc-0000-0000-0000-000000000002'
+
+    # The nine Microsoft Graph v1.0 rules this cmdlet can touch, as hashtables -- the shape
+    # Invoke-MgGraphRequest returns -- with v1.0 approver objects (userId / groupId, never id).
+    # -EnablementFirst lists the activation enablement rule BEFORE the authentication-context rule,
+    # so each of the two patch-order tests starts from the order the helper has to change.
+    function New-TestRuleSet {
+        param(
+            [string]$ActivationDuration = 'PT8H',
+            [string[]]$ActivationEnabledRules = @('Justification'),
+            [bool]$AuthContextEnabled = $false,
+            [string]$AuthContextClaim = '',
+            [bool]$ApprovalRequired = $false,
+            [object[]]$Approvers = @(),
+            [switch]$NoApprovalStage,
+            [switch]$EnablementFirst
+        )
+        function New-Target ([string]$Caller, [string]$Level) {
+            @{ caller = $Caller; operations = @('All'); level = $Level; inheritableSettings = @(); enforcedSettings = @() }
+        }
+        $Stages = if ($NoApprovalStage) { @() } else {
+            @(@{
+                    approvalStageTimeOutInDays      = 1
+                    isApproverJustificationRequired = $true
+                    escalationTimeInMinutes         = 0
+                    isEscalationEnabled             = $false
+                    primaryApprovers                = @($Approvers)
+                    escalationApprovers             = @()
+                })
+        }
+        $Expiration = @{
+            '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyExpirationRule'
+            id = 'Expiration_EndUser_Assignment'; isExpirationRequired = $true; maximumDuration = $ActivationDuration
+            target = New-Target -Caller 'EndUser' -Level 'Assignment'
+        }
+        $AuthContext = @{
+            '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'
+            id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $AuthContextEnabled; claimValue = $AuthContextClaim
+            target = New-Target -Caller 'EndUser' -Level 'Assignment'
+        }
+        $Enablement = @{
+            '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'
+            id = 'Enablement_EndUser_Assignment'; enabledRules = @($ActivationEnabledRules)
+            target = New-Target -Caller 'EndUser' -Level 'Assignment'
+        }
+        $Approval = @{
+            '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'
+            id = 'Approval_EndUser_Assignment'
+            target = New-Target -Caller 'EndUser' -Level 'Assignment'
+            setting = @{
+                isApprovalRequired               = $ApprovalRequired
+                isApprovalRequiredForExtension   = $false
+                isRequestorJustificationRequired = $true
+                approvalMode                     = 'SingleStage'
+                approvalStages                   = $Stages
+            }
+        }
+        $Rest = @(
+            @{
+                '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyExpirationRule'
+                id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P365D'
+                target = New-Target -Caller 'Admin' -Level 'Eligibility'
+            }
+            @{
+                '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyExpirationRule'
+                id = 'Expiration_Admin_Assignment'; isExpirationRequired = $true; maximumDuration = 'P180D'
+                target = New-Target -Caller 'Admin' -Level 'Assignment'
+            }
+            @{
+                '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'
+                id = 'Enablement_Admin_Assignment'; enabledRules = @('Justification')
+                target = New-Target -Caller 'Admin' -Level 'Assignment'
+            }
+            @{
+                '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyNotificationRule'
+                id = 'Notification_Admin_Admin_Eligibility'; notificationType = 'Email'; recipientType = 'Admin'
+                notificationLevel = 'All'; isDefaultRecipientsEnabled = $true; notificationRecipients = @()
+                target = New-Target -Caller 'Admin' -Level 'Eligibility'
+            }
+            @{
+                '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyNotificationRule'
+                id = 'Notification_Approver_EndUser_Assignment'; notificationType = 'Email'; recipientType = 'Approver'
+                notificationLevel = 'All'; isDefaultRecipientsEnabled = $true; notificationRecipients = @()
+                target = New-Target -Caller 'EndUser' -Level 'Assignment'
+            }
+        )
+        $Head = if ($EnablementFirst) { @($Expiration, $Enablement, $AuthContext) } else { @($Expiration, $AuthContext, $Enablement) }
+        @($Head) + @($Approval) + $Rest
+    }
+
+    function New-TestUserApprover ([string]$Id, [string]$Name = 'Person') {
+        @{ '@odata.type' = '#microsoft.graph.singleUser'; userId = $Id; description = $Name }
+    }
+    function New-TestGroupApprover ([string]$Id, [string]$Name = 'Approvers') {
+        @{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = $Id; description = $Name }
+    }
+
+    # The PATCH bodies sent, in order, and the primary approvers of the approval rule sent.
+    function Get-SentRule ([string]$Id) { @($script:Calls | Where-Object { $_.RuleId -eq $Id }) }
+    function Get-SentPrimaryApprover {
+        $Sent = @(Get-SentRule -Id 'Approval_EndUser_Assignment')
+        if ($Sent.Count -ne 1) { throw "Expected exactly one PATCH of the approval rule, got $($Sent.Count)." }
+        @(@($Sent[0].Body.setting.approvalStages)[0].primaryApprovers)
+    }
+}
+
+Describe 'Set-OERDirectoryRoleManagementPolicy' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        $script:LiveRules = New-TestRuleSet
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        $script:RejectRuleId = @()
+
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        # Anything not matched by a filtered mock below is a call this cmdlet must not make.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw "Unexpected Graph call: $Method $Uri" }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+            $Uri -like 'v1.0/roleManagement/directory/roleDefinitions*'
+        } {
+            @{ value = @(@{ id = 'aaaaaaaa-0000-0000-0000-000000000001'; displayName = 'Reports Reader' }) }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+            $Uri -like 'v1.0/policies/roleManagementPolicyAssignments*'
+        } {
+            @{
+                value = @(@{
+                        id               = 'assignment-1'
+                        policyId         = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+                        roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+                        scopeId          = '/'
+                        scopeType        = 'DirectoryRole'
+                        policy           = @{ id = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'; rules = @($script:LiveRules) }
+                    })
+            }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like 'v1.0/policies/roleManagementPolicies/*'
+        } {
+            @{
+                id        = ($Uri -replace '^v1\.0/policies/roleManagementPolicies/', '' -replace '\?.*$', '')
+                scopeId   = '/'
+                scopeType = 'DirectoryRole'
+                rules     = @($script:LiveRules)
+            }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'PATCH' } {
+            $RuleId = ($Uri -split '/')[-1]
+            $script:Calls.Add([pscustomobject]@{ Uri = $Uri; RuleId = $RuleId; Body = $Body })
+            if ($script:RejectRuleId -contains $RuleId) { throw "Graph rejected rule '$RuleId'." }
+            @{}
+        }
+        # An id resolves to itself (letter case preserved, as the real resolver returns a GUID
+        # input untouched); a name resolves through the map; anything else is not found.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+            $Map = @{
+                'person1@example.com' = 'bbbbbbbb-0000-0000-0000-000000000001'
+                'person2@example.com' = 'bbbbbbbb-0000-0000-0000-000000000002'
+                'grpA'                = 'cccccccc-0000-0000-0000-000000000001'
+                'grpB'                = 'cccccccc-0000-0000-0000-000000000002'
+            }
+            $Kind = if ($User) { 'User' } else { 'Group' }
+            $Name = if ($User) { $User } else { $Group }
+            $Id = if ($Name -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { $Name } else { $Map[$Name] }
+            if (-not $Id) { throw "$Kind '$Name' was not found." }
+            [pscustomobject]@{ PrincipalId = $Id; PrincipalType = $Kind }
+        }
+    }
+
+    Context 'guards that refuse the call before any write' {
+        It 'reports NothingToUpdate and makes no Graph call when no setting is supplied (<Shape>)' -TestCases @(
+            @{ Shape = 'ByPolicyId'; Splat = @{ PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222' } }
+            @{ Shape = 'ByRole'; Splat = @{ Role = 'Reports Reader' } }
+        ) {
+            Set-OERDirectoryRoleManagementPolicy @Splat -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'reports InvalidAuthenticationContext for a claim value that is not c followed by digits, before any Graph call' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'x1' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidAuthenticationContext,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses an explicit request for both an authentication context and MFA as InvalidPolicyChange without naming Azure, and sends nothing' {
+            # Live: MFA off, context off -- so only the caller's own request makes the combination.
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c1' -RequireMfaOnActivation $true `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyChange,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Match 'mutually exclusive'
+            # The patch builder's own backstop message names Azure PIM; a directory-role caller must
+            # never see that text.
+            $Reported[0].Exception.Message | Should -Not -Match 'Azure'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'reports InvalidDuration for an -EligibleDuration that is neither a day count nor an ISO duration' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -EligibleDuration 'forever' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidDuration,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'reports ApproverNotFound when one approver does not resolve, and reads and sends nothing' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverUser 'person1@example.com', 'nobody@example.com' `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'ApproverNotFound,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses an Azure Resource Manager policy id as InvalidPolicyId naming Set-OERRoleManagementPolicy, with no Graph call' {
+            Set-OERDirectoryRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' `
+                -ActivationMaxHours 2 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Match 'Set-OERRoleManagementPolicy'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses a policy id with an embedded query or fragment character as InvalidPolicyId, with no Graph call' {
+            Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_x?$expand=rules' -ActivationMaxHours 2 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Not -Match 'Azure Resource Manager'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'refuses a PIM for Groups policy id as InvalidPolicyId after reading it, and sends nothing' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+                $Method -ne 'PATCH' -and $Uri -like 'v1.0/policies/roleManagementPolicies/*'
+            } {
+                @{ id = 'Group_x'; scopeId = '33333333-3333-3333-3333-333333333333'; scopeType = 'Group'; rules = @($script:LiveRules) }
+            }
+            Set-OERDirectoryRoleManagementPolicy -PolicyId 'Group_33333333-3333-3333-3333-333333333333_22222222-2222-2222-2222-222222222222' `
+                -ActivationMaxHours 2 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Match 'Set-OERGroupPimPolicy'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'calls Initialize-OERAuth without -IncludeARM' {
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -Confirm:$false | Out-Null
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+        }
+    }
+
+    Context 'role and policy resolution' {
+        It 'reports RoleDefinitionNotFound and reads no policy when the resolver finds no role' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { $null }
+            Set-OERDirectoryRoleManagementPolicy -Role 'No Such Role' -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'RoleDefinitionNotFound,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'reports RoleDefinitionReadFailed, never RoleDefinitionNotFound, when the resolver throws' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { throw 'Forbidden: insufficient privileges' }
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'RoleDefinitionReadFailed,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'RoleDefinitionNotFound,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'reports AmbiguousRoleName with the candidate ids when the resolver refuses an ambiguous name' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Directory role name 'Dup' matches 2 role definitions (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222)."),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup')
+            }
+            Set-OERDirectoryRoleManagementPolicy -Role 'Dup' -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousRoleName,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        }
+
+        It 'reports PolicyNotFound when no policy assignment exists for the role' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+                $Uri -like 'v1.0/policies/roleManagementPolicyAssignments*'
+            } { @{ value = @() } }
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyNotFound,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'reports PolicyReadFailed, not PolicyNotFound, when the assignment read is refused' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+                $Uri -like 'v1.0/policies/roleManagementPolicyAssignments*'
+            } { throw 'Forbidden: insufficient privileges' }
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyReadFailed,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyNotFound,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'reports PolicyReadFailed when the read of a policy by id is refused' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter {
+                $Method -ne 'PATCH' -and $Uri -like 'v1.0/policies/roleManagementPolicies/*'
+            } { throw 'Forbidden: insufficient privileges' }
+            Set-OERDirectoryRoleManagementPolicy -PolicyId $script:PolicyId -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyReadFailed,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'binds -PolicyId from a piped object and reads that policy by id' {
+            $Result = [PSCustomObject]@{ PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222' } |
+                Set-OERDirectoryRoleManagementPolicy -ActivationMaxHours 2 -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/policies/roleManagementPolicies/DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222?$expand=rules'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -like 'v1.0/policies/roleManagementPolicyAssignments*'
+            }
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].Uri | Should -Be 'v1.0/policies/roleManagementPolicies/DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222/rules/Expiration_EndUser_Assignment'
+            $Result.RoleName | Should -BeNullOrEmpty
+            $Result.RoleDefinitionId | Should -BeNullOrEmpty
+        }
+
+        It 'leaves RoleName empty but reports the RoleDefinitionId when -Role is a GUID' {
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'aaaaaaaa-0000-0000-0000-000000000001' -ActivationMaxHours 4 -Confirm:$false
+            $Result.RoleName | Should -BeNullOrEmpty
+            $Result.RoleDefinitionId | Should -Be 'aaaaaaaa-0000-0000-0000-000000000001'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -like 'v1.0/roleManagement/directory/roleDefinitions*'
+            }
+        }
+    }
+
+    Context 'rule updates' {
+        It 'PATCHes only Expiration_EndUser_Assignment, at its v1.0 rule path, when -ActivationMaxHours changes' {
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -Confirm:$false
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and
+                $Uri -eq 'v1.0/policies/roleManagementPolicies/DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222/rules/Expiration_EndUser_Assignment'
+            }
+            $Body = $script:Calls[0].Body
+            $Body.maximumDuration | Should -Be 'PT4H'
+            # Read-modify-write: the live rule is sent back with only the field changed.
+            $Body.'@odata.type' | Should -Be '#microsoft.graph.unifiedRoleManagementPolicyExpirationRule'
+            $Body.isExpirationRequired | Should -BeTrue
+            $Body.target.caller | Should -Be 'EndUser'
+
+            $Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleManagementPolicy'
+            @($Result.ChangedRuleIds) | Should -Be @('Expiration_EndUser_Assignment')
+            $Result.Scope | Should -Be '/'
+            $Result.PolicyId | Should -Be 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+            $Result.RoleName | Should -Be 'Reports Reader'
+            $Result.RoleDefinitionId | Should -Be 'aaaaaaaa-0000-0000-0000-000000000001'
+            $Result.ActivationMaxHours | Should -Be 4
+        }
+
+        It 'reports NoChange and sends nothing when the supplied value already matches the live policy' {
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 8 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NoChange,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'PATCHes the eligibility expiration rule when permanence and a duration are supplied' {
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AllowPermanentEligibility $true -EligibleDuration 'P180D' -Confirm:$false
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Expiration_Admin_Eligibility'
+            $script:Calls[0].Body.isExpirationRequired | Should -BeFalse
+            $script:Calls[0].Body.maximumDuration | Should -Be 'P180D'
+            $Result.AllowPermanentEligibility | Should -BeTrue
+            $Result.EligibleDurationDays | Should -Be 180
+        }
+
+        It 'PATCHes a notification rule built by New-OERPolicyNotificationRule' {
+            $Note = New-OERPolicyNotificationRule -Event Activation -Recipient Approver -Level Critical -AdditionalRecipient 'person1@example.com'
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -NotificationRule $Note -Confirm:$false
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Notification_Approver_EndUser_Assignment'
+            $script:Calls[0].Body.notificationLevel | Should -Be 'Critical'
+            @($script:Calls[0].Body.notificationRecipients) | Should -Be @('person1@example.com')
+            @($Result.ChangedRuleIds) | Should -Be @('Notification_Approver_EndUser_Assignment')
+        }
+
+        It 'returns the policy with only the accepted rule in ChangedRuleIds, then writes PolicyRulesRejected naming the rejected rule' {
+            $script:RejectRuleId = @('Expiration_Admin_Eligibility')
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -AllowPermanentEligibility $true `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn
+            # A rejected rule does not stop the other: both were sent.
+            @($script:Calls).Count | Should -Be 2
+            @($Result.ChangedRuleIds) | Should -Be @('Expiration_EndUser_Assignment')
+            $Result.ActivationMaxHours | Should -Be 4
+            # The rejected rule keeps its live value on the returned object.
+            $Result.AllowPermanentEligibility | Should -BeFalse
+            $Rejected = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERDirectoryRoleManagementPolicy' })
+            $Rejected.Count | Should -Be 1
+            $Rejected[0].Exception.Message | Should -Match 'Expiration_Admin_Eligibility'
+            $Rejected[0].Exception.Message | Should -Not -Match 'Expiration_EndUser_Assignment'
+            ($Warn -join ' ') | Should -Match 'Expiration_Admin_Eligibility'
+        }
+
+        It 'writes no error when every rule is accepted' {
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -AllowPermanentEligibility $true `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+        }
+
+        It 'sends nothing and returns no object under -WhatIf' {
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 4 -WhatIf
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+    }
+
+    Context 'approvers (Microsoft Graph semantics)' {
+        It 'PATCHes the approval rule when an approver set of the same size changes, in the v1.0 shape' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA)
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup 'grpB' -Confirm:$false
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Approval_EndUser_Assignment'
+            $Primary = @(Get-SentPrimaryApprover)
+            $Primary.Count | Should -Be 1
+            $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.groupMembers'
+            $Primary[0].groupId | Should -Be 'cccccccc-0000-0000-0000-000000000002'
+            # v1.0 shape: exactly the discriminator and groupId -- no beta id, no read-only description.
+            @($Primary[0].Keys | Sort-Object) | Should -Be @('@odata.type', 'groupId')
+            $script:Calls[0].Body.setting.isApprovalRequired | Should -BeTrue
+            @($Result.Approvers.Id) | Should -Be @('cccccccc-0000-0000-0000-000000000002')
+        }
+
+        It 'reports NoChange when the bound approvers equal the live ones, whatever their letter case' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA)
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup 'CCCCCCCC-0000-0000-0000-000000000001' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NoChange,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            @($script:Calls).Count | Should -Be 0
+        }
+
+        It 'replaces only the user side and carries the live group side when only -ApproverUser is bound' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(
+                New-TestUserApprover -Id $script:User1
+                New-TestGroupApprover -Id $script:GroupA
+            )
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverUser 'person2@example.com' -Confirm:$false
+            $Primary = @(Get-SentPrimaryApprover)
+            $Primary.Count | Should -Be 2
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).userId | Should -Be @('bbbbbbbb-0000-0000-0000-000000000002')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).groupId | Should -Be @('cccccccc-0000-0000-0000-000000000001')
+        }
+
+        It 'clears the group side and keeps the live user when -ApproverGroup is bound to an empty list' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(
+                New-TestUserApprover -Id $script:User1
+                New-TestGroupApprover -Id $script:GroupA
+            )
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup @() -Confirm:$false
+            $Primary = @(Get-SentPrimaryApprover)
+            $Primary.Count | Should -Be 1
+            $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.singleUser'
+            $Primary[0].userId | Should -Be 'bbbbbbbb-0000-0000-0000-000000000001'
+        }
+
+        It 'carries a live approver of another kind untouched when an approver side is bound' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(
+                @{ '@odata.type' = '#microsoft.graph.requestorManager'; managerLevel = 1 }
+                New-TestUserApprover -Id $script:User1
+                New-TestGroupApprover -Id $script:GroupA
+            )
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverUser 'person2@example.com' -Confirm:$false
+            $Primary = @(Get-SentPrimaryApprover)
+            $Primary.Count | Should -Be 3
+            $Manager = @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.requestorManager' })
+            $Manager.Count | Should -Be 1
+            @($Manager[0].Keys | Sort-Object) | Should -Be @('@odata.type', 'managerLevel')
+            $Manager[0].managerLevel | Should -Be 1
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).userId | Should -Be @('bbbbbbbb-0000-0000-0000-000000000002')
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.groupMembers' }).groupId | Should -Be @('cccccccc-0000-0000-0000-000000000001')
+        }
+
+        It 'sends an approver named twice, by UPN and by id in another letter case, once' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA)
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' `
+                -ApproverUser 'person2@example.com', 'BBBBBBBB-0000-0000-0000-000000000002' -Confirm:$false
+            $Primary = @(Get-SentPrimaryApprover)
+            @($Primary | Where-Object { $_.'@odata.type' -eq '#microsoft.graph.singleUser' }).userId | Should -Be @('bbbbbbbb-0000-0000-0000-000000000002')
+        }
+
+        It 'refuses -RequireApproval $true with ApproverRequired when the live stage has no approver, and sends nothing' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $false -Approvers @()
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $true -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'ApproverRequired,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -BeLike '*has none on its live approval rule*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'refuses with ApproverRequired when -ApproverGroup @() leaves no approver at all, and sends nothing' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA)
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup @() -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'ApproverRequired,Set-OERDirectoryRoleManagementPolicy' })
+            $Reported.Count | Should -Be 1
+            $Reported[0].Exception.Message | Should -BeLike '*would have none*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'turns approval off with -RequireApproval $false alone and keeps the live approver object on the stage' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA -Name 'PIM Approvers')
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -Confirm:$false
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Approval_EndUser_Assignment'
+            $script:Calls[0].Body.setting.isApprovalRequired | Should -BeFalse
+            $Primary = @(Get-SentPrimaryApprover)
+            $Primary.Count | Should -Be 1
+            $Primary[0].'@odata.type' | Should -Be '#microsoft.graph.groupMembers'
+            $Primary[0].groupId | Should -Be 'cccccccc-0000-0000-0000-000000000001'
+            $Primary[0].description | Should -Be 'PIM Approvers'
+            $Result.RequireApproval | Should -BeFalse
+        }
+
+        It 'requires approval when approvers are supplied, even beside -RequireApproval $false' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $false -Approvers @()
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup 'grpB' -Confirm:$false
+            $script:Calls[0].Body.setting.isApprovalRequired | Should -BeTrue
+            @(Get-SentPrimaryApprover).Count | Should -Be 1
+        }
+    }
+
+    Context 'MFA and authentication context' {
+        It 'clears live MFA when a context is set, and PATCHes the enablement rule BEFORE the context rule' {
+            # Default fixture order lists the context rule first, so the helper has to move it.
+            $script:LiveRules = New-TestRuleSet -ActivationEnabledRules @('MultiFactorAuthentication', 'Justification')
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c1' -Confirm:$false `
+                -WarningAction SilentlyContinue -WarningVariable Warn
+            @($script:Calls.RuleId) | Should -Be @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment')
+            @($script:Calls[0].Body.enabledRules) | Should -Be @('Justification')
+            $script:Calls[1].Body.isEnabled | Should -BeTrue
+            $script:Calls[1].Body.claimValue | Should -Be 'c1'
+            ($Warn -join ' ') | Should -Match 'mfa cleared'
+            @($Result.ChangedRuleIds | Sort-Object) | Should -Be @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            $Result.RequireMfaOnActivation | Should -BeFalse
+            $Result.AuthenticationContextId | Should -Be 'c1'
+        }
+
+        It 'disables a live context when MFA is requested, and PATCHes the context rule BEFORE the enablement rule' {
+            # This fixture lists the enablement rule first, so the helper has to move the context rule.
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1' -EnablementFirst
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireMfaOnActivation $true -Confirm:$false `
+                -WarningAction SilentlyContinue -WarningVariable Warn
+            @($script:Calls.RuleId) | Should -Be @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            $script:Calls[0].Body.isEnabled | Should -BeFalse
+            $script:Calls[0].Body.claimValue | Should -Be ''
+            @($script:Calls[1].Body.enabledRules | Sort-Object) | Should -Be @('Justification', 'MultiFactorAuthentication')
+            ($Warn -join ' ') | Should -Match "authentication context 'c1' disabled"
+        }
+
+        It 'leaves an untouched MFA plus context combination alone on an unrelated change' {
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1' -ActivationEnabledRules @('MultiFactorAuthentication')
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ActivationMaxHours 2 -Confirm:$false `
+                -WarningAction SilentlyContinue -WarningVariable Warn
+            @($script:Calls.RuleId) | Should -Be @('Expiration_EndUser_Assignment')
+            $Warn | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'one confirmation per call' {
+        BeforeAll {
+            # Pester mocks do not cross into the answering runspace, so the fakes are installed in
+            # that runspace's own copy of the module (see tests/Unit/TestHelpers/OERConfirmHost.ps1).
+            $script:ConfirmScenario = {
+                Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+                $Module = Get-Module Omnicit.EntraRBAC
+                & $Module {
+                    $script:TestPatchCount = 0
+                    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+                    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+                        param([string]$Method = 'GET', [string]$Uri, $Body)
+                        if ($Method -eq 'PATCH') { $script:TestPatchCount++; return @{} }
+                        @{
+                            id = 'p1'; scopeId = '/'; scopeType = 'DirectoryRole'
+                            rules = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; isExpirationRequired = $true; maximumDuration = 'PT8H' }
+                                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $true; maximumDuration = 'P365D' }
+                            )
+                        }
+                    }
+                }
+                $null = Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_p1' -ActivationMaxHours 4 `
+                    -AllowPermanentEligibility $true -Confirm
+                & $Module { $script:TestPatchCount }
+            }
+        }
+
+        It 'asks once, naming both changed rules, and sends nothing when declined' {
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script $script:ConfirmScenario
+            $Run.Prompts.Count | Should -Be 1
+            $Run.Prompts[0] | Should -Match "directory role management policy 'DirectoryRole_p1'"
+            $Run.Prompts[0] | Should -Match 'Expiration_EndUser_Assignment'
+            $Run.Prompts[0] | Should -Match 'Expiration_Admin_Eligibility'
+            $Run.Output[-1] | Should -Be 0
+        }
+
+        It 'asks once and sends every changed rule when accepted' {
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $script:ConfirmScenario
+            $Run.Prompts.Count | Should -Be 1
+            $Run.Output[-1] | Should -Be 2
+        }
+    }
+}

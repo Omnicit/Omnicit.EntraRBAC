@@ -19,7 +19,7 @@ LONG DESCRIPTION
     All state-changing cmdlets support -WhatIf and -Confirm. Deletions of high-value
     objects use ConfirmImpact High and warn before the destructive call.
 
-    Use Get-Command -Module Omnicit.EntraRBAC to list all 91 cmdlets, and
+    Use Get-Command -Module Omnicit.EntraRBAC to list all 92 cmdlets, and
     Get-Help <cmdlet> -Full for parameters and examples. Use Get-OERRequiredScope for
     the permissions any of them needs; see PERMISSIONS below.
 
@@ -77,7 +77,7 @@ COMMAND COHORTS
         Send-OERAccessReviewReminder
 
     Directory roles
-        Get-OERDirectoryRoleManagementPolicy
+        Get-OERDirectoryRoleManagementPolicy, Set-OERDirectoryRoleManagementPolicy
 
     Azure inventory, RBAC, resource groups and resources
         Get-OERManagementGroup, Get-OERSubscription, Get-OERRoleDefinition

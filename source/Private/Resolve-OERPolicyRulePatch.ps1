@@ -242,8 +242,9 @@ function Resolve-OERPolicyRulePatch {
 
     if ($Setting.ContainsKey('ActivationMaxHours')) {
         # ConvertTo-OERDuration -Hours has ValidateRange(1, [int]::MaxValue) and throws on 0; this is
-        # safe only because the sole caller, Set-OERRoleManagementPolicy -ActivationMaxHours, already
-        # enforces ValidateRange(1, 24) -- 0 can never reach here.
+        # safe only because both callers, Set-OERRoleManagementPolicy and
+        # Set-OERDirectoryRoleManagementPolicy, enforce ValidateRange(1, 24) on -ActivationMaxHours --
+        # 0 can never reach here.
         Add-RuleField -Object (Get-RuleClone -Source $ById -Cache $Touched -Id 'Expiration_EndUser_Assignment') -Name 'maximumDuration' -Value (ConvertTo-OERDuration -Hours ([int]$Setting.ActivationMaxHours))
     }
     if ($Setting.ContainsKey('RequireMfaOnActivation')) {
@@ -318,7 +319,8 @@ function Resolve-OERPolicyRulePatch {
 
     # Cross-rule reconciliation: PIM forbids MFA-on-activation and an enabled authentication context
     # at the same time. The DECISION is owned by Resolve-OERPimActivationConflict, shared with the
-    # Graph PIM-for-groups write path; only the mutation idiom below is ARM-specific.
+    # Graph PIM-for-groups write path; the mutation idiom below is shared by the ARM and the Graph
+    # directory-role paths, which both call this builder.
     # -ResolveUnrequestedConflict is passed because this transport PATCHes the FULL rule set, so ARM
     # rejects a pre-existing invalid combination even on an unrelated change. It is a parameter
     # (default $true, the ARM behaviour) because the Graph directory-role transport passes $false: it

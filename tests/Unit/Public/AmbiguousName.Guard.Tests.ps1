@@ -229,6 +229,15 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Set-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Set-OERDirectoryRoleManagementPolicy -Role 'Dup' -ActivationMaxHours 8 -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Set-OERGroup'; Resolver = 'Resolve-OERGroupId'
             ErrorId = 'AmbiguousGroupName'; Pre = @{}
             Invoke = {
