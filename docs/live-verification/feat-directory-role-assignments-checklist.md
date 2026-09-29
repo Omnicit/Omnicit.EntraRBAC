@@ -21,10 +21,14 @@ place a person's account appears: Philip's own, in his own window, run by him.
 **Every write is preceded by its `-WhatIf` plan.** Read the plan against the `Expect:` line first,
 and only then run the line that writes. Every apply goes through the `Invoke-S64Check` helper
 defined in Setup, which runs `Invoke-OERStructure -WhatIf` unless `-Apply` is passed. **Every
-`-Prune` run** is preceded by its `-WhatIf` plan AND by `Assert-S64PruneTarget`, which prints every
-row that would remove, removes or reports `Extra`, by name, and returns `False` -- so the `-Prune`
-line behind it does not run -- unless every such target is a test object carrying the prefix, in
-one of the two roles. Section 6's version allows exactly one more principal: Philip himself.
+`-Prune` run** is preceded by its `-WhatIf` plan AND by a gate on that plan. In this window and in
+Philip's, the gate is `Assert-S64PruneTarget`, which prints every row that would remove, removes or
+reports `Extra`, by name, and returns `False` -- so the `-Prune` line behind it does not run --
+unless the plan holds directoryRoleAssignments rows at all and every such target is a test object
+carrying the prefix, in one of the two roles; section 6's FIRST apply alone allows exactly one more
+principal, Philip himself. Section 5's two `-Prune` runs are made by the refused identity in a
+process of their own, and their gate is stricter: the real run is made only when the plan holds
+nothing but `Failed` rows.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s64/` --
 the helpers write every document, every raw Graph read and a results log there, the prerequisite
@@ -309,19 +313,87 @@ Message Center Reader assignment of the certificate identity's OWN service princ
 assignment section 4 relies on to prove the own-assignment guard. It creates no subscription
 object, no resource group and nothing else in Azure.
 
-What it records, once and before its first write: `raw/s64/baseline-directory-policies.json`, the
-raw Graph v1.0 rules of both roles' policies, and `raw/s64/baseline-directory-assignments.json`,
-both roles' DIRECT eligible and active assignments at `/`. The helpers below read them in this shape,
-which the script writes: `{ "roles": [ { "displayName", "roleDefinitionId", "policyId", "rules": [...] } ] }`
-and `{ "roles": [ { "displayName", "roleDefinitionId", "eligible": [ <schedule> ], "active": [ <schedule> ] } ] }`,
-each `<schedule>` the raw Graph object with at least `principalId`. It refuses to run while either
-role holds a direct assignment of a principal it did not create (other than the Message Center
-Reader assignment it creates itself), and while a user `oer-s64-nobody@<your-verified-domain>`
-exists (4.2 relies on that name resolving to nothing). Its `-Teardown` removes the certificate
-identity's own Message Center Reader assignment and every `oer-s64` principal's assignment on both
-roles, restores both policies from the baseline file rule by rule, re-creates any baseline
-assignment that is missing, deletes the test users and groups, and verifies both roles' assignments
-equal the baseline.
+What it records, once and before its first write, as two UTF-8 JSON files. `-BaselinePath` names
+the POLICY baseline; its default is
+`<RepoPath>/docs/live-verification/raw/s64/baseline-directory-policies.json`. The ASSIGNMENT
+baseline is always written beside it, in the same folder, as `baseline-directory-assignments.json`.
+This file never passes `-BaselinePath`, so `$BaselinePath` and `$AssignmentBaselinePath` in the
+variables block are those two defaults. The helpers below read both files in exactly these shapes:
+
+- **The policy baseline** is one object with one key, `roles`, an array of exactly two objects, one
+  per role, in the order Reports Reader, Message Center Reader. Each has `displayName` (the role's
+  display name, exactly `Reports Reader` or `Message Center Reader`), `roleDefinitionId` (the role
+  definition id as Graph returns it), `policyId` (the Graph policy id, `DirectoryRole_<tenant id>_<guid>`)
+  and `rules`: every rule object exactly as
+  `GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<id>'&$expand=policy($expand=rules)`
+  returns it under `value[0].policy.rules` -- unmodified, `id` and `@odata.type` included, nothing
+  added or dropped. The helpers find a rule by its `id` and compare the rest of it.
+- **The assignment baseline** is one object with one key, `roles`, an array of the same two
+  objects' identity -- each with `displayName` and `roleDefinitionId` as above -- plus `eligible` and
+  `active`. `eligible` holds every schedule object exactly as
+  `GET v1.0/roleManagement/directory/roleEligibilitySchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<id>'`
+  returns it under `value`, keeping only those whose `memberType` is `Direct`; `active` the same from
+  `roleAssignmentSchedules`, keeping only `memberType` `Direct` and `assignmentType` `Assigned` (an
+  activation cannot be re-created). Each row is the unmodified Graph object, so it carries at least
+  `id`, `principalId`, `roleDefinitionId`, `directoryScopeId`, `memberType`, `scheduleInfo` and,
+  in `active`, `assignmentType`; the helpers read `principalId`, the teardown also what it needs to
+  re-create a missing row. A role with no such row has `"eligible": []` or `"active": []` -- an
+  empty array, never `null` and never a missing key.
+
+It refuses to run while either role holds a direct assignment of a principal it did not create
+(other than the Message Center Reader assignment it creates itself), and while a user
+`oer-s64-nobody@<your-verified-domain>` exists (4.2 relies on that name resolving to nothing). Its
+`-Teardown` removes the certificate identity's own Message Center Reader assignment and every
+`oer-s64` principal's assignment on both roles, restores both policies from the policy baseline rule
+by rule, re-creates any baseline assignment that is missing, deletes the test users and groups, and
+verifies both roles' direct assignments equal the assignment baseline.
+
+**What the script prints, and the checks read.** 0.2, 0.3 and T.2 compare its output with these
+lines; `<...>` is a value, and every line starts `[oer-s64] ` (shown once here):
+
+- Every run, first: `Mode: CREATE or complete. Tenant alias '<alias>', tenant <tenant id>, prefix 'oer-s64', expected organization '<organization>'.`
+  (`Mode: RESTORE and REMOVE. ...` with `-Teardown`), then
+  `Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Policy baseline: <path> (exists: <True|False>). Assignment baseline: <path> (exists: <True|False>).`
+- After EVERY sign-in, two lines ending exactly
+  `identity check: session app id is oer-live-cc: <True|False>` and
+  `identity check: tenant is the test tenant: <True|False>`, each preceded by the sign-in's own
+  label (for example `[oer-s64] Phase 1 identity check: ...`).
+- Before the first write: `Identified the test tenant: organization '<organization>', tenant id <tenant id>, verified domain <domain>.`,
+  and with `-Unattended`:
+  `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
+  A refusal is one line starting `Refusing to run: ` (`Refusing the teardown: ` with `-Teardown`),
+  and the script then writes nothing.
+- Setup, the baselines: on a first run `No baseline files yet; this run captures both before its first write.`,
+  `Wrote the policy baseline (<n> + <m> rules): <path>` and
+  `Wrote the assignment baseline (Reports Reader: eligible <a>, active <b>; Message Center Reader: eligible <c>, active <d>): <path>`;
+  on a later run `The baseline files exist; comparing the live state with them.` and, per role,
+  `Directory role '<role>': rules differing from the policy baseline: <n>` (a setup run never
+  restores a policy).
+- Setup, the objects: `Created user <upn> (disabled).`, `Created group oer-s64-rag (role-assignable).`,
+  `Created group oer-s64-plain.`, `Added <upn> to oer-s64-rag.`, and
+  `Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`
+  (`The active Message Center Reader assignment of oer-live-cc exists.` on a later run). A retry
+  after a 404 prints a line containing `likely replication delay`.
+- Teardown, in this order: `Teardown: oer-s64 assignments on the two roles: <n>`, one
+  `Removed the <eligible|active> '<role>' assignment of <name>.` per removal, and
+  `Removed the active Message Center Reader assignment of oer-live-cc.`; per role
+  `Teardown: directory role '<role>': rules differing from the policy baseline: <n>` (the rule ids
+  in parentheses when `<n>` is not 0), one `Restored rule <rule id> of '<role>'.` per rule, and
+  `Teardown: directory role '<role>': restored: <True|False|not attempted (WhatIf)>`; per role
+  `Teardown: directory role '<role>': baseline assignments missing and re-created: <n>`; then
+  `Deleted group <name>.` and `Deleted user <upn>.`; per role, last,
+  `Teardown: directory role '<role>': direct assignments equal the assignment baseline: <True|False|not checked (WhatIf)>`,
+  and `Sweep: no user or group starting with 'oer-s64' is left.` (or one
+  `Sweep, still present: <user|group> '<name>' (<id>)` line each). Under `-WhatIf` every write is a
+  PowerShell `What if:` line instead -- a rule restore's reads
+  `"Restore rule <rule id> from the policy baseline (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role '<role>'"`.
+- Last: a summary headed `Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:`
+  -- a table of `Kind`, `Name`, `Id` with the kinds `user`, `group`, `group member`,
+  `directory role (built-in, fixed)`, `directory role policy`, `own assignment`,
+  `policy baseline (<written by this run|existed|not written (WhatIf)>)` and
+  `assignment baseline (<written by this run|existed|not written (WhatIf)>)`, and
+  `(none -- not created)` as the id of anything missing; under `-WhatIf`
+  `WhatIf: nothing was created, restored, removed or written.`; and finally `Done.`
 
 **Sign in.**
 
@@ -753,11 +825,19 @@ function Show-S64Policy {
 
 function Assert-S64PruneTarget {
     # The gate in front of every real -Prune run. Prints every directoryRoleAssignments row that
-    # removes, would remove or reports Extra, by name, and returns $true only when every one of them
-    # names a test object carrying the prefix, in one of the two roles. -AllowPrincipalId adds exactly
-    # one more principal (section 6: Philip's own object id). A candidate row's Item is the engine's
+    # removes, would remove or reports Extra, by name, and returns $true only when the plan holds
+    # directoryRoleAssignments rows at all (no row means the plan did not run -- an invalid document,
+    # or a stale result -- and proves nothing) and every such target names a test object carrying the
+    # prefix, in one of the two roles. -AllowPrincipalId adds exactly one more principal (section 6's
+    # first apply only: Philip's own object id). A candidate row's Item is the engine's
     # '<role> -> <principal id> (<assignmentType>)'; anything else counts as not allowed.
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Result, [Parameter(Mandatory)][string]$Label, [string]$AllowPrincipalId)
+    $SectionRows = @($Result | Where-Object { $null -ne $_ -and $_.Section -eq 'directoryRoleAssignments' })
+    if ($SectionRows.Count -eq 0) {
+        Write-Host "--- $($Label): the plan holds no directoryRoleAssignments row at all"
+        Write-Host '--- STOP: there is no plan to check. The -Prune line does not run.'
+        return $false
+    }
     $Targets = @($Result | Where-Object {
             $_.Section -eq 'directoryRoleAssignments' -and
             ($_.Action -in 'Removed', 'Extra' -or ($_.Action -eq 'Skipped' -and ([string]$_.Detail).StartsWith('would remove', [System.StringComparison]::Ordinal)))
@@ -807,7 +887,8 @@ function Invoke-S64Check {
     # then runs Invoke-OERStructure on it -- under -WhatIf unless -Apply is given, with -Prune only
     # when asked. Warnings keep their order (3>&1); errors print as id and message only; every row
     # prints on one line, ids named, and is appended to all-results.csv for T.3. The rows stay in
-    # $S64Result.
+    # $S64Result, which is emptied first: a run that stops early (an invalid document) must never
+    # leave the previous run's rows for Assert-S64PruneTarget to approve.
     param(
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][string]$Json,
@@ -815,6 +896,7 @@ function Invoke-S64Check {
         [switch]$Apply,
         [switch]$Prune
     )
+    $global:S64Result = @()
     $Path = Join-Path $Raw "$Id.json"
     Set-Content -Path $Path -Value $Json -Encoding utf8NoBOM
     Write-Host "=== $Id"
@@ -864,11 +946,27 @@ $ErrorActionPreference = 'Continue'
 $In = Get-Content -Path (Join-Path $PSScriptRoot '5.1-input.json') -Raw | ConvertFrom-Json
 $env:PSModulePath = $In.PSModulePathPrefix + [System.IO.Path]::PathSeparator + $env:PSModulePath
 Import-Module Omnicit.EntraRBAC -Force
-$null = Connect-OER -TenantId $In.TenantId -ClientId $In.NoPermAppId -Certificate (Get-Item -LiteralPath "Cert:\CurrentUser\My\$($In.Thumbprint)") -ErrorAction Stop
+try {
+    $null = Connect-OER -TenantId $In.TenantId -ClientId $In.NoPermAppId -Certificate (Get-Item -LiteralPath "Cert:\CurrentUser\My\$($In.Thumbprint)") -ErrorAction Stop
+} catch {
+    Write-Host "STOP: the sign-in as oer-live-cc-noperm failed, so nothing below ran: $($PSItem.Exception.Message)"
+    $Error.Clear()
+    exit 1
+}
+# The identity check, BEFORE anything else, printed as True/False only -- never the ids. Nothing
+# below may run unless all three are True: this script makes two real -Prune runs unattended.
 $Ctx = Get-MgContext
-Write-Host "identity check: session app id is oer-live-cc-noperm: $([string]$Ctx.ClientId -eq $In.NoPermAppId)"
-Write-Host "identity check: tenant is the test tenant: $([string]$Ctx.TenantId -eq $In.TenantId)"
-Write-Host "identity check: the token carries application permissions: $(@($Ctx.Scopes | Where-Object { $_ }).Count)"
+$AppOk = [string]$Ctx.ClientId -eq $In.NoPermAppId
+$TenantOk = [string]$Ctx.TenantId -eq $In.TenantId
+$NoPermissionOk = @($Ctx.Scopes | Where-Object { $_ }).Count -eq 0
+Write-Host "identity check: session app id is oer-live-cc-noperm: $AppOk"
+Write-Host "identity check: tenant is the test tenant: $TenantOk"
+Write-Host "identity check: the token carries no application permission: $NoPermissionOk"
+if (-not ($AppOk -and $TenantOk -and $NoPermissionOk)) {
+    Disconnect-OER
+    Write-Host 'STOP: the identity check failed, so nothing below ran. Signed out.'
+    exit 1
+}
 $Names = @{}
 $Names[([string]$In.RoleId).ToLowerInvariant()] = $In.RoleName
 $Names[([string]$In.User1Id).ToLowerInvariant()] = $In.User1Name
@@ -1047,17 +1145,22 @@ the Graph SDK has expired: paste the sign-in block again.
 
 - [ ] **0.2 The prerequisite script's plan names only `oer-s64` targets, the two baseline files and the certificate identity's own assignment.** Paste the `-WhatIf` run's output from Setup, redacted per the rules at the top.
 
-  **Expect:** after each of its sign-ins, both identity lines `True`; the tenant identified
-  positively before anything else (organization, tenant id, verified domain); no question asked
-  under `-WhatIf`. Every `What if:` target is one of: the DISABLED users `oer-s64-user1` and
-  `oer-s64-user2` (printed as user principal names -- redact), the role-assignable security group
-  `oer-s64-rag`, the security group `oer-s64-plain`, the membership `oer-s64-rag <- oer-s64-user2`,
-  the ACTIVE time-bound (`P2D`) Message Center Reader assignment of the certificate identity's own
-  service principal, and -- when they do not exist yet -- the two baseline files under
-  `<your-clone>\docs\live-verification\raw\s64\`. No subscription, no resource group, nothing in
-  Azure; no directory role other than the two; no Azure Resource Manager sign-in. It ends saying
-  nothing was created or written (the wording is the script's own) and with a summary in which the
-  objects it would create read as not created.
+  **Expect:** the lines Setup lists under "What the script prints": first
+  `[oer-s64] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.`
+  and the `Directory roles (fixed): ...` line with `(exists: False)` twice on a first run; after
+  each of its sign-ins both lines `... identity check: session app id is oer-live-cc: True` and
+  `... identity check: tenant is the test tenant: True`;
+  `[oer-s64] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.`;
+  no `Unattended run: ...` line and no question (`-WhatIf`). Every `What if:` target is one of: the
+  two baseline files under `<your-clone>\docs\live-verification\raw\s64\` (when they do not exist
+  yet), the DISABLED users `oer-s64-user1` and `oer-s64-user2` (printed as user principal names --
+  redact), the groups `oer-s64-rag` (role-assignable) and `oer-s64-plain`, the membership
+  `oer-s64-rag <- oer-s64-user2`, and the ACTIVE time-bound (`P2D`) Message Center Reader
+  assignment of the certificate identity's own service principal. No subscription, no resource
+  group, nothing in Azure; no directory role other than the two. Then the summary, with
+  `(none -- not created)` as the id of every object it would create and
+  `policy baseline (not written (WhatIf))` / `assignment baseline (not written (WhatIf))`,
+  `[oer-s64] WhatIf: nothing was created, restored, removed or written.` and `[oer-s64] Done.`
   **Failure looks like:** a target without the prefix other than those named above; a directory
   role other than the two; a refusal line -- `Refusing to run: ...` from the tenant identification
   (check `$OrgName` exactly, case-sensitive, `$Domain`, `$TenantId` and any Tenant Profile for the
@@ -1081,14 +1184,26 @@ the Graph SDK has expired: paste the sign-in block again.
   "raw/s64 is ignored by git: $($LASTEXITCODE -eq 0)"
   ```
 
-  **Expect:** from the script: both identity lines `True` after EVERY sign-in; the tenant identified
-  before any write; `Unattended run: the confirmation question is not asked; ...`; on a first run
-  both baseline files written BEFORE the first object is created (on a later run: compared with the
-  live state and not rewritten); the two users (disabled), the two groups and the membership created
-  -- a membership add answering 404 once and succeeding on a retry is replication, not a failure --
-  and the certificate identity's own Message Center Reader assignment requested and accepted; no
-  refusal; a summary naming every object with its real id (redact every id, and the user principal
-  names); the script's last line is its own `Done.`-style end. From the block: both files
+  **Expect:** from the script, the lines Setup lists: the `Mode: CREATE or complete. ...` and
+  `Directory roles (fixed): ...` lines; both identity lines ending `True` after EVERY sign-in; the
+  `Identified the test tenant: ...` line, then
+  `[oer-s64] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
+  On a first run `[oer-s64] No baseline files yet; this run captures both before its first write.`,
+  `[oer-s64] Wrote the policy baseline (<n> + <m> rules): <path>` and
+  `[oer-s64] Wrote the assignment baseline (Reports Reader: eligible 0, active 0; Message Center Reader: eligible 0, active 0): <path>`
+  BEFORE the first `Created ...` line (on a later run instead
+  `[oer-s64] The baseline files exist; comparing the live state with them.` and, for both roles,
+  `[oer-s64] Directory role '<role>': rules differing from the policy baseline: 0`). Then
+  `[oer-s64] Created user <upn> (disabled).` twice, `[oer-s64] Created group oer-s64-rag (role-assignable).`,
+  `[oer-s64] Created group oer-s64-plain.`, `[oer-s64] Added <upn> to oer-s64-rag.` -- a line
+  containing `likely replication delay` before it is a retry after a 404, not a failure -- and
+  `[oer-s64] Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`
+  (a later run: `... exists.`); no `Refusing to run: ` line. The summary: one row per object, kinds
+  `user` (2), `group` (2), `group member` (1), `directory role (built-in, fixed)` (2),
+  `directory role policy` (2), `own assignment` (1), `policy baseline (written by this run)` and
+  `assignment baseline (written by this run)` (`(existed)` on a later run), and no
+  `(none -- not created)`; redact every id and user principal name. The last line
+  `[oer-s64] Done.` From the block: both files
   `exists True`; `policy baseline:` one line per role, with the rule count Graph lists (step 3
   measured 17) and `True` twice; `assignment baseline:` one line per role -- the counts are
   normally `0` and `0`, since the script refuses to run while either role holds a direct assignment
@@ -1872,8 +1987,10 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
 
   A second process keeps this window's sign-in intact: the module keeps one credential per process.
   The script signs in app-only as `oer-live-cc-noperm` -- the same certificate, no API permission,
-  without `-IncludeARM` -- reads Reports Reader's assignments by name and by role definition id, and
-  runs two documents with `-Prune`: one naming the role and principals by name, one by ids. Each
+  without `-IncludeARM` -- checks its identity and stops at once, signed out and with exit code 1,
+  unless all three identity lines are `True`; only then it reads Reports Reader's assignments by
+  name and by role definition id, and runs two documents with `-Prune`: one naming the role and
+  principals by name, one by ids. Each
   document runs its `-WhatIf` plan first, and its real `-Prune` run only when that plan holds
   nothing but `Failed` rows (the script's own gate: this identity can read nothing, so any other
   row means it is not the refused identity this check describes). This block records the state
@@ -1899,11 +2016,13 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   $RefusedPath = Join-Path $Raw '5.1-refused-read.ps1'
   Set-Content -Path $RefusedPath -Value $RefusedScript -Encoding utf8NoBOM
   pwsh -NoProfile -File $RefusedPath
+  "the refused-read process exit code: $LASTEXITCODE"
   ```
 
   **Expect:** `identity check: session app id is oer-live-cc-noperm: True`,
   `identity check: tenant is the test tenant: True` and
-  `the token carries application permissions: 0`. (a) `result objects: 0`,
+  `identity check: the token carries no application permission: True` -- the script goes on only
+  when all three are `True`. (a) `result objects: 0`,
   `Errors published by Get-OEREligibleDirectoryRoleAssignment: 1`,
   `ERROR [RoleDefinitionReadFailed,Get-OEREligibleDirectoryRoleAssignment]: Looking up the Microsoft Entra directory role 'Reports Reader' failed, so whether it exists could not be determined: <cause>`
   (step 3 measured the cause as `Authorization_RequestDenied: Insufficient privileges to complete the operation.`).
@@ -1919,15 +2038,19 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   `<Reports Reader> -> <oer-s64-user1> (Eligible) | Failed | could not read the eligible assignments of '<Reports Reader>': <cause>`
   and so on; `action counts: Failed=6`; then the real run: the same six. In neither document a
   `Removed`, `Extra`, `Skipped`, `Created`, `Updated` or `Unchanged` row, and no `STOP` line. (f)
-  all three raw statuses `403` (with Graph's error code). `Done.`
-  **Failure looks like:** `RoleDefinitionNotFound` in (a), or an `Unchanged`/`Created` row, while
+  all three raw statuses `403` (with Graph's error code). `Done.`, then in this window
+  `the refused-read process exit code: 0`.
+  **Failure looks like:** `STOP: the identity check failed, so nothing below ran. Signed out.` or
+  `STOP: the sign-in as oer-live-cc-noperm failed, ...` and exit code `1` -- nothing was read or
+  run; a `False` line names which part failed: stop and report it, never retry with another
+  sign-in. `RoleDefinitionNotFound` in (a), or an `Unchanged`/`Created` row, while
   the raw status is `403` -- a refusal read as absence, the defect this branch must not have; any
   `Removed` or `Extra` -- a failed read treated as an empty pair: stop. A raw status of `200` with
   zero objects: Graph HID the objects instead of refusing -- the module cannot tell that from
-  absence; record it as "cannot be verified, and therefore we do not know". A `STOP` line: the
-  plan held another row -- the real run was not made; record the rows. A `False` identity line, or
-  a sign-in answering "application is disabled": the run is not the one this check describes --
-  stop and report it, never retry with another sign-in.
+  absence; record it as "cannot be verified, and therefore we do not know". A
+  `STOP: the plan of ...` line: the plan held another row -- that document's real run was not made;
+  record the rows. A sign-in answering "application is disabled": the run is not the one this check
+  describes -- stop and report it, never retry with another sign-in.
   **Result:**
 
 - [ ] **5.2 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
@@ -1944,7 +2067,7 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
 
 ---
 
-### 6. Manual, Philip -- an activation is neither matched nor pruned
+### 6. Manuell, Philip -- an activation is neither matched nor pruned
 
 **Run by Philip, in his own PowerShell 7 window, as himself -- never by the certificate identity,
 and last before the Teardown (ruling R18).** Leave the Claude window alone while this runs. The
@@ -1955,7 +2078,7 @@ Philip's activation sits in it. The Activated filter must keep that row out enti
 him in the Active pair. A `Skipped` own-assignment row there would mean the filter failed and only
 the own-assignment guard held.
 
-- [ ] **6.1 A document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
+- [ ] **6.1 Manuell, Philip -- a document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
 
   (a) Before signing in: in the Microsoft Entra admin center, ACTIVATE your own Privileged Role
   Administrator role if it is eligible (the sign-in's token must carry it). Then, in a NEW
@@ -1974,10 +2097,17 @@ the own-assignment guard held.
   $MeId = & (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }
   $MeRaw = Invoke-MgGraphRequest -Method GET -Uri 'v1.0/me?$select=id' -OutputType HashTable -SkipHttpErrorCheck
   $MeRoles = Invoke-MgGraphRequest -Method GET -Uri 'v1.0/me/transitiveMemberOf/microsoft.graph.directoryRole?$select=displayName' -OutputType HashTable -SkipHttpErrorCheck
-  "identity check: tenant is the test tenant: $([string](Get-MgContext).TenantId -eq $TenantId)"
-  "identity check: a person's delegated sign-in, not a certificate identity: $(([string](Get-MgContext).ClientId -notin @($AppId, $NoPermAppId)) -and [bool]$Me -and -not $Me.StartsWith($Prefix))"
-  "identity check: the token's object id is this user's (v1.0/me): $([bool]$MeId -and [string]::Equals([string]$MeRaw['id'], [string]$MeId, [System.StringComparison]::OrdinalIgnoreCase))"
-  "Privileged Role Administrator active for this user: $(@($MeRoles['value'] | Where-Object { $_['displayName'] -eq 'Privileged Role Administrator' }).Count -eq 1)"
+  # The identity check, BEFORE anything else: True/False only, never the ids, and a False stops here.
+  $S64MeTenantOk = [string](Get-MgContext).TenantId -eq $TenantId
+  $S64MePersonOk = ([string](Get-MgContext).ClientId -notin @($AppId, $NoPermAppId)) -and [bool]$Me -and -not $Me.StartsWith($Prefix)
+  $S64MeIdOk     = [bool]$MeId -and [string]::Equals([string]$MeRaw['id'], [string]$MeId, [System.StringComparison]::OrdinalIgnoreCase)
+  $S64MePraOk    = @($MeRoles['value'] | Where-Object { $_['displayName'] -eq 'Privileged Role Administrator' }).Count -eq 1
+  Write-Host "identity check: tenant is the test tenant: $S64MeTenantOk"
+  Write-Host "identity check: a person's delegated sign-in, not a certificate identity: $S64MePersonOk"
+  Write-Host "identity check: the token's object id is this user's (v1.0/me): $S64MeIdOk"
+  Write-Host "Privileged Role Administrator active for this user: $S64MePraOk"
+  if (-not ($S64MeTenantOk -and $S64MePersonOk -and $S64MeIdOk)) { throw 'The identity check failed: nothing below may run.' }
+  if (-not $S64MePraOk) { throw 'Privileged Role Administrator is not active for this sign-in: activate it, run Disconnect-OER, and paste this block again.' }
   ```
 
   Then paste the Setup blocks "The helpers" and "The test principals" as they stand, and run
@@ -2016,19 +2146,20 @@ the own-assignment guard held.
   ```
 
   (d) The same document with `-Prune`: the plan, the assertion, and -- only when it passed -- the
-  run; then the one line this check is for:
+  run; then the one line this check is for. This assertion does NOT allow you: a `would remove` of
+  your own activation stops the gate here, and the `-Prune` line does not run.
 
   ```powershell
   Invoke-S64Check -Id '6.1e' -Json $Doc6 -Include DirectoryRoleAssignments -Prune
-  $Ok61e = Assert-S64PruneTarget -Result $S64Result -Label '6.1e plan' -AllowPrincipalId $MeId
+  $Ok61e = Assert-S64PruneTarget -Result $S64Result -Label '6.1e plan'
   ```
 
   ```powershell
-  if ($Ok61e) { Invoke-S64Check -Id '6.1f' -Json $Doc6 -Include DirectoryRoleAssignments -Prune -Apply; $null = Assert-S64PruneTarget -Result $S64Result -Label '6.1f applied' -AllowPrincipalId $MeId } else { Write-Host 'not run: the 6.1e assertion failed' }
+  if ($Ok61e) { Invoke-S64Check -Id '6.1f' -Json $Doc6 -Include DirectoryRoleAssignments -Prune -Apply; $null = Assert-S64PruneTarget -Result $S64Result -Label '6.1f applied' } else { Write-Host 'not run: the 6.1e assertion failed' }
   "rows naming you in the (Reports Reader, Active) pair: $(@($S64Result | Where-Object { $_.Section -eq 'directoryRoleAssignments' -and [string]$_.Item -match '\(Active\)$' -and ([string]$_.Item -match [regex]::Escape([string]$MeId) -or [string]$_.Item -match [regex]::Escape($Me)) }).Count)"
   ```
 
-  **Expect:** (a) all four lines `True`, then `the user lookup by $Me finds this user: True` (if it
+  **Expect:** (a) all four lines `True`, and no exception, then `the user lookup by $Me finds this user: True` (if it
   prints `False` -- a guest account, whose sign-in name is not its user principal name here -- use
   `$MeId` wherever this check writes `$Me` as a principal, `-PrincipalId $MeId` for `-User $Me`, and
   record it). (b) `6.1b before` lists the direct Reports Reader rows sections 3 and 4 left:
@@ -2052,16 +2183,17 @@ the own-assignment guard held.
   not `Removed`, not `Skipped`.
   **Failure looks like:** a `Skipped` row naming `<Me>` in the Active pair, with the reason that it
   belongs to the signed-in identity -- the Activated filter failed and only the own-assignment guard
-  held: record it, it is a defect; an `Extra`, `would remove` or `Removed` row for `<Me>` -- stop at
-  once (the assertion allows you, so it does not stop this; deactivate in the portal before
-  anything else); `<Me> (Active) | Unchanged` -- the activation satisfied a declared active entry;
-  `6.1d` with no row -- wait until the portal shows the activation and read again; a
-  `Privileged Role Administrator active ...: False` -- activate it and sign in again (`Disconnect-OER`
-  first). The Eligible row not `Unchanged`: the one-day window did not converge; record the raw
+  held: record it, it is a defect; an `Extra` or `would remove` row for `<Me>` in the 6.1e plan --
+  the Activated filter AND the own-assignment guard failed: the assertion prints `STOP` and the
+  `-Prune` line does not run; deactivate in the portal first, then record it. `6.1d` with no row --
+  wait until the portal shows the activation and read again. (a) throwing
+  `The identity check failed ...`: stop and record which line printed `False`; throwing
+  `Privileged Role Administrator is not active ...`: activate it, run `Disconnect-OER` and paste the
+  block again. The Eligible row not `Unchanged`: the one-day window did not converge; record the raw
   window.
   **Result:**
 
-- [ ] **6.2 Clean up: the activation deactivated, your eligibility removed, and you signed out.** In your window.
+- [ ] **6.2 Manuell, Philip -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
 
   In the admin center: **My roles > Microsoft Entra roles > Active assignments**, **Reports
   Reader**, **Deactivate** (PIM may refuse a deactivation in the first minutes after an activation:
@@ -2079,14 +2211,24 @@ the own-assignment guard held.
   Disconnect-OER
   ```
 
+  Last, once you are signed out: end the Privileged Role Administrator activation you made in
+  6.1(a). In the admin center: **Identity governance > Privileged Identity Management > My roles >
+  Microsoft Entra roles > Active assignments**, find **Privileged Role Administrator**, choose
+  **Deactivate** (the same few-minutes wait may apply). Skip this only if your Privileged Role
+  Administrator is a standing active assignment that 6.1(a) did not activate -- then there is
+  nothing to deactivate. Close your window; the Teardown runs in the Claude window.
+
   **Expect:** `6.2 your active rows`: `objects returned: 0` (the deactivation took effect). The
   plan: two requests (the role lookup and the `users` lookup for you), ONE `What if:` line,
   `Performing the operation "Remove eligible directory role assignment" on target "eligible directory role 'Reports Reader' for principal '<your user principal name>' at directory scope '/'"`.
   The removal: the same two requests and one `POST .../roleEligibilityScheduleRequests`; the warning
-  `Removing ...`; one object, `Action adminRemove`. Both raw reads: 0 rows. Close your window after
-  `Disconnect-OER`; the Teardown runs in the Claude window.
+  `Removing ...`; one object, `Action adminRemove`. Both raw reads: 0 rows. Then the portal's
+  **Active assignments** no longer lists Privileged Role Administrator for you (or lists only your
+  standing assignment, when you have one) -- record which.
   **Failure looks like:** an active row left -- deactivate first; Graph refusing the removal while
-  the activation lasts -- deactivate, wait, and remove again; a row left in either raw read.
+  the activation lasts -- deactivate, wait, and remove again; a row left in either raw read; the
+  Privileged Role Administrator activation still listed after the deactivation -- deactivate it
+  again, and do not leave it active.
   **Result:**
 
 ---
@@ -2158,21 +2300,35 @@ baseline. There is no Azure object to restore or delete (R17).
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -Teardown -Unattended
   ```
 
-  **Expect:** both runs: both identity lines `True` after every sign-in; the tenant identified
-  before anything is changed; no sign-in with `-IncludeARM`. The plan's `What if:` targets are only:
-  the certificate identity's own Message Center Reader assignment; any `oer-s64` assignment still
-  there (none after T.1); one rule restore per rule that differs from the baseline -- Message Center
-  Reader `Expiration_Admin_Assignment` (2.5), and for Reports Reader none when 1.3 recorded both
-  permanent kinds allowed (3.1 closed them and the document opened them again; any rule listed
-  there, record it); a re-creation for any baseline assignment that is missing (normally none); the
-  groups `oer-s64-rag` and `oer-s64-plain` and the two users. Nothing else, no directory role other
-  than the two, nothing in Azure. The run: the same, done; each policy reported back at its
-  baseline, both roles' assignments reported equal to the baseline, and the users and groups
-  deleted (Graph's list can lag a moment behind the deletes -- T.3 reads again). Paste both outputs
-  redacted per the rules at the top.
+  **Expect:** both runs, the lines Setup lists: `[oer-s64] Mode: RESTORE and REMOVE. ...`, the
+  `Directory roles (fixed): ...` line with `(exists: True)` twice, both identity lines ending `True`
+  after every sign-in, the `Identified the test tenant: ...` line, and -- the real run only -- the
+  `Unattended run: ...` line; no sign-in with `-IncludeARM`. Then, in order:
+  `[oer-s64] Teardown: oer-s64 assignments on the two roles: 0` (T.1 removed them; any other count
+  lists each one); the certificate identity's own Message Center Reader assignment (a `What if:`
+  line, then `[oer-s64] Removed the active Message Center Reader assignment of oer-live-cc.`);
+  `[oer-s64] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0`
+  when 1.3 recorded both permanent kinds allowed (3.1 closed them and the document opened them
+  again -- any rule listed there, record it) and
+  `[oer-s64] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 1 (Expiration_Admin_Assignment)`
+  (2.5), with ONE
+  `What if: Performing the operation "Restore rule Expiration_Admin_Assignment from the policy baseline (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Message Center Reader'".`
+  line in the plan and `[oer-s64] Restored rule Expiration_Admin_Assignment of 'Message Center Reader'.`
+  in the run; per role `... restored: not attempted (WhatIf)` in the plan and `... restored: True`
+  in the run; per role `... baseline assignments missing and re-created: 0`; the groups
+  `oer-s64-rag` and `oer-s64-plain` and the two users (`What if:` lines, then `Deleted group ...` /
+  `Deleted user ...`); per role, last,
+  `... direct assignments equal the assignment baseline: not checked (WhatIf)` in the plan and
+  `... direct assignments equal the assignment baseline: True` in the run; the sweep (Graph's list
+  can lag a moment behind the deletes -- a `Sweep, still present: ...` line then is not a failure,
+  T.3 reads again); the summary; `WhatIf: nothing was created, restored, removed or written.` in
+  the plan; `[oer-s64] Done.` Nothing else is a target: no directory role other than the two,
+  nothing in Azure. Paste both outputs redacted per the rules at the top.
   **Failure looks like:** a target outside that list -- stop, do not run the real teardown; a rule
-  restore Graph refuses, or a policy not back at its baseline -- the script stops before it deletes
-  anything; record Graph's message and look at the policy before running it again; a baseline file
+  restore Graph refuses, or `restored: False` -- the script stops before it deletes anything;
+  record Graph's message and look at the policy before running it again;
+  `direct assignments equal the assignment baseline: False` -- record the difference and restore it
+  by hand from the assignment baseline before T.4; a `Refusing the teardown: ` line; a baseline file
   missing -- find it before anything else, never delete the principals while a policy may be
   unrestored. Re-run the teardown after a fix (it only restores what differs and removes what is
   still there) and record both runs.
@@ -2208,8 +2364,13 @@ baseline. There is no Azure object to restore or delete (R17).
   Entra ID's design). The listed rows, and no others: `3.1c` `Reports Reader | Updated` and the four
   `Created`; `3.3b` `oer-s64-user1 ... (Eligible) | Updated`; `4.1d` `<oer-s64-user2> (Eligible) | Removed`;
   `4.2b` and `4.2c` `oer-s64-nobody ... | Failed`; `4.2d` `oer-s64-no-such-role ... | Failed`; and,
-  when section 6 ran, `6.1c`'s `Removed` rows (all `oer-s64`), `<Me> (Eligible) | Created` and
-  `oer-s64-user1 ... (Active) | Updated`. `Removed rows naming a principal that is not an oer-s64 test object: 0`
+  when section 6 ran, `6.1c`'s `Removed` rows (all named `<oer-s64-...>`),
+  `Reports Reader -> <Philip's user principal name> (Eligible) | Created` and
+  `Reports Reader -> oer-s64-user1@<test domain> (Active) | Updated`. This window never set `$Me`,
+  so the helpers cannot name Philip: that row prints his user principal name exactly as the 6.1
+  document wrote it (its domain replaced by `<test domain>` only when it is the test domain) --
+  redact it to a `personN@example.com` address before pasting (T.4).
+  `Removed rows naming a principal that is not an oer-s64 test object: 0`
   and `rows naming a role other than the two: 0`.
   **Failure looks like:** a policy rule differing from the baseline, or an assignment that is not
   the baseline -- restore it before anything else (the script's `-Teardown` again, or by hand from
@@ -2225,8 +2386,9 @@ baseline. There is no Azure object to restore or delete (R17).
   included -- the tenant id to `<TenantId>`, the organization and the domain to `<test tenant>` and
   `<test domain>`, user principal names (Philip's included) to `personN@example.com`; no credential,
   no bearer token, no application id, no thumbprint, and nothing copied out of the baseline files.
-  That includes the output of 5.1's second process, of Philip's window and of every
-  prerequisite-script run.
+  That includes the output of 5.1's second process, of Philip's window, of every
+  prerequisite-script run, and T.3's list, which prints Philip's user principal name as it stands
+  (the Claude window has no `$Me` to name it by).
 
   ```powershell
   Remove-Item -LiteralPath $Raw -Recurse -Force
