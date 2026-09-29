@@ -85,8 +85,9 @@ function Test-OERStructureSchema {
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
     principalType, directoryRoleAssignmentType) is accepted in any casing, but a non-canonically cased
-    value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares, because draft-07 matches
-    "enum" case-sensitively. An accessReviews item validates reviewers/fallbackReviewers as string arrays,
+    value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares,
+    because draft-07 matches "enum" case-sensitively. An accessReviews item validates
+    reviewers/fallbackReviewers as string arrays,
     descriptionForAdmins/descriptionForReviewers as strings, the five review settings booleans
     (mailNotification, reminderNotification, requireJustification, recommendationsEnabled,
     autoApplyDecisions), defaultDecision against the None/Approve/Deny/Recommendation enum,

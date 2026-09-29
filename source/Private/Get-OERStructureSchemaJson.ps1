@@ -32,7 +32,8 @@ function Get-OERStructureSchemaJson {
     objects stay open (additionalProperties is not restricted); only the root object forbids unknown
     keys at the draft-07 level. Unknown keys in the roleAssignments, roleManagementPolicies,
     directoryRoleManagementPolicies and directoryRoleAssignments sections (a scope key in either
-    directory section included), in a groups[] item, and in a groups[] pimPolicy block (root, or a nested member/owner block) stay
+    directory section included), in a groups[] item, and in a groups[] pimPolicy block (root, or a
+    nested member/owner block) stay
     schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply engine
     cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
     inventory README used to document before they were renamed gets a did-you-mean hint pointing at its
@@ -491,7 +492,7 @@ function Get-OERStructureSchemaJson {
     },
     "directoryRoleAssignments": {
       "type": "array",
-      "description": "Eligible and active assignments of Microsoft Entra directory roles at tenant scope. An entry is matched on role, principal and assignmentType. durationDays makes it time-bound; without durationDays, or with permanent true, it is permanent, and a permanent assignment needs a policy that allows it (declare that under directoryRoleManagementPolicies, which runs first). A changed durationDays is re-issued, never removed and re-created. With -Prune, only the pairs of role and assignmentType the document declares are reconciled: a role it does not name is never touched, an activation is never counted or removed, only direct assignments are matched (one held through a group is managed through the group), the signed-in identity's own assignments are never removed, and a declared entry that cannot be resolved withholds the prune of its pair. Applied through Microsoft Graph only.",
+      "description": "Eligible and active assignments of Microsoft Entra directory roles at tenant scope. An entry is matched on role, principal and assignmentType. durationDays makes it time-bound; without durationDays, or with permanent true, it is permanent, and a permanent assignment needs a policy that allows it (declare that under directoryRoleManagementPolicies, which runs first). A changed durationDays is re-issued, never removed and re-created. With -Prune, only the pairs of role and assignmentType the document declares are reconciled: a role it does not name is never touched, an activation is never counted or removed, only direct assignments are matched (one held through a group is managed through the group), the signed-in identity's own assignments are never removed, an entry whose principal cannot be resolved withholds the prune of its own pair, and one whose role cannot be resolved withholds the prune of every pair of its assignmentType. Applied through Microsoft Graph only.",
       "items": {
         "type": "object",
         "required": [ "role", "principal", "assignmentType" ],

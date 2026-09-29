@@ -902,6 +902,9 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
             $Desc | Should -Match 'matched on role, principal and assignmentType'
             $Desc | Should -Match 'without durationDays, or with permanent true, it is permanent'
             $Desc | Should -Match 'an activation is never counted or removed'
+            # R9: an unresolved principal withholds its own pair, an unresolved role every pair of its kind.
+            $Desc | Should -Match 'an entry whose principal cannot be resolved withholds the prune of its own pair'
+            $Desc | Should -Match 'one whose role cannot be resolved withholds the prune of every pair of its assignmentType'
             $Desc | Should -Match 'Microsoft Graph only'
         }
     }

@@ -18,6 +18,8 @@ function Sync-OERStructureDirectoryRoleAssignment {
     entry carries no scope field.
 
     Flow:
+    0. An assignmentType that is neither Eligible nor Active reports Failed before any lookup or read.
+       The engine validates the document first, so only a direct call of this handler reaches it.
     1. The role (a display name or role definition id) is resolved to its role definition id with
        Resolve-OERDirectoryRoleDefinitionId. No match, or a lookup that throws (an ambiguous name
        included), reports Failed and nothing is read or written.
@@ -101,8 +103,20 @@ function Sync-OERStructureDirectoryRoleAssignment {
     process {
         $Section = 'directoryRoleAssignments'
         $Kind = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Item.assignmentType)
-        $Label = "$($Item.role) -> $($Item.principal) ($Kind)"
+        # An out-of-enum assignmentType keeps its written value in the label, as the engine's
+        # handler-error label does, so the Failed row below still names what the document says.
+        $KindText = if ($Kind) { $Kind } else { [string]$Item.assignmentType }
+        $Label = "$($Item.role) -> $($Item.principal) ($KindText)"
         $PrincipalType = if (Test-OERDeclaredProperty -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
+
+        # -- 0. The assignment kind --------------------------------------------------------
+        # Only reachable by a direct call (the engine validates first); without this the handler
+        # would throw at Select-OERManagedDirectoryRoleAssignment -Kind $null after a Graph read.
+        if (-not $Kind) {
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                -Detail "assignmentType '$($Item.assignmentType)' is not Eligible or Active"
+            return
+        }
 
         # -- 1. Resolve the role -----------------------------------------------------------
         $RoleId = $null

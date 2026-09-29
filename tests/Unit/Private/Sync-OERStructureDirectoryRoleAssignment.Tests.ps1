@@ -220,34 +220,84 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment' {
         }
     }
 
-    It 'reports Failed, never Created, when the live read throws' {
-        # A failed read is not an absent assignment: creating here would re-issue a live assignment.
+    It 'reports Failed, scrubs and publishes the error, and reads and writes nothing when the principal lookup throws' {
         InModuleScope $script:moduleName {
-            Mock Get-OEREligibleDirectoryRoleAssignment { throw 'Graph 403 Forbidden' }
+            Mock Resolve-OERStructurePrincipal { throw "Principal 'person1@example.com' is ambiguous." }
             Mock Remove-OERErrorRecord {}
-            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30 }' | ConvertFrom-Json
+            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+            $Records[0].Detail | Should -Match "could not resolve principal 'person1@example.com'"
+            $Records[0].Detail | Should -Match 'ambiguous'
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+            # Published through Caller.WriteError. -ErrorVariable also collects the exception every
+            # Pester mock layer re-throws on its way to the handler's catch, so count only the records
+            # the wrapper itself wrote (their FullyQualifiedErrorId ends with its name).
+            $CallerErrors = @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraViaCaller' })
+            @($CallerErrors).Count | Should -Be 1
+            "$($CallerErrors[0])" | Should -Match 'ambiguous'
+            { Invoke-SyncDraViaCaller -Item $Item -ErrorAction Stop } | Should -Throw '*ambiguous*'
+        }
+    }
+
+    It 'reports Failed and resolves, reads and writes nothing when assignmentType is neither Eligible nor Active' {
+        # Only reachable by calling the handler directly (the engine validates first), but an
+        # out-of-enum kind must not fall through to a read of the wrong kind or a parameter error.
+        InModuleScope $script:moduleName {
+            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Permanent" }' | ConvertFrom-Json
             $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
             @($Records).Action | Should -Be @('Failed')
-            $Records[0].Detail | Should -Match 'could not read the eligible assignments'
-            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Permanent)'
+            $Records[0].Detail | Should -Match "assignmentType 'Permanent' is not Eligible or Active"
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 0
+            Should -Invoke Resolve-OERStructurePrincipal -Times 0
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OERActiveDirectoryRoleAssignment -Times 0
             Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke New-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'reports Failed, never Created, when the <Kind> live read throws' -TestCases @(
+        @{ Kind = 'Eligible'; GetName = 'Get-OEREligibleDirectoryRoleAssignment'; NewName = 'New-OEREligibleDirectoryRoleAssignment' }
+        @{ Kind = 'Active'; GetName = 'Get-OERActiveDirectoryRoleAssignment'; NewName = 'New-OERActiveDirectoryRoleAssignment' }
+    ) {
+        # A failed read is not an absent assignment: creating here would re-issue a live assignment.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; GetName = $GetName; NewName = $NewName } {
+            param($Kind, $GetName, $NewName)
+            Mock $GetName { throw 'Graph 403 Forbidden' }
+            Mock Remove-OERErrorRecord {}
+            $Item = "{ `"role`": `"Reports Reader`", `"principal`": `"person1@example.com`", `"assignmentType`": `"$Kind`", `"durationDays`": 30 }" | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -Match "could not read the $($Kind.ToLowerInvariant()) assignments"
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            Should -Invoke $GetName -Times 1 -Exactly
+            Should -Invoke $NewName -Times 0
             { Invoke-SyncDraViaCaller -Item $Item -ErrorAction Stop } | Should -Throw '*Graph 403 Forbidden*'
         }
     }
 
-    It 'reports Failed, never Created, when the live read writes a non-terminating error and returns nothing' {
+    It 'reports Failed, never Created, when the <Kind> live read writes a non-terminating error and returns nothing' -TestCases @(
+        @{ Kind = 'Eligible'; GetName = 'Get-OEREligibleDirectoryRoleAssignment'; NewName = 'New-OEREligibleDirectoryRoleAssignment' }
+        @{ Kind = 'Active'; GetName = 'Get-OERActiveDirectoryRoleAssignment'; NewName = 'New-OERActiveDirectoryRoleAssignment' }
+    ) {
         # The real Get cmdlets report a refused read as a NON-terminating error and return nothing.
         # Only -ErrorAction Stop on the read turns that into the handler's catch; without it the
         # read looks empty and the entry would be Created on top of whatever is really there.
-        InModuleScope $script:moduleName {
-            Mock Get-OEREligibleDirectoryRoleAssignment {
-                Write-Error -Message 'Could not read the eligible directory role assignments: Forbidden.' -ErrorId 'GraphRequestFailed' -Category PermissionDenied
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; GetName = $GetName; NewName = $NewName } {
+            param($Kind, $GetName, $NewName)
+            Mock $GetName {
+                Write-Error -Message 'Could not read the directory role assignments: Forbidden.' -ErrorId 'GraphRequestFailed' -Category PermissionDenied
             }
-            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30 }' | ConvertFrom-Json
+            $Item = "{ `"role`": `"Reports Reader`", `"principal`": `"person1@example.com`", `"assignmentType`": `"$Kind`", `"durationDays`": 30 }" | ConvertFrom-Json
             $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
             @($Records).Action | Should -Be @('Failed')
             $Records[0].Detail | Should -Match 'Forbidden'
-            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke $NewName -Times 0
         }
     }
 
@@ -323,3 +373,4 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment' {
         }
     }
 }
+
