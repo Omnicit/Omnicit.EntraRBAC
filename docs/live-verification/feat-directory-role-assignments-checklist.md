@@ -10,13 +10,16 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 real.** It names two directory roles and no other: **Reports Reader** and **Message Center Reader**,
 two low-risk, read-only roles. Never Global Administrator, never Privileged Role Administrator as a
 target, never any other role. Every principal it assigns was created by the prerequisite script for
-this file and carries the prefix `oer-s64`. Three things outside that prefix are touched, and each
+this file and carries the prefix `oer-s64`. Four things outside that prefix are touched, and each
 is restored by the teardown: the tenant-wide PIM policies of the two roles (2.5 and 3.1 write them;
 the prerequisite script records their raw rules in a baseline file before its first write and its
-teardown restores them from it), and one ACTIVE, time-bound Message Center Reader assignment of the
+teardown restores them from it); one ACTIVE, time-bound Message Center Reader assignment of the
 certificate identity's own service principal, which the prerequisite script creates so section 4
-can prove the engine never prunes the signed-in identity's own assignment. Section 6 is the one
-place a person's account appears: Philip's own, in his own window, run by him.
+can prove the engine never prunes the signed-in identity's own assignment; and that service
+principal's membership of the role-assignable group `oer-s64-ccrag`, which the prerequisite script
+adds so 4.5 can prove the engine never prunes a role the signed-in identity holds through a group --
+ended by the teardown when it deletes the group. Section 6 is the one place a person's account
+appears: Philip's own, in his own window, run by him.
 
 **Every write is preceded by its `-WhatIf` plan.** Read the plan against the `Expect:` line first,
 and only then run the line that writes. Every apply goes through the `Invoke-S64Check` helper
@@ -25,10 +28,11 @@ defined in Setup, which runs `Invoke-OERStructure -WhatIf` unless `-Apply` is pa
 Philip's, the gate is `Assert-S64PruneTarget`, which prints every row that would remove, removes or
 reports `Extra`, by name, and returns `False` -- so the `-Prune` line behind it does not run --
 unless the plan holds directoryRoleAssignments rows at all and every such target is a test object
-carrying the prefix, in one of the two roles; section 6's FIRST apply alone allows exactly one more
-principal, Philip himself. Section 5's two `-Prune` runs are made by the refused identity in a
-process of their own, and their gate is stricter: the real run is made only when the plan holds
-nothing but `Failed` rows.
+carrying the prefix, in one of the two roles, and is not `oer-s64-ccrag` (the certificate identity
+holds Message Center Reader through that group, so it is never a target); section 6's FIRST apply
+alone allows exactly one more principal, Philip himself. Section 5's two `-Prune` runs are made by
+the refused identity in a process of their own, and their gate is stricter: the real run is made
+only when the plan holds nothing but `Failed` rows.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s64/` --
 the helpers write every document, every raw Graph read and a results log there, the prerequisite
@@ -121,14 +125,32 @@ merges.
   order: an unresolved principal withholds its own pair and an unresolved role every pair of its
   kind (`Skipped`, `prune withheld: ...`); an unknown signed-in identity withholds everything; the
   signed-in identity's own assignment -- its object id taken from the Graph token's `oid` claim,
-  never `/me` -- is `Skipped`; otherwise `Extra`, or under `-Prune` a warning, a confirmation gate
-  and the Remove cmdlet (`Removed`). A pair whose read fails is one `Failed` row, and nothing in it
-  is removed or reported `Extra`.
+  never `/me` -- is `Skipped`; then the group guard (H): a group the signed-in identity is a member
+  of is `Skipped`; otherwise `Extra`, or under `-Prune` a warning, a confirmation gate and the
+  Remove cmdlet (`Removed`). A pair whose read fails is one `Failed` row, and nothing in it is
+  removed or reported `Extra`.
 - **G. Docs** ("docs: release note and rules for directory role assignments", "docs:
   live-verification checklist for directory role assignments").
+- **H. Two fixes before the live run** ("fix: refuse an ambiguous service principal display name",
+  "fix: never prune a directory role the signed-in identity holds through a group"). A service
+  principal display name that more than one service principal carries is refused instead of
+  resolved to one of them (`AmbiguousName`): the cmdlets report `AmbiguousApplicationName` or
+  `AmbiguousPrincipalName`, and an apply entry naming one reports `Failed` and withholds the prune
+  of its (role, assignmentType) pair. And the prune pass reads the signed-in identity's transitive
+  group memberships ONCE per run (`POST v1.0/directoryObjects/{id}/getMemberGroups`,
+  `securityEnabledOnly` false), and only when a candidate whose `PrincipalType` is Group or unknown
+  reaches that guard. A direct assignment whose principal is a group the signed-in identity is a
+  member of, directly or through nesting, is `Skipped`, with or without `-Prune`:
+  `undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)`.
+  A membership read that fails writes its error once and withholds every Group or unknown
+  candidate
+  (`prune withheld: the signed-in identity's group memberships could not be read, so ... : <message>`).
+  The guard order is: an unresolved entry withholds, then an unknown signed-in identity, then the
+  signed-in identity's own assignment, then the group guard, then `Extra` or `-Prune`. A group the
+  signed-in identity is NOT a member of is pruned as before.
 
 **Every unit test on this branch mocks the transport.** They prove the module's decisions given the
-shapes the tests assume. They cannot prove the eight things this file is for:
+shapes the tests assume. They cannot prove the nine things this file is for:
 
 1. That Microsoft Graph's `roleDefinitions` list, matched ignoring case, returns what the exact
    filter misses -- the step 3 finding closed (1.2).
@@ -147,6 +169,9 @@ shapes the tests assume. They cannot prove the eight things this file is for:
    the signed-in identity's own assignment, identified from a real app-only token (section 4).
 7. That a refused read reaches the operator as `Failed` rows and never as an empty pair (section 5).
 8. That a real PIM activation is neither matched nor pruned (section 6).
+9. That the group guard reads a real app-only identity's group membership from Graph and reports
+   the row of the group through which that identity holds the role `Skipped`, while a group it is
+   not a member of is still pruned (4.5).
 
 ## What this file does not check, and why
 
@@ -161,14 +186,16 @@ shapes the tests assume. They cannot prove the eight things this file is for:
   script's included, is made WITHOUT `-IncludeARM`. The only tenant-wide objects it writes are the
   two directory-role policies, restored from the baseline file. 0.4 shows the session holds no
   Azure Resource Manager token, and 3.2 that a directory-only apply run did not acquire one.
-- **Privilege held through a group is not protected from `-Prune` -- by design, and you should
-  decide knowingly.** The own-assignment guard protects only the signed-in identity's DIRECT
-  assignments. If you hold a directory role through a role-assignable group, that group's direct
-  assignment is an ordinary prune candidate: `-Prune` on a document that declares that role and
-  assignmentType, but not the group, removes it -- and your own privilege with it. Closing that
-  would need group-membership expansion on every prune pass, which the guard deliberately does not
-  do ([rationale](../development/rationale.md#directory-role-assignments)). This file does not
-  provoke it: no person is a member of an `oer-s64` group, and section 6 declares Philip directly.
+- **The group guard's failed membership read, and deep nesting.** Privilege held through a group
+  is now protected from `-Prune` (H), and 4.5 runs that guard against a real app-only identity's
+  membership. Two of its paths are not run live. A membership read that fails -- every Group or
+  unknown candidate withheld with `prune withheld: the signed-in identity's group memberships could
+  not be read, ...` -- is unit-pinned and mutation-proved. And membership through nesting: a
+  role-assignable group cannot contain a group, so the live path is one level deep.
+- **An ambiguous service principal display name** (`AmbiguousApplicationName`,
+  `AmbiguousPrincipalName`, and the `Failed` apply entry that withholds its pair). Two service
+  principals with one display name would need a second app registration. Unit-pinned in the
+  `Resolve-OERApplicationId` suite, in `AmbiguousName.Guard.Tests.ps1` and in the handler suites.
 - **An unknown signed-in identity** (a token without an `oid` claim, or a session state built
   before the key existed). Every token Microsoft Entra ID issues carries `oid`, so it cannot be
   produced live. Unit-pinned in the `Get-OERTokenObjectId`, `Get-OERSignedInObjectId`,
@@ -220,9 +247,13 @@ shapes the tests assume. They cannot prove the eight things this file is for:
   pre-check, and creating a role-assignable group in the prerequisite script);
   `RoleManagementPolicy.ReadWrite.Directory` (the rule PATCHes of 2.5 and 3.1 and the teardown's
   restore); `User.ReadWrite.All` and `Group.ReadWrite.All` (the prerequisite script's users and
-  groups, the user principal name and group name lookups, and the `isAssignableToRole` read);
-  `Application.Read.All` (the service principal read of the identity check) and
-  `Organization.Read.All` (the prerequisite script's tenant identification). Every sign-in below
+  groups, `oer-s64-ccrag`'s membership, the user principal name and group name lookups, and the
+  `isAssignableToRole` read); `Application.Read.All` (the service principal read of the identity
+  check); `Directory.Read.All` (the group guard's read of the certificate identity's group
+  memberships, `POST v1.0/directoryObjects/{id}/getMemberGroups`: Microsoft documents
+  `Directory.Read.All` for that generic form, and `Get-OERRequiredScope` lists it for
+  `Invoke-OERStructure`; 4.5's raw read sends the same request) and `Organization.Read.All` (the
+  prerequisite script's tenant identification). Every sign-in below
   is app-only, as that identity -- never interactive, never a device code, never a cached context
   and never a person's account -- except section 6, which is Philip's. **The operator enables it
   for the run and disables it right after**; a sign-in answering "application is disabled" means it
@@ -241,11 +272,15 @@ when any of these is true: a command, a document or a plan names a principal wit
 `oer-s64` as a target, other than the certificate identity's own Message Center Reader assignment
 (section 4 proves it is left alone) and, in section 6, Philip himself; any directory role other
 than Reports Reader and Message Center Reader appears in a target; an assignment of either role
-shows up for a principal the prerequisite script did not create (other than those two);
-`Assert-S64PruneTarget` prints `STOP`; an identity line prints `False`; or a request on the app path
-answers 401, 403 or `Authorization_RequestDenied` anywhere except section 5, where a refusal is the
-point. A refusal means the certificate identity lacks a permission: name the missing permission,
-never finish the step with another sign-in.
+shows up for a principal the prerequisite script did not create (other than those two); a plan or
+a result names `<oer-s64-ccrag>` as a prune TARGET -- `would remove`, `Removed` or `Extra` --
+although it carries the prefix (the certificate identity holds Message Center Reader through that
+group; its membership of `oer-s64-ccrag`, and an inherited Message Center Reader row it may show
+through it, are expected); `Assert-S64PruneTarget` prints `STOP`; an identity line prints
+`False`; or a request on the app path answers 401, 403 or `Authorization_RequestDenied` anywhere
+except section 5, where a refusal is the point, and the prerequisite script's refused membership of
+`oer-s64-ccrag`, which only marks 4.5 `[~]`. A refusal means the certificate identity lacks a
+permission: name the missing permission, never finish the step with another sign-in.
 
 **Variables, build and module path.** Paste into one PowerShell 7 window and keep that window for
 the whole file.
@@ -303,7 +338,8 @@ identity check and the tenant identification both passed. It is idempotent: a se
 nothing that exists and only fills in what is missing. It ends with a summary of names and REAL
 object ids -- redact those before pasting (check 0.3). Read the `-WhatIf` plan first: every target
 must carry the prefix `oer-s64`, apart from the two baseline files and the certificate identity's
-own Message Center Reader assignment.
+own Message Center Reader assignment (the membership of `oer-s64-ccrag` is a target on that
+prefixed group, naming the certificate identity's service principal as the member).
 
 ```powershell
 pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -WhatIf
@@ -313,10 +349,17 @@ pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId 
 What it creates, all named with the prefix: two DISABLED users `oer-s64-user1` and `oer-s64-user2`
 on your domain (random passwords, never printed); the role-assignable security group `oer-s64-rag`
 with `oer-s64-user2` as its only member; the plain security group `oer-s64-plain` (not
-role-assignable); and, through `roleAssignmentScheduleRequests`, an ACTIVE, time-bound (`P2D`)
+role-assignable); through `roleAssignmentScheduleRequests`, an ACTIVE, time-bound (`P2D`)
 Message Center Reader assignment of the certificate identity's OWN service principal -- the one
-assignment section 4 relies on to prove the own-assignment guard. It creates no subscription
-object, no resource group and nothing else in Azure.
+assignment section 4 relies on to prove the own-assignment guard; the role-assignable security group
+`oer-s64-ccrag`, created exactly as `oer-s64-rag` is, with the certificate identity's own service
+principal as its ONLY member; and, only while that membership exists, an ACTIVE, time-bound
+(`P2D`) Message Center Reader assignment of `oer-s64-ccrag`, requested exactly as the own assignment
+is -- the certificate identity then holds Message Center Reader through the group, which 4.5 relies
+on to prove the group guard. When Graph REFUSES the membership (any HTTP 4xx answer other than a
+404 it retries), the script does not stop: it prints the refusal and that 4.5 cannot run as
+written, requests no assignment for the group, and carries on with everything else. It creates no
+subscription object, no resource group and nothing else in Azure.
 
 What it records, once and before its first write, as two UTF-8 JSON files. `-BaselinePath` names
 the POLICY baseline; its default is
@@ -346,11 +389,15 @@ variables block are those two defaults. The helpers below read both files in exa
   empty array, never `null` and never a missing key.
 
 It refuses to run while either role holds a direct assignment of a principal it did not create
-(other than the Message Center Reader assignment it creates itself), and while a user
-`oer-s64-nobody@<your-verified-domain>` exists (4.2 relies on that name resolving to nothing). Its
-`-Teardown` removes the certificate identity's own Message Center Reader assignment and every
-`oer-s64` principal's assignment on both roles, restores both policies from the policy baseline rule
-by rule, re-creates any baseline assignment that is missing, deletes the test users and groups, and
+(other than the Message Center Reader assignment it creates itself), while a user
+`oer-s64-nobody@<your-verified-domain>` exists (4.2 relies on that name resolving to nothing), and
+while a group under one of its three names has the wrong shape -- `oer-s64-ccrag` included: it
+must be a role-assignable security group whose only member is the certificate identity's service
+principal, and one with any other member is refused, never repaired. Its `-Teardown` removes the
+certificate identity's own Message Center Reader assignment and every `oer-s64` principal's
+assignment on both roles (`oer-s64-ccrag`'s included), restores both policies from the policy
+baseline rule by rule, re-creates any baseline assignment that is missing, deletes the test users
+and groups (deleting `oer-s64-ccrag` ends the certificate identity's membership of it), and
 verifies both roles' direct assignments equal the assignment baseline.
 
 **What the script prints, and the checks read.** 0.2, 0.3 and T.2 compare its output with these
@@ -377,27 +424,41 @@ lines; `<...>` is a value, and every line starts `[oer-s64] ` (shown once here):
   on a later run `The baseline files exist; comparing the live state with them.` and, per role,
   `Directory role '<role>': rules differing from the policy baseline: <n>` (a setup run never
   restores a policy).
-- Setup, the objects: `Created user <upn> (disabled).`, `Created group oer-s64-rag (role-assignable).`,
-  `Created group oer-s64-plain.`, `Added <upn> to oer-s64-rag.`, and
-  `Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`
-  (`The active Message Center Reader assignment of oer-live-cc exists.` on a later run). A retry
-  after a 404 prints a line containing `likely replication delay`.
+- Setup, the objects, in this order: `Created user <upn> (disabled).` (twice),
+  `Created group oer-s64-rag (role-assignable).`, `Created group oer-s64-plain.`,
+  `Created group oer-s64-ccrag (role-assignable).`, `Added <upn> to oer-s64-rag.`,
+  `Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`,
+  `Added the service principal of oer-live-cc to oer-s64-ccrag.` and
+  `Requested the active Message Center Reader assignment of oer-s64-ccrag (P2D): <request status>.`
+  On a later run instead `Group <name> exists ...`, `<upn> is already a member of oer-s64-rag.`,
+  `The active Message Center Reader assignment of oer-live-cc exists.`,
+  `The service principal of oer-live-cc is already a member of oer-s64-ccrag.` and
+  `The active Message Center Reader assignment of oer-s64-ccrag exists.` A retry after a 404
+  prints a line containing `likely replication delay`. When Graph REFUSES the membership, the two
+  lines `Adding the service principal of oer-live-cc to oer-s64-ccrag was refused: <Graph's answer>`
+  (the transport's one-line message, every object id in it printed as `<id>`) and
+  `Check 4.5 cannot run as written: mark it [~] with the line above.` take the place of the last
+  two, no assignment is requested for the group, and the run goes on to its summary and `Done.`
 - Teardown, in this order: `Teardown: oer-s64 assignments on the two roles: <n>`, one
-  `Removed the <eligible|active> '<role>' assignment of <name>.` per removal, and
+  `Removed the <eligible|active> '<role>' assignment of <name>.` per removal (for `oer-s64-ccrag`:
+  `Removed the active 'Message Center Reader' assignment of oer-s64-ccrag.`), and
   `Removed the active Message Center Reader assignment of oer-live-cc.`; per role
   `Teardown: directory role '<role>': rules differing from the policy baseline: <n>` (the rule ids
   in parentheses when `<n>` is not 0), one `Restored rule <rule id> of '<role>'.` per rule, and
   `Teardown: directory role '<role>': restored: <True|False|not attempted (WhatIf)>`; per role
   `Teardown: directory role '<role>': baseline assignments missing and re-created: <n>`; then
-  `Deleted group <name>.` and `Deleted user <upn>.`; per role, last,
+  `Deleted group <name>.` (`oer-s64-rag`, `oer-s64-plain`, `oer-s64-ccrag`) and
+  `Deleted user <upn>.`; per role, last,
   `Teardown: directory role '<role>': direct assignments equal the assignment baseline: <True|False|not checked (WhatIf)>`,
   and `Sweep: no user or group starting with 'oer-s64' is left.` (or one
   `Sweep, still present: <user|group> '<name>' (<id>)` line each). Under `-WhatIf` every write is a
   PowerShell `What if:` line instead -- a rule restore's reads
   `"Restore rule <rule id> from the policy baseline (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role '<role>'"`.
 - Last: a summary headed `Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:`
-  -- a table of `Kind`, `Name`, `Id` with the kinds `user`, `group`, `group member`,
+  -- a table of `Kind`, `Name`, `Id` with the kinds `user` (2), `group` (3), `group member` (2:
+  `oer-s64-rag <- <upn of oer-s64-user2>` and `oer-s64-ccrag <- oer-live-cc`),
   `directory role (built-in, fixed)`, `directory role policy`, `own assignment`,
+  `group assignment` (the Message Center Reader assignment of `oer-s64-ccrag`),
   `policy baseline (<written by this run|existed|not written (WhatIf)>)` and
   `assignment baseline (<written by this run|existed|not written (WhatIf)>)`, and
   `(none -- not created)` as the id of anything missing; under `-WhatIf`
@@ -451,6 +512,7 @@ function Get-S64Name {
         "$Prefix-user2" = $IdUser2
         "$Prefix-rag"   = $IdRag
         "$Prefix-plain" = $IdPlain
+        "$Prefix-ccrag" = $IdCcRag
         'oer-live-cc'   = $IdCc
         $RoleRR         = $RoleIdRR
         $RoleMCR        = $RoleIdMCR
@@ -591,7 +653,7 @@ function Get-S64StateKey {
 function Show-S64AssignmentBaselineDiff {
     # The DIRECT rows of both roles against the assignment baseline file the prerequisite script
     # wrote, per role and kind, by principal: who only the live read has, and who only the baseline
-    # has -- named, never printed as ids.
+    # has -- named, never printed as ids, and sorted by name.
     param([Parameter(Mandatory)][string]$Label, [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$State)
     $Base = Get-Content -LiteralPath $AssignmentBaselinePath -Raw | ConvertFrom-Json -AsHashtable
     foreach ($Entry in @($Base['roles'] | Where-Object { $null -ne $_ })) {
@@ -600,8 +662,8 @@ function Show-S64AssignmentBaselineDiff {
             $BaseIds = @($Entry[$Kind.ToLowerInvariant()] | Where-Object { $null -ne $_ } | ForEach-Object { ([string]$_['principalId']).ToLowerInvariant() } | Sort-Object -Unique)
             $LiveIds = @($State | Where-Object { $_.Kind -eq $Kind -and [string]$_.RoleDefinitionId -eq [string]$Entry['roleDefinitionId'] -and $_.MemberType -eq 'Direct' } |
                     ForEach-Object { ([string]$_.PrincipalId).ToLowerInvariant() } | Sort-Object -Unique)
-            $OnlyLive = @($LiveIds | Where-Object { $BaseIds -notcontains $_ } | ForEach-Object { Get-S64Name $_ })
-            $OnlyBase = @($BaseIds | Where-Object { $LiveIds -notcontains $_ } | ForEach-Object { Get-S64Name $_ })
+            $OnlyLive = @($LiveIds | Where-Object { $BaseIds -notcontains $_ } | ForEach-Object { Get-S64Name $_ } | Sort-Object)
+            $OnlyBase = @($BaseIds | Where-Object { $LiveIds -notcontains $_ } | ForEach-Object { Get-S64Name $_ } | Sort-Object)
             Write-Host ('--- {0}: {1}, {2}: direct principals live {3}, baseline {4}; only live [{5}]; only baseline [{6}]' -f
                 $Label, $Name, $Kind, $LiveIds.Count, $BaseIds.Count, ($OnlyLive -join ', '), ($OnlyBase -join ', '))
         }
@@ -696,14 +758,17 @@ function Get-S64RawSchedule {
     # The schedules of one role and principal straight from Microsoft Graph v1.0, outside the module
     # -- the same resource the Get cmdlets read. -Want waits (6 x 10 s) until exactly that many rows
     # are listed, and -WantWindowDays until every row's window rounds to that many days: Graph lists a
-    # just-accepted request a moment later. Saved as <Label>.json; prints the fields the checks compare.
+    # just-accepted request a moment later. -DirectOnly keeps only the rows whose memberType is Direct:
+    # a member of a role-assignable group may be listed with an inherited row too (4.4), which -Want
+    # must not count. Saved as <Label>.json; prints the fields the checks compare.
     param(
         [Parameter(Mandatory)][ValidateSet('Eligible', 'Active')][string]$Kind,
         [Parameter(Mandatory)][string]$RoleDefinitionId,
         [Parameter(Mandatory)][string]$PrincipalId,
         [Parameter(Mandatory)][string]$Label,
         [int]$Want = -1,
-        [int]$WantWindowDays = 0
+        [int]$WantWindowDays = 0,
+        [switch]$DirectOnly
     )
     $Resource = if ($Kind -eq 'Eligible') { 'roleEligibilitySchedules' } else { 'roleAssignmentSchedules' }
     $F = [uri]::EscapeDataString("roleDefinitionId eq '$RoleDefinitionId' and principalId eq '$PrincipalId'")
@@ -716,14 +781,14 @@ function Get-S64RawSchedule {
             $global:Error.Clear()
             return
         }
-        $Rows = @($R['value'] | Where-Object { $null -ne $_ })
+        $Rows = @($R['value'] | Where-Object { $null -ne $_ -and (-not $DirectOnly -or [string]$_['memberType'] -eq 'Direct') })
         $WindowOk = ($WantWindowDays -le 0) -or (@($Rows | Where-Object { [math]::Round([double](Get-S64WindowDays -Info $_['scheduleInfo'])) -eq $WantWindowDays }).Count -eq $Rows.Count)
         if ($Want -lt 0 -or ($Rows.Count -eq $Want -and $WindowOk)) { break }
         Write-Host "    ($($Label): $($Rows.Count) row(s) listed, waiting -- attempt $Try of 6)"
         Start-Sleep -Seconds 10
     }
     ConvertTo-Json -InputObject $Rows -Depth 20 | Set-Content -Path (Join-Path $Raw "$Label.json") -Encoding utf8NoBOM
-    Write-Host "--- $($Label): raw $Resource of <$(Get-S64Name $RoleDefinitionId)> for <$(Get-S64Name $PrincipalId)>: $($Rows.Count) row(s)"
+    Write-Host "--- $($Label): raw $Resource of <$(Get-S64Name $RoleDefinitionId)> for <$(Get-S64Name $PrincipalId)>$(if ($DirectOnly) { ', memberType Direct only' }): $($Rows.Count) row(s)"
     foreach ($Row in $Rows) {
         $Info = $Row['scheduleInfo']
         $Exp = if ($Info) { $Info['expiration'] } else { $null }
@@ -836,9 +901,11 @@ function Assert-S64PruneTarget {
     # removes, would remove or reports Extra, by name, and returns $true only when the plan holds
     # directoryRoleAssignments rows at all (no row means the plan did not run -- an invalid document,
     # or a stale result -- and proves nothing) and every such target names a test object carrying the
-    # prefix, in one of the two roles. -AllowPrincipalId adds exactly one more principal (section 6's
-    # first apply only: Philip's own object id). A candidate row's Item is the engine's
-    # '<role> -> <principal id> (<assignmentType>)'; anything else counts as not allowed.
+    # prefix, in one of the two roles -- never oer-s64-ccrag, through which the certificate identity
+    # holds Message Center Reader (a stop condition, although it carries the prefix).
+    # -AllowPrincipalId adds exactly one more principal (section 6's first apply only: Philip's own
+    # object id). A candidate row's Item is the engine's '<role> -> <principal id> (<assignmentType>)';
+    # anything else counts as not allowed.
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Result, [Parameter(Mandatory)][string]$Label, [string]$AllowPrincipalId)
     $SectionRows = @($Result | Where-Object { $null -ne $_ -and $_.Section -eq 'directoryRoleAssignments' })
     if ($SectionRows.Count -eq 0) {
@@ -857,14 +924,14 @@ function Assert-S64PruneTarget {
             $Role = $Matches['Role']; $P = $Matches['P']
             if (Test-S64Guid $Role) { $Role = Get-S64Name $Role }
             $Who = Get-S64Name $P
-            $Good = ($Role -in @($RoleRR, $RoleMCR)) -and
+            $Good = ($Role -in @($RoleRR, $RoleMCR)) -and ($Who -ne "$Prefix-ccrag") -and
                 ($Who.StartsWith("$Prefix-", [System.StringComparison]::Ordinal) -or ($AllowPrincipalId -and [string]::Equals($P, $AllowPrincipalId, [System.StringComparison]::OrdinalIgnoreCase)))
         }
         Write-Host ('    target: {0} -- {1}; allowed: {2}' -f (Format-S64Text $T.Item), $T.Action, $Good)
         if (-not $Good) { $Ok = $false }
     }
     Write-Host "--- $($Label): prune targets (would remove, removed or Extra): $($Targets.Count); every one allowed: $Ok"
-    if (-not $Ok) { Write-Host '--- STOP: a target is not a prefixed test object in one of the two roles. The -Prune line does not run.' }
+    if (-not $Ok) { Write-Host '--- STOP: a target is not a prefixed test object in one of the two roles, or is oer-s64-ccrag. The -Prune line does not run.' }
     $Ok
 }
 
@@ -944,6 +1011,7 @@ $User2Upn  = "$Prefix-user2@$Domain"
 $NobodyUpn = "$Prefix-nobody@$Domain"   # must resolve to nothing: the prerequisite script refuses to run while it exists
 $RagName   = "$Prefix-rag"              # role-assignable; oer-s64-user2 is its only member
 $PlainName = "$Prefix-plain"            # NOT role-assignable
+$CcRagName = "$Prefix-ccrag"            # role-assignable; oer-live-cc's service principal is its only member
 
 $RefusedScript = @'
 # Check 5.1 -- runs in a process of its own, signed in app-only as oer-live-cc-noperm: the same
@@ -1074,10 +1142,11 @@ Write-Host 'Done. Copy the lines above into check 5.1.'
 ```
 
 In the `Expect:` lines below, a name in angle brackets is an id the helpers have already named:
-`<oer-s64-user1>`, `<oer-s64-user2>`, `<oer-s64-rag>`, `<oer-s64-plain>`, `<oer-live-cc>` (the
-certificate identity's service principal), `<Reports Reader>` and `<Message Center Reader>` (the
-role definition ids), `<policy of Reports Reader>` and `<policy of Message Center Reader>` (the
-policy ids), and in section 6 `<Me>` (Philip). `<not a test object>` is an id none of those is --
+`<oer-s64-user1>`, `<oer-s64-user2>`, `<oer-s64-rag>`, `<oer-s64-plain>`, `<oer-s64-ccrag>`,
+`<oer-live-cc>` (the certificate identity's service principal), `<Reports Reader>` and
+`<Message Center Reader>` (the role definition ids), `<policy of Reports Reader>` and
+`<policy of Message Center Reader>` (the policy ids), and in section 6 `<Me>` (Philip).
+`<not a test object>` is an id none of those is --
 as a prune target, a stop condition. A test user principal name prints as
 `oer-s64-user1@<test domain>`. PowerShell's own `What if:` lines print the ids and names as they
 are: they are described below as `<the id of oer-s64-user2>` or `<oer-s64-user1's user principal name>`.
@@ -1085,15 +1154,17 @@ are: they are described below as `<the id of oer-s64-user2>` or `<oer-s64-user1'
 **Run order.** Section 0, then section 1 before ANY write -- 1.1 and 1.3 compare the tenant with the
 two baseline files the Teardown restores. Then sections 2, 3 and 4 in order: each starts from the
 state the one before it leaves (2.6 removes what 2.1 made, 2.7 changes what 2.2 made, section 3
-builds the Reports Reader state section 4 prunes, and 4.2 needs 2.4's assignment). Run sections 0 to
-4 within two days of the prerequisite run: the certificate identity's own Message Center Reader
-assignment is time-bound (`P2D`), and 4.3 needs it -- if it has expired, re-run the prerequisite
-script, which only fills in what is missing. Section 5 after section 4. Section 6 last, by Philip,
-then the Teardown. If this window is closed part-way, paste the Setup blocks again (variables,
-sign-in, helpers, test principals) and re-run 0.5; from 3.3 on, also paste section 3's document
-block and the first two lines of 3.3 (its seven-day `$E1` and `$Doc33`), and from section 4 on section 4's
-document block. A raw read answering 401 after a long pause means the token `Connect-OER` handed
-the Graph SDK has expired: paste the sign-in block again.
+builds the Reports Reader state section 4 prunes, 4.2 needs 2.4's assignment, and 4.5 -- after
+4.4 -- prunes 2.7's). Run sections 0 to 4 within two days of the prerequisite run: the certificate
+identity's own Message Center Reader assignment and `oer-s64-ccrag`'s are time-bound (`P2D`), 4.3
+needs the first and 4.5 both -- if either has expired, re-run the prerequisite script, which only
+fills in what is missing. Section 5 after section 4. Section 6 last, by Philip, then the Teardown.
+If this window is closed part-way, paste the Setup blocks again (variables, sign-in, helpers, test
+principals) and re-run 0.5 -- it also sets `$IdCcRag`, which 4.5 needs; from 3.3 on, also paste
+section 3's document block and the first two lines of 3.3 (its seven-day `$E1` and `$Doc33`), and
+from section 4 on section 4's document block (4.5 builds its own document). A raw read answering
+401 after a long pause means the token `Connect-OER` handed the Graph SDK has expired: paste the
+sign-in block again.
 
 ---
 
@@ -1109,7 +1180,7 @@ the Graph SDK has expired: paste the sign-in block again.
   & $M { Get-Command Resolve-OERDirectoryRoleDefinitionId, Resolve-OERDirectoryRoleInput, Get-OERRoleAssignableState,
       Test-OERDirectoryRolePermanentAllowed, New-OERDirectoryRoleScheduleRequestBody, ConvertTo-OERDirectoryRoleAssignment,
       ConvertTo-OERDirectoryRoleScheduleRequest, Select-OERManagedDirectoryRoleAssignment, Resolve-OERDirectoryRoleAssignmentChange,
-      Get-OERTokenObjectId, Get-OERSignedInObjectId, Sync-OERStructureDirectoryRoleAssignment } | Format-Table Name, CommandType -AutoSize
+      Get-OERTokenObjectId, Get-OERSignedInObjectId, Sync-OERStructureDirectoryRoleAssignment, Get-OERMemberGroupId } | Format-Table Name, CommandType -AutoSize
   $Six = 'Get-OEREligibleDirectoryRoleAssignment', 'New-OEREligibleDirectoryRoleAssignment', 'Remove-OEREligibleDirectoryRoleAssignment',
       'Get-OERActiveDirectoryRoleAssignment', 'New-OERActiveDirectoryRoleAssignment', 'Remove-OERActiveDirectoryRoleAssignment'
   Get-Command $Six | Format-Table Name, CommandType -AutoSize
@@ -1133,11 +1204,14 @@ the Graph SDK has expired: paste the sign-in block again.
   prune directory role assignments only within declared role and type pairs", "test: prove a
   declared principal id matches its live assignment in any letter case", "fix: decide principalType
   alike in the prune pass and the item, and reword the unknown-identity reason", "docs: release note
-  and rules for directory role assignments" and "docs: live-verification checklist for directory
-  role assignments". Subjects, not hashes: a rebase onto `main` rewrites every hash. After the merge
-  the range is empty -- the squash merge folds the branch into one commit on `main`. `ModuleBase`
-  lies under `<your-clone>/output/module/Omnicit.EntraRBAC/`; the twelve private functions and the
-  six public ones are listed as `Function`; the `ValidValues` line prints `True`; the scope lines
+  and rules for directory role assignments", "docs: live-verification checklist for directory
+  role assignments", "fix: refuse an ambiguous service principal display name" and "fix: never
+  prune a directory role the signed-in identity holds through a group". Subjects, not hashes: a
+  rebase onto `main` rewrites every hash. After the merge the range is empty -- the squash merge
+  folds the branch into one commit on `main`. `ModuleBase` lies under
+  `<your-clone>/output/module/Omnicit.EntraRBAC/`; the thirteen private functions (the last,
+  `Get-OERMemberGroupId`, came with the group guard) and the six public ones are listed as
+  `Function`; the `ValidValues` line prints `True`; the scope lines
   read, in this order,
   `Get-OEREligibleDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleEligibilitySchedule.Read.Directory, RoleManagement.Read.Directory, User.ReadBasic.All`,
   `New-OEREligibleDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleEligibilitySchedule.ReadWrite.Directory, RoleManagement.Read.Directory, User.ReadBasic.All`,
@@ -1162,19 +1236,25 @@ the Graph SDK has expired: paste the sign-in block again.
   no `Unattended run: ...` line and no question (`-WhatIf`). Every `What if:` target is one of: the
   two baseline files under `<your-clone>\docs\live-verification\raw\s64\` (when they do not exist
   yet), the DISABLED users `oer-s64-user1` and `oer-s64-user2` (printed as user principal names --
-  redact), the groups `oer-s64-rag` (role-assignable) and `oer-s64-plain`, the membership
-  `oer-s64-rag <- oer-s64-user2`, and the ACTIVE time-bound (`P2D`) Message Center Reader
-  assignment of the certificate identity's own service principal. No subscription, no resource
-  group, nothing in Azure; no directory role other than the two. Then the summary, with
-  `(none -- not created)` as the id of every object it would create and
+  redact), the groups `oer-s64-rag` (role-assignable), `oer-s64-plain` and `oer-s64-ccrag`
+  (role-assignable), the membership `oer-s64-rag <- oer-s64-user2`, the ACTIVE time-bound (`P2D`)
+  Message Center Reader assignment of the certificate identity's own service principal, the
+  membership of that service principal in `oer-s64-ccrag`
+  (`Performing the operation "Add member 'the service principal of oer-live-cc'" on target "oer-s64-ccrag"`),
+  and the ACTIVE time-bound (`P2D`) Message Center Reader assignment of `oer-s64-ccrag`
+  (`... on target "active directory role 'Message Center Reader' for oer-s64-ccrag at directory scope '/'"`).
+  No subscription, no resource group, nothing in Azure; no directory role other than the two. Then
+  the summary, with `(none -- not created)` as the id of every object it would create -- the three
+  groups, both `group member` rows, the `own assignment` and the `group assignment` included -- and
   `policy baseline (not written (WhatIf))` / `assignment baseline (not written (WhatIf))`,
   `[oer-s64] WhatIf: nothing was created, restored, removed or written.` and `[oer-s64] Done.`
   **Failure looks like:** a target without the prefix other than those named above; a directory
   role other than the two; a refusal line -- `Refusing to run: ...` from the tenant identification
-  (check `$OrgName` exactly, case-sensitive, `$Domain`, `$TenantId` and the Tenant Profile for the
-  alias; never weaken the check), a refusal naming a direct assignment of either role to a principal
-  the script did not create (someone holds the role: stop, this file cannot restore what it did not
-  record), or a user `oer-s64-nobody@...` that exists. Record it and stop.
+  (check `$OrgName` exactly, case-sensitive, `$Domain` and `$TenantId`; never weaken the check), a
+  refusal naming a group under one of the three names with the wrong shape or another member (it
+  is never repaired: delete it by hand), a refusal naming a direct assignment of either role to a
+  principal the script did not create (someone holds the role: stop, this file cannot restore what
+  it did not record), or a user `oer-s64-nobody@...` that exists. Record it and stop.
   **Result:**
 
 - [ ] **0.3 The prerequisite script ran, every test object exists, and both baseline files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
@@ -1203,15 +1283,26 @@ the Graph SDK has expired: paste the sign-in block again.
   `[oer-s64] The baseline files exist; comparing the live state with them.` and, for both roles,
   `[oer-s64] Directory role '<role>': rules differing from the policy baseline: 0`). Then
   `[oer-s64] Created user <upn> (disabled).` twice, `[oer-s64] Created group oer-s64-rag (role-assignable).`,
-  `[oer-s64] Created group oer-s64-plain.`, `[oer-s64] Added <upn> to oer-s64-rag.` -- a line
-  containing `likely replication delay` before it is a retry after a 404, not a failure -- and
-  `[oer-s64] Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`
-  (a later run: `... exists.`); no `Refusing to run: ` line. The summary: one row per object, kinds
-  `user` (2), `group` (2), `group member` (1), `directory role (built-in, fixed)` (2),
-  `directory role policy` (2), `own assignment` (1), `policy baseline (written by this run)` and
-  `assignment baseline (written by this run)` (`(existed)` on a later run), and no
-  `(none -- not created)`; redact every id and user principal name. The last line
-  `[oer-s64] Done.` From the block: both files
+  `[oer-s64] Created group oer-s64-plain.`,
+  `[oer-s64] Created group oer-s64-ccrag (role-assignable).`,
+  `[oer-s64] Added <upn> to oer-s64-rag.` (a line containing `likely replication delay` before it
+  is a retry after a 404, not a failure),
+  `[oer-s64] Requested the active Message Center Reader assignment of oer-live-cc (P2D): <request status>.`,
+  `[oer-s64] Added the service principal of oer-live-cc to oer-s64-ccrag.` (the same retry lines
+  may come before it) and
+  `[oer-s64] Requested the active Message Center Reader assignment of oer-s64-ccrag (P2D): <request status>.`
+  (a later run: `... is already a member of ...` and `... exists.`); no `Refusing to run: ` line.
+  The summary: one row per object, kinds `user` (2), `group` (3), `group member` (2:
+  `oer-s64-rag <- <upn>` and `oer-s64-ccrag <- oer-live-cc`), `directory role (built-in, fixed)`
+  (2), `directory role policy` (2), `own assignment` (1), `group assignment` (1),
+  `policy baseline (written by this run)` and `assignment baseline (written by this run)`
+  (`(existed)` on a later run), and no `(none -- not created)`; redact every id and user principal
+  name. The last line `[oer-s64] Done.` When Graph REFUSED the membership instead:
+  `[oer-s64] Adding the service principal of oer-live-cc to oer-s64-ccrag was refused: <Graph's answer>`
+  and `[oer-s64] Check 4.5 cannot run as written: mark it [~] with the line above.` in place of the
+  last two lines, `(none -- not created)` for `oer-s64-ccrag <- oer-live-cc` and for the
+  `group assignment` and nowhere else, and still `[oer-s64] Done.` -- carry on, and mark 4.5 `[~]`
+  with the refusal line. From the block: both files
   `exists True`; `policy baseline:` one line per role, with the rule count Graph lists (step 3
   measured 17) and `True` twice; `assignment baseline:` one line per role -- the counts are
   normally `0` and `0`, since the script refuses to run while either role holds a direct assignment
@@ -1252,7 +1343,8 @@ the Graph SDK has expired: paste the sign-in block again.
   $U2 = Get-S64RawUser -Upn $User2Upn
   $Rag = Get-S64RawGroup -Name $RagName
   $Plain = Get-S64RawGroup -Name $PlainName
-  $IdUser1 = $U1.Id; $IdUser2 = $U2.Id; $IdRag = $Rag.Id; $IdPlain = $Plain.Id
+  $CcRag = Get-S64RawGroup -Name $CcRagName
+  $IdUser1 = $U1.Id; $IdUser2 = $U2.Id; $IdRag = $Rag.Id; $IdPlain = $Plain.Id; $IdCcRag = $CcRag.Id
   $Sp = Get-S64RawStatus -Uri "v1.0/servicePrincipals(appId='$AppId')?`$select=id,displayName"
   $IdCc = if ($Sp.Status -eq 200) { [string]$Sp.Body['id'] } else { $null }
   $RoleIdRR  = Get-S64RawRoleDefinitionId -Name $RoleRR
@@ -1262,10 +1354,11 @@ the Graph SDK has expired: paste the sign-in block again.
   "users: oer-s64-user1 enabled $($U1.AccountEnabled); oer-s64-user2 enabled $($U2.AccountEnabled)"
   "oer-s64-rag: isAssignableToRole '$($Rag.IsAssignableToRole)'; securityEnabled $($Rag.SecurityEnabled); members [$((@($Rag.MemberIds) | ForEach-Object { Get-S64Name $_ }) -join ', ')]"
   "oer-s64-plain: isAssignableToRole '$($Plain.IsAssignableToRole)' (null prints as ''); securityEnabled $($Plain.SecurityEnabled); members $(@($Plain.MemberIds).Count)"
+  "oer-s64-ccrag: isAssignableToRole '$($CcRag.IsAssignableToRole)'; securityEnabled $($CcRag.SecurityEnabled); members [$((@($CcRag.MemberIds) | ForEach-Object { Get-S64Name $_ }) -join ', ')]"
   "oer-live-cc service principal: status $($Sp.Status); displayName is oer-live-cc: $([string]$Sp.Body['displayName'] -ceq 'oer-live-cc')"
   Get-S64RawUser -Upn $NobodyUpn
-  $S05Ids = @($IdUser1, $IdUser2, $IdRag, $IdPlain, $IdCc, $RoleIdRR, $RoleIdMCR)
-  "ids read: $(@($S05Ids | Where-Object { Test-S64Guid $_ }).Count) of 7; all different: $(@($S05Ids | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique).Count -eq 7)"
+  $S05Ids = @($IdUser1, $IdUser2, $IdRag, $IdPlain, $IdCcRag, $IdCc, $RoleIdRR, $RoleIdMCR)
+  "ids read: $(@($S05Ids | Where-Object { Test-S64Guid $_ }).Count) of 8; all different: $(@($S05Ids | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique).Count -eq 8)"
   "policy ids read: $([bool]$PolicyIdRR) $([bool]$PolicyIdMCR); different: $($PolicyIdRR -ne $PolicyIdMCR)"
   ```
 
@@ -1273,14 +1366,17 @@ the Graph SDK has expired: paste the sign-in block again.
   `oer-s64-rag: isAssignableToRole 'True'; securityEnabled True; members [oer-s64-user2]`;
   `oer-s64-plain: isAssignableToRole 'False'` or `''` -- record which: 2.3 turns on it (null and
   false both count as not role-assignable) -- `; securityEnabled True; members 0`;
+  `oer-s64-ccrag: isAssignableToRole 'True'; securityEnabled True; members [oer-live-cc]` --
+  `members []` when the prerequisite run printed that Graph refused the membership: then 4.5 is
+  `[~]`, with that refusal line;
   `oer-live-cc service principal: status 200; displayName is oer-live-cc: True`;
   `--- raw user read: 0 users match 'oer-s64-nobody@<test domain>', not one`;
-  `ids read: 7 of 7; all different: True`; `policy ids read: True True; different: True`. No
+  `ids read: 8 of 8; all different: True`; `policy ids read: True True; different: True`. No
   `FAILED` line.
   **Failure looks like:** any count off, a `True` for a user's `enabled`, `oer-s64-plain` role-assignable,
-  a member missing from `oer-s64-rag` or an extra one, or a `raw ... read FAILED` line -- a 403 there
-  is a missing permission (see Stop conditions). `1 users match` for `oer-s64-nobody`: stop, 4.2
-  cannot run as written.
+  a member missing from `oer-s64-rag` or an extra one, any member of `oer-s64-ccrag` other than
+  `oer-live-cc`, or a `raw ... read FAILED` line -- a 403 there is a missing permission (see Stop
+  conditions). `1 users match` for `oer-s64-nobody`: stop, 4.2 cannot run as written.
   **Result:**
 
 ---
@@ -1290,7 +1386,7 @@ the Graph SDK has expired: paste the sign-in block again.
 Nothing below this section may run before it: 1.1 and 1.3 prove the tenant starts where the two
 baseline files say, and the Teardown restores exactly what those files hold.
 
-- [ ] **1.1 Both Get cmdlets, on both roles, against the assignment baseline -- and the certificate identity's own Message Center Reader row.** Read-only.
+- [ ] **1.1 Both Get cmdlets, on both roles, against the assignment baseline -- and the Message Center Reader rows of the certificate identity and of `oer-s64-ccrag`.** Read-only.
 
   ```powershell
   foreach ($R in $RoleRR, $RoleMCR) {
@@ -1301,8 +1397,9 @@ baseline files say, and the Teardown restores exactly what those files hold.
   Show-S64State -State $S11 -Label '1.1'
   Show-S64AssignmentBaselineDiff -Label '1.1' -State $S11
   $Cc11 = @($S11 | Where-Object { $_.S64Role -eq $RoleMCR -and $_.Kind -eq 'Active' -and $_.PrincipalId -eq $IdCc })
-  "oer-live-cc's own Message Center Reader rows: $($Cc11.Count)"
+  "oer-live-cc's own Message Center Reader rows: direct $(@($Cc11 | Where-Object { $_.MemberType -eq 'Direct' }).Count), other $(@($Cc11 | Where-Object { $_.MemberType -ne 'Direct' }).Count)"
   $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCc -Label '1.1-cc-mcr-active-raw'
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCcRag -Label '1.1-ccrag-mcr-active-raw'
   ```
 
   **Expect:** each of the four calls sends exactly TWO requests, in order:
@@ -1311,19 +1408,30 @@ baseline files say, and the Teardown restores exactly what those files hold.
   `GET v1.0/roleManagement/directory/roleEligibilitySchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Reports Reader>'&$expand=principal,roleDefinition`
   (or `roleAssignmentSchedules`, or `<Message Center Reader>`); no own verbose line, no warning, no
   error. The state: normally no row for Reports Reader and none for Message Center Reader Eligible;
-  for Message Center Reader Active exactly one row,
+  for Message Center Reader Active two DIRECT rows,
   `<oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration '<type>'; DurationDays 2; end set`
-  (record the expiration type Graph returns: `afterDateTime` or `afterDuration`). The baseline diff:
-  for both roles and both kinds `only live []` and `only baseline []`, EXCEPT
-  `Message Center Reader, Active: ... only live [oer-live-cc]` -- the script created that
-  assignment after it wrote the baseline. `oer-live-cc's own Message Center Reader rows: 1`, and the
-  raw read shows one row: `memberType Direct; directoryScopeId '/'; assignmentType Assigned`, a
-  window of 2 days.
+  and `<oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration '<type>'; DurationDays 2; end set`
+  (record the expiration type Graph returns: `afterDateTime` or `afterDuration`), and possibly a
+  third, an inherited row for `<oer-live-cc>` with a `MemberType` other than `Direct` -- the
+  certificate identity holds the role through `oer-s64-ccrag` too: record whether Graph lists it,
+  and its `MemberType`. The baseline diff: for both roles and both kinds `only live []` and
+  `only baseline []`, EXCEPT
+  `Message Center Reader, Active: ... only live [oer-live-cc, oer-s64-ccrag]`
+  -- the script created both assignments after it wrote the baseline (the diff reads direct rows
+  only). `oer-live-cc's own Message Center Reader rows: direct 1, other 0` (`other 1` when Graph
+  lists the inherited row). The first raw read shows the own row,
+  `memberType Direct; directoryScopeId '/'; assignmentType Assigned`, a window of 2 days (and the
+  inherited row, when Graph lists it: record it); the second shows `oer-s64-ccrag`'s row, the same.
+  When the prerequisite run recorded that Graph refused the membership, there is no
+  `<oer-s64-ccrag>` row and no inherited row, `only live [oer-live-cc]`, and the second raw read
+  shows 0 rows (4.5 is `[~]`).
   **Failure looks like:** a row for any principal the script did not create -- stop (Stop
   conditions); a non-empty `only baseline` -- a baseline assignment is gone since the script ran;
   record it (the teardown re-creates it); no row for the certificate identity, or one that is not
-  `Assigned`/`Direct`: 4.3 cannot run -- re-run the prerequisite script. A third request in any call:
-  the exact-case name did not match in one request -- record it.
+  `Assigned`/`Direct`: 4.3 cannot run -- re-run the prerequisite script; no row for `oer-s64-ccrag`
+  although the prerequisite run added the membership: 4.5 cannot run -- re-run the prerequisite
+  script. A third request in any call: the exact-case name did not match in one request -- record
+  it.
   **Result:**
 
 - [ ] **1.2 A name in another letter case now matches -- the step 3 finding closed.** Read-only. The active read of Message Center Reader is used because it has a row (1.1), so "the same rows" is not vacuous.
@@ -1563,8 +1671,8 @@ list what it has just accepted.
   -- and NO `POST` and NO `PATCH`; no object; one published error,
   `ERROR [PermanentAssignmentNotAllowed,New-OERActiveDirectoryRoleAssignment]: The PIM policy of Microsoft Entra directory role 'Message Center Reader' does not allow permanent active assignments, so Microsoft Graph would refuse this one, and Omnicit.EntraRBAC never changes a policy implicitly. Nothing was changed. Allow it first with Set-OERDirectoryRoleManagementPolicy -Role 'Message Center Reader' -AllowPermanentActiveAssignment $true, or declare allowPermanentActiveAssignment: true for the role under directoryRoleManagementPolicies in the same apply document (that section runs first), or pass -DurationDays for a time-bound assignment.`
   Then `rules differing from the read before the request: 0` and the raw schedule read: 0 rows.
-  The certificate identity's own Message Center Reader assignment is time-bound and is not affected
-  by the changed rule.
+  The certificate identity's own Message Center Reader assignment and `oer-s64-ccrag`'s are
+  time-bound and are not affected by the changed rule.
   **Failure looks like:** a `POST` or `PATCH` in 2.5b -- the policy was opened implicitly or the
   request was sent; a count above `0`; a row in the raw read. A `NoChange` error in 2.5a: 1.3
   recorded permanent active already refused -- carry on to 2.5b, and record it.
@@ -1859,7 +1967,8 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   reads: user2 on Reports Reader 0 rows; user2 on Message Center Reader still ONE row (2.4's -- a
   pair the document does not declare). The state: Reports Reader holds exactly section 3's four
   direct rows (and any `MemberType Group` rows 3.1 recorded); Message Center Reader Eligible
-  `<oer-s64-user2>`, Active `<oer-live-cc>` and `<oer-s64-rag>`, as before.
+  `<oer-s64-user2>`, Active `<oer-live-cc>`, `<oer-s64-ccrag>` and `<oer-s64-rag>` (and any
+  inherited `<oer-live-cc>` row 1.1 recorded), as before.
   **Failure looks like:** `Extra` or a `would remove` row for `oer-s64-rag` -- the role written by id
   became a second pair; anything of Message Center Reader named; more than one target; a
   `MemberType Group` row as a target (see 4.4); the assertion printing `STOP` -- the `-Prune` line
@@ -1929,7 +2038,7 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   pair of its kind.
   **Result:**
 
-- [ ] **4.3 The signed-in identity's own assignment is `Skipped` under `-Prune`, and stays.** The document declares (Message Center Reader, Active) for the group only, so the certificate identity's own active Message Center Reader assignment is an undeclared candidate in a declared pair.
+- [ ] **4.3 The signed-in identity's own assignment is `Skipped` under `-Prune`, and stays.** The document declares (Message Center Reader, Active) for `oer-s64-rag` only, so the certificate identity's own active Message Center Reader assignment is an undeclared candidate in a declared pair -- and so is `oer-s64-ccrag`'s, which the certificate identity holds through its membership (4.5 runs the group guard on its own).
 
   ```powershell
   "the module's signed-in object id is oer-live-cc's service principal: $([string]::Equals([string](& (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }), $IdCc, [System.StringComparison]::OrdinalIgnoreCase))"
@@ -1942,24 +2051,35 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
 
   ```powershell
   if ($Ok43) { Invoke-S64Check -Id '4.3b' -Json $Doc43 -Include DirectoryRoleAssignments -Prune -Apply; $null = Assert-S64PruneTarget -Result $S64Result -Label '4.3b applied' } else { Write-Host 'not run: the 4.3a assertion failed' }
-  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCc -Label '4.3-cc-raw' -Want 1
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCc -Label '4.3-cc-raw' -Want 1 -DirectOnly
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCcRag -Label '4.3-ccrag-raw' -Want 1
   Show-S64State -State @(Get-S64State) -Label '4.3 after'
   ```
 
   **Expect:** `... oer-live-cc's service principal: True`. 4.3a: `Valid = True`; no warning, no
-  `What if:` line for a removal; two rows: the prune row
-  `Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)`
-  and `Message Center Reader -> oer-s64-rag (Active) | Unchanged | assignment matches` (2.7's
-  four-day window); `Skipped=1, Unchanged=1`; the assertion `0; every one allowed: True`. 4.3b: the
-  same two rows, for real. The raw read: the certificate identity's row still there, `Assigned`,
-  `Direct`. The state: unchanged from 4.1's except `oer-s64-user2`'s Reports Reader eligible row,
-  which 4.2 created -- Reports Reader is not in this document, and Message Center Reader Eligible
-  (`oer-s64-user2`) is a pair it does not declare: neither is read, listed or touched.
+  `What if:` line for a removal; three rows. First the two prune rows, in the order the pass emits
+  them (it walks the pair's rows in Graph's order: record it): the own row, with the own-assignment
+  reason -- that guard comes before the group guard --
+  `Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)`,
+  and the group's row
+  `Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)`;
+  then `Message Center Reader -> oer-s64-rag (Active) | Unchanged | assignment matches` (2.7's
+  four-day window); `Skipped=2, Unchanged=1`; the assertion `0; every one allowed: True`. 4.3b: the
+  same three rows, for real. The raw reads: the certificate identity's direct row still there,
+  `Assigned`, `Direct`, and `oer-s64-ccrag`'s. The state: unchanged from 4.1's except
+  `oer-s64-user2`'s Reports Reader eligible row, which 4.2 created -- Reports Reader is not in this
+  document, and Message Center Reader Eligible (`oer-s64-user2`) is a pair it does not declare:
+  neither is read, listed or touched. When the prerequisite run recorded that Graph refused the
+  membership, `oer-s64-ccrag` holds no assignment: the own row and the `oer-s64-rag` row only,
+  `Skipped=1, Unchanged=1`, and the second raw read waits and shows 0 rows.
   **Failure looks like:** `Extra`, `would remove` or `Removed` for `<oer-live-cc>` -- the guard did
   not recognize the signed-in identity (the assertion also stops: `oer-live-cc` carries no
-  `oer-s64` prefix); `prune withheld: the signed-in identity's object id is unknown` -- 0.4 should
-  have caught it; the group's row `Updated` -- 2.7's window did not converge; any row naming Reports
-  Reader.
+  `oer-s64` prefix); `Extra`, `would remove` or `Removed` for `<oer-s64-ccrag>` -- the group guard
+  failed (a stop condition; the assertion also stops: it never allows `oer-s64-ccrag`); the group's
+  row `prune withheld: the signed-in identity's group memberships could not be read, ...` -- the
+  membership read failed: record the message, 4.5 shows Graph's own answer;
+  `prune withheld: the signed-in identity's object id is unknown` -- 0.4 should have caught it;
+  the `oer-s64-rag` row `Updated` -- 2.7's window did not converge; any row naming Reports Reader.
   **Result:**
 
 - [ ] **4.4 A member of a role-assignable group: is its inherited row listed, and is it ever a prune target?** Read-only: a measurement over the state and over section 4's results.
@@ -1972,19 +2092,138 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   $All44 = @(Import-Csv (Join-Path $Raw 'all-results.csv') | Where-Object { $_.CheckId -like '4.*' })
   "section 4 rows naming oer-s64-user2 in an Active pair: $(@($All44 | Where-Object { $_.Item -match [regex]::Escape($IdUser2) -and $_.Item -match '\(Active\)$' }).Count)"
   "4.1c rows naming oer-s64-user2: $(@($All44 | Where-Object { $_.CheckId -eq '4.1c' -and $_.Item -match [regex]::Escape($IdUser2) }).Count)"
+  $Targets44 = @($All44 | Where-Object { $_.Action -in 'Removed', 'Extra' -or ([string]$_.Detail).StartsWith('would remove', [System.StringComparison]::Ordinal) })
+  "section 4 prune targets naming oer-live-cc: $(@($Targets44 | Where-Object { $_.Item -match [regex]::Escape($IdCc) }).Count); naming oer-s64-ccrag: $(@($Targets44 | Where-Object { $_.Item -match [regex]::Escape($IdCcRag) }).Count)"
   ```
 
   **Expect:** if Graph lists them, `rows that are not Direct:` a count above 0, each for
   `<oer-s64-user2>` with a `MemberType` other than `Direct` (Graph documents `Group` and
   `Inherited`; record which) -- in the pairs the group holds: Reports Reader Eligible and Active and
-  Message Center Reader Active. Then `section 4 rows naming oer-s64-user2 in an Active pair: 0` and
+  Message Center Reader Active -- and possibly one for `<oer-live-cc>` in Message Center Reader
+  Active, through `oer-s64-ccrag` (1.1 recorded whether Graph lists it). Then
+  `section 4 rows naming oer-s64-user2 in an Active pair: 0` and
   `4.1c rows naming oer-s64-user2: 1` -- its DIRECT eligible assignment only: an inherited row was
-  neither `Extra` nor a removal target, in any pair. If Graph lists no such row
+  neither `Extra` nor a removal target, in any pair -- and
+  `section 4 prune targets naming oer-live-cc: 0; naming oer-s64-ccrag: 0`: an inherited row of
+  the certificate identity is never a target either. If Graph lists no such row
   (`rows that are not Direct: 0`), the guard cannot be seen live: mark this check `[~]` with that
   measurement -- `Select-OERManagedDirectoryRoleAssignment`'s `MemberType` guard is pinned and
   mutation-proved in its unit suite.
   **Failure looks like:** an inherited row counted in a section 4 result (`Active` pair count above
-  0, or `2` for 4.1c) -- the managed-row filter let it through; stop and record the rows.
+  0, or `2` for 4.1c) -- the managed-row filter let it through; stop and record the rows. A prune
+  target naming `oer-live-cc` or `oer-s64-ccrag` -- stop (Stop conditions).
+  **Result:**
+
+- [ ] **4.5 A role the signed-in identity holds through a group is `Skipped` under `-Prune`, and stays -- and a group it is not a member of is still pruned.** The document declares (Message Center Reader, Active) for `oer-s64-user1` only, so three undeclared candidates sit in that pair: the certificate identity's own assignment, `oer-s64-ccrag`'s (the certificate identity is its only member) and `oer-s64-rag`'s (2.7's; the certificate identity is NOT a member).
+
+  First the raw facts, read-only: both groups' members, and the certificate identity's own group
+  memberships straight from Microsoft Graph, read as data -- the status and two True/False, never
+  the ids. If the prerequisite run printed that Graph refused the membership, mark 4.5 `[~]` with
+  that refusal line and stop here.
+
+  ```powershell
+  $CcRag45 = Get-S64RawGroup -Name $CcRagName
+  $Rag45 = Get-S64RawGroup -Name $RagName
+  "4.5a oer-s64-ccrag: members [$((@($CcRag45.MemberIds) | ForEach-Object { Get-S64Name $_ }) -join ', ')]"
+  "4.5a oer-s64-rag: members [$((@($Rag45.MemberIds) | ForEach-Object { Get-S64Name $_ }) -join ', ')]; oer-live-cc among them: $(@($Rag45.MemberIds) -contains $IdCc)"
+  $Mg45 = Invoke-MgGraphRequest -Method POST -Uri "v1.0/directoryObjects/$IdCc/getMemberGroups" -Body @{ securityEnabledOnly = $false } -OutputType HashTable -SkipHttpErrorCheck -StatusCodeVariable 'S64MgStatus'
+  $Mg45Code = if ($Mg45 -is [System.Collections.IDictionary] -and $Mg45['error']) { [string]$Mg45['error']['code'] } else { '' }
+  $Mg45Ids = @($Mg45['value'] | Where-Object { $_ } | ForEach-Object { ([string]$_).ToLowerInvariant() })
+  "4.5a raw getMemberGroups of oer-live-cc: status $S64MgStatus$(if ($Mg45Code) { " $Mg45Code" }); groups listed $($Mg45Ids.Count); holds oer-s64-ccrag: $($Mg45Ids -contains ([string]$IdCcRag).ToLowerInvariant()); holds oer-s64-rag: $($Mg45Ids -contains ([string]$IdRag).ToLowerInvariant())"
+  ```
+
+  The document, its `-WhatIf -Prune` plan, and the gate: `$Ok45` is `True` only when
+  `Assert-S64PruneTarget` passed AND the plan holds exactly one row for `oer-s64-ccrag`, `Skipped`
+  by the group guard, AND the own row is `Skipped` by the own-assignment guard, AND the only prune
+  target is `oer-s64-rag`:
+
+  ```powershell
+  $Doc45 = New-S64Doc -Assignment (New-S64Entry -Role $RoleMCR -Principal $User1Upn -Kind Active -Days 1)
+  Invoke-S64Check -Id '4.5b' -Json $Doc45 -Include DirectoryRoleAssignments -Prune
+  $Plan45 = @($S64Result | Where-Object { $_.Section -eq 'directoryRoleAssignments' })
+  $Assert45 = Assert-S64PruneTarget -Result $S64Result -Label '4.5b plan'
+  $CcRow45 = @($Plan45 | Where-Object { [string]$_.Item -match [regex]::Escape([string]$IdCcRag) })
+  $OwnRow45 = @($Plan45 | Where-Object { [string]$_.Item -match [regex]::Escape([string]$IdCc) })
+  $Targets45 = @($Plan45 | Where-Object { $_.Action -in 'Removed', 'Extra' -or ($_.Action -eq 'Skipped' -and ([string]$_.Detail).StartsWith('would remove', [System.StringComparison]::Ordinal)) })
+  $Gate45 = [ordered]@{
+      'the ids of 0.5 are set'                                    = [bool]($IdCc -and $IdCcRag -and $IdRag)
+      'the assertion passed'                                      = [bool]$Assert45
+      'exactly one oer-s64-ccrag row, Skipped by the group guard' = ($CcRow45.Count -eq 1) -and ($CcRow45[0].Action -eq 'Skipped') -and ([string]$CcRow45[0].Detail).Contains('is a group the signed-in identity is a member of')
+      'the own row, Skipped by the own-assignment guard'          = ($OwnRow45.Count -eq 1) -and ($OwnRow45[0].Action -eq 'Skipped') -and ([string]$OwnRow45[0].Detail).Contains('belongs to the signed-in identity itself')
+      'the only prune target is oer-s64-rag'                      = ($Targets45.Count -eq 1) -and ([string]$Targets45[0].Item -match [regex]::Escape([string]$IdRag))
+  }
+  $Gate45.GetEnumerator() | ForEach-Object { "4.5b gate: $($_.Key): $($_.Value)" }
+  $Ok45 = @($Gate45.Values | Where-Object { -not $_ }).Count -eq 0
+  "4.5b gate: all: $Ok45"
+  ```
+
+  The same document's `-WhatIf -Prune` run once more, straight through `Invoke-OERStructure
+  -Verbose`: every request it sends, and how many of them read the signed-in identity's group
+  memberships -- the pass reads them once per run:
+
+  ```powershell
+  $Out45 = @(Invoke-OERStructure -Path (Join-Path $Raw '4.5b.json') -Include DirectoryRoleAssignments -Prune -WhatIf -Verbose -ErrorAction SilentlyContinue -ErrorVariable Err45 3>$null 4>&1)
+  $Req45 = @($Out45 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { Format-S64Request -Message $_.Message } | Where-Object { $_ })
+  "4.5c requests, in the order sent: $($Req45.Count)"
+  $Req45 | ForEach-Object { "    $_" }
+  "4.5c getMemberGroups requests in that run: $(@($Req45 | Where-Object { $_ -match 'getMemberGroups' }).Count); errors: $(@($Err45 | Where-Object { $null -ne $_ }).Count)"
+  ```
+
+  The `-Prune` run -- only when the gate passed -- and the raw read-backs:
+
+  ```powershell
+  if ($Ok45) { Invoke-S64Check -Id '4.5d' -Json $Doc45 -Include DirectoryRoleAssignments -Prune -Apply; $null = Assert-S64PruneTarget -Result $S64Result -Label '4.5d applied' } else { Write-Host 'not run: the 4.5b gate failed' }
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCcRag -Label '4.5-ccrag-raw' -Want 1
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdCc -Label '4.5-cc-raw' -Want 1 -DirectOnly
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdRag -Label '4.5-rag-raw' -Want 0
+  $null = Get-S64RawSchedule -Kind Active -RoleDefinitionId $RoleIdMCR -PrincipalId $IdUser1 -Label '4.5-user1-raw' -Want 1
+  Show-S64State -State @(Get-S64State) -Label '4.5 after' -Role $RoleMCR
+  ```
+
+  **Expect:** the raw facts: `4.5a oer-s64-ccrag: members [oer-live-cc]`;
+  `4.5a oer-s64-rag: members [oer-s64-user2]; oer-live-cc among them: False`;
+  `4.5a raw getMemberGroups of oer-live-cc: status 200; groups listed <n>; holds oer-s64-ccrag: True; holds oer-s64-rag: False`
+  (record `<n>`: any other group the certificate identity is a member of counts too). 4.5b:
+  `Valid = True`; ONE warning,
+  `WARNING: Sync-OERStructureDirectoryRoleAssignment: would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'.`;
+  the `What if:` lines of the removal
+  (`Performing the operation "Remove undeclared active directory role assignment" on target "Message Center Reader -> <the id of oer-s64-rag> (Active)"`)
+  and of the create (`create active directory role assignment`, its row label as the target --
+  redact the user principal name). Four rows: first the three prune rows, BEFORE the item row, in
+  the order the pass emits them (it reads the pair once and walks its rows in Graph's order:
+  record it) -- the own row
+  `Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; ...`,
+  the group's row
+  `Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)`
+  and `Message Center Reader -> <oer-s64-rag> (Active) | Skipped | would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'`;
+  then `Message Center Reader -> oer-s64-user1@<test domain> (Active) | Skipped | would create the active assignment (time-bound assignment (1 days) is absent)`;
+  `Skipped=4`. The assertion:
+  `target: Message Center Reader -> <oer-s64-rag> (Active) -- Skipped; allowed: True` and
+  `prune targets (would remove, removed or Extra): 1; every one allowed: True`; every gate line
+  `True`, and `4.5b gate: all: True`. 4.5c: the requests (record them), among them exactly one
+  `POST v1.0/directoryObjects/<oer-live-cc>/getMemberGroups`, and
+  `4.5c getMemberGroups requests in that run: 1; errors: 0`. 4.5d: the warning reads
+  `removing ...`; the own row and the group's row `Skipped` as in the plan;
+  `Message Center Reader -> <oer-s64-rag> (Active) | Removed | removed undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'`;
+  `Message Center Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (time-bound assignment (1 days) is absent)`;
+  `Skipped=2, Removed=1, Created=1`; no error; the applied assertion `1; every one allowed: True`.
+  The raw reads: `oer-s64-ccrag`'s row still there (1 row, `memberType Direct`,
+  `assignmentType Assigned`); the certificate identity's direct row still there (1); `oer-s64-rag`'s
+  Message Center Reader active row gone (0); `oer-s64-user1`'s created (1 row, a window of 1
+  day(s)). The state: Message Center Reader Eligible `<oer-s64-user2>`; Active `<oer-live-cc>`,
+  `<oer-s64-ccrag>` and `<oer-s64-user1>` (and any inherited `<oer-live-cc>` row), and no
+  `<oer-s64-rag>`.
+  **Failure looks like:** a `<oer-s64-ccrag>` prune target -- `would remove` or `Extra` -- the
+  group guard failed: the assertion and the gate both stop the real run; stop and record it. The
+  group's row `prune withheld: the signed-in identity's group memberships could not be read, ...`
+  -- the membership read failed: record Graph's answer from the `4.5a raw getMemberGroups` line;
+  not a pass. `oer-s64-rag`'s row `Skipped` with the group guard's reason -- a group the identity is
+  not a member of was protected: the guard over-reaches. The own row carrying the group guard's
+  reason instead of its own -- the guard order is wrong. A `getMemberGroups` count other than 1. A
+  `holds oer-s64-ccrag: False` or a status other than 200 in the raw facts: the plan cannot be
+  judged -- record it and do not run the real `-Prune` line; a `403 Authorization_RequestDenied`
+  there is the permission question Setup names (`Directory.Read.All` for the `directoryObjects`
+  form): name it, and never finish the check with another sign-in.
   **Result:**
 
 ---
@@ -2174,7 +2413,9 @@ the own-assignment guard held.
   Eligible `oer-s64-user1`, `oer-s64-rag` and -- while 4.2's one-day window lasts --
   `oer-s64-user2`; Active `oer-s64-user1` (permanent) and `oer-s64-rag`. The plan: `Valid = True`;
   one `would remove` row, with its warning and its `What if:` line, for EVERY one of those rows
-  except `oer-s64-user1`'s Active, which the document declares; then
+  except `oer-s64-user1`'s Active, which the document declares -- `oer-s64-rag`'s two included:
+  you are a member of no `oer-s64` group, so the group guard, which reads your group memberships
+  once for this run, leaves them to be pruned; then
   `Reports Reader -> <Me> (Eligible) | Skipped | would create the eligible assignment (time-bound assignment (1 days) is absent)`
   and
   `Reports Reader -> oer-s64-user1@<test domain> (Active) | Skipped | would update the active assignment (window differs (live permanent, declared 1 days))`.
@@ -2198,7 +2439,11 @@ the own-assignment guard held.
   `The identity check failed ...`: stop and record which line printed `False`; throwing
   `Privileged Role Administrator is not active ...`: activate it, run `Disconnect-OER` and paste the
   block again. The Eligible row not `Unchanged`: the one-day window did not converge; record the raw
-  window.
+  window. `oer-s64-rag`'s rows in the 6.1b plan
+  `Skipped | prune withheld: the signed-in identity's group memberships could not be read, ...`
+  -- your delegated membership read was refused: record the message; they are then not removed,
+  and the Teardown removes them. `oer-s64-rag`'s rows `Skipped` with the group guard's reason --
+  you are a member of `oer-s64-rag` after all: stop and record it.
   **Result:**
 
 - [ ] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
@@ -2248,8 +2493,9 @@ lines once more). T.1 removes every `oer-s64` assignment through the module's ow
 T.2 is the prerequisite script's teardown, which does not depend on T.1: it removes the certificate
 identity's own Message Center Reader assignment and anything of an `oer-s64` principal still there,
 restores both policies from the baseline file rule by rule, re-creates any baseline assignment that
-is missing, deletes the test users and groups, and verifies both roles' assignments equal the
-baseline. There is no Azure object to restore or delete (R17).
+is missing, deletes the test users and groups (deleting `oer-s64-ccrag` ends the certificate
+identity's membership of it), and verifies both roles' assignments equal the baseline. There is no
+Azure object to restore or delete (R17).
 
 - [ ] **T.1 Remove every `oer-s64` assignment through the module.**
 
@@ -2280,17 +2526,21 @@ baseline. There is no Azure object to restore or delete (R17).
   ```
 
   **Expect:** one removal per direct `oer-s64` row still there. With every earlier check run in
-  order, and each time-bound window still open, three: Active Reports Reader `oer-s64-user1`
-  (6.1's one day), Eligible Message Center Reader `oer-s64-user2` (2.4's two days) and Active
-  Message Center Reader `oer-s64-rag` (2.7's four days); if section 6 did not run, instead Reports
+  order, and each time-bound window still open, four: Active Reports Reader `oer-s64-user1`
+  (6.1's one day), Eligible Message Center Reader `oer-s64-user2` (2.4's two days), and Active
+  Message Center Reader `oer-s64-user1` (4.5's one day) and `oer-s64-ccrag` (the prerequisite
+  script's two days) -- 4.5 removed `oer-s64-rag`'s; if section 6 did not run, instead Reports
   Reader Eligible `oer-s64-user1`, `oer-s64-rag` and `oer-s64-user2` (4.2's one day), Reports
-  Reader Active `oer-s64-user1` and `oer-s64-rag`, and the same two of Message Center Reader. A
+  Reader Active `oer-s64-user1` and `oer-s64-rag`, and the same three of Message Center Reader.
+  When 4.5 was marked `[~]` because Graph refused the membership, Active Message Center Reader
+  holds `oer-s64-rag` (2.7's four days) instead of `oer-s64-user1` and `oer-s64-ccrag`. A
   window that has closed takes its row with it: fewer removals, never other ones. Each plan: NO request (both ids are GUIDs), one `What if:` line
   (`Remove eligible directory role assignment` or `Remove active directory role assignment`, the
   target naming the role definition id and the principal id -- redact), no warning. Each removal:
   one `POST`, the warning `Removing ...`, one object, `Action adminRemove`. After:
   `direct oer-s64 rows left: 0`; `Message Center Reader, Active` still holds `<oer-live-cc>` (T.2
-  removes it); a `MemberType Group` row left for `oer-s64-user2` goes with its group's assignment.
+  removes it); a `MemberType Group` row left for `oer-s64-user2` goes with its group's assignment,
+  and an inherited row for `<oer-live-cc>` with `oer-s64-ccrag`'s.
   **Failure looks like:** a target that is not an `oer-s64` principal -- impossible by the filter,
   so stop and look; a removal Graph refuses -- record its message; T.2 removes what is left all the
   same. `rows left` above 0 after a minute: read again; Graph lists removals a moment late.
@@ -2312,9 +2562,11 @@ baseline. There is no Azure object to restore or delete (R17).
   `Directory roles (fixed): ...` line with `(exists: True)` twice, both identity lines ending `True`
   after every sign-in, the `Identified the test tenant: ...` line, and -- the real run only -- the
   `Unattended run: ...` line; no sign-in with `-IncludeARM`. Then, in order:
-  `[oer-s64] Teardown: oer-s64 assignments on the two roles: 0` (T.1 removed them; any other count
-  lists each one); the certificate identity's own Message Center Reader assignment (a `What if:`
-  line, then `[oer-s64] Removed the active Message Center Reader assignment of oer-live-cc.`);
+  `[oer-s64] Teardown: oer-s64 assignments on the two roles: 0` (T.1 removed them, `oer-s64-ccrag`'s
+  included; any other count lists each one -- for the group,
+  `[oer-s64] Removed the active 'Message Center Reader' assignment of oer-s64-ccrag.`); the
+  certificate identity's own Message Center Reader assignment (a `What if:` line, then
+  `[oer-s64] Removed the active Message Center Reader assignment of oer-live-cc.`);
   `[oer-s64] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0`
   when 1.3 recorded both permanent kinds allowed (3.1 closed them and the document opened them
   again -- any rule listed there, record it) and
@@ -2324,12 +2576,15 @@ baseline. There is no Azure object to restore or delete (R17).
   line in the plan and `[oer-s64] Restored rule Expiration_Admin_Assignment of 'Message Center Reader'.`
   in the run; per role `... restored: not attempted (WhatIf)` in the plan and `... restored: True`
   in the run; per role `... baseline assignments missing and re-created: 0`; the groups
-  `oer-s64-rag` and `oer-s64-plain` and the two users (`What if:` lines, then `Deleted group ...` /
-  `Deleted user ...`); per role, last,
+  `oer-s64-rag`, `oer-s64-plain` and `oer-s64-ccrag` and the two users (`What if:` lines, then
+  `Deleted group ...` / `Deleted user ...` -- `[oer-s64] Deleted group oer-s64-ccrag.` ends the
+  certificate identity's membership of it); per role, last,
   `... direct assignments equal the assignment baseline: not checked (WhatIf)` in the plan and
-  `... direct assignments equal the assignment baseline: True` in the run; the sweep (Graph's list
-  can lag a moment behind the deletes -- a `Sweep, still present: ...` line then is not a failure,
-  T.3 reads again); the summary; `WhatIf: nothing was created, restored, removed or written.` in
+  `... direct assignments equal the assignment baseline: True` in the run; the sweep,
+  `[oer-s64] Sweep: no user or group starting with 'oer-s64' is left.` (Graph's list can lag a
+  moment behind the deletes -- a `Sweep, still present: ...` line then, `oer-s64-ccrag` included,
+  is not a failure, T.3 reads again); the summary;
+  `WhatIf: nothing was created, restored, removed or written.` in
   the plan; `[oer-s64] Done.` Nothing else is a target: no directory role other than the two,
   nothing in Azure. Paste both outputs redacted per the rules at the top.
   **Failure looks like:** a target outside that list -- stop, do not run the real teardown; a rule
@@ -2367,11 +2622,16 @@ baseline. There is no Azure object to restore or delete (R17).
   **Expect:** `--- T.3: Reports Reader: the baseline names this policy: True; ...; differing from the baseline: 0`
   and the same for Message Center Reader. The state: exactly the baseline -- normally no row at all;
   the assignment diff `only live []` and `only baseline []` for both roles and both kinds (the
-  certificate identity's own assignment is gone). `users starting with the prefix: 0` and
-  `groups starting with the prefix: 0` (the two users sit in Deleted items for 30 days, which is
-  Entra ID's design). The listed rows, and no others: `3.1c` `Reports Reader | Updated` and the four
-  `Created`; `3.3b` `oer-s64-user1 ... (Eligible) | Updated`; `4.1d` `<oer-s64-user2> (Eligible) | Removed`;
-  `4.2b` and `4.2c` `oer-s64-nobody ... | Failed`; `4.2d` `oer-s64-no-such-role ... | Failed`; and,
+  certificate identity's own assignment and `oer-s64-ccrag`'s are gone).
+  `users starting with the prefix: 0` and `groups starting with the prefix: 0` (the two users sit
+  in Deleted items for 30 days, which is Entra ID's design). The listed rows, and no others: `3.1c`
+  `Reports Reader | Updated` and the four `Created`; `3.3b`
+  `oer-s64-user1 ... (Eligible) | Updated`; `4.1d` `<oer-s64-user2> (Eligible) | Removed`;
+  `4.2b` and `4.2c` `oer-s64-nobody ... | Failed`; `4.2d` `oer-s64-no-such-role ... | Failed`;
+  `4.5d`
+  `Message Center Reader -> <oer-s64-rag> (Active) | Removed` and
+  `Message Center Reader -> oer-s64-user1@<test domain> (Active) | Created` (neither when 4.5 was
+  `[~]`); and,
   when section 6 ran, `6.1c`'s `Removed` rows (all named `<oer-s64-...>`),
   `Reports Reader -> <Philip's user principal name> (Eligible) | Created` and
   `Reports Reader -> oer-s64-user1@<test domain> (Active) | Updated`. This window never set `$Me`,
