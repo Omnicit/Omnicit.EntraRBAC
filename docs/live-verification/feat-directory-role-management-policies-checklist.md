@@ -904,7 +904,7 @@ sign-in block again.
 
 ### 0. Preparation
 
-- [ ] **0.1 The session runs THIS branch's build.**
+- [x] **0.1 The session runs THIS branch's build.**
 
   ```powershell
   git -C $Repo fetch origin
@@ -944,9 +944,62 @@ sign-in block again.
   **Failure looks like:** `CommandNotFound` for any of the functions, `False`, a missing scope row, or
   no completion -- a build without this branch's change is loaded. Rebuild, fix `PSModulePath`,
   re-import; nothing below means anything until this passes.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Run 1, from the main
+  clone on `feat/directory-role-management-policies` at `5d2b5a5`, built from it. Every block of
+  this run ran in a process of its own, as this file's recovery path describes (Setup blocks,
+  sign-in, helpers, documents, 0.3's ids), so each block below starts with its own two identity
+  lines. Run order: sections 0 and 1, then 2.2 and 2.3 FIRST -- the approver-shape measurement --
+  then 2.1, then everything else in order. The log lists every expected subject plus the review
+  fixes and three later commits; `ModuleBase` is the clone's build; the four private and two public
+  functions are `Function`; `True`; both scope lines exactly as expected; the completion is
+  `'Reports Reader'`.
 
-- [ ] **0.2 The prerequisite script ran, every test object exists, and the baseline file and the Reader record are written.** Paste its output and summary table, redacted per the redaction rules at the top: `<TenantId>`, `<SubscriptionId>`, `<test tenant>`, `<test subscription>`, `<test domain>`, `<Alias>`, `<Repo>`, `personN@example.com`, and a placeholder for every object id -- the summary's, the `approver on it:` lines' and the sweep lines' alike.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  docs: tighten the release notes for the coming minor release
+  test: find an object id wrapped over a line break in dochygiene
+  docs: redact an object id wrapped over two lines in the PIM group approval checklist
+  fix: lower-case a role definition id passed to -Role
+  refactor: describe the directory-role code by behaviour, not by plan step
+  docs: correct the directory-role policy help and release notes
+  fix: put back the accepted half of a rejected MFA and authentication-context pair
+  docs: restore the Azure test policy in full in the directory-role live checklist
+  docs: release notes for directory-role PIM settings
+  docs: live-verification checklist for directory-role PIM settings
+  docs: complete the new-function checklist and correct the source gate count
+  test: split the PIM policy scope rule so directory-role paths need directory permissions
+  docs: name the directory-role section wherever the document sections are listed
+  fix: converge a declared empty approver side on directory-role policies
+  feat: directoryRoleManagementPolicies section in the apply document
+  feat: diff only the declared approver side on request
+  feat: tab-complete built-in directory role names on the directory-role policy cmdlets
+  refactor: one owner for the Graph approver semantics of the PIM policy cmdlets
+  fix: refuse a malformed policy id before any approver lookup
+  feat: Set-OERDirectoryRoleManagementPolicy updates the PIM settings of a directory role
+  fix: refuse a group policy id on the directory-role policy read
+  feat: Get-OERDirectoryRoleManagementPolicy reads the PIM settings of a directory role
+  refactor: give the PIM rule-patch builder and policy projection a Graph mode
+  feat: resolve a directory role name to its role definition id
+  Omnicit.EntraRBAC 1.1.0 from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0
+  Name                                           CommandType
+  ----                                           -----------
+  Resolve-OERDirectoryRoleDefinitionId              Function
+  Get-OERPimRulePatchOrder                          Function
+  Resolve-OERGraphApproverSet                       Function
+  Sync-OERStructureDirectoryRoleManagementPolicy    Function
+  Name                                 CommandType
+  ----                                 -----------
+  Get-OERDirectoryRoleManagementPolicy    Function
+  Set-OERDirectoryRoleManagementPolicy    Function
+  True
+  Get-OERDirectoryRoleManagementPolicy [Graph]: RoleManagement.Read.Directory
+  Set-OERDirectoryRoleManagementPolicy [Graph]: Application.Read.All, Group.Read.All, RoleManagement.Read.Directory, RoleManagementPolicy.ReadWrite.Directory, User.ReadBasic.All
+  'Reports Reader'
+  ```
+
+- [x] **0.2 The prerequisite script ran, every test object exists, and the baseline file and the Reader record are written.** Paste its output and summary table, redacted per the redaction rules at the top: `<TenantId>`, `<SubscriptionId>`, `<test tenant>`, `<test subscription>`, `<test domain>`, `<Alias>`, `<Repo>`, `personN@example.com`, and a placeholder for every object id -- the summary's, the `approver on it:` lines' and the sweep lines' alike.
 
   **Expect:** the `-WhatIf` run names only `oer-s63` targets, plus one
   `What if: Performing the operation "Write the baseline file: ..." on target "<your-clone>\docs\live-verification\raw\s63\baseline-directory-policies.json".`
@@ -997,9 +1050,123 @@ sign-in block again.
   file assumes -- stop, and let the script's `-Teardown` restore it from the record, or move a foreign
   record aside, before section 5. A refusal naming a directory role that is not one of the two, or a
   user `oer-s63-nobody@...` that exists: stop and record it.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The `-WhatIf` run named
+  only `oer-s63` targets besides the baseline file (no Reader-record line: the resource group did
+  not exist yet) and wrote nothing. The real run: both identity lines `True` after each of its
+  three sign-ins; the tenant and the subscription identified; the baseline file written (17 + 17
+  rules) BEFORE the first object was created; both roles at approval off with no approver, no
+  warning; one membership add answered 404 once (replication) and succeeded on the retry; the
+  Reader policy at its defaults with 8 activation hours, and the Reader record written (17 rules);
+  no `(none -- not created)` row; `Done.` Then, read-only: both files exist under `raw/s63/`, with
+  their rule counts, and git ignores the folder. Omitted below: the `What if: ... "Update
+  TypeData"` lines PowerShell prints while modules import in the `-WhatIf` process -- not targets
+  of the script.
 
-- [ ] **0.3 Record the object ids every later check compares against.** Read-only.
+  ```text
+  [oer-s63] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s63] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+  [oer-s63] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s63', expected organization '<test tenant>'.
+  [oer-s63] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Baseline file: <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json (exists: False).
+  [oer-s63] Reader record: <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json (exists: False).
+  [oer-s63] Tenant identification (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Tenant identification (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Tenant identification (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s63] Identified the test subscription: '<test subscription>' (<SubscriptionId>).
+  [oer-s63] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+  [oer-s63] Phase 1 identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 1 identity check: tenant is the test tenant: True
+  [oer-s63] Phase 1 is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  [oer-s63] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s63] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s63] No baseline file yet at <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json; this run captures it.
+  [oer-s63] Directory role 'Reports Reader': approval required False, approvers 0.
+  [oer-s63] Directory role 'Message Center Reader': approval required False, approvers 0.
+  What if: Performing the operation "Write the baseline file: the raw Microsoft Graph v1.0 rules of both directory-role policies, which -Teardown restores" on target "<Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person1@example.com".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person2@example.com".
+  What if: Performing the operation "Create security group" on target "oer-s63-approvers".
+  [oer-s63] Skipping the member of oer-s63-approvers: the group does not exist yet.
+  [oer-s63] Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Phase 2 (Connect-OER) is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  What if: Performing the operation "Create in swedencentral" on target "resource group 'oer-s63-rg' in subscription '<SubscriptionId>'".
+  [oer-s63] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                                 Name                                                                                      Id
+  ----                                 ----                                                                                      --
+  user                                 person1@example.com                                                  (none -- not created)
+  user                                 person2@example.com                                                 (none -- not created)
+  group                                oer-s63-approvers                                                                         (none -- not created)
+  resource group                       oer-s63-rg                                                                                (none -- not created)
+  directory role (built-in, fixed)     Reports Reader                                                                            00000000-0000-0000-0000-000000000001
+  directory role policy                Reports Reader                                                                            DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)     Message Center Reader                                                                     00000000-0000-0000-0000-000000000003
+  directory role policy                Message Center Reader                                                                     DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  baseline file (not written (WhatIf)) <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json  -
+  Reader record ()                     <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json -
+  [oer-s63] WhatIf: nothing was created, restored, removed or written.
+  [oer-s63] Done.
+
+  [oer-s63] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s63] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+  [oer-s63] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s63', expected organization '<test tenant>'.
+  [oer-s63] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Baseline file: <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json (exists: False).
+  [oer-s63] Reader record: <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json (exists: False).
+  [oer-s63] Tenant identification (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Tenant identification (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Tenant identification (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s63] Identified the test subscription: '<test subscription>' (<SubscriptionId>).
+  [oer-s63] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s63] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+  [oer-s63] Phase 1 identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 1 identity check: tenant is the test tenant: True
+  [oer-s63] Phase 1 is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  [oer-s63] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s63] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s63] No baseline file yet at <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json; this run captures it.
+  [oer-s63] Directory role 'Reports Reader': approval required False, approvers 0.
+  [oer-s63] Directory role 'Message Center Reader': approval required False, approvers 0.
+  [oer-s63] Wrote the baseline file (17 + 17 rules): <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json
+  [oer-s63] Created user person1@example.com (disabled).
+  [oer-s63] Created user person2@example.com (disabled).
+  [oer-s63] Created group oer-s63-approvers.
+  [oer-s63] Adding person1@example.com to oer-s63-approvers failed (attempt 1 of 6, likely replication delay): Response status code does not indicate success: NotFound (Not Found). -- retrying in 10 s.
+  [oer-s63] Added person1@example.com to oer-s63-approvers.
+  [oer-s63] Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Phase 2 (Connect-OER) is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  [oer-s63] Created resource group oer-s63-rg in swedencentral, tagged purpose = oer-s63-live-verification.
+  [oer-s63] No Reader record yet at <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json; this run captures it.
+  [oer-s63] Setup: Reader policy at oer-s63-rg: approval required False, approvers 0, activation max hours 8; at its defaults (approval off, no approver): True
+  [oer-s63] Wrote the Reader record (17 rules): <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json
+  [oer-s63] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                                Name                                                                                      Id
+  ----                                ----                                                                                      --
+  user                                person1@example.com                                                  00000000-0000-0000-0000-000000000005
+  user                                person2@example.com                                                 00000000-0000-0000-0000-000000000006
+  group                               oer-s63-approvers                                                                         00000000-0000-0000-0000-000000000007
+  group member                        oer-s63-approvers <- person1@example.com                             00000000-0000-0000-0000-000000000005
+  resource group                      oer-s63-rg                                                                                /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg
+  directory role (built-in, fixed)    Reports Reader                                                                            00000000-0000-0000-0000-000000000001
+  directory role policy               Reports Reader                                                                            DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)    Message Center Reader                                                                     00000000-0000-0000-0000-000000000003
+  directory role policy               Message Center Reader                                                                     DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  baseline file (written by this run) <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json  -
+  Reader record (written by this run) <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json -
+  [oer-s63] Done.
+
+  baseline-directory-policies.json: exists True; 20581 bytes; written 2026-09-29T09:04:08
+  baseline-azure-reader-policy.json: exists True; 8826 bytes; written 2026-09-29T09:04:32
+  baseline file: role entries 2: Reports Reader (17 rules, policyId recorded True, roleDefinitionId recorded True); Message Center Reader (17 rules, policyId recorded True, roleDefinitionId recorded True)
+  Reader record: 17 rules, policyId recorded True
+  raw/s63 is ignored by git: True
+  ```
+
+- [x] **0.3 Record the object ids every later check compares against.** Read-only.
 
   ```powershell
   $IdApprovers = (Get-OERGroup -Group $ApproversName -ErrorAction Stop).Id
@@ -1033,7 +1200,30 @@ sign-in block again.
   **Failure looks like:** any count off, a `False`, or a `raw ... read FAILED` line -- a 403 there
   is a missing permission (see Stop conditions). A baseline naming another role definition or policy
   is not this tenant's baseline: stop, move it aside and run the prerequisite script again.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Every line as expected:
+  one member, `oer-s63-approver`, both users disabled, `oer-s63-approver2` not a member, two
+  baseline entries naming these role definitions and policies, the roles and policies differ, and
+  seven `True`.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  members of oer-s63-approvers: 1; oer-s63-approver among them: True
+  oer-s63-approver: raw id is the member's id: True; account enabled: False
+  oer-s63-approver2: account enabled: False; a member of oer-s63-approvers: False
+  baseline file: role entries 2
+  Reports Reader: the baseline names this role definition: True; this policy: True
+  Message Center Reader: the baseline names this role definition: True; this policy: True
+  the two roles, and their policies, differ: True
+  True
+  True
+  True
+  True
+  True
+  True
+  True
+  ```
 
 ---
 
@@ -1042,7 +1232,7 @@ sign-in block again.
 Nothing below this section may run before it: the Teardown restores exactly what the baseline file
 holds, and T.4 compares with what 1.1 saves.
 
-- [ ] **1.1 Both directory-role policies, through the module and raw from Graph v1.0, against the baseline file.**
+- [x] **1.1 Both directory-role policies, through the module and raw from Graph v1.0, against the baseline file.**
 
   ```powershell
   $View11 = [ordered]@{}
@@ -1080,9 +1270,54 @@ holds, and T.4 compares with what 1.1 saves.
   `-Teardown` restores from the file). A `False` on the module-and-raw line -- the projection reads
   Graph v1.0 differently from Graph itself: record which field. Approvers or approval on at the
   baseline: record them; 2.8 is then `[~]`, and the approver counts below change.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Both roles: the two
+  requests in order, no warning, no error, one object, the name as typed and scope `/`; approval
+  off, no approver; the module-and-raw line `True` four times; raw `isApprovalRequired = False`,
+  `SingleStage`, one stage, a one-day timeout, approver justification on, no primary approver;
+  `differing from the baseline: 0` for both. Recorded for T.4, identical for both roles:
+  `ActivationMaxHours 1`; on activation MFA off, justification on, ticket off; no authentication
+  context; eligible permanent allowed, `P365D`; active permanent allowed, `P180D`; on active
+  assignment MFA off, justification on.
 
-- [ ] **1.2 A role definition id, a name in another letter case, a name no role has, and the policy id.** Read-only; before the first write, so every read compares with 1.1.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 1.1 Reports Reader -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- Reports Reader: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 1; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval False
+      approvers: 0
+  --- module and raw agree: PolicyId True; RequireApproval True; approvers True; ActivationMaxHours True
+  --- 1.1-rr-approval-raw: policy of Reports Reader, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+      primary approvers: 0
+  === 1.1 Message Center Reader -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- Message Center Reader: policy of Message Center Reader; Scope '/'; RoleName 'Message Center Reader'; RoleDefinitionId: Message Center Reader
+      ActivationMaxHours 1; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval False
+      approvers: 0
+  --- module and raw agree: PolicyId True; RequireApproval True; approvers True; ActivationMaxHours True
+  --- 1.1-mcr-approval-raw: policy of Message Center Reader, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+      primary approvers: 0
+  --- 1.1: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- 1.1: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  ```
+
+- [x] **1.2 A role definition id, a name in another letter case, a name no role has, and the policy id.** Read-only; before the first write, so every read compares with 1.1.
 
   ```powershell
   Invoke-S63Call -Cmdlet Get-OERDirectoryRoleManagementPolicy -Splat @{ Role = $RoleIdRR } -Label '1.2a by role definition id'
@@ -1120,9 +1355,52 @@ holds, and T.4 compares with what 1.1 saves.
   `scopeType` other than `Directory` or `DirectoryRole`, or a `scopeId` other than `/`, which the
   module's scope check refuses: record the message, it names what Graph returned; a `PolicyReadFailed`;
   or a setting that differs from 1.1 (the two reads project the same rules differently).
-  **Result:**
+  **Result:** PASS, with a FINDING in (b) -- 2026-09-29, run by Claude Code as the certificate
+  identity `oer-live-cc` (app-only), every output below passed through the run's redaction first.
+  (a) exactly one request, no role lookup, and `True; RoleName empty: True; ...: True; Scope: /`.
+  (c) one request and `RoleDefinitionNotFound` with the expected text. (d) exactly one request, the
+  policy itself, and every setting equal to 1.1's. FINDING (b): Microsoft Graph's `displayName`
+  filter on `roleDefinitions` is CASE-SENSITIVE -- `reports reader` matched nothing, so the module
+  reported `RoleDefinitionNotFound` after its one request. Not a module defect (the module passes
+  the name as typed), but this Expect line assumed a case-insensitive match, and neither the help
+  nor the error message says the lookup is case-sensitive. Tab completion on `-Role` inserts the
+  exact name.
 
-- [ ] **1.3 `-All`: every directory role's policy, each named.** Read-only.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 1.2a by role definition id -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 1
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  PolicyId is the one by name: True; RoleName empty: True; RoleDefinitionId is the GUID: True; Scope: /
+  === 1.2b by name in lower case -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 1
+      GET v1.0/roleManagement/directory/roleDefinitions
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [RoleDefinitionNotFound,Get-OERDirectoryRoleManagementPolicy]: No Microsoft Entra directory role definition named 'reports reader' was found. Use Tab completion on -Role, or pass the role definition id directly.
+  --- objects returned: 0
+  PolicyId is the one by name: False; RoleName as typed: False
+  === 1.2c a name no role has -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 1
+      GET v1.0/roleManagement/directory/roleDefinitions
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [RoleDefinitionNotFound,Get-OERDirectoryRoleManagementPolicy]: No Microsoft Entra directory role definition named 'oer-s63-no-such-role' was found. Use Tab completion on -Role, or pass the role definition id directly.
+  --- objects returned: 0
+  === 1.2d by policy id -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 1
+      GET v1.0/policies/roleManagementPolicies/<Reports Reader>
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  PolicyId is the one by name: True; RoleName empty: True; RoleDefinitionId empty: True; Scope: /; every setting equals 1.1's: True
+  ```
+
+- [x] **1.3 `-All`: every directory role's policy, each named.** Read-only.
 
   ```powershell
   Invoke-S63Call -Cmdlet Get-OERDirectoryRoleManagementPolicy -Splat @{ All = $true } -Label '1.3 -All'
@@ -1143,9 +1421,27 @@ holds, and T.4 compares with what 1.1 saves.
   **Failure looks like:** a warning `Could not read Microsoft Entra directory role definition names: ...`
   with every `RoleName` empty (the name read was refused: record it); a count above `0` of empty
   `RoleName` rows (a policy for a role definition the name list lacks: record the count).
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. One page of each list,
+  nothing else; 145 rows, 145 distinct policy ids, `0`, `0`, `0`; one row each for the two roles,
+  with 0.3's policy and role definition ids.
 
-- [ ] **1.4 The Reader role management policy at `oer-s63-rg` -- the Azure baseline for section 5, against the Reader record.** Read-only.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 1.3 -All -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/policies/roleManagementPolicyAssignments
+      GET v1.0/roleManagement/directory/roleDefinitions
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 145
+  rows 145; distinct PolicyIds 145; Scope not "/": 0; empty RoleName: 0; empty RoleDefinitionId: 0
+  Reports Reader: rows 1; PolicyId is 0.3's: True; RoleDefinitionId is 0.3's: True
+  Message Center Reader: rows 1; PolicyId is 0.3's: True; RoleDefinitionId is 0.3's: True
+  ```
+
+- [x] **1.4 The Reader role management policy at `oer-s63-rg` -- the Azure baseline for section 5, against the Reader record.** Read-only.
 
   ```powershell
   $Arm0 = Get-OERRoleManagementPolicy -Role Reader -Scope $RgScope -ErrorAction Stop
@@ -1169,13 +1465,23 @@ holds, and T.4 compares with what 1.1 saves.
   False` -- the policy moved since setup, or the record is not this resource group's: run the
   prerequisite script again (with `-Unattended` it restores the policy from its record) before any
   check writes to the policy.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The Reader policy at
+  `oer-s63-rg` at its defaults -- 8 activation hours, approval off, no approver -- and `differing
+  from the record: 0`.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  Scope is RgScope: True; RoleName Reader; ActivationMaxHours 8; RequireApproval False; approvers 0
+  --- 1.4: Reader at oer-s63-rg: the record names this policy: True; rules live 17, recorded 17; differing from the record: 0
+  ```
 
 ---
 
 ### 2. `Set-OERDirectoryRoleManagementPolicy`
 
-- [ ] **2.1 The guards refuse before anything is written, and most of them before any request.** `-WhatIf` only: a guard that failed would print a `What if:` line here, never a write.
+- [x] **2.1 The guards refuse before anything is written, and most of them before any request.** `-WhatIf` only: a guard that failed would print a `What if:` line here, never a write.
 
   ```powershell
   Invoke-S63Call -Cmdlet Set-OERDirectoryRoleManagementPolicy -Splat @{ Role = $RoleRR; WhatIf = $true } -Label '2.1a no setting'
@@ -1204,9 +1510,57 @@ holds, and T.4 compares with what 1.1 saves.
   instead of `InvalidPolicyId` in (c) -- the id guard runs after the approver lookup again, the defect
   "fix: refuse a malformed policy id before any approver lookup" closed; in (f) a
   `v1.0/roleManagement` or `v1.0/policies` request before the refusal.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Run after 2.2 and 2.3
+  (see 0.1); none of the six calls reads a setting those two changed. No `What if:` line and no
+  object anywhere; exactly one published error each, with the expected ids and texts; (a) to (e)
+  sent no request; (f) sent exactly one, `GET v1.0/users`. Outside this step: (f) also collected
+  ten further error records from nested calls beside the one it published (not shown) -- the known
+  several-records-per-failure behaviour.
 
-- [ ] **2.2 FIRST WRITE -- approval on Reports Reader, the user named by UPN and the group by display name.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.1a no setting -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 0
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [NothingToUpdate,Set-OERDirectoryRoleManagementPolicy]: No policy change was supplied. Specify at least one setting parameter.
+  --- objects returned: 0
+  === 2.1b MFA and a context together -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 0
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [InvalidPolicyChange,Set-OERDirectoryRoleManagementPolicy]: Cannot enable both multi-factor authentication and an authentication context on activation; PIM treats them as mutually exclusive. Set only one.
+  --- objects returned: 0
+  === 2.1c an Azure policy piped in -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 0
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy]: The policy id '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000008' looks like an Azure Resource Manager role management policy id, not a Microsoft Graph directory-role policy id. Use Set-OERRoleManagementPolicy to update an Azure role policy by ARM id, or pass the Microsoft Graph policy id (for example 'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.
+  --- objects returned: 0
+  === 2.1d an Azure policy id typed -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 0
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [InvalidPolicyId,Set-OERDirectoryRoleManagementPolicy]: The policy id '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000008' looks like an Azure Resource Manager role management policy id, not a Microsoft Graph directory-role policy id. Use Set-OERRoleManagementPolicy to update an Azure role policy by ARM id, or pass the Microsoft Graph policy id (for example 'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.
+  --- objects returned: 0
+  === 2.1e an Azure policy id on the read -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 0
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [InvalidPolicyId,Get-OERDirectoryRoleManagementPolicy]: The policy id '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000008' looks like an Azure Resource Manager role management policy id, not a Microsoft Graph directory-role policy id. Use Get-OERRoleManagementPolicy to read an Azure role policy by ARM id, or pass the Microsoft Graph policy id (for example 'DirectoryRole_<tenantId>_<policyGuid>') to this cmdlet.
+  --- objects returned: 0
+  === 2.1f an approver that resolves to nothing -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 1
+      GET v1.0/users
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 10)
+      ERROR [ApproverNotFound,Set-OERDirectoryRoleManagementPolicy]: User 'person3@example.com' was not found.
+  --- objects returned: 0
+  ```
+
+- [x] **2.2 FIRST WRITE -- approval on Reports Reader, the user named by UPN and the group by display name.**
 
   The plan:
 
@@ -1239,9 +1593,52 @@ holds, and T.4 compares with what 1.1 saves.
   is exactly what this check exists to find. If it names the approver as invalid or disabled, the
   disabled test account is the cause: record it and stop -- enabling a user is the operator's call.
   A second PATCH, or a PATCH to `<another policy>`.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The FIRST WRITE, run
+  right after section 1. The plan: one `What if:` line on Reports Reader's policy, the four GETs,
+  no object. The write: the four GETs and exactly one PATCH of `Approval_EndUser_Assignment`; no
+  400, no warning, no error -- Microsoft Graph v1.0 accepted the approvers in the
+  `userId`/`groupId` shape. The object: `ChangedRuleIds [Approval_EndUser_Assignment]`,
+  `RequireApproval True`, exactly the expected set, `DisplayName filled: False` (the rule as sent);
+  every other setting 1.1's.
 
-- [ ] **2.3 The approval rule read back RAW from Graph v1.0 -- which fields each approver comes back with.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Approval_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 2.2 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET v1.0/users
+      GET v1.0/groups
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.2 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 5
+      GET v1.0/users
+      GET v1.0/groups
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Approval_EndUser_Assignment
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 2.2 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [Approval_EndUser_Assignment]
+      ActivationMaxHours 1; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: False
+        Group oer-s63-approvers; DisplayName filled: False
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **2.3 The approval rule read back RAW from Graph v1.0 -- which fields each approver comes back with.**
 
   ```powershell
   Show-S63RawApproval -PolicyId $PolicyIdRR -Label '2.3-rr-approval-raw'
@@ -1263,9 +1660,34 @@ holds, and T.4 compares with what 1.1 saves.
   read that is not exactly the set. An approver with `userId filled False` and `groupId filled False`
   but `id filled True` is not a failure of the module (its reader falls back to `id`), but it
   contradicts the v1.0 premise the read and the PATCH both rest on: record it exactly.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. THE MEASUREMENT:
+  Microsoft Graph v1.0 returns each approver with exactly `@odata.type`, `description` and `userId`
+  (`#microsoft.graph.singleUser`) or `groupId` (`#microsoft.graph.groupMembers`) -- no `id` and no
+  `isBackup` field at all; Graph filled `description` itself. `isApprovalRequired = True`,
+  `SingleStage`, one stage, the one-day timeout and approver justification 1.1 recorded. The module
+  read is exactly the set, `DisplayName` filled from `description`.
 
-- [ ] **2.4 Activation hours, MFA, justification and ticket on activation, and both assignment durations -- one call.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 2.3-rr-approval-raw: policy of Reports Reader, isApprovalRequired = True, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+      primary approvers: 2
+      #microsoft.graph.singleUser: fields [@odata.type, description, userId]
+        userId filled True, groupId filled False, id filled False; names oer-s63-approver; description filled True; isBackup
+      #microsoft.graph.groupMembers: fields [@odata.type, description, groupId]
+        userId filled False, groupId filled True, id filled False; names oer-s63-approvers; description filled True; isBackup
+  --- 2.3 module read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 1; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **2.4 Activation hours, MFA, justification and ticket on activation, and both assignment durations -- one call.**
 
   The plan:
 
@@ -1299,9 +1721,50 @@ holds, and T.4 compares with what 1.1 saves.
   Graph's message; for the two expiration rules, a duration Graph refuses for a directory role is the
   likely cause (the portal offers a fixed list of durations; the module sends the ISO value it is
   given); the PATCHes in another order than the `What if:` line.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan named exactly
+  the four rules, in the policy's own order: `Expiration_Admin_Eligibility`,
+  `Expiration_Admin_Assignment`, `Enablement_EndUser_Assignment`, `Expiration_EndUser_Assignment`;
+  two GETs, no warning. The write: four PATCHes in that order, no warning, no error, the expected
+  values and `ChangedRuleIds` in the order sent. Graph accepted `P90D` and `P30D` for a directory
+  role: no value was refused.
 
-- [ ] **2.5 Read 2.4 back INDEPENDENTLY, raw from Graph v1.0, and through the module.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Expiration_Admin_Eligibility, Expiration_Admin_Assignment, Enablement_EndUser_Assignment, Expiration_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 2.4 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.4 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 6
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Expiration_Admin_Eligibility
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Expiration_Admin_Assignment
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Enablement_EndUser_Assignment
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Expiration_EndUser_Assignment
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 2.4 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [Expiration_Admin_Eligibility, Expiration_Admin_Assignment, Enablement_EndUser_Assignment, Expiration_EndUser_Assignment]
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **2.5 Read 2.4 back INDEPENDENTLY, raw from Graph v1.0, and through the module.**
 
   ```powershell
   Show-S63RawSettings -RoleDefinitionId $RoleIdRR -Label '2.5-rr-raw'
@@ -1318,9 +1781,32 @@ holds, and T.4 compares with what 1.1 saves.
   2.4's returned object, and `approvers are exactly the expected set: True`.
   **Failure looks like:** any raw value that is not what 2.4 returned -- the object reported a write
   Graph did not keep.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Every raw value is what
+  2.4 returned; the context disabled with `claimValue (null)`; the module read the same values and
+  exactly the set.
 
-- [ ] **2.6 `-ApproverUser` alone replaces the user side and KEEPS the group side.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 2.5-rr-raw: policy of Reports Reader
+      Expiration_EndUser_Assignment: maximumDuration PT3H
+      Enablement_EndUser_Assignment: enabledRules [Justification, MultiFactorAuthentication, Ticketing]
+      AuthenticationContext_EndUser_Assignment: isEnabled False, claimValue (null)
+      Expiration_Admin_Eligibility: isExpirationRequired True, maximumDuration P90D
+      Expiration_Admin_Assignment: isExpirationRequired True, maximumDuration P30D
+      Approval_EndUser_Assignment: isApprovalRequired True
+  --- 2.5 module read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **2.6 `-ApproverUser` alone replaces the user side and KEEPS the group side.**
 
   The plan:
 
@@ -1345,9 +1831,53 @@ holds, and T.4 compares with what 1.1 saves.
   `oer-s63-approver2` and a `#microsoft.graph.groupMembers` naming `oer-s63-approvers`.
   **Failure looks like:** `approvers: 1` with the group gone -- the unbound side was not carried (the
   Azure whole-list semantics leaked into the Graph path); `oer-s63-approver` still there.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan: the same `What
+  if:` line, three GETs, no `GET v1.0/groups`. The write: those three and one PATCH; the user side
+  replaced by `oer-s63-approver2`, the group side carried, exactly the set; raw the same two
+  approvers.
 
-- [ ] **2.7 `-RequireApproval $false` alone turns approval off and KEEPS the approvers on the stage.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Approval_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 2.6 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET v1.0/users
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.6 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET v1.0/users
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Approval_EndUser_Assignment
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 2.6 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [Approval_EndUser_Assignment]
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver2; DisplayName filled: False
+        Group oer-s63-approvers; DisplayName filled: False
+      approvers are exactly the expected set: True
+  --- 2.6-rr-approval-raw: policy of Reports Reader, isApprovalRequired = True, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+      primary approvers: 2
+      #microsoft.graph.singleUser: fields [@odata.type, description, userId]
+        userId filled True, groupId filled False, id filled False; names oer-s63-approver2; description filled True; isBackup
+      #microsoft.graph.groupMembers: fields [@odata.type, description, groupId]
+        userId filled False, groupId filled True, id filled False; names oer-s63-approvers; description filled True; isBackup
+  ```
+
+- [x] **2.7 `-RequireApproval $false` alone turns approval off and KEEPS the approvers on the stage.**
 
   The plan:
 
@@ -1374,9 +1904,53 @@ holds, and T.4 compares with what 1.1 saves.
   its own read shape when it is sent back (a read-only field in the carried approvers): record the
   message. `primary approvers: 0` with approval off -- Graph dropped the stage's approvers by itself:
   not a module failure, but record it; 3.2's plan then starts from no approver.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan: two GETs, no
+  user or group lookup. The write: one PATCH; Graph accepted the carried approvers as it had
+  returned them; approval off, the same two approvers on the stage, raw and in the module.
+  Recorded: after this PATCH Graph returned `description` EMPTY on both approvers (filled after
+  2.6, and sent back filled); with approval on again in 3.3 it is filled again. No effect on the
+  module, which compares ids.
 
-- [ ] **2.8 `ApproverRequired` on Message Center Reader -- only while its policy has no approver.** `-WhatIf` only.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Approval_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 2.7 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.7 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Approval_EndUser_Assignment
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 2.7 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [Approval_EndUser_Assignment]
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval False
+      approvers: 2
+        User oer-s63-approver2; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  --- 2.7-rr-approval-raw: policy of Reports Reader, isApprovalRequired = False, approvalMode = SingleStage, stages = 1, stage 1 timeout = 1 day(s), approver justification = True
+      primary approvers: 2
+      #microsoft.graph.singleUser: fields [@odata.type, description, userId]
+        userId filled True, groupId filled False, id filled False; names oer-s63-approver2; description filled False; isBackup
+      #microsoft.graph.groupMembers: fields [@odata.type, description, groupId]
+        userId filled False, groupId filled True, id filled False; names oer-s63-approvers; description filled False; isBackup
+  ```
+
+- [x] **2.8 `ApproverRequired` on Message Center Reader -- only while its policy has no approver.** `-WhatIf` only.
 
   ```powershell
   "Message Center Reader approvers at 1.1: $((Get-Content (Join-Path $Raw '1.1-module-view.json') -Raw | ConvertFrom-Json).mcr.ApproverCount)"
@@ -1392,7 +1966,32 @@ holds, and T.4 compares with what 1.1 saves.
   (b) `ApproverRequired,Set-OERDirectoryRoleManagementPolicy`: `Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, directory role management policy '<PolicyIdMCR>' would have none. Pass at least one approver.`
   **Failure looks like:** a `What if: ... "Update rules: Approval_EndUser_Assignment" ...` line -- the
   guard let approval with no approver through to the PATCH.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Message Center Reader
+  had `0` approvers at 1.1. Both calls: two requests, no `What if:`, no object, exactly one
+  `ApproverRequired` each, with the expected texts.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  Message Center Reader approvers at 1.1: 0
+  === 2.8a approval with no approver -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [ApproverRequired,Set-OERDirectoryRoleManagementPolicy]: Approval cannot be required with no approver: directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004' has none on its live approval rule and none was supplied. Pass -ApproverUser or -ApproverGroup.
+  --- objects returned: 0
+  === 2.8b an approver side emptied on a policy with none -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 1 (other records collected, not shown: 0)
+      ERROR [ApproverRequired,Set-OERDirectoryRoleManagementPolicy]: Approval cannot be required with no approver: after -ApproverUser/-ApproverGroup are applied, directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004' would have none. Pass at least one approver.
+  --- objects returned: 0
+  ```
 
 ---
 
@@ -1402,7 +2001,7 @@ Document `$Docs.DirBoth`: both roles, each declaring `"requireApproval": true` a
 `"approvers": { "users": [ "<ApproverUpn>" ], "groups": [ "oer-s63-approvers" ] }` -- a UPN and a
 display name, never an id; Message Center Reader also declares `"activationMaxHours": 2`.
 
-- [ ] **3.1 Offline validation: the document is valid, a `scope` key warns, and MFA with a context is refused.**
+- [x] **3.1 Offline validation: the document is valid, a `scope` key warns, and MFA with a context is refused.**
 
   ```powershell
   Invoke-S63Check -Id '3.1a' -Json $Docs.DirBoth -Include DirectoryRoleManagementPolicies -ValidateOnly
@@ -1421,9 +2020,55 @@ display name, never an id; Message Center Reader also declares `"activationMaxHo
   -- "PIM", not "Azure PIM".
   **Failure looks like:** a `scope` key that validates silently, or turns the document invalid; 3.1c
   valid.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Nothing sent. 3.1a valid
+  with no finding; 3.1b valid with one `scope` Warning at the expected path and text; 3.1c invalid
+  with the one Error, "PIM", not "Azure PIM".
 
-- [ ] **3.2 The plan: both policies would change, and the declared names are compared as ids.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.1a -- <Repo>\docs\live-verification\raw\s63\3.1a.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } },
+          { "role": "Message Center Reader", "activationMaxHours": 2, "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  === 3.1b -- <Repo>\docs\live-verification\raw\s63\3.1b.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "scope": "/", "activationMaxHours": 3 }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+  Section  : directoryRoleManagementPolicies
+  Item     : Reports Reader
+  Path     : directoryRoleManagementPolicies[0].scope
+  Severity : Warning
+  Message  : Unknown key 'scope' at directoryRoleManagementPolicies[0] is not applied by Invoke-OERStructure and will be ignored.
+  === 3.1c -- <Repo>\docs\live-verification\raw\s63\3.1c.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireMfaOnActivation": true, "authenticationContextId": "c1" }
+        ]
+      }
+  --- offline validation: Valid = False, findings = 1
+  Section  : directoryRoleManagementPolicies
+  Item     : Reports Reader
+  Path     : directoryRoleManagementPolicies[0]
+  Severity : Error
+  Message  : 'requireMfaOnActivation' and 'authenticationContextId' at directoryRoleManagementPolicies[0] are mutually exclusive in PIM; declare only one.
+  ```
+
+- [x] **3.2 The plan: both policies would change, and the declared names are compared as ids.**
 
   ```powershell
   Invoke-S63Check -Id '3.2' -Json $Docs.DirBoth -Include DirectoryRoleManagementPolicies
@@ -1441,9 +2086,42 @@ display name, never an id; Message Center Reader also declares `"activationMaxHo
   is sent.
   **Failure looks like:** a UPN or a group name inside `approvers(...)` -- a name compared with an id;
   a `Failed` row (read it: a lookup refusal is a missing permission).
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Valid, no finding; two
+  `What if:` lines, Reports Reader first; no warning, no error; two `Skipped` rows in document
+  order with the expected details -- the approvers as OBJECT ids.
 
-- [ ] **3.3 Run 1, applied, and read back.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.2 -- <Repo>\docs\live-verification\raw\s63\3.2.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } },
+          { "role": "Message Center Reader", "activationMaxHours": 2, "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  What if: Performing the operation "Update directory role management policy" on target "Message Center Reader".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Reports Reader' (requireApproval=True, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Message Center Reader' (requireApproval=True, activationMaxHours=2, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  --- action counts: Skipped=2
+  ```
+
+- [x] **3.3 Run 1, applied, and read back.**
 
   ```powershell
   Invoke-S63Check -Id '3.3' -Json $Docs.DirBoth -Include DirectoryRoleManagementPolicies -Apply
@@ -1459,9 +2137,56 @@ display name, never an id; Message Center Reader also declares `"activationMaxHo
   Read back: both `RequireApproval True` and `approvers are exactly the expected set: True`; Reports
   Reader keeps `ActivationMaxHours 3` (2.4), Message Center Reader has `ActivationMaxHours 2`.
   **Failure looks like:** a `Failed` row -- record its detail and the published error.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. No warning, no error;
+  two `Updated` rows with the expected details. Read back: both `RequireApproval True` and exactly
+  the set; Reports Reader keeps 3 hours, Message Center Reader has 2.
 
-- [ ] **3.4 Run 2: only `Unchanged` -- the proof that the v1.0 read shape converges.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3 -- <Repo>\docs\live-verification\raw\s63\3.3.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } },
+          { "role": "Message Center Reader", "activationMaxHours": 2, "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Reports Reader' (requireApproval=True, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Message Center Reader' (requireApproval=True, activationMaxHours=2, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  --- action counts: Updated=2
+  --- 3.3 Reports Reader: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  --- 3.3 Message Center Reader: policy of Message Center Reader; Scope '/'; RoleName 'Message Center Reader'; RoleDefinitionId: Message Center Reader
+      ActivationMaxHours 2; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **3.4 Run 2: only `Unchanged` -- the proof that the v1.0 read shape converges.**
 
   ```powershell
   Invoke-S63Check -Id '3.4' -Json $Docs.DirBoth -Include DirectoryRoleManagementPolicies -Apply
@@ -1472,13 +2197,43 @@ display name, never an id; Message Center Reader also declares `"activationMaxHo
   `policy already matches for 'Message Center Reader'`.
   **Failure looks like:** an `Updated` row naming `approvers(...)` -- the live approvers, read through
   `ConvertFrom-OERGraphApprover`, do not match the resolved ids, and every run would rewrite the rule.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Exactly two `Unchanged`
+  rows, no warning, no error: the v1.0 read shape converges.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.4 -- <Repo>\docs\live-verification\raw\s63\3.4.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } },
+          { "role": "Message Center Reader", "activationMaxHours": 2, "requireApproval": true, "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reports Reader'
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Message Center Reader'
+  --- action counts: Unchanged=2
+  ```
 
 Document `$Docs.DirUsersOnly`: Reports Reader only, `"requireApproval": true` and
 `"approvers": { "users": [ "<Approver2Upn>" ] }` -- the user side declared, the group side not
 declared at all.
 
-- [ ] **3.5 Only the declared side is sent: the user side changes, the undeclared group side stays.**
+- [x] **3.5 Only the declared side is sent: the user side changes, the undeclared group side stays.**
 
   The plan:
 
@@ -1500,9 +2255,66 @@ declared at all.
   `User oer-s63-approver2` and `Group oer-s63-approvers`, exactly the set `True`.
   **Failure looks like:** `groups=[...]` in the detail -- the undeclared side was sent; the group gone
   from the read-back.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan: one `What
+  if:`, one `Skipped` row with `approvers(users=[...])` only -- no `groups=` and no
+  `requireApproval=`. The apply: `Updated`, the same detail; read back `oer-s63-approver2` and the
+  carried group, exactly the set.
 
-- [ ] **3.6 That document converges.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.5a -- <Repo>\docs\live-verification\raw\s63\3.5a.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person2@example.com" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Reports Reader' (approvers(users=[00000000-0000-0000-0000-000000000006]))
+  --- action counts: Skipped=1
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.5b -- <Repo>\docs\live-verification\raw\s63\3.5b.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person2@example.com" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Reports Reader' (approvers(users=[00000000-0000-0000-0000-000000000006]))
+  --- action counts: Updated=1
+  --- 3.5 read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver2; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **3.6 That document converges.**
 
   ```powershell
   Invoke-S63Check -Id '3.6' -Json $Docs.DirUsersOnly -Include DirectoryRoleManagementPolicies -Apply
@@ -1511,12 +2323,37 @@ declared at all.
   **Expect:** one result, `Unchanged`, `policy already matches for 'Reports Reader'`; no warning, no
   error.
   **Failure looks like:** `Updated` again.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. One `Unchanged` row, no
+  warning, no error.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.6 -- <Repo>\docs\live-verification\raw\s63\3.6.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person2@example.com" ] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reports Reader'
+  --- action counts: Unchanged=1
+  ```
 
 Document `$Docs.DirGroupsEmpty`: Reports Reader only, `"requireApproval": true` and
 `"approvers": { "groups": [] }` -- the group side declared EMPTY, the user side not declared.
 
-- [ ] **3.7 A side declared `[]` is cleared, and the other side stays.**
+- [x] **3.7 A side declared `[]` is cleared, and the other side stays.**
 
   The plan:
 
@@ -1538,9 +2375,63 @@ Document `$Docs.DirGroupsEmpty`: Reports Reader only, `"requireApproval": true` 
   exactly the set `True`.
   **Failure looks like:** `users=[...]` in the detail; `approvers: 0` (the user side lost); an
   `ApproverRequired` error (the user side was not carried).
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan and the apply:
+  `approvers(groups=[])` only; read back `approvers: 1`, the user side kept, exactly the set.
 
-- [ ] **3.8 The emptied side converges.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.7a -- <Repo>\docs\live-verification\raw\s63\3.7a.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "groups": [] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Reports Reader' (approvers(groups=[]))
+  --- action counts: Skipped=1
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.7b -- <Repo>\docs\live-verification\raw\s63\3.7b.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "groups": [] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Reports Reader' (approvers(groups=[]))
+  --- action counts: Updated=1
+  --- 3.7 read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 1
+        User oer-s63-approver2; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **3.8 The emptied side converges.**
 
   ```powershell
   Invoke-S63Check -Id '3.8' -Json $Docs.DirGroupsEmpty -Include DirectoryRoleManagementPolicies -Apply
@@ -1552,7 +2443,32 @@ Document `$Docs.DirGroupsEmpty`: Reports Reader only, `"requireApproval": true` 
   -- the declared empty side is compared as one null entry again, so the diff reports a change the
   write then finds nothing for, on every run: the defect "fix: converge a declared empty approver side
   on directory-role policies" closed. An `Updated` row.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. One `Unchanged` row, no
+  `NoChange`, no warning: the declared empty side converges.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.8 -- <Repo>\docs\live-verification\raw\s63\3.8.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          { "role": "Reports Reader", "requireApproval": true, "approvers": { "groups": [] } }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reports Reader'
+  --- action counts: Unchanged=1
+  ```
 
 ---
 
@@ -1562,7 +2478,7 @@ Graph refuses MFA on activation while an authentication context is on, and accep
 context while MFA is on. So the module PATCHes a context being DISABLED before the activation rule,
 and one being ENABLED after it. Reports Reader requires MFA on activation since 2.4.
 
-- [ ] **4.1 Enabling a context clears MFA, with a warning, and the context is PATCHed LAST.**
+- [x] **4.1 Enabling a context clears MFA, with a warning, and the context is PATCHed LAST.**
 
   The context, the starting state, and the plan:
 
@@ -1605,9 +2521,55 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
   **Failure looks like:** the context PATCH before the enablement PATCH; MFA still `True` beside an
   enabled context (the reconcile did not happen); a `PolicyRulesRejected` naming either rule --
   record Graph's message.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The tenant publishes two
+  authentication contexts; `c1` is one of them. Before: MFA on, no context. The plan and the write:
+  one warning, the enablement rule FIRST and the context rule second, two PATCHes in that order, no
+  error. After: MFA off, context `c1`, raw `isEnabled True, claimValue 'c1'`.
 
-- [ ] **4.2 Requiring MFA disables the context, with a warning, and the context is PATCHed FIRST.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  published authentication contexts: 2; using 'c1'; published in this tenant: True
+  before: RequireMfaOnActivation True; AuthenticationContextId ''
+  What if: Performing the operation "Update rules: Enablement_EndUser_Assignment, AuthenticationContext_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 4.1 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 1
+      WARNING: Policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002': mfa cleared: mutually exclusive with authenticationContextId=c1
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.1 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Enablement_EndUser_Assignment
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/AuthenticationContext_EndUser_Assignment
+  --- warnings: 1
+      WARNING: Policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002': mfa cleared: mutually exclusive with authenticationContextId=c1
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 4.1 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [Enablement_EndUser_Assignment, AuthenticationContext_EndUser_Assignment]
+      ActivationMaxHours 3; on activation: MFA False, justification True, ticket True; AuthenticationContextId 'c1'
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 1
+        User oer-s63-approver2; DisplayName filled: True
+  --- 4.1-rr-raw: policy of Reports Reader
+      Expiration_EndUser_Assignment: maximumDuration PT3H
+      Enablement_EndUser_Assignment: enabledRules [Justification, Ticketing]
+      AuthenticationContext_EndUser_Assignment: isEnabled True, claimValue 'c1'
+      Expiration_Admin_Eligibility: isExpirationRequired True, maximumDuration P90D
+      Expiration_Admin_Assignment: isExpirationRequired True, maximumDuration P30D
+      Approval_EndUser_Assignment: isApprovalRequired True
+  ```
+
+- [x] **4.2 Requiring MFA disables the context, with a warning, and the context is PATCHed FIRST.**
 
   The plan:
 
@@ -1641,9 +2603,53 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
   `MfaAndAcrsConflict` (a `PolicyRulesRejected` naming `Enablement_EndUser_Assignment`), and the policy
   is left with the context disabled and MFA off: neither protection in force, the defect
   `Get-OERPimRulePatchOrder` exists to prevent.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. One warning; the context
+  rule PATCHed FIRST, then the enablement rule; no error, no `MfaAndAcrsConflict`. After: MFA on,
+  no context. Recorded exactly: Graph returned the disabled context with `claimValue ''` (an empty
+  string, not null).
 
-- [ ] **4.3 A document declaring the context: run 1 clears MFA with the same warning, run 2 is `Unchanged`.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: AuthenticationContext_EndUser_Assignment, Enablement_EndUser_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 4.2 plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+  --- warnings: 1
+      WARNING: Policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002': authentication context 'c1' disabled: mutually exclusive with multi-factor authentication on activation
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.2 write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions
+      GET v1.0/policies/roleManagementPolicyAssignments
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/AuthenticationContext_EndUser_Assignment
+      PATCH v1.0/policies/roleManagementPolicies/<Reports Reader>/rules/Enablement_EndUser_Assignment
+  --- warnings: 1
+      WARNING: Policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002': authentication context 'c1' disabled: mutually exclusive with multi-factor authentication on activation
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 4.2 returned: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader; ChangedRuleIds [AuthenticationContext_EndUser_Assignment, Enablement_EndUser_Assignment]
+      ActivationMaxHours 3; on activation: MFA True, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 1
+        User oer-s63-approver2; DisplayName filled: True
+  --- 4.2-rr-raw: policy of Reports Reader
+      Expiration_EndUser_Assignment: maximumDuration PT3H
+      Enablement_EndUser_Assignment: enabledRules [Justification, MultiFactorAuthentication, Ticketing]
+      AuthenticationContext_EndUser_Assignment: isEnabled False, claimValue ''
+      Expiration_Admin_Eligibility: isExpirationRequired True, maximumDuration P90D
+      Expiration_Admin_Assignment: isExpirationRequired True, maximumDuration P30D
+      Approval_EndUser_Assignment: isApprovalRequired True
+  ```
+
+- [x] **4.3 A document declaring the context: run 1 clears MFA with the same warning, run 2 is `Unchanged`.**
 
   The document -- Reports Reader declaring only `"authenticationContextId": "<AcId>"` -- and its plan:
 
@@ -1670,9 +2676,91 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
   no error. 4.3c: one result, `Unchanged`, `policy already matches for 'Reports Reader'`; no
   warning. Read: `MFA False`, `AuthenticationContextId '<AcId>'`.
   **Failure looks like:** 4.3c `Updated` again; a `Failed` row in 4.3b.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. 4.3a valid, one `What
+  if:`, `Skipped`, no warning. 4.3b the one warning, `Updated`, no error. 4.3c `Unchanged`, no
+  warning. Read: MFA off, context `c1`.
 
-- [ ] **4.4 A document declaring the context `""`: run 1 disables it, run 2 is `Unchanged`.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.3a -- <Repo>\docs\live-verification\raw\s63\4.3a.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": "c1"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Reports Reader' (authenticationContextId=c1)
+  --- action counts: Skipped=1
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.3b -- <Repo>\docs\live-verification\raw\s63\4.3b.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": "c1"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 1
+      WARNING: Policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002': mfa cleared: mutually exclusive with authenticationContextId=c1
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Reports Reader' (authenticationContextId=c1)
+  --- action counts: Updated=1
+  === 4.3c -- <Repo>\docs\live-verification\raw\s63\4.3c.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": "c1"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reports Reader'
+  --- action counts: Unchanged=1
+  --- 4.3 read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA False, justification True, ticket True; AuthenticationContextId 'c1'
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 1
+        User oer-s63-approver2; DisplayName filled: True
+  ```
+
+- [x] **4.4 A document declaring the context `""`: run 1 disables it, run 2 is `Unchanged`.**
 
   The document -- Reports Reader declaring only `"authenticationContextId": ""` -- and its plan:
 
@@ -1697,7 +2785,88 @@ and one being ENABLED after it. Reports Reader requires MFA on activation since 
   disabling a context never puts MFA back; justification and ticket still `True`.
   **Failure looks like:** 4.4c `Updated` again -- an empty declared value and a disabled live context
   compared as different; MFA `True` after 4.4b.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. 4.4a `Skipped` with
+  `authenticationContextId=`. 4.4b `Updated`, no warning, no error. 4.4c `Unchanged`. Read: no
+  context, MFA still off, justification and ticket on.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.4a -- <Repo>\docs\live-verification\raw\s63\4.4a.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": ""
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Reports Reader' (authenticationContextId=)
+  --- action counts: Skipped=1
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.4b -- <Repo>\docs\live-verification\raw\s63\4.4b.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": ""
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Reports Reader' (authenticationContextId=)
+  --- action counts: Updated=1
+  === 4.4c -- <Repo>\docs\live-verification\raw\s63\4.4c.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "authenticationContextId": ""
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 1
+  Section : directoryRoleManagementPolicies
+  Item    : Reports Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reports Reader'
+  --- action counts: Unchanged=1
+  --- 4.4 read: policy of Reports Reader; Scope '/'; RoleName 'Reports Reader'; RoleDefinitionId: Reports Reader
+      ActivationMaxHours 3; on activation: MFA False, justification True, ticket True; AuthenticationContextId ''
+      eligible: permanent allowed False, P90D; active: permanent allowed False, P30D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 1
+        User oer-s63-approver2; DisplayName filled: True
+  ```
 
 ---
 
@@ -1711,7 +2880,7 @@ The policy outlives its resource group, so none of this may survive the run: the
 script's teardown restores the whole recorded rule set from the Reader record 1.4 checked -- whether
 or not T.1 has put the hours back, and also after a run that stops part-way here (T.3).
 
-- [ ] **5.1 `Set-OERRoleManagementPolicy -ActivationMaxHours 2` on the Reader policy at `oer-s63-rg`.**
+- [x] **5.1 `Set-OERRoleManagementPolicy -ActivationMaxHours 2` on the Reader policy at `oer-s63-rg`.**
 
   The plan:
 
@@ -1736,14 +2905,44 @@ or not T.1 has put the hours back, and also after a run that stops part-way here
   path -- the whole rule set in one request, unlike the directory path's one per rule; no warning, no
   error; the line prints `returned ActivationMaxHours 2, ChangedRuleIds [Expiration_EndUser_Assignment]; read back ActivationMaxHours 2, RequireApproval False, approvers 0`.
   **Failure looks like:** a `v1.0/` request, more than one rule id, or `NoChange` (1.4 recorded `2`).
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The plan: one `What if:`
+  naming `Expiration_EndUser_Assignment`, Azure Resource Manager GETs only. The write: exactly one
+  ARM PATCH, no warning, no error, and the line as expected.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Expiration_EndUser_Assignment" on target "role management policy '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000008'".
+  === 5.1 plan -- Set-OERRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleDefinitions
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicyAssignments
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+  --- warnings: 0
+  --- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 5.1 write -- Set-OERRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleDefinitions
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicyAssignments
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+      PATCH /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+  --- warnings: 0
+  --- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  returned ActivationMaxHours 2, ChangedRuleIds [Expiration_EndUser_Assignment]; read back ActivationMaxHours 2, RequireApproval False, approvers 0
+  ```
 
 Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader at `<RgScope>` with
 `"activationMaxHours": 3`, `"requireApproval": true` and
 `"approvers": { "users": [ "<ApproverUpn>" ], "groups": [ "oer-s63-approvers" ] }` -- then
 `directoryRoleManagementPolicies[]` with Message Center Reader and `"activationMaxHours": 3`.
 
-- [ ] **5.2 The plan: the directory row comes first, whatever the document and `-Include` say.**
+- [x] **5.2 The plan: the directory row comes first, whatever the document and `-Include` say.**
 
   ```powershell
   Invoke-S63Check -Id '5.2' -Json $Docs.Mixed -Include RoleManagementPolicies, DirectoryRoleManagementPolicies
@@ -1758,9 +2957,50 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   `would update role management policy for 'Reader' at '<RgScope>'`. The document and `-Include` both
   list the Azure section first; the engine's own section order decides.
   **Failure looks like:** the Azure row first; a `Failed` row.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Valid; the directory row
+  FIRST in the `What if:` lines and in the results, although the document and `-Include` list the
+  Azure section first; no warning, no error.
 
-- [ ] **5.3 Run 1, applied, and read back.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 5.2 -- <Repo>\docs\live-verification\raw\s63\5.2.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "roleManagementPolicies": [
+          {
+            "scope": "/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg",
+            "role": "Reader",
+            "activationMaxHours": 3,
+            "requireApproval": true,
+            "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] }
+          }
+        ],
+        "directoryRoleManagementPolicies": [
+          { "role": "Message Center Reader", "activationMaxHours": 3 }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleManagementPolicies,DirectoryRoleManagementPolicies -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Message Center Reader".
+  What if: Performing the operation "Update role management policy" on target "Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Skipped
+  Detail  : would update directory role management policy for 'Message Center Reader' (activationMaxHours=3)
+  Section : roleManagementPolicies
+  Item    : Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg
+  Action  : Skipped
+  Detail  : would update role management policy for 'Reader' at '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg'
+  --- action counts: Skipped=2
+  ```
+
+- [x] **5.3 Run 1, applied, and read back.**
 
   ```powershell
   Invoke-S63Check -Id '5.3' -Json $Docs.Mixed -Include RoleManagementPolicies, DirectoryRoleManagementPolicies -Apply
@@ -1778,9 +3018,61 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   exactly the set `True`; Message Center Reader `ActivationMaxHours 3`, approvers still exactly 3.3's.
   **Failure looks like:** a `Failed` row; Message Center Reader's approvers changed (this document
   declares none for it).
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Two `Updated` rows in
+  5.2's order with the expected details. Read back: Reader 3 hours, approval on, exactly the set;
+  Message Center Reader 3 hours, its approvers still exactly 3.3's.
 
-- [ ] **5.4 Run 2: only `Unchanged`, in the same order.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 5.3 -- <Repo>\docs\live-verification\raw\s63\5.3.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "roleManagementPolicies": [
+          {
+            "scope": "/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg",
+            "role": "Reader",
+            "activationMaxHours": 3,
+            "requireApproval": true,
+            "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] }
+          }
+        ],
+        "directoryRoleManagementPolicies": [
+          { "role": "Message Center Reader", "activationMaxHours": 3 }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleManagementPolicies,DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Updated
+  Detail  : updated directory role management policy for 'Message Center Reader' (activationMaxHours=3)
+  Section : roleManagementPolicies
+  Item    : Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg
+  Action  : Updated
+  Detail  : updated role management policy for 'Reader' at '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg' (requireApproval=True, activationMaxHours=3, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  --- action counts: Updated=2
+  Reader at oer-s63-rg: ActivationMaxHours 3; RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  --- 5.3 Message Center Reader: policy of Message Center Reader; Scope '/'; RoleName 'Message Center Reader'; RoleDefinitionId: Message Center Reader
+      ActivationMaxHours 3; on activation: MFA False, justification True, ticket False; AuthenticationContextId ''
+      eligible: permanent allowed True, P365D; active: permanent allowed True, P180D; on active assignment: MFA False, justification True
+      RequireApproval True
+      approvers: 2
+        User oer-s63-approver; DisplayName filled: True
+        Group oer-s63-approvers; DisplayName filled: True
+      approvers are exactly the expected set: True
+  ```
+
+- [x] **5.4 Run 2: only `Unchanged`, in the same order.**
 
   ```powershell
   Invoke-S63Check -Id '5.4' -Json $Docs.Mixed -Include RoleManagementPolicies, DirectoryRoleManagementPolicies -Apply
@@ -1792,13 +3084,52 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   name, still converge through the shared diff and projection in their default mode.
   **Failure looks like:** an `Updated` row for the Reader policy naming `approvers(...)` -- the Azure
   approver key or projection changed with this branch.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Two `Unchanged` rows in
+  the same order: the Azure approvers still converge through the shared helpers in their default
+  mode.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 5.4 -- <Repo>\docs\live-verification\raw\s63\5.4.json
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "roleManagementPolicies": [
+          {
+            "scope": "/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg",
+            "role": "Reader",
+            "activationMaxHours": 3,
+            "requireApproval": true,
+            "approvers": { "users": [ "person1@example.com" ], "groups": [ "oer-s63-approvers" ] }
+          }
+        ],
+        "directoryRoleManagementPolicies": [
+          { "role": "Message Center Reader", "activationMaxHours": 3 }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include RoleManagementPolicies,DirectoryRoleManagementPolicies -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results: 2
+  Section : directoryRoleManagementPolicies
+  Item    : Message Center Reader
+  Action  : Unchanged
+  Detail  : policy already matches for 'Message Center Reader'
+  Section : roleManagementPolicies
+  Item    : Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg
+  Action  : Unchanged
+  Detail  : policy already matches for 'Reader' at '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg'
+  --- action counts: Unchanged=2
+  ```
 
 ---
 
 ### 6. A refused read is not a missing role
 
-- [ ] **6.1 A refused lookup and a refused policy read, by `oer-live-cc-noperm` in a process of its own.**
+- [x] **6.1 A refused lookup and a refused policy read, by `oer-live-cc-noperm` in a process of its own.**
 
   A second process keeps this window's sign-in intact: the module keeps one credential per process.
   The script signs in app-only as `oer-live-cc-noperm` -- the same certificate, no API permission --
@@ -1846,9 +3177,38 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   confirms it, and 6.1 is `[~]`. A `False` identity line, or a sign-in answering "application is
   disabled", means the run is not the one this check describes: stop and report it, never retry with
   another sign-in.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Hours before 6.1: 3, the
+  refused Set asked for 2. The second process: both identity lines `True`, no application
+  permission. (a) and (c) `RoleDefinitionReadFailed` (Authorization_RequestDenied), (b)
+  `PolicyReadFailed`, no `What if:` in (c), raw `403` twice: a refusal never read as absence.
+  Graph's refusal in (b) names the permissions that would admit the policy read:
+  `RoleManagementPolicy.Read.Directory`, `RoleManagementPolicy.ReadWrite.Directory`,
+  `RoleManagement.Read.Directory`, `RoleManagement.ReadWrite.Directory` and
+  `RoleManagement.Read.All`.
 
-- [ ] **6.2 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  activation hours before 6.1: 3; the refused Set asks for: 2
+  identity check: session app id is oer-live-cc-noperm: True
+  identity check: tenant is the test tenant: True
+  identity check: the token carries application permissions: 0
+  (a) Get by name -- result objects: 0
+  Errors published by Get-OERDirectoryRoleManagementPolicy: 1
+  ERROR [RoleDefinitionReadFailed,Get-OERDirectoryRoleManagementPolicy]: Looking up the Microsoft Entra directory role 'Reports Reader' failed, so whether it exists could not be determined: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  (b) Get by role definition id -- result objects: 0
+  Errors published by Get-OERDirectoryRoleManagementPolicy: 1
+  ERROR [PolicyReadFailed,Get-OERDirectoryRoleManagementPolicy]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  (c) Set by name, -WhatIf -- result objects: 0
+  Errors published by Set-OERDirectoryRoleManagementPolicy: 1
+  ERROR [RoleDefinitionReadFailed,Set-OERDirectoryRoleManagementPolicy]: Looking up the Microsoft Entra directory role 'Reports Reader' failed, so whether it exists could not be determined: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  Raw status of the role-definition lookup for this identity: 403
+  Raw status of the policy-assignment read for this identity: 403
+  Done. Copy the lines above into check 6.1.
+  ```
+
+- [x] **6.2 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
 
   ```powershell
   $After61 = (Get-OERDirectoryRoleManagementPolicy -Role $RoleRR -ErrorAction Stop).ActivationMaxHours
@@ -1860,7 +3220,13 @@ Document `$Docs.Mixed`: `roleManagementPolicies[]` FIRST in the text -- Reader a
   runs: both sides are read in this run, around 6.1, and 6.1's Set ran under `-WhatIf`.
   **Failure looks like:** the right side equals the value the refused Set asked for, or differs from
   the left in any other way: stop and record it.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. The same value on both
+  sides, `True`, and not the value the refused Set asked for.
+
+  ```text
+  3 -> 3: True; the value the refused Set asked for: 2
+  ```
 
 ---
 
@@ -1876,7 +3242,7 @@ users. T.1 reads what it will restore, and also puts the Reader policy's activat
 the module first -- one more pass through the module's Azure write path, not something the teardown
 needs.
 
-- [ ] **T.1 What the teardown will restore, and the Reader policy's activation hours put back through the module.**
+- [x] **T.1 What the teardown will restore, and the Reader policy's activation hours put back through the module.**
 
   The restore plan, read-only, and the plan for the activation hours:
 
@@ -1916,9 +3282,44 @@ needs.
   it. A `NoChange` error in the write: the hours already match 1.4 (5.x did not apply). If this write
   fails or is skipped, carry on: `T.1 after` then still lists `Expiration_EndUser_Assignment`, and
   T.3 restores it from the record.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Exactly the five Reports
+  Reader rules and the two Message Center Reader rules, no context rule (`''` compares equal to the
+  baseline's null); the Reader policy two rules; one `What if:`. The write: one ARM PATCH, `8 (1.4:
+  8): True`, and after it only `Approval_EndUser_Assignment` differs.
 
-- [ ] **T.2 Read the teardown plan.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- T.1: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 5 (Expiration_Admin_Eligibility, Expiration_Admin_Assignment, Expiration_EndUser_Assignment, Enablement_EndUser_Assignment, Approval_EndUser_Assignment)
+  --- T.1: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 2 (Expiration_EndUser_Assignment, Approval_EndUser_Assignment)
+  --- T.1 before: Reader at oer-s63-rg: the record names this policy: True; rules live 17, recorded 17; differing from the record: 2 (Expiration_EndUser_Assignment, Approval_EndUser_Assignment)
+  What if: Performing the operation "Update rules: Expiration_EndUser_Assignment" on target "role management policy '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000008'".
+  === T.1 plan -- Set-OERRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleDefinitions
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicyAssignments
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+  --- warnings: 0
+  --- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === T.1 write -- Set-OERRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleDefinitions
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicyAssignments
+      GET /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+      PATCH /subscriptions/<id>/resourceGroups/oer-s63-rg/providers/Microsoft.Authorization/roleManagementPolicies/<id>
+  --- warnings: 0
+  --- errors published by Set-OERRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  Reader at oer-s63-rg: ActivationMaxHours 8 (1.4: 8): True
+  --- T.1 after: Reader at oer-s63-rg: the record names this policy: True; rules live 17, recorded 17; differing from the record: 1 (Approval_EndUser_Assignment)
+  ```
+
+- [x] **T.2 Read the teardown plan.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -ModulePath $ModulePsd1 -Teardown -WhatIf
@@ -1955,9 +3356,61 @@ needs.
   `There is no Reader record at ...`: the record is gone, and the teardown would restore approval
   only -- find it (it sits beside the baseline file) before T.3. A warning
   `Refusing to delete resource group oer-s63-rg: its 'purpose' tag is ...`: find out whose it is first.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Both identity lines
+  `True` after each sign-in; T.1's rule lists, one `What if:` per rule in the baseline's order; the
+  Reader policy with the two 5.3 approvers, the record naming it, one rule differing, restored
+  before the resource group's deletion; only `oer-s63` objects, the two roles' policies and that
+  Reader policy targeted; `WhatIf: nothing was created, restored, removed or written.`
 
-- [ ] **T.3 Restore both policies and remove every test object.**
+  ```text
+  [oer-s63] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s63] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+  [oer-s63] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s63', expected organization '<test tenant>'.
+  [oer-s63] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Baseline file: <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json (exists: True).
+  [oer-s63] Reader record: <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json (exists: True).
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s63] Identified the test subscription: '<test subscription>' (<SubscriptionId>).
+  [oer-s63] Teardown: directory role 'Reports Reader': the baseline names the same role definition and policy: True
+  [oer-s63] Teardown: directory role 'Reports Reader': rules differing from the baseline: 5 (Expiration_Admin_Eligibility, Expiration_Admin_Assignment, Expiration_EndUser_Assignment, Enablement_EndUser_Assignment, Approval_EndUser_Assignment)
+  What if: Performing the operation "Restore rule Expiration_Admin_Eligibility from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  What if: Performing the operation "Restore rule Expiration_Admin_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  What if: Performing the operation "Restore rule Expiration_EndUser_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  What if: Performing the operation "Restore rule Enablement_EndUser_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  What if: Performing the operation "Restore rule Approval_EndUser_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  [oer-s63] Teardown: directory role 'Reports Reader': restored: not attempted (WhatIf)
+  [oer-s63] Teardown: directory role 'Message Center Reader': the baseline names the same role definition and policy: True
+  [oer-s63] Teardown: directory role 'Message Center Reader': rules differing from the baseline: 2 (Expiration_EndUser_Assignment, Approval_EndUser_Assignment)
+  What if: Performing the operation "Restore rule Expiration_EndUser_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Message Center Reader'".
+  What if: Performing the operation "Restore rule Approval_EndUser_Assignment from the baseline file (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Message Center Reader'".
+  [oer-s63] Teardown: directory role 'Message Center Reader': restored: not attempted (WhatIf)
+  [oer-s63] Teardown, before the restore: Reader policy at oer-s63-rg: approval required True, approvers 2, activation max hours 8; at its defaults (approval off, no approver): False
+  [oer-s63] Teardown, before the restore:   approver on it: User 00000000-0000-0000-0000-000000000005
+  [oer-s63] Teardown, before the restore:   approver on it: Group 00000000-0000-0000-0000-000000000007
+  [oer-s63] Teardown: the Reader record names this policy: True
+  [oer-s63] Teardown, before the restore: Reader policy at oer-s63-rg against its record: activation max hours 8 (record 8), approval required True (record False), approvers 2 (record 0); rules differing from the record: 1 (Approval_EndUser_Assignment)
+  What if: Performing the operation "Restore from its record before the resource group is deleted: the recorded rule set, in one Azure Resource Manager PATCH" on target "Reader role management policy at resource group 'oer-s63-rg'".
+  [oer-s63] Teardown: Reader policy at oer-s63-rg: restored: not attempted (WhatIf)
+  What if: Performing the operation "Delete the resource group (Azure completes it asynchronously)" on target "resource group 'oer-s63-rg' in subscription '<SubscriptionId>' (tag purpose = oer-s63-live-verification)".
+  [oer-s63] Phase 2 sweep, still present: resource group oer-s63-rg (Succeeded -- Azure deletes a resource group asynchronously; re-read in a few minutes)
+  [oer-s63] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+  [oer-s63] Phase 1 identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 1 identity check: tenant is the test tenant: True
+  [oer-s63] Phase 1 is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  What if: Performing the operation "Delete security group" on target "oer-s63-approvers".
+  What if: Performing the operation "Delete test user" on target "person1@example.com".
+  What if: Performing the operation "Delete test user" on target "person2@example.com".
+  [oer-s63] Phase 1 sweep, still present: users 'person1@example.com' (00000000-0000-0000-0000-000000000005)
+  [oer-s63] Phase 1 sweep, still present: users 'person2@example.com' (00000000-0000-0000-0000-000000000006)
+  [oer-s63] Phase 1 sweep, still present: groups 'oer-s63-approvers' (00000000-0000-0000-0000-000000000007)
+  [oer-s63] WhatIf: nothing was created, restored, removed or written.
+  [oer-s63] Done.
+  ```
+
+- [x] **T.3 Restore both policies and remove every test object.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -SubscriptionId $SubId -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -ModulePath $ModulePsd1 -Teardown -Unattended
@@ -1990,9 +3443,64 @@ needs.
   `Authorization_RequestDenied` or a 403 on a restore or a deletion: a missing permission -- stop and
   name it (see Stop conditions). Re-run T.3 after a fix (it only restores what differs and removes what
   is still there) and record both runs.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Every listed rule
+  restored, `restored: True` for both roles, no warning. The Reader policy restored from its record
+  BEFORE the resource group was deleted, and its read-back: `rules differing from the record: 0`,
+  `restored: True`; then the deletion accepted (the resource group `Deleting`). The group and both
+  users deleted; the sweep still listed them a moment later -- Graph's list lagging the deletes --
+  and T.5 reads them gone.
 
-- [ ] **T.4 Read both directory-role policies back, through the module and raw, against the baseline.**
+  ```text
+  [oer-s63] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s63] No Tenant Profile '<Alias>' on this machine; every sign-in names -TenantId.
+  [oer-s63] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubscriptionId>, prefix 'oer-s63', expected organization '<test tenant>'.
+  [oer-s63] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Baseline file: <Repo>\docs\live-verification\raw\s63\baseline-directory-policies.json (exists: True).
+  [oer-s63] Reader record: <Repo>\docs\live-verification\raw\s63\baseline-azure-reader-policy.json (exists: True).
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER): signing in with Connect-OER -TenantId -ClientId -Certificate -IncludeARM as the certificate identity.
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER) identity check: session app id is oer-live-cc: True
+  [oer-s63] Tenant identification and Phase 2 (Connect-OER) identity check: tenant is the test tenant: True
+  [oer-s63] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s63] Identified the test subscription: '<test subscription>' (<SubscriptionId>).
+  [oer-s63] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s63] Teardown: directory role 'Reports Reader': the baseline names the same role definition and policy: True
+  [oer-s63] Teardown: directory role 'Reports Reader': rules differing from the baseline: 5 (Expiration_Admin_Eligibility, Expiration_Admin_Assignment, Expiration_EndUser_Assignment, Enablement_EndUser_Assignment, Approval_EndUser_Assignment)
+  [oer-s63] Restored rule Expiration_Admin_Eligibility of 'Reports Reader'.
+  [oer-s63] Restored rule Expiration_Admin_Assignment of 'Reports Reader'.
+  [oer-s63] Restored rule Expiration_EndUser_Assignment of 'Reports Reader'.
+  [oer-s63] Restored rule Enablement_EndUser_Assignment of 'Reports Reader'.
+  [oer-s63] Restored rule Approval_EndUser_Assignment of 'Reports Reader'.
+  [oer-s63] Teardown: directory role 'Reports Reader': restored: True
+  [oer-s63] Teardown: directory role 'Message Center Reader': the baseline names the same role definition and policy: True
+  [oer-s63] Teardown: directory role 'Message Center Reader': rules differing from the baseline: 2 (Expiration_EndUser_Assignment, Approval_EndUser_Assignment)
+  [oer-s63] Restored rule Expiration_EndUser_Assignment of 'Message Center Reader'.
+  [oer-s63] Restored rule Approval_EndUser_Assignment of 'Message Center Reader'.
+  [oer-s63] Teardown: directory role 'Message Center Reader': restored: True
+  [oer-s63] Teardown, before the restore: Reader policy at oer-s63-rg: approval required True, approvers 2, activation max hours 8; at its defaults (approval off, no approver): False
+  [oer-s63] Teardown, before the restore:   approver on it: User 00000000-0000-0000-0000-000000000005
+  [oer-s63] Teardown, before the restore:   approver on it: Group 00000000-0000-0000-0000-000000000007
+  [oer-s63] Teardown: the Reader record names this policy: True
+  [oer-s63] Teardown, before the restore: Reader policy at oer-s63-rg against its record: activation max hours 8 (record 8), approval required True (record False), approvers 2 (record 0); rules differing from the record: 1 (Approval_EndUser_Assignment)
+  [oer-s63] Restored the Reader role management policy at resource group 'oer-s63-rg' from its record.
+  [oer-s63] Teardown, read again after the restore: Reader policy at oer-s63-rg against its record: activation max hours 8 (record 8), approval required False (record False), approvers 0 (record 0); rules differing from the record: 0
+  [oer-s63] Teardown: Reader policy at oer-s63-rg: restored: True
+  WARNING: Deleting resource group 'oer-s63-rg' permanently deletes ALL resources it contains.
+  [oer-s63] Deletion of resource group oer-s63-rg accepted.
+  [oer-s63] Phase 2 sweep, still present: resource group oer-s63-rg (Deleting -- Azure deletes a resource group asynchronously; re-read in a few minutes)
+  [oer-s63] Phase 1: signing in to Microsoft Graph as the certificate identity (app-only, process-scoped context).
+  [oer-s63] Phase 1 identity check: session app id is oer-live-cc: True
+  [oer-s63] Phase 1 identity check: tenant is the test tenant: True
+  [oer-s63] Phase 1 is signed in to the confirmed test tenant '<test tenant>' (<TenantId>).
+  [oer-s63] Deleted group oer-s63-approvers.
+  [oer-s63] Deleted user person1@example.com.
+  [oer-s63] Deleted user person2@example.com.
+  [oer-s63] Phase 1 sweep, still present: users 'person1@example.com' (00000000-0000-0000-0000-000000000005)
+  [oer-s63] Phase 1 sweep, still present: users 'person2@example.com' (00000000-0000-0000-0000-000000000006)
+  [oer-s63] Phase 1 sweep, still present: groups 'oer-s63-approvers' (00000000-0000-0000-0000-000000000007)
+  [oer-s63] Done.
+  ```
+
+- [x] **T.4 Read both directory-role policies back, through the module and raw, against the baseline.**
 
   ```powershell
   $View11 = Get-Content -Path (Join-Path $Raw '1.1-module-view.json') -Raw | ConvertFrom-Json
@@ -2013,9 +3521,22 @@ needs.
   Record which setting or rule, and restore it before anything else -- by the prerequisite script's
   `-Teardown` again, or by hand in the portal from the baseline file -- and never delete the raw folder
   (T.6) while this is not clean: it holds the only record of the original rules.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. `module view equals
+  1.1's: True` twice and `differing from the baseline: 0` twice: both directory-role policies are
+  back at their baseline, as Graph v1.0 returns them. (The 0.3 ids are no longer loadable here: the
+  approver group is gone.)
 
-- [ ] **T.5 No object outside the prefix was touched, nothing was removed by an apply, and no user or group is left.** The module has no user read, so this signs in to Microsoft Graph directly, as the same certificate identity, read-only, at the very end.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === Reports Reader: module view equals 1.1's: True
+  === Message Center Reader: module view equals 1.1's: True
+  --- T.4: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.4: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  ```
+
+- [x] **T.5 No object outside the prefix was touched, nothing was removed by an apply, and no user or group is left.** The module has no user read, so this signs in to Microsoft Graph directly, as the same certificate identity, read-only, at the very end.
 
   ```powershell
   $All = Import-Csv (Join-Path $Raw 'all-results.csv')
@@ -2047,7 +3568,30 @@ needs.
   Deleted items for 30 days, which is Entra ID's design; the deleted group is gone for good.
   **Failure looks like:** a `Created`, `Removed` or `Failed` row, an `Updated` row not listed above,
   or any count above `0`.
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Exactly the expected
+  `Updated` rows, no `Created`, `Removed` or `Failed` row, `rows naming anything else: 0`; both
+  identity lines `True`; no user and no group left with the prefix.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  CheckId Item                                                                                   Action  Detail
+  ------- ----                                                                                   ------  ------
+  3.3     Reports Reader                                                                         Updated updated directory role management policy for 'Reports Reader' (requireApproval=True, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  3.3     Message Center Reader                                                                  Updated updated directory role management policy for 'Message Center Reader' (requireApproval=True, activationMaxHours=2, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  3.5b    Reports Reader                                                                         Updated updated directory role management policy for 'Reports Reader' (approvers(users=[00000000-0000-0000-0000-000000000006]))
+  3.7b    Reports Reader                                                                         Updated updated directory role management policy for 'Reports Reader' (approvers(groups=[]))
+  4.3b    Reports Reader                                                                         Updated updated directory role management policy for 'Reports Reader' (authenticationContextId=c1)
+  4.4b    Reports Reader                                                                         Updated updated directory role management policy for 'Reports Reader' (authenticationContextId=)
+  5.3     Message Center Reader                                                                  Updated updated directory role management policy for 'Message Center Reader' (activationMaxHours=3)
+  5.3     Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg Updated updated role management policy for 'Reader' at '/subscriptions/<SubscriptionId>/resourceGroups/oer-s63-rg' (requireApproval=True, activationMaxHours=3, approvers(users=[00000000-0000-0000-0000-000000000005],groups=[00000000-0000-0000-0000-000000000007]))
+  rows naming anything else: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  users starting with the prefix: 0
+  groups starting with the prefix: 0
+  ```
 
 - [ ] **T.6 Redact, then clean up.** Only once T.4 printed `True` twice and `0` twice, and T.3 printed `Teardown: Reader policy at oer-s63-rg: restored: True`: the raw folder holds the baseline file and the Reader record, the only records of the original rules. Move what the results above need from `docs/live-verification/raw/s63/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
