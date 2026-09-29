@@ -1098,6 +1098,32 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
         }
     }
 
+    It 'withholds the group candidate, never removes it, when the membership read writes a non-terminating error and returns nothing' {
+        # A read that reports its failure as a NON-terminating error and returns nothing is still a
+        # failed read, never an empty membership: only -ErrorAction Stop on the membership read makes
+        # it land in the catch. -ErrorAction SilentlyContinue on the call below keeps a Stop
+        # preference in the session from doing that work instead.
+        InModuleScope $script:moduleName {
+            Mock Get-OERMemberGroupId {
+                Write-Error -Message 'Could not read the group memberships: Forbidden.' -ErrorId 'GraphRequestFailed' -Category PermissionDenied
+            }
+            $Group = 'cccccccc-0000-0000-0000-000000000001'
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $Group -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Group (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: the signed-in identity's group memberships could not be read, *Forbidden*"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            @(Select-DraCallerError $DraErrors).Count | Should -Be 1
+        }
+    }
+
     It 'reads the memberships at most once per pass, reusing the <Case> for a group candidate in another pair' -TestCases @(
         @{ Case = 'answer'; Throws = $false }
         @{ Case = 'failure'; Throws = $true }
@@ -1308,9 +1334,11 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment with an ambiguous service pri
 
 Describe 'Sync-OERStructureDirectoryRoleAssignment group guard with the real membership read' {
     # Get-OERMemberGroupId runs for REAL here: only the Graph transport is mocked, and its
-    # getMemberGroups POST answers with several group ids, one of them upper-case. The helper returns
-    # its [string[]] as ONE pipeline object, so this pins that the handler unrolls it into separate
-    # ids (wrapping the call in @() would leave one space-joined string that matches no group). The
+    # getMemberGroups POST answers with several group ids, the member one upper-case and in the
+    # middle. The helper emits each id as its own pipeline object and the handler collects them with
+    # @(), so this pins that the real helper's output and the handler's collection agree: a helper
+    # that emitted its ids as ONE array object would be wrapped by @() as a single element, leaving
+    # one space-joined string that matches no group, and the member group would be removed. The
     # resolvers, the Get/Remove cmdlets and the signed-in identity are mocked as in the suites above.
     # No id below is version-4 shaped.
     BeforeEach {

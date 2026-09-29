@@ -2484,7 +2484,10 @@ group memberships could not be read"): a failed read is not an empty membership,
 one would remove exactly the assignment this guard exists to keep. User and service principal
 candidates carry on to the prune, since neither can be such a group. Cost if the permission assumed
 here is wrong for some tenant: withheld `Skipped` rows on every group candidate, never a wrong
-removal.
+removal. The group guard reads ACTIVE group memberships only (`getMemberGroups`). An identity that
+is only eligible for membership through PIM for Groups is not a member until it activates, so a
+group it could activate into is an ordinary prune candidate -- decide knowingly before running
+`-Prune` in a tenant that uses PIM for Groups on role-assignable groups.
 
 **Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
 suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to

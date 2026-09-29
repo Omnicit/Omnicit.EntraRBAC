@@ -288,9 +288,9 @@ function Sync-OERStructureDirectoryRoleAssignment {
                         if (-not $MemberGroupRead) {
                             $MemberGroupRead = $true
                             try {
-                                # No @() around the call: the helper returns its [string[]] as ONE pipeline
-                                # object, which @() would wrap as a single element instead of unrolling.
-                                $MemberGroupIds = Get-OERMemberGroupId -ObjectId $SignedInId
+                                # -ErrorAction Stop: a read that reports a non-terminating error must land in
+                                # the catch, never read as "no groups".
+                                $MemberGroupIds = @(Get-OERMemberGroupId -ObjectId $SignedInId -ErrorAction Stop)
                                 foreach ($GroupId in $MemberGroupIds) {
                                     if (-not [string]::IsNullOrWhiteSpace([string]$GroupId)) { $null = $MemberGroupSet.Add([string]$GroupId) }
                                 }

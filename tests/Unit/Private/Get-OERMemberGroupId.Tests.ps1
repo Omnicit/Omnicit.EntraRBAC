@@ -25,20 +25,23 @@ Describe 'Get-OERMemberGroupId' {
         }
     }
 
-    It 'returns the ids lower-cased, as a string array, skipping null and blank entries' {
+    It 'emits each id lower-cased as its own pipeline object, skipping null and blank entries' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERGraphRequest {
                 @{ value = @('CCCCCCCC-0000-0000-0000-000000000001', $null, '', '   ', 'dddddddd-0000-0000-0000-000000000002') }
             }
-            $Result = Get-OERMemberGroupId -ObjectId 'aaaaaaaa-0000-0000-0000-0000000000ff'
-            $Result.GetType() | Should -Be ([string[]])
+            # Two ids are two pipeline objects: the caller collects them with @(), which would wrap an
+            # array emitted as ONE object as a single element instead.
+            (Get-OERMemberGroupId -ObjectId 'aaaaaaaa-0000-0000-0000-0000000000ff' | Measure-Object).Count | Should -Be 2
+            $Result = @(Get-OERMemberGroupId -ObjectId 'aaaaaaaa-0000-0000-0000-0000000000ff')
             $Result.Count | Should -Be 2
+            foreach ($Id in $Result) { $Id -is [string] | Should -BeTrue }
             $Result[0] | Should -BeExactly 'cccccccc-0000-0000-0000-000000000001'
             $Result[1] | Should -BeExactly 'dddddddd-0000-0000-0000-000000000002'
         }
     }
 
-    It 'returns an empty string array, never $null, when the object is a member of no group (<Case>)' -TestCases @(
+    It 'emits nothing when the object is a member of no group (<Case>)' -TestCases @(
         @{ Case = 'an empty value collection'; Answer = @{ value = @() } }
         @{ Case = 'no value collection at all'; Answer = @{} }
         @{ Case = 'only null and blank entries'; Answer = @{ value = @($null, '') } }
@@ -47,10 +50,7 @@ Describe 'Get-OERMemberGroupId' {
             param($Answer)
             $script:MemberGroupAnswer = $Answer
             Mock Invoke-OERGraphRequest { $script:MemberGroupAnswer }
-            $Result = Get-OERMemberGroupId -ObjectId 'aaaaaaaa-0000-0000-0000-0000000000ff'
-            $null -eq $Result | Should -BeFalse
-            $Result.GetType() | Should -Be ([string[]])
-            $Result.Count | Should -Be 0
+            @(Get-OERMemberGroupId -ObjectId 'aaaaaaaa-0000-0000-0000-0000000000ff').Count | Should -Be 0
         }
     }
 
