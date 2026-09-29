@@ -449,6 +449,9 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                 return $null
             }
             Mock Resolve-OERStructurePrincipal {
+                # A GUID reference comes back verbatim, letter case included, as the real resolver
+                # returns it; Graph reports principalId lower-case.
+                if (Test-OERGuid -Value $Reference) { return $Reference }
                 if ($Reference -match '^person(\d)@example\.com$') { return $script:DraP[[int]$Matches[1]] }
                 if ($Reference -eq 'throws@example.com') { throw "Principal 'throws@example.com' is ambiguous." }
                 return $null
@@ -517,11 +520,16 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                 New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
             )
             $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
-            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WhatIf -WarningAction SilentlyContinue)
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WhatIf `
+                    -WarningAction SilentlyContinue -WarningVariable DraWarnings)
             @($Records).Action | Should -Be @('Skipped', 'Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
             $Records[0].Detail | Should -Match "^would remove undeclared eligible assignment of directory role 'Reports Reader'"
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            # The plan's warning names what would happen, not what is happening.
+            @($DraWarnings).Count | Should -Be 1
+            "$($DraWarnings[0])" | Should -Match "would remove undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:DraP[2])'"
+            "$($DraWarnings[0])" | Should -Not -Match 'removing'
         }
     }
 
@@ -764,6 +772,47 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
                 $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and -not $PesterBoundParameters.ContainsKey('PrincipalId')
             }
             Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { -not $PesterBoundParameters.ContainsKey('PrincipalId') }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'matches a principal declared as an upper-case object id to its lower-case live assignment: never Extra, never Removed, and the item is Unchanged' {
+        # Resolve-OERStructurePrincipal returns a GUID reference verbatim while Graph reports
+        # principalId lower-case, so only a case-insensitive key keeps the declared assignment out of
+        # the candidates -- and only a case-insensitive filter lets the item find its own row.
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(New-DraPassRow -Role $script:RR -Principal $script:DraP[1])
+            $Section = @(New-DraSection "Reports Reader|$($script:DraP[1].ToUpperInvariant())|Eligible")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[1].ToUpperInvariant()) (Eligible)"
+            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly -ParameterFilter { $Reference -ceq 'BBBBBBBB-0000-0000-0000-000000000001' }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'withholds before any identity guard: an unresolved entry in the pair wins over <Case>' -TestCases @(
+        @{ Case = 'the signed-in identity''s own assignment'; SignedIn = 'bbbbbbbb-0000-0000-0000-000000000006' }
+        @{ Case = 'an unknown signed-in identity'; SignedIn = $null }
+    ) {
+        # R10: the step 1 rule is checked first for every candidate, so the Detail names the
+        # unresolved entry, not the identity guard that would otherwise apply.
+        InModuleScope $script:moduleName -Parameters @{ SignedIn = $SignedIn } {
+            param($SignedIn)
+            $script:DraSignedIn = $SignedIn
+            Mock Get-OERSignedInObjectId { $script:DraSignedIn }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[6]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', 'Reports Reader|nobody@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[6]) (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry 'Reports Reader -> nobody@example.com (Eligible)'*"
+            $Records[0].Detail | Should -Not -Match 'signed-in identity'
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
         }
     }
