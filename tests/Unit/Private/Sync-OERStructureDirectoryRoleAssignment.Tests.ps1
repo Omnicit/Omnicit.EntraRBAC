@@ -676,7 +676,9 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             @($Records).Action | Should -Be @('Skipped', 'Skipped', 'Unchanged')
             foreach ($Record in $Records[0..1]) {
                 $Record.Detail | Should -BeLike "prune withheld: the signed-in identity's object id is unknown*"
+                $Record.Detail | Should -Match "it could not be determined from the session's Microsoft Graph token"
                 $Record.Detail | Should -Match 'our own guard'
+                $Record.Detail | Should -Match 'Sign in again with Connect-OER; if the token carries no oid claim, reconcile this pair from a session that does\.'
             }
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
             Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
@@ -790,6 +792,24 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
             Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
             Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'treats a declared but empty principalType as not given, in the pass and in the item alike' {
+        # The pass and the item must agree on what a declared principalType is: were an empty one
+        # forwarded as -Type in the pass only, its lookup would fail there and withhold the pair
+        # while the item itself resolved fine.
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @('{ "role": "Reports Reader", "principal": "person1@example.com", "principalType": "", "assignmentType": "Eligible" }' | ConvertFrom-Json)
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            Should -Invoke Resolve-OERStructurePrincipal -Times 0 -ParameterFilter { $PesterBoundParameters.ContainsKey('Type') }
+            Should -Invoke Resolve-OERStructurePrincipal -Times 2 -Exactly
         }
     }
 

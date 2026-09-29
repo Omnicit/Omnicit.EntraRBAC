@@ -25,8 +25,9 @@ function Sync-OERStructureDirectoryRoleAssignment {
        Resolve-OERDirectoryRoleDefinitionId. No match, or a lookup that throws (an ambiguous name
        included), reports Failed and nothing is read or written.
     2. The principal is resolved to an object id with Resolve-OERStructurePrincipal, forwarding the
-       optional principalType (User, Group or ServicePrincipal) as -Type; without it the resolver's
-       heuristic applies. No match, or a lookup that throws, reports Failed.
+       optional principalType (User, Group or ServicePrincipal) as -Type; without it, or with an
+       empty one, the resolver's heuristic applies. The prune pass below decides principalType the
+       same way. No match, or a lookup that throws, reports Failed.
     3. The live schedules of that role and principal are read with -ErrorAction Stop, so a refused
        read lands in a Failed row and is never mistaken for an absent assignment. Only the rows
        Select-OERManagedDirectoryRoleAssignment keeps may stand for the entry: tenant scope, a DIRECT
@@ -76,10 +77,12 @@ function Sync-OERStructureDirectoryRoleAssignment {
       1. The step 1 rule, through ConvertTo-OERPruneWithheldResult, called first. An entry whose
          PRINCIPAL cannot be resolved (nothing found, or the lookup throws) withholds its own pair;
          an entry whose ROLE cannot be resolved withholds every pair of its assignmentType, since its
-         pair is unknown. A withheld candidate is reported Skipped with a Detail starting
-         "prune withheld: declared entry '<role> -> <principal> (<assignmentType>)' could not be
-         resolved", with or without -Prune. A failed entry lookup writes no error here: that entry's
-         own invocation writes its error and reports its Failed row under the same label.
+         pair is unknown. A withheld candidate is reported Skipped, with or without -Prune, with a
+         Detail starting "prune withheld: declared entry" when one entry is unresolved, or
+         "prune withheld: declared entries" when several are, each named as
+         '<role> -> <principal> (<assignmentType>)' (ConvertTo-OERPruneWithheldResult owns the
+         wording). A failed entry lookup writes no error here: that entry's own invocation writes
+         its error and reports its Failed row under the same label.
       2. The signed-in identity is unknown: Get-OERSignedInObjectId returns the object id recorded
          from the Microsoft Graph token's oid claim (delegated and app-only alike, never /me); when
          it returns nothing, every candidate is reported Skipped with a Detail starting
@@ -170,6 +173,7 @@ function Sync-OERStructureDirectoryRoleAssignment {
         # handler-error label does, so the Failed row below still names what the document says.
         $KindText = if ($Kind) { $Kind } else { [string]$Item.assignmentType }
         $Label = "$($Item.role) -> $($Item.principal) ($KindText)"
+        # A principalType counts only when declared AND non-empty -- the pass below decides it the same way.
         $PrincipalType = if (Test-OERDeclaredProperty -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
 
         if ($ReconcileSection) {
@@ -200,8 +204,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
                 if (-not $PairUnresolved.Contains($PairKey)) {
                     $PairUnresolved[$PairKey] = [System.Collections.Generic.List[string]]::new()
                 }
+                # principalType is decided exactly as the item part decides it (declared AND
+                # non-empty), so the pass never fails a lookup the item itself makes.
+                $EntryType = if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { [string]$Entry.principalType } else { $null }
                 $EntryParams = @{ Reference = [string]$Entry.principal }
-                if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { $EntryParams.Type = [string]$Entry.principalType }
+                if ($EntryType) { $EntryParams.Type = $EntryType }
                 $EntryPrincipalId = $null
                 try { $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams }
                 catch { Remove-OERErrorRecord -Record $PSItem }
@@ -235,7 +242,7 @@ function Sync-OERStructureDirectoryRoleAssignment {
                     if ($Withheld) { $Withheld; continue }
                     if (-not $SignedInId) {
                         ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
-                            -Detail "prune withheld: the signed-in identity's object id is unknown (no oid claim in the Microsoft Graph token), so $CandLabel may be its own assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER to reconcile this pair."
+                            -Detail "prune withheld: the signed-in identity's object id is unknown (it could not be determined from the session's Microsoft Graph token), so $CandLabel may be its own assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER; if the token carries no oid claim, reconcile this pair from a session that does."
                         continue
                     }
                     if ($Candidate.PrincipalId -eq $SignedInId) {
