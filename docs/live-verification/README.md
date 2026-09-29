@@ -178,6 +178,12 @@ the file and line of every hit and never prints the value it matched; printing i
 identifier, or the credential, into every CI log, which is precisely the leak the gate exists to
 prevent.
 
+**An object id wrapped over two lines is found too.** A formatted table breaks a long cell at the
+column edge and indents the rest, so a pasted id can land half on one line and half on the next,
+where neither line matches on its own. The object-id checks therefore also read each file with its
+line breaks, and the whitespace around them, removed, and report such an id at the line it starts
+on. Redact a wrapped id in place, keeping the break where the console put it.
+
 The email and credential rules are the same everywhere. The **object-id** rule is not, because the
 two halves of the tree are different kinds of writing:
 
