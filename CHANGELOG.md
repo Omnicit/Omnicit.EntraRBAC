@@ -46,8 +46,9 @@ the same three for active assignments, and the apply section `directoryRoleAssig
 runs after the directory-role policies. A permanent assignment the role's policy does not allow is
 refused instead of opening the policy, and a group that is not role-assignable is refused before the
 request. `-Prune` touches only the role and assignment-type pairs the document declares, and never an
-activation, an assignment held through a group, or the signed-in identity's own direct assignment.
-Role names now match in any letter case. `Get-OERRequiredScope` lists the new cmdlets too.
+activation, a member's assignment inherited through a group, or the signed-in identity's own direct
+assignment. Directory role names now match in any letter case. `Get-OERRequiredScope` lists the new
+cmdlets too.
 
 ## [1.0.1] - 2026-09-23
 

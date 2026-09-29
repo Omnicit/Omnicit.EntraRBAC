@@ -27,7 +27,9 @@ function Sync-OERStructureDirectoryRoleAssignment {
     2. The principal is resolved to an object id with Resolve-OERStructurePrincipal, forwarding the
        optional principalType (User, Group or ServicePrincipal) as -Type; without it, or with an
        empty one, the resolver's heuristic applies. The prune pass below decides principalType the
-       same way. No match, or a lookup that throws, reports Failed.
+       same way. No match, or a lookup that throws, reports Failed. Name a service principal by its
+       object id: service principal display names are not unique and the lookup takes the first
+       match (Test-OERStructureSchema warns about a ServicePrincipal entry named by display name).
     3. The live schedules of that role and principal are read with -ErrorAction Stop, so a refused
        read lands in a Failed row and is never mistaken for an absent assignment. Only the rows
        Select-OERManagedDirectoryRoleAssignment keeps may stand for the entry: tenant scope, a DIRECT
@@ -68,9 +70,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
       "<role definition id> (<assignmentType>)", and its error is written; nothing in that pair is
       removed or reported Extra, since a failed read is not an empty one. The other pairs still run.
     - Candidates. Only the rows Select-OERManagedDirectoryRoleAssignment keeps, and only those of the
-      pair's own role, are candidates: an activation (an Activated schedule), an assignment held
-      through a group and one scoped to an administrative unit are never counted and never pruned. A
-      candidate whose principal a declared entry of the same pair names is kept. Every other one is
+      pair's own role, are candidates: an activation (an Activated schedule), a member's assignment
+      inherited through a group and one scoped to an administrative unit are never counted and never
+      pruned. A role-assignable group's own direct assignment is a candidate like any other, so
+      removing it ends the role for every member who holds it through the group. A candidate whose
+      principal a declared entry of the same pair names is kept. Every other one is
       an undeclared assignment, reported under its own label "<role> -> <principal id>
       (<assignmentType>)".
     - Guards, in this order, for every undeclared candidate:
@@ -117,9 +121,12 @@ function Sync-OERStructureDirectoryRoleAssignment {
     .PARAMETER Prune
     When set (together with -ReconcileSection), an undeclared direct, tenant-scope assignment in a
     (role, assignmentType) pair the section declares is removed after a ShouldProcess gate; without
-    it, such an assignment is only reported Extra. Activations, assignments held through a group or
-    scoped to an administrative unit, roles and kinds the document does not declare, and the
-    signed-in identity's own assignments are never removed. A candidate a guard withholds (an
+    it, such an assignment is only reported Extra. Activations, a member's assignments inherited
+    through a group, assignments scoped to an administrative unit, roles and kinds the document does
+    not declare, and the signed-in identity's own direct assignments are never removed. A
+    role-assignable group's own direct assignment is an ordinary candidate: when the document
+    declares a pair without that group, it is removed, and with it the role of every member who
+    holds it through the group, the signed-in identity included. A candidate a guard withholds (an
     unresolved entry, an unknown signed-in identity, or the identity's own assignment) is reported
     Skipped with or without this switch.
 

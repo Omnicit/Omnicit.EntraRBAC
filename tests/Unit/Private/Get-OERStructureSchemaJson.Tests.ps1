@@ -905,6 +905,11 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
             # R9: an unresolved principal withholds its own pair, an unresolved role every pair of its kind.
             $Desc | Should -Match 'an entry whose principal cannot be resolved withholds the prune of its own pair'
             $Desc | Should -Match 'one whose role cannot be resolved withholds the prune of every pair of its assignmentType'
+            # A group's own direct assignment IS a candidate: removing it ends the role for its members.
+            $Desc | Should -Match "A role-assignable group's own direct assignment is an ordinary prune candidate"
+            $Desc | Should -Match 'the role of every member who holds it through the group, the signed-in identity included'
+            # The shared service principal lookup takes the first match.
+            $Desc | Should -Match 'service principal display names are not unique and the lookup takes the first match'
             $Desc | Should -Match 'Microsoft Graph only'
         }
     }

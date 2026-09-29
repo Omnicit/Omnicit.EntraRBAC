@@ -106,13 +106,16 @@ function Invoke-OERStructure {
     directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
     for the pairs the document declares: a directory role the document does not name, or names only
     for the other assignmentType, is never read or touched. An activation of an eligible assignment,
-    an assignment held through a group and one scoped to an administrative unit are never counted and
-    never removed, and neither is any assignment of the signed-in identity itself (reported Skipped);
-    while that identity's object id cannot be determined, nothing in the section is removed. There
-    the unit of the rule above is the pair: an entry whose principal cannot be resolved withholds the
-    prune of its own pair, and an entry whose role cannot be resolved withholds every pair of its
-    assignmentType. A pair whose live read fails is reported Failed, and nothing in it is removed or
-    reported Extra.
+    a member's assignment inherited through a group and one scoped to an administrative unit are never
+    counted and never removed, and neither is any direct assignment of the signed-in identity itself
+    (reported Skipped); while that identity's object id cannot be determined, nothing in the section
+    is removed. A role-assignable group's own direct assignment, however, is an ordinary candidate:
+    when the document declares a pair without that group, -Prune removes the group's assignment and
+    with it the role of every member who holds it through the group, the signed-in identity included.
+    There the unit of the rule above is the pair: an entry whose principal cannot be resolved
+    withholds the prune of its own pair, and an entry whose role cannot be resolved withholds every
+    pair of its assignmentType. A pair whose live read fails is reported Failed, and nothing in it is
+    removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
     so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,
