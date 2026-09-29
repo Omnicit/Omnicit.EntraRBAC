@@ -297,7 +297,7 @@ function Get-OERRequiredScopeMap {
             Cmdlet = 'New-OERActiveDirectoryRoleAssignment'; Transport = 'Graph'
             GraphScope = 'Application.Read.All', 'Group.Read.All', 'RoleAssignmentSchedule.ReadWrite.Directory',
                          'RoleManagement.Read.Directory', 'User.ReadBasic.All'
-            Note = 'RoleAssignmentSchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All only resolve a principal filter. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. The permanent pre-check reads the role''s PIM policy (RoleManagement.Read.Directory covers it); Group.Read.All also serves the role-assignable check. A delegated caller also needs the Privileged Role Administrator role.'
+            Note = 'RoleAssignmentSchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All resolve -User, -Group and -ServicePrincipal. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. The permanent pre-check reads the role''s PIM policy (RoleManagement.Read.Directory covers it); Group.Read.All also serves the role-assignable check. A delegated caller also needs the Privileged Role Administrator role.'
         }
         @{
             Cmdlet = 'New-OERActiveRoleAssignment'; Transport = 'GraphAndArm'
@@ -320,7 +320,7 @@ function Get-OERRequiredScopeMap {
             Cmdlet = 'New-OEREligibleDirectoryRoleAssignment'; Transport = 'Graph'
             GraphScope = 'Application.Read.All', 'Group.Read.All', 'RoleEligibilitySchedule.ReadWrite.Directory',
                          'RoleManagement.Read.Directory', 'User.ReadBasic.All'
-            Note = 'RoleEligibilitySchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All only resolve a principal filter. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. The permanent pre-check reads the role''s PIM policy (RoleManagement.Read.Directory covers it); Group.Read.All also serves the role-assignable check. A delegated caller also needs the Privileged Role Administrator role.'
+            Note = 'RoleEligibilitySchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All resolve -User, -Group and -ServicePrincipal. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. The permanent pre-check reads the role''s PIM policy (RoleManagement.Read.Directory covers it); Group.Read.All also serves the role-assignable check. A delegated caller also needs the Privileged Role Administrator role.'
         }
         @{
             Cmdlet = 'New-OEREligibleRoleAssignment'; Transport = 'GraphAndArm'
@@ -370,7 +370,7 @@ function Get-OERRequiredScopeMap {
             Cmdlet = 'Remove-OERActiveDirectoryRoleAssignment'; Transport = 'Graph'
             GraphScope = 'Application.Read.All', 'Group.Read.All', 'RoleAssignmentSchedule.ReadWrite.Directory',
                          'RoleManagement.Read.Directory', 'User.ReadBasic.All'
-            Note = 'RoleAssignmentSchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All only resolve a principal filter. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. A delegated caller also needs the Privileged Role Administrator role.'
+            Note = 'RoleAssignmentSchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All resolve -User, -Group and -ServicePrincipal. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. A delegated caller also needs the Privileged Role Administrator role.'
         }
         @{
             Cmdlet = 'Remove-OERActiveRoleAssignment'; Transport = 'GraphAndArm'
@@ -408,7 +408,7 @@ function Get-OERRequiredScopeMap {
             Cmdlet = 'Remove-OEREligibleDirectoryRoleAssignment'; Transport = 'Graph'
             GraphScope = 'Application.Read.All', 'Group.Read.All', 'RoleEligibilitySchedule.ReadWrite.Directory',
                          'RoleManagement.Read.Directory', 'User.ReadBasic.All'
-            Note = 'RoleEligibilitySchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All only resolve a principal filter. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. A delegated caller also needs the Privileged Role Administrator role.'
+            Note = 'RoleEligibilitySchedule.ReadWrite.Directory is the least privileged permission for the write; RoleManagement.Read.Directory resolves -Role through roleDefinitions; User.ReadBasic.All, Group.Read.All and Application.Read.All resolve -User, -Group and -ServicePrincipal. The default sign-in''s RoleManagement.ReadWrite.Directory covers every Graph permission listed. A delegated caller also needs the Privileged Role Administrator role.'
         }
         @{
             Cmdlet = 'Remove-OEREligibleRoleAssignment'; Transport = 'GraphAndArm'
