@@ -271,6 +271,12 @@ BeforeAll {
         roleManagementPolicyAssignments, Update unifiedRoleManagementPolicyRule, List
         roleDefinitions).
 
+        The roleEligibilitySchedule* and roleAssignmentSchedule* rules below were also confirmed
+        against Microsoft Learn (List roleEligibilitySchedules, Create
+        roleAssignmentScheduleRequests, List roleAssignmentSchedules): the least privileged
+        permission is RoleEligibilitySchedule.* / RoleAssignmentSchedule.* respectively, with the
+        higher RoleManagement.*.Directory as the broader alternative.
+
         Every pattern below was confirmed against a published Microsoft Learn permissions table.
         =====================================================================================
     #>
@@ -336,6 +342,18 @@ BeforeAll {
             Match    = 'v1.0/roleManagement/directory/roleDefinitions'
             Read     = '^RoleManagement\.(Read|ReadWrite)\.Directory$'
             Write    = '^RoleManagement\.ReadWrite\.Directory$'
+        }
+        @{
+            Endpoint = 'roleManagement/directory/roleEligibilitySchedules*, roleEligibilityScheduleRequests'
+            Match    = 'v1.0/roleManagement/directory/roleEligibilitySchedule'
+            Read     = '^(RoleEligibilitySchedule|RoleManagement)\.(Read|ReadWrite)\.Directory$'
+            Write    = '^(RoleEligibilitySchedule|RoleManagement)\.ReadWrite\.Directory$'
+        }
+        @{
+            Endpoint = 'roleManagement/directory/roleAssignmentSchedules*, roleAssignmentScheduleRequests'
+            Match    = 'v1.0/roleManagement/directory/roleAssignmentSchedule'
+            Read     = '^(RoleAssignmentSchedule|RoleManagement)\.(Read|ReadWrite)\.Directory$'
+            Write    = '^(RoleAssignmentSchedule|RoleManagement)\.ReadWrite\.Directory$'
         }
         @{
             Endpoint = 'groups'
