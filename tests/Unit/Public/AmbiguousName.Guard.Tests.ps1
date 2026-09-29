@@ -106,10 +106,26 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Get-OERActiveDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Get-OERActiveDirectoryRoleAssignment -Role 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
             ErrorId = 'AmbiguousRoleName'; Pre = @{}
             Invoke = {
                 Get-OERDirectoryRoleManagementPolicy -Role 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Get-OEREligibleDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Get-OEREligibleDirectoryRoleAssignment -Role 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
         }
@@ -159,6 +175,24 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'New-OERActiveDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                New-OERActiveDirectoryRoleAssignment -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -DurationDays 30 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'New-OEREligibleDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                New-OEREligibleDirectoryRoleAssignment -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -DurationDays 30 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Remove-OERAccessPackage'; Resolver = 'Resolve-OERAccessPackageId'
             ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
             Invoke = {
@@ -171,6 +205,15 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
             Invoke = {
                 Remove-OERAccessPackageResourceRole -AccessPackage 'Dup' -ResourceRoleScopeId 'scope-1' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OERActiveDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Remove-OERActiveDirectoryRoleAssignment -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
                     -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
@@ -189,6 +232,15 @@ BeforeDiscovery {
             Invoke = {
                 Remove-OERCatalogResource -ResourceId 'res-1' -Catalog 'Dup' -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OEREligibleDirectoryRoleAssignment'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Remove-OEREligibleDirectoryRoleAssignment -Role 'Dup' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
         }

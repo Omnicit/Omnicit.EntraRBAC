@@ -549,7 +549,7 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 |---|---|---|
 | `-Role` | `Resolve-OERRoleCompletion` (from `Get-OERCommonRoleName`) | Every cmdlet taking an Azure RBAC role name -- the registered list is in `suffix.ps1` |
 | `-RoleName` (alias `-Role`) | `Resolve-OERDirectoryRoleCompletion` (from `Get-OERCommonDirectoryRoleName`) | `Add`/`Remove-OERAdministrativeUnitScopedRole` |
-| `-Role` | `Resolve-OERBuiltInDirectoryRoleCompletion` (from `Get-OERBuiltInDirectoryRoleName`, tenant-wide built-in roles) | `Get`/`Set-OERDirectoryRoleManagementPolicy` |
+| `-Role` | `Resolve-OERBuiltInDirectoryRoleCompletion` (from `Get-OERBuiltInDirectoryRoleName`, tenant-wide built-in roles) | `Get`/`Set-OERDirectoryRoleManagementPolicy` and the six directory role assignment cmdlets |
 | `-TenantAlias` | `Resolve-OERTenantAliasCompletion` (profile `*.psd1` basenames on disk) | `Connect-OER`, `Get`/`Set`/`Remove-OERConfiguration` |
 
 **Rules for adding a completer:**

@@ -84,9 +84,30 @@ Describe 'Built-in directory role argument completer registration' {
         $Completion.CompletionMatches.CompletionText | Should -Contain "'Reports Reader'"
     }
 
+    It 'completes -Role on <Cmdlet> with a prefix match' -ForEach @(
+        @{ Cmdlet = 'New-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Get-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Remove-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'New-OERActiveDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Get-OERActiveDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Remove-OERActiveDirectoryRoleAssignment' }
+    ) {
+        $Line = "$Cmdlet -Role Reports"
+        $Completion = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length
+        $Completion.CompletionMatches.CompletionText | Should -Contain "'Reports Reader'"
+        ($Completion.CompletionMatches | Where-Object CompletionText -EQ "'Reports Reader'")[0].ListItemText |
+            Should -Be 'Reports Reader'
+    }
+
     It 'still accepts a free-text role name that is not in the curated set (no ValidateSet) on <Cmdlet>' -ForEach @(
         @{ Cmdlet = 'Get-OERDirectoryRoleManagementPolicy' }
         @{ Cmdlet = 'Set-OERDirectoryRoleManagementPolicy' }
+        @{ Cmdlet = 'New-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Get-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Remove-OEREligibleDirectoryRoleAssignment' }
+        @{ Cmdlet = 'New-OERActiveDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Get-OERActiveDirectoryRoleAssignment' }
+        @{ Cmdlet = 'Remove-OERActiveDirectoryRoleAssignment' }
     ) {
         (Get-Command $Cmdlet).Parameters['Role'].Attributes |
             Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
