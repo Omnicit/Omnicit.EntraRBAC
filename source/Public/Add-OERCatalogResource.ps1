@@ -11,7 +11,8 @@ function Add-OERCatalogResource {
     - -Group / -Application take a display name and resolve it to an object id (groups via
       Resolve-OERGroupId, enterprise applications via Resolve-OERApplicationId, which queries
       servicePrincipals). A name that does not resolve produces a non-terminating GroupNotFound or
-      ApplicationNotFound error.
+      ApplicationNotFound error, and a name that matches more than one group or service principal is
+      refused with AmbiguousGroupName or AmbiguousApplicationName, naming the candidate ids.
     - -SharePointSite takes a site URL (originSystem SharePointOnline).
 
     Groups onboard with originSystem AadGroup; applications with originSystem AadApplication (the resolved
@@ -37,7 +38,8 @@ function Add-OERCatalogResource {
 
     .PARAMETER Application
     The display name of an enterprise application to onboard; resolved to its service principal object id
-    via Resolve-OERApplicationId (originSystem AadApplication).
+    via Resolve-OERApplicationId (originSystem AadApplication). A display name matching more than one
+    service principal is refused with AmbiguousApplicationName naming the candidates.
 
     .PARAMETER SharePointSite
     The site URL of a SharePoint Online site to onboard (originSystem SharePointOnline).
@@ -145,7 +147,20 @@ function Add-OERCatalogResource {
                 $OriginSystem = 'AadApplication'
             }
             'AppByName' {
-                $OriginId = try { Resolve-OERApplicationId -DisplayName $Application } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+                # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+                $OriginId = $null
+                try {
+                    $OriginId = Resolve-OERApplicationId -DisplayName $Application
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    if (Test-OERAmbiguousNameError -Record $PSItem) {
+                        Write-CmdletError `
+                            -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                            -ErrorId 'AmbiguousApplicationName' -Category InvalidArgument `
+                            -TargetObject $Application -Cmdlet $PSCmdlet
+                        return
+                    }
+                }
                 $OriginSystem = 'AadApplication'
                 if (-not $OriginId) {
                     Write-CmdletError `

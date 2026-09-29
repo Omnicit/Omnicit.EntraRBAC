@@ -27,9 +27,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
     2. The principal is resolved to an object id with Resolve-OERStructurePrincipal, forwarding the
        optional principalType (User, Group or ServicePrincipal) as -Type; without it, or with an
        empty one, the resolver's heuristic applies. The prune pass below decides principalType the
-       same way. No match, or a lookup that throws, reports Failed. Name a service principal by its
-       object id: service principal display names are not unique and the lookup takes the first
-       match (Test-OERStructureSchema warns about a ServicePrincipal entry named by display name).
+       same way. No match, or a lookup that throws, reports Failed. A service principal display name
+       that matches more than one service principal is refused (AmbiguousName, naming the candidate
+       ids) and reports Failed the same way; it never acts on one of them. Name a service principal by
+       its object id (Test-OERStructureSchema warns about a ServicePrincipal entry named by display
+       name).
     3. The live schedules of that role and principal are read with -ErrorAction Stop, so a refused
        read lands in a Failed row and is never mistaken for an absent assignment. Only the rows
        Select-OERManagedDirectoryRoleAssignment keeps may stand for the entry: tenant scope, a DIRECT

@@ -3173,7 +3173,7 @@ Describe 'Test-OERStructureSchema directoryRoleAssignments' {
         }
     }
 
-    It 'warns when a ServicePrincipal is named by display name (principalType <PrincipalType>), since the lookup takes the first match' -TestCases @(
+    It 'warns when a ServicePrincipal is named by display name (principalType <PrincipalType>), since an ambiguous name fails at apply time' -TestCases @(
         @{ PrincipalType = 'ServicePrincipal' }
         @{ PrincipalType = 'serviceprincipal' }
     ) {
@@ -3188,7 +3188,7 @@ Describe 'Test-OERStructureSchema directoryRoleAssignments' {
             $Hit[0].Section | Should -BeExactly 'directoryRoleAssignments'
             $Hit[0].Item | Should -BeExactly 'Reports Reader'
             $Hit[0].Message | Should -BeExactly ("'principal' at directoryRoleAssignments[0] names a service principal by display name ('oer-test-app'): " +
-                'service principal display names are not unique and the lookup takes the first match; ' +
+                'service principal display names are not unique, and an ambiguous name is refused at apply time (the entry fails); ' +
                 'name a service principal by its object id.')
         }
     }

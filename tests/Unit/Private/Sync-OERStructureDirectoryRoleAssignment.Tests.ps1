@@ -944,3 +944,97 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
         }
     }
 }
+
+Describe 'Sync-OERStructureDirectoryRoleAssignment with an ambiguous service principal display name' {
+    # Resolve-OERStructurePrincipal and Resolve-OERApplicationId run for REAL here: only the Graph
+    # transport is mocked, and its servicePrincipals query answers with two service principals that
+    # share the display name 'Dup App'. The role resolver, the four cmdlets and the signed-in identity
+    # are mocked as in the suites above. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DupSp1 = '11111111-1111-1111-1111-111111111111'
+            $script:DupSp2 = '22222222-2222-2222-2222-222222222222'
+            $script:DraKept = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DraLiveEligible = @()
+            function script:Invoke-SyncDraAmbiguous {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection, [switch]$Prune)
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection
+            }
+            # A permanent, direct, tenant-scope eligible schedule of Reports Reader for one principal.
+            function script:New-DraAmbiguousRow {
+                param([string]$Principal, [string]$PrincipalType = 'User')
+                [PSCustomObject]([ordered]@{
+                        ScheduleId       = "schedule-$Principal"
+                        RoleDefinitionId = $script:RR
+                        RoleName         = 'Reports Reader'
+                        PrincipalId      = $Principal
+                        PrincipalType    = $PrincipalType
+                        DirectoryScopeId = '/'
+                        MemberType       = 'Direct'
+                        StartDateTime    = '2026-01-01T00:00:00Z'
+                        EndDateTime      = $null
+                    })
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -eq 'Reports Reader') { return $script:RR }
+                return $null
+            }
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
+                @{ value = @(
+                        @{ id = $script:DupSp1; displayName = 'Dup App' },
+                        @{ id = $script:DupSp2; displayName = 'Dup App' }) }
+            }
+            Mock Invoke-OERGraphRequest -MockWith { throw 'unexpected Graph request' }
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                @($script:DraLiveEligible | Where-Object { $_.RoleDefinitionId -eq $Role -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+            }
+            Mock Get-OERActiveDirectoryRoleAssignment {}
+            Mock New-OEREligibleDirectoryRoleAssignment {}
+            Mock New-OERActiveDirectoryRoleAssignment {}
+            Mock Remove-OEREligibleDirectoryRoleAssignment {}
+            Mock Remove-OERActiveDirectoryRoleAssignment {}
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+        }
+    }
+
+    It 'reports the entry Failed with both candidate ids, and reads and writes nothing' {
+        InModuleScope $script:moduleName {
+            $Item = '{ "role": "Reports Reader", "principal": "Dup App", "principalType": "ServicePrincipal", "assignmentType": "Eligible" }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraAmbiguous -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> Dup App (Eligible)'
+            $Records[0].Detail | Should -Match "could not resolve principal 'Dup App'"
+            $Records[0].Detail | Should -Match $script:DupSp1
+            $Records[0].Detail | Should -Match $script:DupSp2
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke New-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'withholds the prune of its pair under -Prune: the undeclared candidate is Skipped, never Extra or Removed' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraAmbiguousRow -Principal $script:DraKept
+                New-DraAmbiguousRow -Principal $script:DupSp2 -PrincipalType 'ServicePrincipal'
+            )
+            $Section = @(
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = 'Eligible' }
+                [PSCustomObject]@{ role = 'Reports Reader'; principal = 'Dup App'; principalType = 'ServicePrincipal'; assignmentType = 'Eligible' }
+            )
+            $Records = @(Invoke-SyncDraAmbiguous -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DupSp2) (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry 'Reports Reader -> Dup App (Eligible)'*"
+            @($Records | Where-Object { $_.Action -in @('Extra', 'Removed') }).Count | Should -Be 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+}

@@ -49,9 +49,9 @@ function Test-OERStructureSchema {
     Error at the later entry's path naming the earlier index, since applying both would re-issue the
     one live assignment's window on every run. An entry whose principalType is ServicePrincipal (in
     any casing) and whose principal is not a GUID is a Warning at its principal path: service
-    principal display names are not unique and the lookup takes the first match, so a service
-    principal is named by its object id. An unknown per-item key in the roleAssignments,
-    roleManagementPolicies, directoryRoleManagementPolicies or directoryRoleAssignments section, a
+    principal display names are not unique, and an apply run refuses an ambiguous one (the entry
+    reports Failed), so a service principal is named by its object id. An unknown per-item key in the
+    roleAssignments, roleManagementPolicies, directoryRoleManagementPolicies or directoryRoleAssignments section, a
     groups[] item, or a groups[] pimPolicy block (root, or a nested member/owner block) is reported as a
     Warning naming the key, because the apply handlers for those sections and blocks read a fixed field
     list and would otherwise drop it silently. A pimPolicy key matching one of the five field names the
@@ -1387,7 +1387,8 @@ function Test-OERStructureSchema {
     # would re-issue its window for each of them on every run, so the second is an Error. The key is
     # compared as written, without regard to letter case: a role written by name in one entry and by
     # id in another cannot be told apart offline. A service principal named by display name rather
-    # than object id is a Warning: display names are not unique and the lookup takes the first match.
+    # than object id is a Warning: display names are not unique, and an apply run refuses an ambiguous
+    # one (AmbiguousName; the entry reports Failed).
     if (Test-HasProp -Node $Document -Name 'directoryRoleAssignments') {
         if (Test-SectionIsArray -SectionName 'directoryRoleAssignments') {
             $DRAs = @($Document.directoryRoleAssignments)
@@ -1430,16 +1431,18 @@ function Test-OERStructureSchema {
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $DRA.principalType `
                             -Section 'directoryRoleAssignments' -Item $DRAItem -Path "$DRAPath.principalType"
-                        # A service principal named by display name: the shared lookup takes the FIRST
-                        # service principal with that name, and display names are not unique, so the
-                        # entry could grant (or its pair could keep) a role for the wrong principal.
+                        # A service principal named by display name: display names are not unique, and
+                        # the shared lookup refuses a name that matches more than one service principal
+                        # (AmbiguousName), so the entry reports Failed at apply time and withholds the
+                        # prune of its pair. A name that is unique today can become ambiguous later;
+                        # the object id cannot.
                         if ([string]$DRA.principalType -ieq 'ServicePrincipal' -and
                             (Test-HasProp -Node $DRA -Name 'principal') -and
                             -not (Test-OERGuid -Value ([string]$DRA.principal))) {
                             Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
                                 -Path "$DRAPath.principal" -Severity 'Warning' `
                                 -Message ("'principal' at $DRAPath names a service principal by display name ('$($DRA.principal)'): " +
-                                    'service principal display names are not unique and the lookup takes the first match; ' +
+                                    'service principal display names are not unique, and an ambiguous name is refused at apply time (the entry fails); ' +
                                     'name a service principal by its object id.')
                         }
                     }

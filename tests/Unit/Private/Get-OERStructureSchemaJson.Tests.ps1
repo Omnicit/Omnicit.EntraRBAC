@@ -908,8 +908,9 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
             # A group's own direct assignment IS a candidate: removing it ends the role for its members.
             $Desc | Should -Match "A role-assignable group's own direct assignment is an ordinary prune candidate"
             $Desc | Should -Match 'the role of every member who holds it through the group, the signed-in identity included'
-            # The shared service principal lookup takes the first match.
-            $Desc | Should -Match 'service principal display names are not unique and the lookup takes the first match'
+            # The shared service principal lookup refuses an ambiguous name rather than taking a first match.
+            $Desc | Should -Match 'service principal display names are not unique, and an ambiguous name is refused at apply time \(the entry fails\)'
+            $Desc | Should -Not -Match 'first match'
             $Desc | Should -Match 'Microsoft Graph only'
         }
     }

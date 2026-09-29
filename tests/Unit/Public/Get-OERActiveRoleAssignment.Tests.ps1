@@ -119,3 +119,48 @@ Describe 'Get-OERActiveRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
     }
 }
+
+Describe 'Get-OERActiveRoleAssignment with an ambiguous service principal display name' {
+    # End to end through Resolve-OERPrincipal -> Resolve-OERApplicationId: only the Graph and ARM
+    # transports are mocked, so the real resolvers decide. A raw -Scope resolves without an ARM call,
+    # so any ARM request at all would be the assignment read the refusal must prevent. No id below is
+    # version-4 shaped.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
+            @{ value = @(
+                    @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup App' },
+                    @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup App' }) }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { throw 'unexpected Graph request' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+    }
+
+    It 'reports exactly one AmbiguousPrincipalName record naming both candidates, and makes no ARM request' {
+        $Err = $null
+        $Out = Get-OERActiveRoleAssignment -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000000' -ServicePrincipal 'Dup App' `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Out | Should -BeNullOrEmpty
+        $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousPrincipalName,Get-OERActiveRoleAssignment' })
+        $Reported.Count | Should -Be 1
+        # No fall-through: the cmdlet writes no other record of its own (PrincipalNotFound included).
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERActiveRoleAssignment' }).Count | Should -Be 1
+        $Reported[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Reported[0].TargetObject | Should -Be 'Dup App'
+        $Reported[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+        $Reported[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+    }
+
+    It 'still reports PrincipalNotFound when no service principal carries the display name' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith { @{ value = @() } }
+        $Err = $null
+        $null = Get-OERActiveRoleAssignment -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000000' -ServicePrincipal 'Nobody App' `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PrincipalNotFound,Get-OERActiveRoleAssignment' }).Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERActiveRoleAssignment' }).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+    }
+}

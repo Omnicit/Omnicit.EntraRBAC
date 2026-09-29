@@ -1016,3 +1016,68 @@ Describe 'Sync-OERStructureRoleAssignment' {
         }
     }
 }
+
+Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal display name' {
+    # Resolve-OERStructurePrincipal and Resolve-OERApplicationId run for REAL here: only the Graph
+    # transport is mocked, and its servicePrincipals query answers with two service principals that
+    # share the display name 'Dup App'. Scope, role and the ARM cmdlets are mocked as in the suite
+    # above. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncRaAmbiguous {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+            }
+            $script:RaRoleId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'
+            $script:RaLive = @()
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERScope { '/subscriptions/sub-1' }
+            Mock Resolve-OERRoleDefinitionId { $script:RaRoleId }
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
+                @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup App' },
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup App' }) }
+            }
+            Mock Invoke-OERGraphRequest -MockWith { throw 'unexpected Graph request' }
+            Mock Get-OERRoleAssignment { $script:RaLive }
+            Mock New-OERRoleAssignment {}
+            Mock Set-OERRoleAssignment {}
+            Mock Remove-OERRoleAssignment {}
+        }
+    }
+
+    It 'reports the entry Failed with both candidate ids, and reads and writes nothing' {
+        InModuleScope $script:moduleName {
+            $Item = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'Dup App'; principalType = 'ServicePrincipal' }
+            $r = @(Invoke-SyncRaAmbiguous -Item $Item -ErrorAction SilentlyContinue)
+            @($r).Action | Should -Be @('Failed')
+            $r[0].Item | Should -BeExactly 'Reader -> Dup App @ subscription:Prod'
+            $r[0].Detail | Should -Match "could not resolve principal 'Dup App'"
+            $r[0].Detail | Should -Match '11111111-1111-1111-1111-111111111111'
+            $r[0].Detail | Should -Match '22222222-2222-2222-2222-222222222222'
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
+            Should -Invoke Get-OERRoleAssignment -Times 0
+            Should -Invoke New-OERRoleAssignment -Times 0
+            Should -Invoke Set-OERRoleAssignment -Times 0
+        }
+    }
+
+    It 'withholds the scope-wide prune when a declared sibling names it: the undeclared candidate is Skipped, never Extra or Removed' {
+        InModuleScope $script:moduleName {
+            $script:RaLive = @(
+                [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'bbbbbbbb-0000-0000-0000-000000000001'; RoleDefinitionId = $script:RaRoleId; RoleAssignmentId = 'ra-main' }
+                [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = '22222222-2222-2222-2222-222222222222'; RoleDefinitionId = $script:RaRoleId; RoleAssignmentId = 'ra-sp' }
+            )
+            $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'bbbbbbbb-0000-0000-0000-000000000001' }
+            $Sibling = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'Dup App'; principalType = 'ServicePrincipal' }
+            $r = @(Invoke-SyncRaAmbiguous -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            @($r).Action | Should -Be @('Unchanged', 'Skipped')
+            $r[1].Item | Should -BeExactly 'rd-reader -> 22222222-2222-2222-2222-222222222222 @ /subscriptions/sub-1'
+            $r[1].Detail | Should -Match ('^prune withheld: declared entry ''{0}'' could not be resolved' -f [regex]::Escape('Reader -> Dup App @ subscription:Prod'))
+            @($r | Where-Object { $_.Action -in @('Extra', 'Removed') }).Count | Should -Be 0
+            Should -Invoke Remove-OERRoleAssignment -Times 0
+        }
+    }
+}

@@ -13,7 +13,10 @@ function Resolve-OERStructurePrincipal {
     Without -Type the existing heuristic applies: a value containing an at sign is treated as a user
     principal name and resolved via Resolve-OERUserId; any other value is treated as a group display name
     and resolved via Resolve-OERGroupId, falling back to a user lookup if no group matches. Returns $null
-    when the reference cannot be resolved, so the caller can record a Failed result.
+    when the reference cannot be resolved, so the caller can record a Failed result. A group or service
+    principal display name that matches more than one object is never resolved to one of them: the
+    underlying resolver's AmbiguousName ErrorRecord, which lists the candidate ids, propagates
+    unchanged to the caller.
 
     .PARAMETER Reference
     The principal reference from the document: a user principal name, a group display name, a service
@@ -30,7 +33,8 @@ function Resolve-OERStructurePrincipal {
 
     .EXAMPLE
     Resolve-OERStructurePrincipal -Reference 'Contoso App' -Type ServicePrincipal
-    Returns the service principal object id resolved via Resolve-OERApplicationId, or $null when not found.
+    Returns the service principal object id resolved via Resolve-OERApplicationId, or $null when not found;
+    throws AmbiguousName when more than one service principal carries that display name.
     #>
     [OutputType([string])]
     [CmdletBinding()]

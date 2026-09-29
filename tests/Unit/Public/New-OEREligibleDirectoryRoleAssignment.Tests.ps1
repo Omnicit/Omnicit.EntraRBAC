@@ -210,3 +210,39 @@ Describe 'New-OEREligibleDirectoryRoleAssignment' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 }
+
+Describe 'New-OEREligibleDirectoryRoleAssignment with an ambiguous service principal display name' {
+    # End to end through Resolve-OERPrincipalOrId -> Resolve-OERPrincipal -> Resolve-OERApplicationId:
+    # only the Graph transport is mocked, so the real resolvers decide. The role is given as an id,
+    # which Resolve-OERDirectoryRoleDefinitionId returns without a Graph call. No id below is
+    # version-4 shaped.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignableState { [PSCustomObject]@{ IsGroup = $false; IsAssignableToRole = $false } }
+        Mock -ModuleName Omnicit.EntraRBAC Test-OERDirectoryRolePermanentAllowed { $true }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
+            @{ value = @(
+                    @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup App' },
+                    @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup App' }) }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { [PSCustomObject]@{ id = 'req1' } }
+    }
+
+    It 'reports exactly one AmbiguousPrincipalName record naming both candidates, and sends no POST' {
+        $Err = $null
+        $Out = New-OEREligibleDirectoryRoleAssignment -Role 'aaaaaaaa-0000-0000-0000-000000000001' -ServicePrincipal 'Dup App' `
+            -DurationDays 30 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Out | Should -BeNullOrEmpty
+        $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousPrincipalName,New-OEREligibleDirectoryRoleAssignment' })
+        $Reported.Count | Should -Be 1
+        # No fall-through: the cmdlet writes no other record of its own (PrincipalNotFound included).
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
+        $Reported[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Reported[0].TargetObject | Should -Be 'Dup App'
+        $Reported[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+        $Reported[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+}
