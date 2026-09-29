@@ -202,10 +202,13 @@ shapes the tests assume. They cannot prove the eight things this file is for:
 
 - A **test tenant** -- never a customer tenant -- with Microsoft Entra ID P2 or ID Governance
   licensing (PIM for Microsoft Entra roles), its tenant id and one verified domain. No subscription
-  is needed. A Tenant Profile for it (`Get-OERConfiguration`) is required: a profile for the alias
-  must exist on the machine running this file and name the test tenant's id, or the first block
-  below stops; the prerequisite script also refuses a profile that names another tenant or a cloud
-  other than the commercial one. Every sign-in still names the tenant id itself.
+  is needed, and no Tenant Profile is needed either: the apply documents carry the alias, but the
+  engine resolves no profile for these sections, and every sign-in names the tenant id itself. The
+  tenant guard is the identity check against the tenant claim of the token, after every sign-in
+  (`identity check: tenant is the test tenant: True`), and the prerequisite script's positive
+  identification of the organization (its display name, a verified domain and its id). When a
+  profile for the alias happens to exist on the machine, the prerequisite script still refuses one
+  that names another tenant or a cloud other than the commercial one.
 - The **dedicated certificate identity** `oer-live-cc` ([README.md](README.md), first paragraph):
   an app whose only credential is a non-exportable certificate in `Cert:\CurrentUser\My`, with the
   Microsoft Graph application permissions the operator's identity script grants. This file needs,
@@ -280,24 +283,6 @@ if (Select-String -Path ($ModulePsd1 -replace '\.psd1$', '.psm1') -Pattern "^#Re
     throw 'The built module carries a PREFIX region: rebuild with the line above, never with ./build.ps1 in this window.'
 }
 New-Item -ItemType Directory -Path $Raw -Force | Out-Null
-# The Tenant Profile for $Alias must exist on this machine and name $TenantId; otherwise stop.
-# -ErrorAction Stop: a profile Get-OERConfiguration skips as unreadable or incomplete stops here too.
-# Printed as True/False, never as values.
-Import-Module Omnicit.EntraRBAC -Force
-try {
-    $S64Profile = @(Get-OERConfiguration -TenantAlias $Alias -ErrorAction Stop)
-} catch {
-    $global:Error.Clear()
-    throw 'The Tenant Profile for $Alias could not be read: the alias is not a valid profile name, or its profile file is unreadable or incomplete. Run Get-OERConfiguration -TenantAlias $Alias in this window to see why, and repair it with Set-OERConfiguration -TenantAlias $Alias -TenantId $TenantId. Nothing below may run.'
-}
-if ($S64Profile.Count -ne 1) {
-    throw "There is no Tenant Profile for `$Alias on this machine ($($S64Profile.Count) found). Create it first, in this window: New-OERConfiguration -TenantAlias `$Alias -TenantId `$TenantId. Nothing below may run."
-}
-$S64ProfileOk = [string]$S64Profile[0].TenantId -eq $TenantId
-"Tenant Profile for `$Alias names `$TenantId: $S64ProfileOk"
-if (-not $S64ProfileOk) {
-    throw 'The Tenant Profile for $Alias names another tenant than $TenantId: stop, and correct one of them (Set-OERConfiguration -TenantAlias $Alias -TenantId $TenantId). Nothing below may run.'
-}
 ```
 
 **Create the test objects and record the baselines.** The script runs in its own process, so this
@@ -307,8 +292,9 @@ window keeps its own sign-in. It signs in app-only as the certificate identity, 
 `identity check: tenant is the test tenant: True` -- and a `False` stops it before anything is
 written. Before its first write it identifies the tenant positively: the organization's display
 name must equal `-ExpectedTenantDisplayName` EXACTLY, `-UserDomain` must be one of its verified
-domains, and `-TenantId` must be the organization's id; the Tenant Profile for the alias, which
-the first block requires, must name the same tenant. Before each `Connect-MgGraph` it runs
+domains, and `-TenantId` must be the organization's id. No Tenant Profile is needed; when one for
+the alias happens to exist on the machine, it must name the same tenant, in the commercial cloud,
+or the script refuses to run. Before each `Connect-MgGraph` it runs
 `Disconnect-OER` and then `Disconnect-MgGraph` (`Connect-OER` leaves its raw access token in the
 Graph SDK's process cache, which a later `Connect-MgGraph` would otherwise try to read as an MSAL
 cache). A read of an object it has just created is retried on a 404. With `-Unattended` -- a run
@@ -381,7 +367,10 @@ lines; `<...>` is a value, and every line starts `[oer-s64] ` (shown once here):
   and with `-Unattended`:
   `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
   A refusal is one line starting `Refusing to run: ` (`Refusing the teardown: ` with `-Teardown`),
-  and the script then writes nothing.
+  and the script then writes nothing. No Tenant Profile is needed: before the sign-in it prints
+  `No Tenant Profile '<alias>' on this machine; the sign-in names -TenantId.`, or, when one exists
+  and names the same tenant in the commercial cloud,
+  `Tenant Profile '<alias>' names the same tenant as -TenantId, in the commercial cloud: True`.
 - Setup, the baselines: on a first run `No baseline files yet; this run captures both before its first write.`,
   `Wrote the policy baseline (<n> + <m> rules): <path>` and
   `Wrote the assignment baseline (Reports Reader: eligible <a>, active <b>; Message Center Reader: eligible <c>, active <d>): <path>`;
@@ -2086,7 +2075,7 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
 
 ---
 
-### 6. Manuell, Philip -- an activation is neither matched nor pruned
+### 6. Manual (operator) -- an activation is neither matched nor pruned
 
 **Run by Philip, in his own PowerShell 7 window, as himself -- never by the certificate identity,
 and last before the Teardown (ruling R18).** Leave the Claude window alone while this runs. The
@@ -2097,7 +2086,7 @@ Philip's activation sits in it. The Activated filter must keep that row out enti
 him in the Active pair. A `Skipped` own-assignment row there would mean the filter failed and only
 the own-assignment guard held.
 
-- [ ] **6.1 Manuell, Philip -- a document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
+- [ ] **6.1 Manual (operator) -- a document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
 
   (a) Before signing in: in the Microsoft Entra admin center, ACTIVATE your own Privileged Role
   Administrator role if it is eligible (the sign-in's token must carry it). Then, in a NEW
@@ -2212,7 +2201,7 @@ the own-assignment guard held.
   window.
   **Result:**
 
-- [ ] **6.2 Manuell, Philip -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
+- [ ] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
 
   In the admin center: **My roles > Microsoft Entra roles > Active assignments**, **Reports
   Reader**, **Deactivate** (PIM may refuse a deactivation in the first minutes after an activation:
