@@ -41,6 +41,14 @@ built-in role names, and a delegated sign-in needs Privileged Role Administrator
 policy. `Get-OERRequiredScope` lists the least-privilege permissions of the new cmdlets, and
 `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
+Directory roles can be assigned: `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment` and
+the same three for active assignments, and the apply section `directoryRoleAssignments[]`, which
+runs after the directory-role policies. A permanent assignment the role's policy does not allow is
+refused instead of opening the policy, and a group that is not role-assignable is refused before the
+request. `-Prune` touches only the role and assignment-type pairs the document declares, and never an
+activation, an assignment held through a group, or the signed-in identity's own direct assignment.
+Role names now match in any letter case. `Get-OERRequiredScope` lists the new cmdlets too.
+
 ## [1.0.1] - 2026-09-23
 
 Omnicit.EntraRBAC no longer depends on Az.Resources. The module never called a cmdlet from it:

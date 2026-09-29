@@ -2361,3 +2361,122 @@ under `source/` after the close-out then REPLACES the sentence, since its openin
 true the moment the module changes; a note added after the sentence would publish both. The gate
 side of all this -- the body floor, the two close-out checks, and why the built notes are now
 compared whole instead of by a 400-character tail -- is under [#changelog-budget](#changelog-budget).
+
+## directory-role-assignments
+
+Sprint 6 step 4 added six cmdlets -- `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment`,
+and the same three for active assignments -- and the apply section `directoryRoleAssignments[]`.
+This anchor records why the harder decisions sit where they do.
+
+**Role name matching is case-insensitive, but the exact-case path stays a single request.**
+`Resolve-OERDirectoryRoleDefinitionId` issues an exact-case `displayName eq '...'` OData filter
+first. Step 3's live check 1.2b measured Microsoft Graph's `roleDefinitions` filter as
+case-SENSITIVE: a role named `Reports Reader` in the tenant returned nothing for a filter typed
+`reports reader`. Only when the exact-case request finds nothing does the whole role definition list
+get paged (`-All`) and matched `OrdinalIgnoreCase`; a unique case-insensitive match returns its id,
+more than one throws `AmbiguousName` listing every candidate id, and no match returns `$null`. A
+name typed in its exact case still costs one request and never reaches the paged list at all, so the
+common case (a name typed as the portal shows it) pays nothing extra for this; only a name typed in
+another letter case pays for the second, paged request. Cost if a tenant carried two role
+definitions differing only in case: a name typed in the exact case of one of them would silently pick
+that one, without ever reaching the case-insensitive step that would otherwise refuse the ambiguity.
+
+**Both kinds of assignment are read from their SCHEDULE, never an activation instance.**
+`Get-OEREligibleDirectoryRoleAssignment` reads `roleEligibilitySchedules` and
+`Get-OERActiveDirectoryRoleAssignment` reads `roleAssignmentSchedules` -- the objects that carry the
+window of the request that created them, which is what idempotence
+(`Resolve-OERDirectoryRoleAssignmentChange`) compares the declared window against. Three fields
+decide whether a schedule can stand for a declared entry, and the private
+`Select-OERManagedDirectoryRoleAssignment` is the single place all three are read: `directoryScopeId`
+must be `/` (tenant scope -- an administrative-unit-scoped one belongs to
+`administrativeUnits[].scopedRoles`, not here); `memberType` must be `Direct` (one a principal holds
+through a group is managed through that group, never here); and for an Active read,
+`assignmentType` must be `Assigned` -- an `Activated` schedule is the activation of an eligible
+assignment, created by the principal and ended by PIM, and is never a declared Active assignment,
+never counted as one, and never pruned. The Get cmdlets themselves still return every row at `/`,
+activations included, so an operator asking to see them still can; only the apply engine's filter
+narrows. Reading schedules rather than instances also picks the safer failure direction: an
+assignment whose schedule a read somehow missed would be silently re-created every run (visible as
+`Created` every run, never a silent delete), not silently removed.
+
+**A group must be role-assignable before either New cmdlet ever writes.** `isAssignableToRole` can
+only be set when a group is created, and Microsoft Graph only reports the mismatch after the
+eligibility or active-assignment request is submitted. The role-assignable check therefore runs
+first, as its own private read-only helper (so the required-scope gate attributes it as a read, not
+a write), whenever the resolved principal is a group or of unknown type -- a raw `-PrincipalId`
+might name a group, so the check has to run for it too. `isAssignableToRole` false is
+`GroupNotRoleAssignable` before any write; a read that fails for any other reason is written to
+Verbose and the request proceeds, letting Microsoft Graph enforce it as before this check existed.
+
+**A permanent request is pre-checked against the role's own PIM policy, and a refusal changes
+nothing.** Unlike the ARM eligible-role-assignment cmdlet, which auto-opens the equivalent Azure
+policy when a permanent request would otherwise be refused, the Graph directory-role path never
+changes a policy implicitly. `Test-OERDirectoryRolePermanentAllowed` reads
+`AllowPermanentEligibility`/`AllowPermanentActiveAssignment` from the role's policy
+(`Get-OERDirectoryRolePolicyAssignment` plus the shared `ConvertTo-OERRoleManagementPolicy`) before
+`ShouldProcess`, the same place the ARM pre-check runs. `$false` is `PermanentAssignmentNotAllowed`
+and no request is submitted at all; the message points at `-AllowPermanentEligibility` /
+`-AllowPermanentActiveAssignment` on `Set-OERDirectoryRoleManagementPolicy`, and at declaring
+`allowPermanentEligibility` / `allowPermanentActiveAssignment` under `directoryRoleManagementPolicies`
+in the same document (that section runs first in the apply order). An unreadable answer -- no policy
+assignment found, or the policy carries no expiration rule for that kind -- is not a refusal: it is
+written to Verbose and the request proceeds, letting Microsoft Graph enforce the policy as it always
+did.
+
+**The prune pass is keyed on RESOLVED role ids, runs once per section, and withholds before it
+removes anything.** Like `roleAssignments`, the pass runs in the handler invocation for the
+section's FIRST item, before that item's own reconcile -- but unlike `roleAssignments`, it runs
+whatever that first item's own outcome, since a role or principal that fails to resolve for item one
+says nothing about whether item two's pair should be pruned. It is keyed on resolved role
+definition ids, not on the text the document wrote, so one role written by display name in one entry
+and by id in another is one pair, and neither entry's live assignment is ever reported `Extra`. Only
+the `(role, assignmentType)` pairs the document actually declares are read -- a role the document
+does not name is never touched, and a role declared only for `Eligible` never has its `Active`
+assignments read, nor the reverse. `ConvertTo-OERPruneWithheldResult` is called FIRST for every
+undeclared candidate: an entry whose PRINCIPAL cannot be resolved withholds only its own pair, since
+only that one candidate might be its live counterpart; an entry whose ROLE cannot be resolved
+withholds every pair of its declared `assignmentType`, since without a role id there is no way to
+know which pair it belongs to. A pair whose live READ fails is its own `Failed` row, and nothing in
+that pair is removed or reported `Extra` -- a failed read is not proof the pair is empty, and
+treating it as one would let a transient Graph failure silently strip privilege the document still
+declares.
+
+**The signed-in identity's object id comes from the token, never `/me`.** `Initialize-OERAuth`
+stores `SignedInObjectId` in `$script:_OERAuthState` whenever it builds a new state from a fresh
+Graph token, read by the private `Get-OERTokenObjectId` from the token's `oid` claim -- present on a
+delegated user's token and an app-only service principal's token alike, so the same read serves both
+without a conditional `/me` call an app-only sign-in does not have. `Get-OERSignedInObjectId` is the
+only reader, and treats a missing key (a state built before this key existed) or a non-GUID value the
+same as unresolved. When it cannot be determined, EVERY prune candidate in the section is withheld,
+not only the ones that might turn out to be the caller's own: the alternative -- pruning everything
+except a candidate that happens to match no known id -- would prune the operator's own assignment on
+exactly the session that carries no `oid` claim at all.
+
+**The own-assignment guard is narrower than it sounds, and that is the spec's decision, not an
+oversight.** It protects only the signed-in identity's DIRECT assignments -- the ones
+`Select-OERManagedDirectoryRoleAssignment` would otherwise let the prune pass consider. A
+role-assignable group's direct assignment, through which the operator holds the role indirectly, is
+an ordinary prune candidate like any other: nothing in the guard chain recognizes "a group I am a
+member of" as "my own". `-Prune` can therefore remove the operator's own privilege when it is held
+through a group rather than assigned to the operator directly. This is recorded here so an operator
+who provisions their own access through a group makes that choice knowingly, not because the guard
+failed to close it -- closing it would need group-membership expansion the guard deliberately does
+not do (it reads the token's `oid`, nothing more), which is a materially larger and slower check for
+every prune pass, not a one-line fix.
+
+**Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
+suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to
+swallow a mocked failure and report it a different way (a `Failed` structure result, or a re-thrown
+`ErrorRecord` carrying the cmdlet's own error id). Pester still leaves the mock's thrown record in
+the caller's `-ErrorVariable` -- measured, several copies, one per mock call boundary the pipeline
+crosses -- even when the code under test caught it and never let it reach the caller as an unhandled
+error. An assertion that only checks `-ErrorVariable` is non-empty, or matches the bare mocked
+message, therefore passes whether or not the code under test's own catch block ran at all. The new
+suites instead count only the records whose `FullyQualifiedErrorId` ends `,<CmdletName>` -- the
+qualifier PowerShell attaches to an error the NAMED cmdlet itself writes, which the mock's own inner
+record never carries -- for example
+`@($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1`.
+This is the same family of trap `#bearer-scrub-tests` already documents for a re-thrown record; it
+recurs here because every one of the six new cmdlets, and the new
+`Sync-OERStructureDirectoryRoleAssignment` handler, catches Graph and lookup failures internally
+before reporting its own outcome.

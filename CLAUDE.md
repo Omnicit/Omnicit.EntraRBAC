@@ -460,7 +460,9 @@ Every public cmdlet that calls Graph or Azure invokes `Initialize-OERAuth` at th
 `begin`/`process` block, passing `-IncludeARM` when it needs ARM. `Connect-OER` is an optional
 pre-auth shortcut -- all cmdlets authenticate automatically on first use. Auth uses AzAuth's
 `Get-AzToken` for every credential type; state is cached in `$script:_OERAuthState`, keyed on tenant,
-auth identity, **and cloud**. `Why: docs/development/rationale.md#auth-state`
+auth identity, **and cloud**. The state also carries `SignedInObjectId`, the signed-in identity's
+object id read from the Graph token's `oid` claim -- never the token itself.
+`Why: docs/development/rationale.md#auth-state`
 
 | Parameter set | Key parameters | Use case |
 |---|---|---|
@@ -662,6 +664,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   keeps one documented public-cloud fallback for the no-auth-state case, exempted by name rather than
   deleted. `tests/QA/sourcehygiene.tests.ps1` machine-checks this the same way it checks the other
   single-owner rules above. `Why: docs/development/rationale.md#sovereign-clouds`
+- **`Select-OERManagedDirectoryRoleAssignment` is the single owner of which live directory role
+  assignment the apply engine may match or prune** (tenant scope, `memberType` Direct, Active only
+  `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in
+  identity's object id (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
+  re-implement either inline. `Why: docs/development/rationale.md#directory-role-assignments`
 
 ---
 
