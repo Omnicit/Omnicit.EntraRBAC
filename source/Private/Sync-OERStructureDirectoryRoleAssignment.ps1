@@ -74,11 +74,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
     - Candidates. Only the rows Select-OERManagedDirectoryRoleAssignment keeps, and only those of the
       pair's own role, are candidates: an activation (an Activated schedule), a member's assignment
       inherited through a group and one scoped to an administrative unit are never counted and never
-      pruned. A role-assignable group's own direct assignment is a candidate like any other, so
-      removing it ends the role for every member who holds it through the group. A candidate whose
-      principal a declared entry of the same pair names is kept. Every other one is
-      an undeclared assignment, reported under its own label "<role> -> <principal id>
-      (<assignmentType>)".
+      pruned. A role-assignable group's own direct assignment is a candidate, and removing it ends the
+      role for every member who holds it through the group -- which is why guard 4 below keeps the
+      assignment of a group the signed-in identity is a member of. A candidate whose principal a
+      declared entry of the same pair names is kept. Every other one is an undeclared assignment,
+      reported under its own label "<role> -> <principal id> (<assignmentType>)".
     - Guards, in this order, for every undeclared candidate:
       1. The step 1 rule, through ConvertTo-OERPruneWithheldResult, called first. An entry whose
          PRINCIPAL cannot be resolved (nothing found, or the lookup throws) withholds its own pair;
@@ -95,13 +95,25 @@ function Sync-OERStructureDirectoryRoleAssignment {
          "prune withheld: the signed-in identity's object id is unknown", with or without -Prune.
       3. The candidate is the signed-in identity's own assignment: it is reported Skipped, with or
          without -Prune, and never removed.
-      4. Otherwise, without -Prune the candidate is reported Extra. With -Prune the handler writes a
+      4. The candidate is a group the signed-in identity is a member of, directly or through
+         nesting, so the signed-in identity holds the role through it: it is reported Skipped, with
+         or without -Prune, and never removed. Only a candidate whose PrincipalType is neither User
+         nor ServicePrincipal (a Group, or an unknown type) is checked; a user or service principal
+         cannot be such a group. The memberships are read with Get-OERMemberGroupId (one transitive
+         getMemberGroups request for the signed-in object id, never /me) lazily -- only when the
+         first such candidate reaches this guard -- and at most once per pass, the answer standing
+         for every later candidate in every pair; ids are compared case-insensitively. A read that
+         fails is written once, and every Group or unknown-type candidate of the pass is then
+         reported Skipped, with or without -Prune, with a Detail starting "prune withheld: the
+         signed-in identity's group memberships could not be read", since a failed read is not an
+         empty membership. User and ServicePrincipal candidates go on to guard 5 either way.
+      5. Otherwise, without -Prune the candidate is reported Extra. With -Prune the handler writes a
          warning naming it, gates $Caller.ShouldProcess, and removes it with
          Remove-OEREligibleDirectoryRoleAssignment or Remove-OERActiveDirectoryRoleAssignment
          -Role <id> -PrincipalId <id> -Confirm:$false, reporting Removed; a removal that fails is
          reported Failed and its error is written. Under -WhatIf, or when the prompt is declined, it
          is reported Skipped ("would remove ...").
-      Guards 2 and 3 are this module's own, not a Graph rejection, and their Details say so.
+      Guards 2, 3 and 4 are this module's own, not a Graph rejection, and their Details say so.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
     emits Skipped, naming the planned change, instead of calling the New or Remove cmdlet. Reads always
@@ -126,10 +138,13 @@ function Sync-OERStructureDirectoryRoleAssignment {
     it, such an assignment is only reported Extra. Activations, a member's assignments inherited
     through a group, assignments scoped to an administrative unit, roles and kinds the document does
     not declare, and the signed-in identity's own direct assignments are never removed. A
-    role-assignable group's own direct assignment is an ordinary candidate: when the document
-    declares a pair without that group, it is removed, and with it the role of every member who
-    holds it through the group, the signed-in identity included. A candidate a guard withholds (an
-    unresolved entry, an unknown signed-in identity, or the identity's own assignment) is reported
+    role-assignable group's own direct assignment is a candidate: when the document declares a pair
+    without that group, it is removed, and with it the role of every member who holds it through
+    the group -- unless the signed-in identity is a member of that group (directly or through
+    nesting), in which case it is reported Skipped and never removed. When the signed-in identity's
+    group memberships cannot be read, every group (or unknown-type) candidate is withheld. A
+    candidate a guard withholds (an unresolved entry, an unknown signed-in identity, the identity's
+    own assignment, a group the identity is a member of, or an unreadable membership) is reported
     Skipped with or without this switch.
 
     .PARAMETER TenantAlias
@@ -226,6 +241,12 @@ function Sync-OERStructureDirectoryRoleAssignment {
             }
 
             $SignedInId = Get-OERSignedInObjectId
+            # The signed-in identity's group memberships, read lazily -- only when the first Group or
+            # unknown-type candidate reaches the group guard -- and at most once per pass: the answer,
+            # or the failure, stands for every later candidate in every pair.
+            $MemberGroupRead = $false
+            $MemberGroupSet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $MemberGroupFailure = $null
             foreach ($PairKey in @($PairUnresolved.Keys)) {
                 $PairRoleId, $PairKind = $PairKey -split '\|', 2
                 $Unresolved = @($PairUnresolved[$PairKey]) + @($KindUnresolved[$PairKind])
@@ -258,6 +279,38 @@ function Sync-OERStructureDirectoryRoleAssignment {
                         ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
                             -Detail "$CandLabel belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)"
                         continue
+                    }
+                    # A group (or a principal of unknown type, which may be one) that the signed-in identity
+                    # is a member of, directly or through nesting: removing its assignment would end the
+                    # role the signed-in identity holds through it. A user or service principal cannot be
+                    # such a group and never needs the read.
+                    if ([string]$Candidate.PrincipalType -notin @('User', 'ServicePrincipal')) {
+                        if (-not $MemberGroupRead) {
+                            $MemberGroupRead = $true
+                            try {
+                                # No @() around the call: the helper returns its [string[]] as ONE pipeline
+                                # object, which @() would wrap as a single element instead of unrolling.
+                                $MemberGroupIds = Get-OERMemberGroupId -ObjectId $SignedInId
+                                foreach ($GroupId in $MemberGroupIds) {
+                                    if (-not [string]::IsNullOrWhiteSpace([string]$GroupId)) { $null = $MemberGroupSet.Add([string]$GroupId) }
+                                }
+                            } catch {
+                                Remove-OERErrorRecord -Record $PSItem
+                                # Written once for the pass; every candidate that needs the answer is withheld.
+                                $Caller.WriteError($PSItem)
+                                $MemberGroupFailure = $PSItem
+                            }
+                        }
+                        if ($null -ne $MemberGroupFailure) {
+                            ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
+                                -Detail "prune withheld: the signed-in identity's group memberships could not be read, so $CandLabel may be a group the signed-in identity holds the role through and is left in place (our own guard, not a Graph rejection): $($MemberGroupFailure.Exception.Message)"
+                            continue
+                        }
+                        if ($MemberGroupSet.Contains([string]$Candidate.PrincipalId)) {
+                            ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
+                                -Detail "$CandLabel is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role '$RoleText' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)"
+                            continue
+                        }
                     }
                     if ($Prune) {
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }

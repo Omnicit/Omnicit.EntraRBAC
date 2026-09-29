@@ -467,6 +467,10 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             Mock New-OEREligibleDirectoryRoleAssignment {}
             Mock New-OERActiveDirectoryRoleAssignment {}
             Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+            # The group guard's membership read. Only a Group or unknown-type candidate reaches it, so a
+            # test that does not override this never reads it; one that reads it by accident sees its
+            # candidates withheld and an error written instead of a silent pass.
+            Mock Get-OERMemberGroupId { throw 'unexpected membership read' }
         }
     }
 
@@ -943,6 +947,269 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
         }
     }
+
+    # -- The group guard (F3) ------------------------------------------------------------------
+    # A role-assignable group's own direct assignment is a candidate, but when the signed-in
+    # identity is a member of that group (directly or through nesting) it holds the role through it,
+    # and removing the group's assignment would end that role. Get-OERMemberGroupId answers the
+    # memberships (mocked here; its own suite pins the request). Group ids are cccccccc-...; none is
+    # version-4 shaped.
+
+    It 'reports a group the signed-in identity is a member of Skipped and never removes it (<Kind>, Prune: <Prune>)' -TestCases @(
+        @{ Kind = 'Eligible'; Prune = $true }
+        @{ Kind = 'Eligible'; Prune = $false }
+        @{ Kind = 'Active'; Prune = $true }
+        @{ Kind = 'Active'; Prune = $false }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Prune = $Prune } {
+            param($Kind, $Prune)
+            $Group = 'cccccccc-0000-0000-0000-000000000001'
+            Mock Get-OERMemberGroupId { @('cccccccc-0000-0000-0000-000000000009', 'cccccccc-0000-0000-0000-000000000001') }
+            $Rows = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind $Kind
+                New-DraPassRow -Role $script:RR -Principal $Group -Kind $Kind -PrincipalType 'Group'
+            )
+            if ($Kind -eq 'Active') { $script:DraLiveActive = $Rows } else { $script:DraLiveEligible = $Rows }
+            $Section = @(New-DraSection "Reports Reader|person1@example.com|$Kind")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune `
+                    -WarningAction SilentlyContinue -WarningVariable DraWarnings)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Group ($Kind)"
+            $Records[0].Detail | Should -BeExactly (
+                "undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal '$Group' " +
+                "is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity " +
+                "holds directory role 'Reports Reader' through it; the apply engine never removes a role the signed-in " +
+                "identity holds (our own guard, not a Graph rejection)")
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly -ParameterFilter { $ObjectId -eq 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            # Nothing is announced as being removed either.
+            @($DraWarnings).Count | Should -Be 0
+        }
+    }
+
+    It 'reads the memberships for a candidate of unknown principal type too, and skips it when it is one of the groups' {
+        InModuleScope $script:moduleName {
+            $Unknown = 'cccccccc-0000-0000-0000-000000000002'
+            Mock Get-OERMemberGroupId { @('cccccccc-0000-0000-0000-000000000002') }
+            # ConvertTo-OERDirectoryRoleAssignment reports an @odata.type it does not know as $null.
+            $UnknownRow = New-DraPassRow -Role $script:RR -Principal $Unknown
+            $UnknownRow.PrincipalType = $null
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                $UnknownRow
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Unknown (Eligible)"
+            $Records[0].Detail | Should -Match 'is a group the signed-in identity is a member of \(directly or through nesting\)'
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'still prunes a group the signed-in identity is not a member of (<Kind>, Prune: <Prune>)' -TestCases @(
+        @{ Kind = 'Eligible'; Prune = $true }
+        @{ Kind = 'Eligible'; Prune = $false }
+        @{ Kind = 'Active'; Prune = $true }
+        @{ Kind = 'Active'; Prune = $false }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Prune = $Prune } {
+            param($Kind, $Prune)
+            $Group = 'cccccccc-0000-0000-0000-000000000001'
+            Mock Get-OERMemberGroupId { @('cccccccc-0000-0000-0000-000000000008', 'cccccccc-0000-0000-0000-000000000009') }
+            $Rows = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind $Kind
+                New-DraPassRow -Role $script:RR -Principal $Group -Kind $Kind -PrincipalType 'Group'
+            )
+            if ($Kind -eq 'Active') { $script:DraLiveActive = $Rows } else { $script:DraLiveEligible = $Rows }
+            $Section = @(New-DraSection "Reports Reader|person1@example.com|$Kind")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune -WarningAction SilentlyContinue)
+            $Expected = if ($Prune) { 'Removed' } else { 'Extra' }
+            @($Records).Action | Should -Be @($Expected, 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Group ($Kind)"
+            $RemoveName, $OtherRemove = if ($Kind -eq 'Active') {
+                'Remove-OERActiveDirectoryRoleAssignment', 'Remove-OEREligibleDirectoryRoleAssignment'
+            } else {
+                'Remove-OEREligibleDirectoryRoleAssignment', 'Remove-OERActiveDirectoryRoleAssignment'
+            }
+            $RemoveCount = if ($Prune) { 1 } else { 0 }
+            Should -Invoke $RemoveName -Times $RemoveCount -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and $PrincipalId -eq 'cccccccc-0000-0000-0000-000000000001'
+            }
+            Should -Invoke $RemoveName -Times $RemoveCount -Exactly
+            Should -Invoke $OtherRemove -Times 0
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+        }
+    }
+
+    It 'withholds every group and unknown-type candidate, and writes the error once, when the membership read fails (Prune: <Prune>)' -TestCases @(
+        @{ Prune = $true }
+        @{ Prune = $false }
+    ) {
+        # A failed read is not an empty membership: a group or unknown-type candidate may be one the
+        # signed-in identity holds the role through, so it is withheld (the step 1 rule). A user or
+        # service principal cannot be such a group, so it goes on to the prune as before.
+        InModuleScope $script:moduleName -Parameters @{ Prune = $Prune } {
+            param($Prune)
+            Mock Get-OERMemberGroupId { throw 'Graph 403 Authorization_RequestDenied' }
+            Mock Remove-OERErrorRecord {}
+            $Group = 'cccccccc-0000-0000-0000-000000000001'
+            $Unknown = 'cccccccc-0000-0000-0000-000000000002'
+            $UnknownRow = New-DraPassRow -Role $script:RR -Principal $Unknown
+            $UnknownRow.PrincipalType = $null
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $Group -PrincipalType 'Group'
+                $UnknownRow
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            $UserAction = if ($Prune) { 'Removed' } else { 'Extra' }
+            @($Records).Action | Should -Be @('Skipped', 'Skipped', $UserAction, 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $Group (Eligible)"
+            $Records[1].Item | Should -BeExactly "Reports Reader -> $Unknown (Eligible)"
+            $Records[2].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            foreach ($Index in 0, 1) {
+                $Id = @($Group, $Unknown)[$Index]
+                $Records[$Index].Detail | Should -BeExactly (
+                    "prune withheld: the signed-in identity's group memberships could not be read, so undeclared eligible " +
+                    "assignment of directory role 'Reports Reader' for principal '$Id' may be a group the signed-in identity " +
+                    "holds the role through and is left in place (our own guard, not a Graph rejection): Graph 403 Authorization_RequestDenied")
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter {
+                $PrincipalId -in @('cccccccc-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000002')
+            }
+            $RemoveCount = if ($Prune) { 1 } else { 0 }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times $RemoveCount -Exactly -ParameterFilter {
+                $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002'
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times $RemoveCount -Exactly
+            # One read, one scrub, one published error -- not one per withheld candidate.
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            $CallerErrors = @(Select-DraCallerError $DraErrors)
+            @($CallerErrors).Count | Should -Be 1
+            "$($CallerErrors[0])" | Should -Match 'Authorization_RequestDenied'
+        }
+    }
+
+    It 'reads the memberships at most once per pass, reusing the <Case> for a group candidate in another pair' -TestCases @(
+        @{ Case = 'answer'; Throws = $false }
+        @{ Case = 'failure'; Throws = $true }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Throws = $Throws } {
+            param($Throws)
+            $script:DraReadThrows = $Throws
+            Mock Get-OERMemberGroupId {
+                if ($script:DraReadThrows) { throw 'Graph 503 ServiceUnavailable' }
+                @('cccccccc-0000-0000-0000-000000000009')
+            }
+            Mock Remove-OERErrorRecord {}
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+            )
+            $script:DraLiveActive = @(
+                New-DraPassRow -Role $script:MCR -Principal $script:DraP[1] -Kind Active
+                New-DraPassRow -Role $script:MCR -Principal 'cccccccc-0000-0000-0000-000000000002' -Kind Active -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', 'Message Center Reader|person1@example.com|Active')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            $Expected = if ($Throws) { 'Skipped' } else { 'Extra' }
+            @($Records).Action | Should -Be @($Expected, $Expected, 'Unchanged')
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> cccccccc-0000-0000-0000-000000000001 (Eligible)'
+            $Records[1].Item | Should -BeExactly 'Message Center Reader -> cccccccc-0000-0000-0000-000000000002 (Active)'
+            Should -Invoke Get-OERMemberGroupId -Times 1 -Exactly
+            $ErrorCount = if ($Throws) { 1 } else { 0 }
+            @(Select-DraCallerError $DraErrors).Count | Should -Be $ErrorCount
+        }
+    }
+
+    It 'makes no membership read when every candidate is a user or a service principal' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[3] -PrincipalType 'ServicePrincipal'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Removed', 'Removed', 'Unchanged')
+            Should -Invoke Get-OERMemberGroupId -Times 0
+        }
+    }
+
+    It 'makes no membership read when the signed-in identity is unknown: the group candidate is withheld by that guard' {
+        InModuleScope $script:moduleName {
+            Mock Get-OERSignedInObjectId { $null }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Detail | Should -BeLike "prune withheld: the signed-in identity's object id is unknown*"
+            Should -Invoke Get-OERMemberGroupId -Times 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'lets the own-assignment guard decide first: a group candidate that is the signed-in object id reads no memberships' {
+        InModuleScope $script:moduleName {
+            Mock Get-OERSignedInObjectId { 'cccccccc-0000-0000-0000-000000000001' }
+            Mock Get-OERMemberGroupId { @('cccccccc-0000-0000-0000-000000000001') }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Detail | Should -Match 'belongs to the signed-in identity itself'
+            $Records[0].Detail | Should -Not -Match 'is a group the signed-in identity is a member of'
+            Should -Invoke Get-OERMemberGroupId -Times 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'lets the step 1 rule decide first: a withheld group candidate keeps the withheld Detail and reads no memberships' {
+        InModuleScope $script:moduleName {
+            Mock Get-OERMemberGroupId { @('cccccccc-0000-0000-0000-000000000001') }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', 'Reports Reader|nobody@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry 'Reports Reader -> nobody@example.com (Eligible)'*"
+            $Records[0].Detail | Should -Not -Match 'signed-in identity'
+            Should -Invoke Get-OERMemberGroupId -Times 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'matches the membership answer case-insensitively: an upper-case group id still makes its candidate Skipped' {
+        InModuleScope $script:moduleName {
+            Mock Get-OERMemberGroupId { @('CCCCCCCC-0000-0000-0000-000000000001') }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Detail | Should -Match 'is a group the signed-in identity is a member of'
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
 }
 
 Describe 'Sync-OERStructureDirectoryRoleAssignment with an ambiguous service principal display name' {
@@ -1035,6 +1302,91 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment with an ambiguous service pri
             @($Records | Where-Object { $_.Action -in @('Extra', 'Removed') }).Count | Should -Be 0
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
             Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+}
+
+Describe 'Sync-OERStructureDirectoryRoleAssignment group guard with the real membership read' {
+    # Get-OERMemberGroupId runs for REAL here: only the Graph transport is mocked, and its
+    # getMemberGroups POST answers with several group ids, one of them upper-case. The helper returns
+    # its [string[]] as ONE pipeline object, so this pins that the handler unrolls it into separate
+    # ids (wrapping the call in @() would leave one space-joined string that matches no group). The
+    # resolvers, the Get/Remove cmdlets and the signed-in identity are mocked as in the suites above.
+    # No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DraKept = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DraLiveEligible = @()
+            function script:Invoke-SyncDraRealRead {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection, [switch]$Prune)
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection
+            }
+            # A permanent, direct, tenant-scope eligible schedule of Reports Reader for one principal.
+            function script:New-DraRealReadRow {
+                param([string]$Principal, [string]$PrincipalType = 'User')
+                [PSCustomObject]([ordered]@{
+                        ScheduleId       = "schedule-$Principal"
+                        RoleDefinitionId = $script:RR
+                        RoleName         = 'Reports Reader'
+                        PrincipalId      = $Principal
+                        PrincipalType    = $PrincipalType
+                        DirectoryScopeId = '/'
+                        MemberType       = 'Direct'
+                        StartDateTime    = '2026-01-01T00:00:00Z'
+                        EndDateTime      = $null
+                    })
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -eq 'Reports Reader') { return $script:RR }
+                return $null
+            }
+            Mock Resolve-OERStructurePrincipal {
+                if (Test-OERGuid -Value $Reference) { return $Reference }
+                return $null
+            }
+            Mock Invoke-OERGraphRequest -ParameterFilter {
+                $Method -eq 'POST' -and $Uri -eq 'v1.0/directoryObjects/aaaaaaaa-0000-0000-0000-0000000000ff/getMemberGroups'
+            } -MockWith {
+                @{ value = @('cccccccc-0000-0000-0000-000000000009', 'CCCCCCCC-0000-0000-0000-000000000001', 'cccccccc-0000-0000-0000-000000000008') }
+            }
+            Mock Invoke-OERGraphRequest -MockWith { throw 'unexpected Graph request' }
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                @($script:DraLiveEligible | Where-Object { $_.RoleDefinitionId -eq $Role -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+            }
+            Mock Get-OERActiveDirectoryRoleAssignment {}
+            Mock New-OEREligibleDirectoryRoleAssignment {}
+            Mock New-OERActiveDirectoryRoleAssignment {}
+            Mock Remove-OEREligibleDirectoryRoleAssignment {}
+            Mock Remove-OERActiveDirectoryRoleAssignment {}
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+        }
+    }
+
+    It 'skips the group it is a member of and prunes the other group, from one getMemberGroups request answering several ids' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraRealReadRow -Principal $script:DraKept
+                New-DraRealReadRow -Principal 'cccccccc-0000-0000-0000-000000000001' -PrincipalType 'Group'
+                New-DraRealReadRow -Principal 'cccccccc-0000-0000-0000-000000000002' -PrincipalType 'Group'
+            )
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = 'Eligible' })
+            $Records = @(Invoke-SyncDraRealRead -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly 'Reports Reader -> cccccccc-0000-0000-0000-000000000001 (Eligible)'
+            $Records[0].Detail | Should -Match 'is a group the signed-in identity is a member of \(directly or through nesting\)'
+            $Records[1].Item | Should -BeExactly 'Reports Reader -> cccccccc-0000-0000-0000-000000000002 (Eligible)'
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $PrincipalId -eq 'cccccccc-0000-0000-0000-000000000002'
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            # One request for both group candidates.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/getMemberGroups' }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
         }
     }
 }

@@ -109,13 +109,15 @@ function Invoke-OERStructure {
     a member's assignment inherited through a group and one scoped to an administrative unit are never
     counted and never removed, and neither is any direct assignment of the signed-in identity itself
     (reported Skipped); while that identity's object id cannot be determined, nothing in the section
-    is removed. A role-assignable group's own direct assignment, however, is an ordinary candidate:
-    when the document declares a pair without that group, -Prune removes the group's assignment and
-    with it the role of every member who holds it through the group, the signed-in identity included.
-    There the unit of the rule above is the pair: an entry whose principal cannot be resolved
-    withholds the prune of its own pair, and an entry whose role cannot be resolved withholds every
-    pair of its assignmentType. A pair whose live read fails is reported Failed, and nothing in it is
-    removed or reported Extra.
+    is removed. A role-assignable group's own direct assignment is a candidate: when the document
+    declares a pair without that group, -Prune removes the group's assignment and with it the role of
+    every member who holds it through the group -- unless the signed-in identity is a member of that
+    group, directly or through nesting, in which case the assignment is left in place and reported
+    Skipped. When the signed-in identity's group memberships cannot be read, every group (or
+    unknown-type) candidate is withheld the same way. There the unit of the rule above is the pair:
+    an entry whose principal cannot be resolved withholds the prune of its own pair, and an entry
+    whose role cannot be resolved withholds every pair of its assignmentType. A pair whose live read
+    fails is reported Failed, and nothing in it is removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
     so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,

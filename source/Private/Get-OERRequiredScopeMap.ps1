@@ -257,7 +257,7 @@ function Get-OERRequiredScopeMap {
                          'RoleManagement.ReadWrite.Directory',
                          'RoleManagementPolicy.ReadWrite.AzureADGroup'
             AzureRole = 'User Access Administrator', 'Owner', 'Role Based Access Control Administrator'
-            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups. RoleManagement.ReadWrite.Directory also covers the directoryRoleManagementPolicies and directoryRoleAssignments sections.'
+            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups and the directoryRoleAssignments prune pass''s read of the signed-in identity''s group memberships (directoryObjects/{id}/getMemberGroups). RoleManagement.ReadWrite.Directory also covers the directoryRoleManagementPolicies and directoryRoleAssignments sections.'
         }
         @{
             Cmdlet = 'New-OERAccessPackage'; Transport = 'Graph'

@@ -905,9 +905,12 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
             # R9: an unresolved principal withholds its own pair, an unresolved role every pair of its kind.
             $Desc | Should -Match 'an entry whose principal cannot be resolved withholds the prune of its own pair'
             $Desc | Should -Match 'one whose role cannot be resolved withholds the prune of every pair of its assignmentType'
-            # A group's own direct assignment IS a candidate: removing it ends the role for its members.
-            $Desc | Should -Match "A role-assignable group's own direct assignment is an ordinary prune candidate"
-            $Desc | Should -Match 'the role of every member who holds it through the group, the signed-in identity included'
+            # A group's own direct assignment IS a candidate: removing it ends the role for its members,
+            # unless the signed-in identity is one of them; an unreadable membership withholds.
+            $Desc | Should -Match "A role-assignable group's own direct assignment is a prune candidate"
+            $Desc | Should -Match 'the role of every member who holds it through the group, unless the signed-in identity is a member of that group \(directly or through nesting\), in which case it is left in place and reported Skipped'
+            $Desc | Should -Match "when the signed-in identity's group memberships cannot be read, every group \(or unknown-type\) candidate is withheld"
+            $Desc | Should -Not -Match 'the signed-in identity included'
             # The shared service principal lookup refuses an ambiguous name rather than taking a first match.
             $Desc | Should -Match 'service principal display names are not unique, and an ambiguous name is refused at apply time \(the entry fails\)'
             $Desc | Should -Not -Match 'first match'

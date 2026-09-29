@@ -2457,17 +2457,34 @@ Module Logging" policy) records every bound parameter value, so a string paramet
 Graph token on every sign-in on such a machine. The plaintext exists only inside the helper, through
 a .NET call that is not a parameter binding.
 
-**The own-assignment guard is narrower than it sounds, and that is the spec's decision, not an
-oversight.** It protects only the signed-in identity's DIRECT assignments -- the ones
-`Select-OERManagedDirectoryRoleAssignment` would otherwise let the prune pass consider. A
-role-assignable group's direct assignment, through which the operator holds the role indirectly, is
-an ordinary prune candidate like any other: nothing in the guard chain recognizes "a group I am a
-member of" as "my own". `-Prune` can therefore remove the operator's own privilege when it is held
-through a group rather than assigned to the operator directly. This is recorded here so an operator
-who provisions their own access through a group makes that choice knowingly, not because the guard
-failed to close it -- closing it would need group-membership expansion the guard deliberately does
-not do (it reads the token's `oid`, nothing more), which is a materially larger and slower check for
-every prune pass, not a one-line fix.
+**A group the signed-in identity is a member of is never pruned, and an unreadable membership
+withholds.** The own-assignment guard protects only the signed-in identity's DIRECT assignments --
+the ones `Select-OERManagedDirectoryRoleAssignment` would otherwise let the prune pass consider. A
+role-assignable group's own direct assignment is a candidate too, and removing it ends the role for
+every member who holds it through the group, the operator included when the operator is one of
+them. The first version of this anchor accepted that and recorded it as a known gap, on the grounds
+that closing it needed group-membership expansion the guard did not do; the review of PR #12
+reversed that, since the gap is exactly the self-lockout the own-assignment guard exists to prevent.
+A second guard now runs right after the own-assignment one. For a candidate whose `PrincipalType` is
+neither `User` nor `ServicePrincipal` -- a `Group`, or a type the converter did not recognize, which
+might be one -- the pass reads the signed-in identity's transitive group memberships through the
+private `Get-OERMemberGroupId`, one `POST v1.0/directoryObjects/{oid}/getMemberGroups` with
+`securityEnabledOnly` false (a role-assignable Microsoft 365 group can hold a directory role too),
+and a candidate whose id is in that set is reported `Skipped`, with or without `-Prune`. That call
+names the object by the token's `oid`, so the same request serves a delegated user and an app-only
+service principal: `/me` does not exist app-only, and `/users/{id}` or `/servicePrincipals/{id}`
+would need the object's type first. Microsoft Learn (directoryObject: getMemberGroups, "Group
+memberships for a directory object") asks for `Directory.Read.All`, which `Invoke-OERStructure`
+already requires outright, so the consent list does not grow. The read is lazy and happens at most
+once per pass: a run whose candidates are all users or service principals never makes it, and the
+answer -- or the failure -- stands for every later candidate in every pair, so a large section does
+not pay one request per group. A read that fails is written once, and every `Group` or
+unknown-type candidate in the pass is withheld (`Skipped`, "prune withheld: the signed-in identity's
+group memberships could not be read"): a failed read is not an empty membership, and treating it as
+one would remove exactly the assignment this guard exists to keep. User and service principal
+candidates carry on to the prune, since neither can be such a group. Cost if the permission assumed
+here is wrong for some tenant: withheld `Skipped` rows on every group candidate, never a wrong
+removal.
 
 **Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
 suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to
