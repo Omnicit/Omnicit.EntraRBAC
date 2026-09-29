@@ -59,8 +59,13 @@ function Remove-OERActiveDirectoryRoleAssignment {
     Removes Anna's active assignment of the Reports Reader directory role.
 
     .EXAMPLE
-    Get-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'anna.berg@example.com' | Remove-OERActiveDirectoryRoleAssignment
-    Removes the piped active assignment.
+    Get-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'anna.berg@example.com' |
+        Where-Object { $_.MemberType -eq 'Direct' -and $_.AssignmentType -eq 'Assigned' } |
+        Remove-OERActiveDirectoryRoleAssignment
+    Removes the piped active assignment, filtered to a direct, standing one --
+    Get-OERActiveDirectoryRoleAssignment also returns activations and group-inherited rows, which
+    this cmdlet cannot remove directly (an activation ends on its own schedule or through the
+    eligible assignment's removal; a group-inherited row is removed from the group instead).
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([PSCustomObject])]

@@ -19,6 +19,13 @@ function Test-OERDirectoryRolePermanentAllowed {
     .PARAMETER Kind
     Eligible reads the Expiration_Admin_Eligibility rule; Active reads Expiration_Admin_Assignment.
 
+    .OUTPUTS
+    System.Boolean or $null. The [OutputType([bool])] attribute below is PowerShell metadata and has
+    no way to express a nullable/tri-state return; the real contract is three-valued: $true (the
+    policy allows a permanent assignment of this -Kind), $false (it does not -- the caller refuses
+    the request), or $null (unreadable: no policy assignment was found, or the policy carries no
+    expiration rule for this -Kind -- the caller proceeds and lets Microsoft Graph enforce it).
+
     .EXAMPLE
     Test-OERDirectoryRolePermanentAllowed -RoleDefinitionId $RoleDefinitionId -Kind Eligible
     Returns $true, $false, or $null.

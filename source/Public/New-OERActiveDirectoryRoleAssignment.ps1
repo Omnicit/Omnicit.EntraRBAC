@@ -131,7 +131,6 @@ function New-OERActiveDirectoryRoleAssignment {
 
         [string]$TenantId,
 
-        # Declared after the pre-existing parameters so their positional binding is unchanged.
         [Parameter(ValueFromPipelineByPropertyName)]
         [string]$PrincipalId
     )
@@ -237,11 +236,16 @@ function New-OERActiveDirectoryRoleAssignment {
         # Ruling R7: it never opens the policy itself -- a refusal here submits NO request at all.
         if ($IsPermanentRequest) {
             $Allowed = $null
+            $PreCheckThrew = $false
             try {
                 $Allowed = Test-OERDirectoryRolePermanentAllowed -RoleDefinitionId $RoleInput.RoleDefinitionId -Kind Active
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                $PreCheckThrew = $true
                 Write-Verbose "[New-OERActiveDirectoryRoleAssignment] Could not pre-check whether the PIM policy for role '$Role' allows a permanent active assignment: $($PSItem.Exception.Message). Proceeding; Microsoft Graph will enforce the policy."
+            }
+            if (-not $PreCheckThrew -and $null -eq $Allowed) {
+                Write-Verbose "[New-OERActiveDirectoryRoleAssignment] Could not determine whether the policy allows permanent active assignments. Proceeding; Microsoft Graph will enforce the policy."
             }
             if ($Allowed -eq $false) {
                 Write-CmdletError -Message ([System.Exception]::new(

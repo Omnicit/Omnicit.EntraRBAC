@@ -77,10 +77,13 @@ Describe 'New-OEREligibleDirectoryRoleAssignment' {
         Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleAssignableState { throw 'transport failure' }
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
 
-        New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -Group 'oer-rag' -DurationDays 30 -Confirm:$false | Out-Null
+        $Err = $null
+        New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -Group 'oer-rag' -DurationDays 30 -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
 
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OER*' }).Count | Should -Be 0
     }
 
     It 'refuses a permanent request with PermanentAssignmentNotAllowed, naming -AllowPermanentEligibility and directoryRoleManagementPolicies, and issues no write of any kind' {
@@ -92,9 +95,17 @@ Describe 'New-OEREligibleDirectoryRoleAssignment' {
 
         $Err[0].FullyQualifiedErrorId | Should -Be 'PermanentAssignmentNotAllowed,New-OEREligibleDirectoryRoleAssignment'
         $Err[0].Exception.Message | Should -Match '-AllowPermanentEligibility'
+        # Case-sensitive: proves the lowercase apply-document key text is really present, rather than
+        # relying on -Match's case-insensitivity to accept a match against the PascalCase parameter
+        # name assertion above.
+        $Err[0].Exception.Message | Should -MatchExactly 'allowPermanentEligibility'
         $Err[0].Exception.Message | Should -Match 'directoryRoleManagementPolicies'
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter {
             $Method -in 'POST', 'PATCH', 'PUT', 'DELETE'
+        }
+        # Pins -Kind so a copy-paste swap between the Eligible and Active cmdlets is caught here.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Test-OERDirectoryRolePermanentAllowed -Times 1 -Exactly -ParameterFilter {
+            $Kind -eq 'Eligible'
         }
     }
 
@@ -187,10 +198,15 @@ Describe 'New-OEREligibleDirectoryRoleAssignment' {
     }
 
     It 'writes a non-terminating error and returns nothing when the POST fails' {
+        # Called directly (not inside a { } | Should -Not -Throw scriptblock, which runs in a child
+        # scope and would let $Out silently stay unset in THIS scope even if the assignment worked) so
+        # -ErrorVariable is observable and the WriteError call itself is proven, not merely assumed.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
-        $Out = $null
-        { $Out = New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -DurationDays 30 -Confirm:$false -ErrorAction SilentlyContinue } | Should -Not -Throw
+        $Err = $null
+        $Out = New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -DurationDays 30 -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
         $Out | Should -BeNullOrEmpty
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 }

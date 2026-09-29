@@ -57,8 +57,11 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     Removes Anna's eligibility for the Reports Reader directory role.
 
     .EXAMPLE
-    Get-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'anna.berg@example.com' | Remove-OEREligibleDirectoryRoleAssignment
-    Removes the piped eligibility.
+    Get-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'anna.berg@example.com' |
+        Where-Object { $_.MemberType -eq 'Direct' } | Remove-OEREligibleDirectoryRoleAssignment
+    Removes the piped eligibility, filtered to a direct one -- Get-OEREligibleDirectoryRoleAssignment
+    also returns group-inherited rows, which this cmdlet cannot remove directly (remove the group's
+    own eligibility instead).
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([PSCustomObject])]

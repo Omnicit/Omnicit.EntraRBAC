@@ -52,20 +52,26 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
-    It 'binds -Role and -PrincipalId from piped Get-OERActiveDirectoryRoleAssignment-shaped output' {
+    It 'binds -Role and -PrincipalId from piped Get-OERActiveDirectoryRoleAssignment-shaped output, with the piped role value flowing through unchanged' {
+        # The default BeforeEach mock of Resolve-OERDirectoryRoleDefinitionId always returns the same
+        # fixed GUID regardless of input, so a piped RoleDefinitionId equal to that fixed value cannot
+        # prove the piped value actually flows anywhere -- the assertion would pass even if the
+        # pipeline binding were broken. Mock it here to ECHO its -Role input lower-cased instead (the
+        # real function's own documented GUID short-circuit behavior), pipe a role id that is NOT the
+        # BeforeEach fixture's id, and assert that exact (lower-cased) value reaches the POST body.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId {
+            param($Role)
+            $Role.ToLowerInvariant()
+        }
         $Piped = [PSCustomObject]@{
-            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            RoleDefinitionId = 'FFFFFFFF-1111-2222-3333-444444444444'
             PrincipalId      = 'cccccccc-0000-0000-0000-000000000003'
         }
         $Piped.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.ActiveDirectoryRoleAssignment')
         $Piped | Remove-OERActiveDirectoryRoleAssignment -Confirm:$false -WarningAction SilentlyContinue
 
-        # The role is still resolved through Resolve-OERDirectoryRoleInput even when -Role already
-        # arrived as a GUID (Resolve-OERDirectoryRoleDefinitionId itself short-circuits a GUID with no
-        # Graph call -- see its own comment-based help); what matters here is that the PIPED value
-        # reaches the POST body unchanged, not that resolution is skipped.
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
-            $Body.roleDefinitionId -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and
+            $Body.roleDefinitionId -eq 'ffffffff-1111-2222-3333-444444444444' -and
             $Body.principalId -eq 'cccccccc-0000-0000-0000-000000000003'
         }
     }
@@ -113,10 +119,15 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
     }
 
     It 'writes a non-terminating error and returns nothing when the POST fails' {
+        # Called directly (not inside a { } | Should -Not -Throw scriptblock, which runs in a child
+        # scope and would let $Out silently stay unset in THIS scope even if the assignment worked) so
+        # -ErrorVariable is observable and the WriteError call itself is proven, not merely assumed.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
-        $Out = $null
-        { $Out = Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } | Should -Not -Throw
+        $Err = $null
+        $Out = Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
         $Out | Should -BeNullOrEmpty
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OERActiveDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 }

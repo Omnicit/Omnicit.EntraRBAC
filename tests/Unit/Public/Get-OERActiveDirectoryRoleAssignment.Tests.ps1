@@ -83,11 +83,15 @@ Describe 'Get-OERActiveDirectoryRoleAssignment' {
     }
 
     It 'reports a non-terminating error and returns nothing when the schedule read fails' {
+        # Called directly (not inside a { } | Should -Not -Throw scriptblock, which runs in a child
+        # scope and would let $Out silently stay unset in THIS scope even if the assignment worked) so
+        # -ErrorVariable is observable and the WriteError call itself is proven, not merely assumed.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'transport failure' }
         Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
-        $Out = $null
-        { $Out = Get-OERActiveDirectoryRoleAssignment -ErrorAction SilentlyContinue } | Should -Not -Throw
+        $Err = $null
+        $Out = Get-OERActiveDirectoryRoleAssignment -ErrorAction SilentlyContinue -ErrorVariable Err
         $Out | Should -BeNullOrEmpty
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERActiveDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 
     It 'calls Initialize-OERAuth without -IncludeARM' {
