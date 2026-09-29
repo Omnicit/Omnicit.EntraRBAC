@@ -2450,7 +2450,12 @@ only reader, and treats a missing key (a state built before this key existed) or
 same as unresolved. When it cannot be determined, EVERY prune candidate in the section is withheld,
 not only the ones that might turn out to be the caller's own: the alternative -- pruning everything
 except a candidate that happens to match no known id -- would prune the operator's own assignment on
-exactly the session that carries no `oid` claim at all.
+exactly the session that carries no `oid` claim at all. `Get-OERTokenObjectId` takes the token as a
+`[securestring]`, the same one `Initialize-OERAuth` hands to `Connect-MgGraph`, and never as a
+`[string]`: PowerShell module logging (Event 4103, `LogPipelineExecutionDetails` or the "Turn on
+Module Logging" policy) records every bound parameter value, so a string parameter would log the live
+Graph token on every sign-in on such a machine. The plaintext exists only inside the helper, through
+a .NET call that is not a parameter binding.
 
 **The own-assignment guard is narrower than it sounds, and that is the spec's decision, not an
 oversight.** It protects only the signed-in identity's DIRECT assignments -- the ones

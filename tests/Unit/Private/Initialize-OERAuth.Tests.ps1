@@ -290,6 +290,31 @@ Describe 'Initialize-OERAuth' {
         }
     }
 
+    # -- New test: the oid reader receives the Graph token as a SecureString (module logging) ---------
+    # PowerShell module logging (Event 4103) records every bound parameter value, so the token must
+    # never be bound to a [string] parameter. AzAuth hands the token back as plain text (the mocked
+    # Get-AzToken below keeps that shape); Initialize-OERAuth must pass the SecureString it already
+    # builds for Connect-MgGraph, and that SecureString must carry exactly the acquired token.
+    It 'passes the Graph token to Get-OERTokenObjectId as a SecureString, never as plain text' {
+        $AppOnlyToken = New-TestToken -Claims @{
+            oid   = 'aaaaaaaa-0000-0000-0000-000000000002'
+            idtyp = 'app'
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = $AppOnlyToken; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = 'contoso' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId { 'aaaaaaaa-0000-0000-0000-000000000009' }
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'ClientCertificate' -ClientId 'cid' -CertificatePath 'C:\c\app.pfx'
+            $script:_OERAuthState.SignedInObjectId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000009'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERTokenObjectId -Times 1 -Exactly -ParameterFilter {
+            $Token -is [securestring] -and
+            [System.Net.NetworkCredential]::new('', $Token).Password -ceq $AppOnlyToken
+        }
+    }
+
     # -- New test: SignedInObjectId is $null for a non-JWT mocked token (the fixtures every other -----
     # -- test in this file uses), so this key never regresses an existing test's expectations. --------
     It 'records SignedInObjectId as $null for a non-JWT mocked token' {

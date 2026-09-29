@@ -979,7 +979,7 @@ function Initialize-OERAuth {
                 # user on a delegated sign-in, the service principal on an app-only one. Read by
                 # Get-OERSignedInObjectId so the directory-role prune never removes the caller's own
                 # assignments. The token itself is never stored.
-                SignedInObjectId = Get-OERTokenObjectId -Token $GraphToken.Token
+                SignedInObjectId = Get-OERTokenObjectId -Token $SecureToken
                 # SEC: carry the cached ARM token into the rebuilt state ONLY when the tenant and auth
                 # identity are unchanged. Otherwise drop it, so the next -IncludeARM call re-acquires for
                 # the tenant actually being targeted instead of inheriting the previous customer's token.
