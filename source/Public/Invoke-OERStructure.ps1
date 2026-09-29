@@ -62,6 +62,11 @@ function Invoke-OERStructure {
     scope string and passes -ReconcileScope on the first item of each unique scope. This signals
     the handler to run its prune pass for that scope after processing the item.
 
+    DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
+    each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
+    runs its section-wide prune pass once, before that first item is reconciled and whatever that
+    item's own outcome (see -Prune for what the pass may remove).
+
     Returns zero or more tagged Omnicit.EntraRBAC.StructureResult records, one per reconcile
     action. A one-line verbose summary of counts per Action is written after all sections.
 
@@ -97,6 +102,17 @@ function Invoke-OERStructure {
     reported Skipped with a Detail starting "prune withheld:", with or without -Prune (instead of
     Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
     remove the unresolved entry to reconcile the collection.
+
+    directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
+    for the pairs the document declares: a directory role the document does not name, or names only
+    for the other assignmentType, is never read or touched. An activation of an eligible assignment,
+    an assignment held through a group and one scoped to an administrative unit are never counted and
+    never removed, and neither is any assignment of the signed-in identity itself (reported Skipped);
+    while that identity's object id cannot be determined, nothing in the section is removed. There
+    the unit of the rule above is the pair: an entry whose principal cannot be resolved withholds the
+    prune of its own pair, and an entry whose role cannot be resolved withholds every pair of its
+    assignmentType. A pair whose live read fails is reported Failed, and nothing in it is removed or
+    reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
     so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,
@@ -233,6 +249,8 @@ function Invoke-OERStructure {
         # Per-scope tracking for the RoleAssignments section, so the scope-wide reconcile/prune pass
         # runs once per declared scope (on the first item of that scope).
         $SeenRaScopes = @{}
+        # The DirectoryRoleAssignments prune pass is section-wide: it runs once, on the first item.
+        $DraReconciled = $false
 
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so
@@ -286,12 +304,19 @@ function Invoke-OERStructure {
 
             foreach ($It in $Items) {
                 # RoleAssignments take two extra params so prune is scoped per declared scope.
+                # DirectoryRoleAssignments take the whole section, and the prune pass runs on the
+                # first item only, whatever that item's own outcome.
                 $ExtraParams = @{}
                 if ($Section.IncludeName -eq 'RoleAssignments') {
                     $ScopeKey = [string]$It.scope
                     $ExtraParams.DeclaredAtScope = @($Items | Where-Object { [string]$_.scope -eq $ScopeKey })
                     $ExtraParams.ReconcileScope  = -not $SeenRaScopes.ContainsKey($ScopeKey)
                     $SeenRaScopes[$ScopeKey] = $true
+                }
+                if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {
+                    $ExtraParams.DeclaredInSection = $Items
+                    $ExtraParams.ReconcileSection  = -not $DraReconciled
+                    $DraReconciled = $true
                 }
                 try {
                     $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams

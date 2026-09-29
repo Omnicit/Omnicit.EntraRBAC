@@ -374,3 +374,504 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment' {
     }
 }
 
+Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
+    # The pass runs in the invocation that carries -ReconcileSection (the engine sets it on the
+    # section's first item only). It reads the live assignments of every (role, assignmentType) pair
+    # the section declares and reports each undeclared direct, tenant-scope one Extra, or removes it
+    # under -Prune, unless a guard withholds it. The resolvers map document values to fixed ids (role
+    # RR and MCR, personN@example.com -> principal N); the Get mocks return the live rows of the role
+    # they are asked for, and of the principal when the per-item part names one, so a test places a
+    # row on a role by its RoleDefinitionId. Select-OERManagedDirectoryRoleAssignment,
+    # ConvertTo-OERPruneWithheldResult and Resolve-OERDirectoryRoleAssignmentChange run for real.
+    # No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:MCR = 'aaaaaaaa-0000-0000-0000-000000000002'
+            $script:DraP = @{}
+            foreach ($N in 1..9) { $script:DraP[$N] = "bbbbbbbb-0000-0000-0000-00000000000$N" }
+            $script:DraLiveEligible = @()
+            $script:DraLiveActive = @()
+            function script:Invoke-SyncDraSection {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection, [switch]$Prune)
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection
+            }
+            # One projected schedule row, the shape ConvertTo-OERDirectoryRoleAssignment emits. It is
+            # permanent, so a permanent declared entry for the same role and principal is Unchanged.
+            function script:New-DraPassRow {
+                param(
+                    [string]$Role,
+                    [string]$Principal,
+                    [string]$Kind = 'Eligible',
+                    [string]$AssignmentType = 'Assigned',
+                    [string]$MemberType = 'Direct',
+                    [string]$DirectoryScopeId = '/',
+                    [string]$PrincipalType = 'User'
+                )
+                $Row = [ordered]@{
+                    ScheduleId       = "schedule-$Principal"
+                    RoleDefinitionId = $Role
+                    RoleName         = $(if ($Role -eq $script:RR) { 'Reports Reader' } elseif ($Role -eq $script:MCR) { 'Message Center Reader' } else { '' })
+                    PrincipalId      = $Principal
+                    PrincipalType    = $PrincipalType
+                    DirectoryScopeId = $DirectoryScopeId
+                    MemberType       = $MemberType
+                }
+                if ($Kind -eq 'Active') { $Row.AssignmentType = $AssignmentType }
+                $Row.StartDateTime = '2026-01-01T00:00:00Z'
+                $Row.EndDateTime = $null
+                [PSCustomObject]$Row
+            }
+            # The errors the wrapper itself wrote, i.e. what Caller.WriteError published. -ErrorVariable
+            # also collects the exception every Pester mock layer re-throws on its way to a catch in
+            # the handler, so a raw count would include errors the handler caught and never wrote.
+            function script:Select-DraCallerError {
+                param([object[]]$ErrorList)
+                @($ErrorList | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraSection' })
+            }
+            # The section's entries from 'role|principal|assignmentType' strings, as ConvertFrom-Json
+            # would produce them; the first entry is the item the handler is invoked for.
+            function script:New-DraSection {
+                param([string[]]$Entry)
+                foreach ($E in $Entry) {
+                    $Role, $Principal, $Kind = $E -split '\|'
+                    [PSCustomObject]@{ role = $Role; principal = $Principal; assignmentType = $Kind }
+                }
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -eq 'Reports Reader') { return $script:RR }
+                if ($Role -eq 'Message Center Reader') { return $script:MCR }
+                if ($Role -eq 'Throwing Role') { throw "Directory role name 'Throwing Role' is ambiguous." }
+                if (Test-OERGuid -Value $Role) { return $Role.ToLowerInvariant() }
+                return $null
+            }
+            Mock Resolve-OERStructurePrincipal {
+                if ($Reference -match '^person(\d)@example\.com$') { return $script:DraP[[int]$Matches[1]] }
+                if ($Reference -eq 'throws@example.com') { throw "Principal 'throws@example.com' is ambiguous." }
+                return $null
+            }
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                @($script:DraLiveEligible | Where-Object { $_.RoleDefinitionId -eq $Role -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+            }
+            Mock Get-OERActiveDirectoryRoleAssignment {
+                @($script:DraLiveActive | Where-Object { $_.RoleDefinitionId -eq $Role -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+            }
+            Mock Remove-OEREligibleDirectoryRoleAssignment {}
+            Mock Remove-OERActiveDirectoryRoleAssignment {}
+            Mock New-OEREligibleDirectoryRoleAssignment {}
+            Mock New-OERActiveDirectoryRoleAssignment {}
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+        }
+    }
+
+    It 'reports an undeclared direct assignment in a declared pair Extra without -Prune, and removes nothing' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection)
+            @($Records).Action | Should -Be @('Extra', 'Unchanged')
+            $Records[0].Section | Should -BeExactly 'directoryRoleAssignments'
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -Match "undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:DraP[2])'"
+            $Records[0].Detail | Should -Match 'use -Prune to remove'
+            $Records[1].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'removes an undeclared direct assignment in a declared pair under -Prune, naming it in its own warning' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -WarningVariable DraWarnings)
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -Match "^removed undeclared eligible assignment of directory role 'Reports Reader'"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and
+                $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002' -and
+                $PesterBoundParameters.ContainsKey('Confirm') -and -not [bool]$PesterBoundParameters['Confirm']
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            @($DraWarnings).Count | Should -Be 1
+            "$($DraWarnings[0])" | Should -Match "removing undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:DraP[2])'"
+        }
+    }
+
+    It 'reports Skipped naming the plan, and removes nothing, when the caller declines ShouldProcess under -Prune' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WhatIf -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -Match "^would remove undeclared eligible assignment of directory role 'Reports Reader'"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'removes an undeclared assigned active assignment with the active Remove cmdlet, and never reads the eligible ones' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveActive = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind Active
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2] -Kind Active
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Active')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Active)"
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and
+                $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002' -and
+                $PesterBoundParameters.ContainsKey('Confirm') -and -not [bool]$PesterBoundParameters['Confirm']
+            }
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'reports Failed, scrubs and publishes the error when a removal throws, and carries on with the next candidate' {
+        InModuleScope $script:moduleName {
+            Mock Remove-OEREligibleDirectoryRoleAssignment {
+                if ($PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002') { throw 'Graph 400 RoleAssignmentDoesNotExist' }
+            }
+            Mock Remove-OERErrorRecord {}
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[3]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Failed', 'Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -Match 'failed to remove undeclared eligible assignment'
+            $Records[0].Detail | Should -Match 'RoleAssignmentDoesNotExist'
+            $Records[1].Item | Should -BeExactly "Reports Reader -> $($script:DraP[3]) (Eligible)"
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            $CallerErrors = @(Select-DraCallerError $DraErrors)
+            @($CallerErrors).Count | Should -Be 1
+            "$($CallerErrors[0])" | Should -Match 'RoleAssignmentDoesNotExist'
+        }
+    }
+
+    It 'reads and reconciles only the declared pairs: another role in the read, and the other kind, are never touched' {
+        InModuleScope $script:moduleName {
+            # This read ignores -Role, so the pass's read of Reports Reader also returns a Message
+            # Center Reader row: only the per-candidate role check keeps it out. The document names
+            # Reports Reader only for Eligible, so its Active assignments must never even be read.
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                @($script:DraLiveEligible | Where-Object { -not $PrincipalId -or $_.PrincipalId -eq $PrincipalId })
+            }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:MCR -Principal $script:DraP[3]
+            )
+            $script:DraLiveActive = @(New-DraPassRow -Role $script:RR -Principal $script:DraP[4] -Kind Active)
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Unchanged')
+            @($Records | Where-Object { $_.Item -match $script:DraP[3] -or $_.Item -match $script:DraP[4] }).Count | Should -Be 0
+            Should -Invoke Get-OERActiveDirectoryRoleAssignment -Times 0
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and -not $PesterBoundParameters.ContainsKey('PrincipalId')
+            }
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter { $Role -eq 'aaaaaaaa-0000-0000-0000-000000000002' }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'never reports or removes <Case> (Prune: <Prune>)' -TestCases @(
+        @{ Case = 'an activation in a declared Active pair'; Kind = 'Active'; Row = @{ Kind = 'Active'; AssignmentType = 'Activated' }; Prune = $false }
+        @{ Case = 'an activation in a declared Active pair'; Kind = 'Active'; Row = @{ Kind = 'Active'; AssignmentType = 'Activated' }; Prune = $true }
+        @{ Case = 'an assignment held through a group'; Kind = 'Eligible'; Row = @{ MemberType = 'Group' }; Prune = $false }
+        @{ Case = 'an assignment held through a group'; Kind = 'Eligible'; Row = @{ MemberType = 'Group' }; Prune = $true }
+        @{ Case = 'an administrative-unit-scoped assignment'; Kind = 'Eligible'; Row = @{ DirectoryScopeId = '/administrativeUnits/aaaaaaaa-0000-0000-0000-0000000000a1' }; Prune = $false }
+        @{ Case = 'an administrative-unit-scoped assignment'; Kind = 'Eligible'; Row = @{ DirectoryScopeId = '/administrativeUnits/aaaaaaaa-0000-0000-0000-0000000000a1' }; Prune = $true }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Row = $Row; Prune = $Prune } {
+            param($Kind, $Row, $Prune)
+            $Declared = New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind $Kind
+            $Unmanaged = New-DraPassRow -Role $script:RR -Principal $script:DraP[5] @Row
+            if ($Kind -eq 'Active') { $script:DraLiveActive = @($Declared, $Unmanaged) } else { $script:DraLiveEligible = @($Declared, $Unmanaged) }
+            $Section = @(New-DraSection "Reports Reader|person1@example.com|$Kind")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Unchanged')
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            # The pass did read the pair, so no row is a verdict, not an unread pair.
+            $GetName = if ($Kind -eq 'Active') { 'Get-OERActiveDirectoryRoleAssignment' } else { 'Get-OEREligibleDirectoryRoleAssignment' }
+            Should -Invoke $GetName -Times 1 -Exactly -ParameterFilter { -not $PesterBoundParameters.ContainsKey('PrincipalId') }
+        }
+    }
+
+    It 'reports the signed-in identity''s own undeclared assignment Skipped and never removes it (<PrincipalType>, Prune: <Prune>)' -TestCases @(
+        @{ PrincipalType = 'User'; Prune = $false }
+        @{ PrincipalType = 'User'; Prune = $true }
+        @{ PrincipalType = 'ServicePrincipal'; Prune = $false }
+        @{ PrincipalType = 'ServicePrincipal'; Prune = $true }
+    ) {
+        # ServicePrincipal is the app-only sign-in: the oid claim is then the service principal's id.
+        InModuleScope $script:moduleName -Parameters @{ PrincipalType = $PrincipalType; Prune = $Prune } {
+            param($PrincipalType, $Prune)
+            Mock Get-OERSignedInObjectId { 'bbbbbbbb-0000-0000-0000-000000000006' }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[6] -PrincipalType $PrincipalType
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune -WarningAction SilentlyContinue)
+            $Other = if ($Prune) { 'Removed' } else { 'Extra' }
+            @($Records).Action | Should -Be @($Other, 'Skipped', 'Unchanged')
+            $Records[1].Item | Should -BeExactly "Reports Reader -> $($script:DraP[6]) (Eligible)"
+            $Records[1].Detail | Should -Match 'signed-in identity'
+            $Records[1].Detail | Should -Match 'our own guard'
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter { $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000006' }
+            $RemoveCount = if ($Prune) { 1 } else { 0 }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times $RemoveCount -Exactly
+        }
+    }
+
+    It 'withholds every candidate when the signed-in identity is unknown (Prune: <Prune>)' -TestCases @(
+        @{ Prune = $false }
+        @{ Prune = $true }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Prune = $Prune } {
+            param($Prune)
+            Mock Get-OERSignedInObjectId { $null }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[3]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune:$Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Skipped', 'Unchanged')
+            foreach ($Record in $Records[0..1]) {
+                $Record.Detail | Should -BeLike "prune withheld: the signed-in identity's object id is unknown*"
+                $Record.Detail | Should -Match 'our own guard'
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'withholds the prune of a pair holding an entry whose principal lookup <Case>, and writes no error for it' -TestCases @(
+        @{ Case = 'finds nothing'; Principal = 'nobody@example.com' }
+        @{ Case = 'throws'; Principal = 'throws@example.com' }
+    ) {
+        # No error is written here: the unresolved entry's own invocation writes its error and its
+        # Failed row, under the label the withheld Detail names.
+        InModuleScope $script:moduleName -Parameters @{ Principal = $Principal } {
+            param($Principal)
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', "Reports Reader|$Principal|Eligible")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry 'Reports Reader -> $Principal (Eligible)'*"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            @(Select-DraCallerError $DraErrors).Count | Should -Be 0
+        }
+    }
+
+    It 'withholds only the pair of an entry whose principal cannot be resolved: another pair is still pruned' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:MCR -Principal $script:DraP[3]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', 'Message Center Reader|nobody@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Removed', 'Skipped', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[1].Item | Should -BeExactly "Message Center Reader -> $($script:DraP[3]) (Eligible)"
+            $Records[1].Detail | Should -BeLike "prune withheld: declared entry 'Message Center Reader -> nobody@example.com (Eligible)'*"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002'
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+        }
+    }
+
+    It 'withholds every pair of its assignmentType, and no other, when an entry''s role lookup <Case>' -TestCases @(
+        @{ Case = 'finds nothing'; RoleText = 'No Such Role' }
+        @{ Case = 'throws'; RoleText = 'Throwing Role' }
+    ) {
+        # The unresolved role's pair is unknown, so it may be the counterpart of a candidate in any
+        # Eligible pair; an Active pair cannot hold it and is reconciled as usual.
+        InModuleScope $script:moduleName -Parameters @{ RoleText = $RoleText } {
+            param($RoleText)
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $script:DraLiveActive = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1] -Kind Active
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[4] -Kind Active
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', "$RoleText|person3@example.com|Eligible", 'Reports Reader|person1@example.com|Active')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Skipped', 'Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry '$RoleText -> person3@example.com (Eligible)'*"
+            $Records[1].Item | Should -BeExactly "Reports Reader -> $($script:DraP[4]) (Active)"
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000004'
+            }
+            Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+            @(Select-DraCallerError $DraErrors).Count | Should -Be 0
+        }
+    }
+
+    It 'treats one role written by name in one entry and by id in another as one pair: neither assignment is Extra or Removed' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            # The id is written upper-case on purpose: the role is resolved before it is keyed.
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', "$($script:RR.ToUpperInvariant())|person2@example.com|Eligible")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Unchanged')
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and -not $PesterBoundParameters.ContainsKey('PrincipalId')
+            }
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { -not $PesterBoundParameters.ContainsKey('PrincipalId') }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'reports a failed read of one pair Failed and publishes it, prunes nothing in that pair, and still reconciles another pair' {
+        InModuleScope $script:moduleName {
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                if ($Role -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and -not $PrincipalId) { throw 'Graph 403 Forbidden' }
+                @($script:DraLiveEligible | Where-Object { $_.RoleDefinitionId -eq $Role -and (-not $PrincipalId -or $_.PrincipalId -eq $PrincipalId) })
+            }
+            Mock Remove-OERErrorRecord {}
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:MCR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:MCR -Principal $script:DraP[3]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible', 'Message Center Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Failed', 'Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "$($script:RR) (Eligible)"
+            $Records[0].Detail | Should -Match "could not read the eligible assignments of directory role '$($script:RR)'"
+            $Records[0].Detail | Should -Match 'nothing in this pair was pruned or reported Extra'
+            $Records[0].Detail | Should -Match 'Graph 403 Forbidden'
+            $Records[1].Item | Should -BeExactly "Message Center Reader -> $($script:DraP[3]) (Eligible)"
+            @($Records | Where-Object { $_.Item -match $script:DraP[2] }).Count | Should -Be 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                $Role -eq 'aaaaaaaa-0000-0000-0000-000000000002' -and $PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000003'
+            }
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
+            $CallerErrors = @(Select-DraCallerError $DraErrors)
+            @($CallerErrors).Count | Should -Be 1
+            "$($CallerErrors[0])" | Should -Match 'Graph 403 Forbidden'
+        }
+    }
+
+    It 'reports Failed, never an empty pair, when the pass read of a <Kind> pair writes a non-terminating error' -TestCases @(
+        @{ Kind = 'Eligible'; GetName = 'Get-OEREligibleDirectoryRoleAssignment' }
+        @{ Kind = 'Active'; GetName = 'Get-OERActiveDirectoryRoleAssignment' }
+    ) {
+        # The real Get cmdlets report a refused read as a NON-terminating error and return nothing;
+        # only -ErrorAction Stop on the pass read makes that a Failed row rather than an empty pair.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; GetName = $GetName } {
+            param($Kind, $GetName)
+            Mock $GetName {
+                if (-not $PrincipalId) {
+                    Write-Error -Message 'Could not read the directory role assignments: Forbidden.' -ErrorId 'GraphRequestFailed' -Category PermissionDenied
+                }
+            }
+            $Section = @(New-DraSection "Reports Reader|person1@example.com|$Kind")
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            @($Records)[0].Action | Should -Be 'Failed'
+            @($Records)[0].Item | Should -BeExactly "$($script:RR) ($Kind)"
+            @($Records)[0].Detail | Should -Match 'Forbidden'
+        }
+    }
+
+    It 'runs the pass before the item and whatever the item''s own fate: an unresolved first item still gets the pass rows, then its own Failed row' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[3]
+            )
+            $Section = @(New-DraSection 'No Such Role|person1@example.com|Eligible', 'Reports Reader|person2@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Skipped', 'Failed')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[3]) (Eligible)"
+            $Records[0].Detail | Should -BeLike "prune withheld: declared entry 'No Such Role -> person1@example.com (Eligible)'*"
+            $Records[1].Item | Should -BeExactly 'No Such Role -> person1@example.com (Eligible)'
+            $Records[1].Detail | Should -Match 'could not be resolved to a role definition id'
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'skips an entry whose assignmentType is neither Eligible nor Active in the pass, and that item reports its own Failed row' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Message Center Reader|person1@example.com|Permanent', 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection)
+            @($Records).Action | Should -Be @('Extra', 'Failed')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraP[2]) (Eligible)"
+            $Records[1].Item | Should -BeExactly 'Message Center Reader -> person1@example.com (Permanent)'
+            $Records[1].Detail | Should -Match "assignmentType 'Permanent' is not Eligible or Active"
+            Should -Invoke Resolve-OERDirectoryRoleDefinitionId -Times 0 -ParameterFilter { $Role -eq 'Message Center Reader' }
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter { $Role -eq 'aaaaaaaa-0000-0000-0000-000000000002' }
+            Should -Invoke Get-OERActiveDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'runs no pass without -ReconcileSection: no section read, no identity lookup and no pass rows' {
+        InModuleScope $script:moduleName {
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -Prune -WarningAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Unchanged')
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 0 -ParameterFilter { -not $PesterBoundParameters.ContainsKey('PrincipalId') }
+            Should -Invoke Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke Get-OERSignedInObjectId -Times 0
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+}

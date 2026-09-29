@@ -592,6 +592,34 @@ Describe 'Invoke-OERStructure directoryRoleAssignments section' {
         $Failed[0].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
         $Failed[0].Detail | Should -Match 'handler blew up'
     }
+
+    It 'passes -ReconcileSection on the first directoryRoleAssignments item only, and the whole section to every item' {
+        # The section-wide prune pass must run exactly once per run, and every invocation must see
+        # every declared entry so the pass keys the whole section, not just the first item.
+        InModuleScope $script:moduleName {
+            $script:DraCalls = [System.Collections.Generic.List[object]]::new()
+            Mock Sync-OERStructureDirectoryRoleAssignment {
+                $script:DraCalls.Add([PSCustomObject]@{
+                        Principal = [string]$Item.principal
+                        Reconcile = [bool]$ReconcileSection
+                        Declared  = @($DeclaredInSection | ForEach-Object { [string]$_.principal })
+                        Prune     = [bool]$Prune
+                    })
+            }
+        }
+        $Json = '{ "version":"1.0", "directoryRoleAssignments":[' +
+            '{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"Eligible"}, ' +
+            '{"role":"Message Center Reader","principal":"person2@example.com","assignmentType":"Active"} ] }'
+        Invoke-OERStructure -Json $Json -Prune -Confirm:$false -WarningAction SilentlyContinue | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:DraCalls.Principal) | Should -Be @('person1@example.com', 'person2@example.com')
+            @($script:DraCalls.Reconcile) | Should -Be @($true, $false)
+            foreach ($Call in $script:DraCalls) {
+                @($Call.Declared) | Should -Be @('person1@example.com', 'person2@example.com')
+                $Call.Prune | Should -BeTrue
+            }
+        }
+    }
 }
 
 Describe 'Invoke-OERStructure help pointer to the worked example' {

@@ -2,14 +2,15 @@ function Sync-OERStructureDirectoryRoleAssignment {
     <#
     .SYNOPSIS
     Reconciles one directoryRoleAssignments[] document entry against the live eligible or active
-    assignments of a Microsoft Entra directory role.
+    assignments of a Microsoft Entra directory role, and runs the section-wide prune pass once.
 
     .DESCRIPTION
     The orchestration handler for a single directoryRoleAssignments entry from the structure document.
     It is called by the Invoke-OERStructure engine and emits one ConvertTo-OERStructureResult record,
     labelled "<role> -> <principal> (<assignmentType>)", describing what was created, updated, left
     unchanged, skipped or failed. The engine labels a handler error for the same entry the same way, so
-    the two rows correlate.
+    the two rows correlate. The invocation that carries -ReconcileSection also emits the rows of the
+    section-wide prune pass described below, ahead of its own row.
 
     An entry is matched on role, principal and assignmentType. assignmentType Eligible reconciles an
     eligible assignment (Get-/New-OEREligibleDirectoryRoleAssignment) and Active an active one
@@ -47,13 +48,57 @@ function Sync-OERStructureDirectoryRoleAssignment {
     New cmdlet before any write, and that refusal is reported Failed; the policy is declared under
     directoryRoleManagementPolicies, which the engine applies first.
 
-    Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
-    emits Skipped, naming the planned change, instead of calling the New cmdlet. Reads always execute
-    even under -WhatIf so the plan is built from the live state. Every call goes through Microsoft
-    Graph; no Azure Resource Manager token is needed.
+    Section-wide prune pass (only when -ReconcileSection is set):
+    The engine sets -ReconcileSection on the section's FIRST item only and passes the whole section as
+    -DeclaredInSection to every item, so the pass runs once per apply run. It runs at the top of that
+    invocation, BEFORE the item's own reconcile and whatever that item's own outcome: a first item
+    whose role, principal or read fails still gets the pass, and its own row follows the pass rows.
+    (The roleAssignments pass differs here: it is skipped when its first item fails.)
+    - Keys. Every declared entry's role is resolved to its role definition id and its principal to an
+      object id. The pass is keyed on these RESOLVED ids, so one role written by name in one entry and
+      by its role definition id in another is one pair, and neither entry's live assignment is ever
+      reported Extra or removed. An entry whose assignmentType is neither Eligible nor Active is left
+      out of the pass; its own invocation reports it Failed.
+    - Pairs. Only the (role, assignmentType) pairs the document declares are read, one
+      Get-OEREligibleDirectoryRoleAssignment or Get-OERActiveDirectoryRoleAssignment -Role call per
+      pair, with -ErrorAction Stop. A role the document does not name is never read or touched, and a
+      role declared only for Eligible never has its active assignments read, and the reverse. A read
+      that fails, or that reports a non-terminating error, is one Failed row for that pair, labelled
+      "<role definition id> (<assignmentType>)", and its error is written; nothing in that pair is
+      removed or reported Extra, since a failed read is not an empty one. The other pairs still run.
+    - Candidates. Only the rows Select-OERManagedDirectoryRoleAssignment keeps, and only those of the
+      pair's own role, are candidates: an activation (an Activated schedule), an assignment held
+      through a group and one scoped to an administrative unit are never counted and never pruned. A
+      candidate whose principal a declared entry of the same pair names is kept. Every other one is
+      an undeclared assignment, reported under its own label "<role> -> <principal id>
+      (<assignmentType>)".
+    - Guards, in this order, for every undeclared candidate:
+      1. The step 1 rule, through ConvertTo-OERPruneWithheldResult, called first. An entry whose
+         PRINCIPAL cannot be resolved (nothing found, or the lookup throws) withholds its own pair;
+         an entry whose ROLE cannot be resolved withholds every pair of its assignmentType, since its
+         pair is unknown. A withheld candidate is reported Skipped with a Detail starting
+         "prune withheld: declared entry '<role> -> <principal> (<assignmentType>)' could not be
+         resolved", with or without -Prune. A failed entry lookup writes no error here: that entry's
+         own invocation writes its error and reports its Failed row under the same label.
+      2. The signed-in identity is unknown: Get-OERSignedInObjectId returns the object id recorded
+         from the Microsoft Graph token's oid claim (delegated and app-only alike, never /me); when
+         it returns nothing, every candidate is reported Skipped with a Detail starting
+         "prune withheld: the signed-in identity's object id is unknown", with or without -Prune.
+      3. The candidate is the signed-in identity's own assignment: it is reported Skipped, with or
+         without -Prune, and never removed.
+      4. Otherwise, without -Prune the candidate is reported Extra. With -Prune the handler writes a
+         warning naming it, gates $Caller.ShouldProcess, and removes it with
+         Remove-OEREligibleDirectoryRoleAssignment or Remove-OERActiveDirectoryRoleAssignment
+         -Role <id> -PrincipalId <id> -Confirm:$false, reporting Removed; a removal that fails is
+         reported Failed and its error is written. Under -WhatIf, or when the prompt is declined, it
+         is reported Skipped ("would remove ...").
+      Guards 2 and 3 are this module's own, not a Graph rejection, and their Details say so.
 
-    -Prune and -TenantAlias are accepted for a uniform Sync-OERStructure* signature; this handler
-    reconciles the declared entry only and removes nothing.
+    Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
+    emits Skipped, naming the planned change, instead of calling the New or Remove cmdlet. Reads always
+    execute even under -WhatIf so the plan is built from the live state. Every call goes through
+    Microsoft Graph; no Azure Resource Manager token is needed. -TenantAlias is accepted for a uniform
+    Sync-OERStructure* signature and is not used.
 
     .PARAMETER Item
     One element from the directoryRoleAssignments[] array in the structure document, as a
@@ -67,17 +112,37 @@ function Sync-OERStructureDirectoryRoleAssignment {
     with WriteError. The engine passes its own $PSCmdlet here.
 
     .PARAMETER Prune
-    Accepted for handler signature uniformity. This handler reconciles the declared entry only and
-    never removes an assignment.
+    When set (together with -ReconcileSection), an undeclared direct, tenant-scope assignment in a
+    (role, assignmentType) pair the section declares is removed after a ShouldProcess gate; without
+    it, such an assignment is only reported Extra. Activations, assignments held through a group or
+    scoped to an administrative unit, roles and kinds the document does not declare, and the
+    signed-in identity's own assignments are never removed. A candidate a guard withholds (an
+    unresolved entry, an unknown signed-in identity, or the identity's own assignment) is reported
+    Skipped with or without this switch.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Accepted for handler signature uniformity
     but not used by this handler.
 
+    .PARAMETER DeclaredInSection
+    Every entry of the document's directoryRoleAssignments section, this item included. The prune
+    pass builds its declared pairs and keys from it (see the pass above); an entry whose role or
+    principal cannot be resolved withholds the prune as described there, and its Failed row comes
+    from its own invocation. Used only with -ReconcileSection. Defaults to an empty array.
+
+    .PARAMETER ReconcileSection
+    When set, this invocation runs the section-wide prune pass once, before reconciling its own item
+    and independently of that item's outcome. The engine sets it on the section's first item only.
+
     .EXAMPLE
     Sync-OERStructureDirectoryRoleAssignment -Item $DocItem -Caller $PSCmdlet
     Reconciles one directory role assignment entry from the document against the live assignments of
     its role and principal.
+
+    .EXAMPLE
+    Sync-OERStructureDirectoryRoleAssignment -Item $Items[0] -Caller $PSCmdlet -DeclaredInSection $Items -ReconcileSection -Prune
+    Runs the section-wide prune pass over every (role, assignmentType) pair the section declares,
+    removing the undeclared direct assignments no guard withholds, then reconciles the first entry.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -87,17 +152,15 @@ function Sync-OERStructureDirectoryRoleAssignment {
         'PSReviewUnusedParameter', 'TenantAlias',
         Justification = 'TenantAlias is part of the uniform Sync-OERStructure* handler signature; accepted for future use and caller consistency even though this handler does not resolve tenant defaults.'
     )]
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
-        'PSReviewUnusedParameter', 'Prune',
-        Justification = 'Prune is part of the uniform Sync-OERStructure* handler signature; this handler reconciles the declared entry only, so the switch is accepted for caller uniformity.'
-    )]
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [object[]]$DeclaredInSection = @(),
+        [switch]$ReconcileSection
     )
 
     process {
@@ -108,6 +171,102 @@ function Sync-OERStructureDirectoryRoleAssignment {
         $KindText = if ($Kind) { $Kind } else { [string]$Item.assignmentType }
         $Label = "$($Item.role) -> $($Item.principal) ($KindText)"
         $PrincipalType = if (Test-OERDeclaredProperty -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
+
+        if ($ReconcileSection) {
+            # -- Section-wide prune pass (runs once, before this item, whatever this item's own fate) --
+            # Keyed on RESOLVED role ids, so one role written by name in one entry and by id in another
+            # is one pair. Only pairs the document declares are read, so a role or kind the document does
+            # not name is never touched.
+            $DeclaredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $PairUnresolved = [ordered]@{}
+            $KindUnresolved = @{
+                Eligible = [System.Collections.Generic.List[string]]::new()
+                Active   = [System.Collections.Generic.List[string]]::new()
+            }
+            foreach ($Entry in @($DeclaredInSection)) {
+                $EntryKind = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Entry.assignmentType)
+                if (-not $EntryKind) { continue }
+                $EntryLabel = "$($Entry.role) -> $($Entry.principal) ($EntryKind)"
+                $EntryRoleId = $null
+                try { $EntryRoleId = Resolve-OERDirectoryRoleDefinitionId -Role ([string]$Entry.role) }
+                catch { Remove-OERErrorRecord -Record $PSItem }
+                if (-not $EntryRoleId) {
+                    # Its pair is unknown, so it may be the counterpart of a candidate in ANY pair of
+                    # its kind: withhold them all. Its own invocation reports its Failed row.
+                    $KindUnresolved[$EntryKind].Add($EntryLabel)
+                    continue
+                }
+                $PairKey = "$EntryRoleId|$EntryKind"
+                if (-not $PairUnresolved.Contains($PairKey)) {
+                    $PairUnresolved[$PairKey] = [System.Collections.Generic.List[string]]::new()
+                }
+                $EntryParams = @{ Reference = [string]$Entry.principal }
+                if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { $EntryParams.Type = [string]$Entry.principalType }
+                $EntryPrincipalId = $null
+                try { $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams }
+                catch { Remove-OERErrorRecord -Record $PSItem }
+                if (-not $EntryPrincipalId) { $PairUnresolved[$PairKey].Add($EntryLabel); continue }
+                $null = $DeclaredKeys.Add("$EntryRoleId|$EntryPrincipalId|$EntryKind")
+            }
+
+            $SignedInId = Get-OERSignedInObjectId
+            foreach ($PairKey in @($PairUnresolved.Keys)) {
+                $PairRoleId, $PairKind = $PairKey -split '\|', 2
+                $Unresolved = @($PairUnresolved[$PairKey]) + @($KindUnresolved[$PairKind])
+                $Live = $null
+                try {
+                    $Live = if ($PairKind -eq 'Eligible') { @(Get-OEREligibleDirectoryRoleAssignment -Role $PairRoleId -ErrorAction Stop) }
+                            else { @(Get-OERActiveDirectoryRoleAssignment -Role $PairRoleId -ErrorAction Stop) }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $Caller.WriteError($PSItem)
+                    ConvertTo-OERStructureResult -Section $Section -Item "$PairRoleId ($PairKind)" -Action 'Failed' `
+                        -Detail "could not read the $($PairKind.ToLowerInvariant()) assignments of directory role '$PairRoleId', so nothing in this pair was pruned or reported Extra: $($PSItem.Exception.Message)" `
+                        -ErrorRecord $PSItem
+                    continue
+                }
+                foreach ($Candidate in @(Select-OERManagedDirectoryRoleAssignment -Assignment $Live -Kind $PairKind)) {
+                    if ($Candidate.RoleDefinitionId -ne $PairRoleId) { continue }
+                    if ($DeclaredKeys.Contains("$PairRoleId|$($Candidate.PrincipalId)|$PairKind")) { continue }
+                    $RoleText = if ($Candidate.RoleName) { $Candidate.RoleName } else { $PairRoleId }
+                    $CandItem = "$RoleText -> $($Candidate.PrincipalId) ($PairKind)"
+                    $CandLabel = "undeclared $($PairKind.ToLowerInvariant()) assignment of directory role '$RoleText' for principal '$($Candidate.PrincipalId)'"
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section $Section -Item $CandItem -Unresolved $Unresolved -Candidate $CandLabel
+                    if ($Withheld) { $Withheld; continue }
+                    if (-not $SignedInId) {
+                        ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
+                            -Detail "prune withheld: the signed-in identity's object id is unknown (no oid claim in the Microsoft Graph token), so $CandLabel may be its own assignment and is left in place (our own guard, not a Graph rejection). Sign in again with Connect-OER to reconcile this pair."
+                        continue
+                    }
+                    if ($Candidate.PrincipalId -eq $SignedInId) {
+                        ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' `
+                            -Detail "$CandLabel belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)"
+                        continue
+                    }
+                    if ($Prune) {
+                        $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
+                        Write-Warning "Sync-OERStructureDirectoryRoleAssignment: $PruneVerb $CandLabel."
+                        if ($Caller.ShouldProcess($CandItem, "Remove undeclared $($PairKind.ToLowerInvariant()) directory role assignment")) {
+                            try {
+                                $RemoveParams = @{ Role = $PairRoleId; PrincipalId = $Candidate.PrincipalId; Confirm = $false; ErrorAction = 'Stop' }
+                                $null = if ($PairKind -eq 'Eligible') { Remove-OEREligibleDirectoryRoleAssignment @RemoveParams -WarningAction SilentlyContinue }
+                                        else { Remove-OERActiveDirectoryRoleAssignment @RemoveParams -WarningAction SilentlyContinue }
+                                ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Removed' -Detail "removed $CandLabel"
+                            } catch {
+                                Remove-OERErrorRecord -Record $PSItem
+                                $Caller.WriteError($PSItem)
+                                ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Failed' `
+                                    -Detail "failed to remove $CandLabel`: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                            }
+                        } else {
+                            ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' -Detail "would remove $CandLabel"
+                        }
+                    } else {
+                        ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Extra' -Detail "$CandLabel (use -Prune to remove)"
+                    }
+                }
+            }
+        }
 
         # -- 0. The assignment kind --------------------------------------------------------
         # Only reachable by a direct call (the engine validates first); without this the handler
