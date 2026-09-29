@@ -26,7 +26,7 @@ Describe 'Get-OEREligibleDirectoryRoleAssignment' {
 
     It 'GETs roleEligibilitySchedules at tenant scope with -All and no other filter by default' {
         Get-OEREligibleDirectoryRoleAssignment | Out-Null
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Uri -eq "v1.0/roleManagement/directory/roleEligibilitySchedules?`$filter=directoryScopeId eq '/'&`$expand=principal,roleDefinition" -and $All
         }
     }
@@ -38,14 +38,14 @@ Describe 'Get-OEREligibleDirectoryRoleAssignment' {
 
     It 'gains a roleDefinitionId filter clause for -Role' {
         Get-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' | Out-Null
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Uri -like "*directoryScopeId eq '/' and roleDefinitionId eq '11111111-1111-1111-1111-111111111111'*"
         }
     }
 
     It 'gains a principalId filter clause for -User' {
         Get-OEREligibleDirectoryRoleAssignment -User 'person1@example.com' | Out-Null
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Uri -like "*directoryScopeId eq '/' and principalId eq 'aaaaaaaa-0000-0000-0000-000000000001'*"
         }
     }
