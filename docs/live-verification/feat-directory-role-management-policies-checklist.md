@@ -3593,7 +3593,7 @@ needs.
   groups starting with the prefix: 0
   ```
 
-- [ ] **T.6 Redact, then clean up.** Only once T.4 printed `True` twice and `0` twice, and T.3 printed `Teardown: Reader policy at oer-s63-rg: restored: True`: the raw folder holds the baseline file and the Reader record, the only records of the original rules. Move what the results above need from `docs/live-verification/raw/s63/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
+- [x] **T.6 Redact, then clean up.** Only once T.4 printed `True` twice and `0` twice, and T.3 printed `Teardown: Reader policy at oer-s63-rg: restored: True`: the raw folder holds the baseline file and the Reader record, the only records of the original rules. Move what the results above need from `docs/live-verification/raw/s63/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
   Object ids to `00000000-0000-0000-0000-0000000000NN` -- the two role definition ids and the policy
   half of each directory-role policy id included -- the tenant id to `<TenantId>`, the subscription id
@@ -3618,4 +3618,18 @@ needs.
   `example.com`, the tenant or subscription id, the organization or domain name -- means redaction
   is not finished: redact it before the commit, and if it was a credential, rotate it
   ([README.md](README.md), "Credentials").
-  **Result:**
+  **Result:** PASS -- 2026-09-29, run by Claude Code as the certificate identity `oer-live-cc`
+  (app-only), every output below passed through the run's redaction first. Run once T.4 printed
+  `True` twice and `0` twice and T.3 printed `restored: True` for the Reader policy. Every result
+  above was moved in redacted, and nothing was copied out of the baseline file or the Reader
+  record. Before the commit, a scan of this file found none of the tenant values -- the tenant,
+  subscription and application ids, the thumbprint, the organization, the domain and the clone path
+  -- no GUID outside the placeholder range, no address outside `example.com`, and nothing
+  token-shaped, and `tests/QA/dochygiene.tests.ps1`, with its new pass for an id wrapped over a
+  line break, was green. The results were committed and pushed first; the folder was deleted after
+  that, so `git status` printed nothing: this file was already committed and nothing under `raw/`
+  was ever staged.
+
+  ```text
+  raw/s63 exists after: False
+  ```
