@@ -17,7 +17,7 @@ Describe 'Resolve-OERApplicationId' {
         InModuleScope $script:moduleName {
             Mock Invoke-OERGraphRequest { @{ value = @(@{ id = 'sp-9'; displayName = 'Contoso Expense Portal' }) } }
             Resolve-OERApplicationId -DisplayName 'Contoso Expense Portal' | Should -Be 'sp-9'
-            Should -Invoke Invoke-OERGraphRequest -Times 1 -ParameterFilter {
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 # Spaces are percent-encoded (%20) so the value survives transport.
                 $Uri -like "*servicePrincipals?*displayName eq 'Contoso%20Expense%20Portal'*"
             }
@@ -42,7 +42,7 @@ Describe 'Resolve-OERApplicationId' {
             Mock Invoke-OERGraphRequest { @{ value = @() } }
             Resolve-OERApplicationId -DisplayName "O'Brien App" | Out-Null
             # Doubled quote first (''), then percent-encoded ('' -> %27%27, space -> %20).
-            Should -Invoke Invoke-OERGraphRequest -Times 1 -ParameterFilter { $Uri -like "*O%27%27Brien%20App*" }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like "*O%27%27Brien%20App*" }
         }
     }
 

@@ -1078,6 +1078,8 @@ Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal di
             $r[1].Detail | Should -Match ('^prune withheld: declared entry ''{0}'' could not be resolved' -f [regex]::Escape('Reader -> Dup App @ subscription:Prod'))
             @($r | Where-Object { $_.Action -in @('Extra', 'Removed') }).Count | Should -Be 0
             Should -Invoke Remove-OERRoleAssignment -Times 0
+            # The withheld row comes from the servicePrincipals answer, not the catch-all mock's throw.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
         }
     }
 }

@@ -1328,6 +1328,8 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment with an ambiguous service pri
             @($Records | Where-Object { $_.Action -in @('Extra', 'Removed') }).Count | Should -Be 0
             Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
             Should -Invoke Remove-OERActiveDirectoryRoleAssignment -Times 0
+            # The withheld row comes from the servicePrincipals answer, not the catch-all mock's throw.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
         }
     }
 }

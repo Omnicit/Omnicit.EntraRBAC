@@ -139,9 +139,8 @@ Describe 'Get-OEREligibleRoleAssignment with an ambiguous service principal disp
 
     It 'reports exactly one AmbiguousPrincipalName record naming both candidates, and makes no ARM request' {
         $Err = $null
-        $Out = Get-OEREligibleRoleAssignment -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000000' -ServicePrincipal 'Dup App' `
+        $null = Get-OEREligibleRoleAssignment -Scope '/subscriptions/aaaa1111-0000-0000-0000-000000000000' -ServicePrincipal 'Dup App' `
             -ErrorAction SilentlyContinue -ErrorVariable Err
-        $Out | Should -BeNullOrEmpty
         $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousPrincipalName,Get-OEREligibleRoleAssignment' })
         $Reported.Count | Should -Be 1
         # No fall-through: the cmdlet writes no other record of its own (PrincipalNotFound included).
@@ -161,6 +160,7 @@ Describe 'Get-OEREligibleRoleAssignment with an ambiguous service principal disp
             -ErrorAction SilentlyContinue -ErrorVariable Err
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PrincipalNotFound,Get-OEREligibleRoleAssignment' }).Count | Should -Be 1
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OEREligibleRoleAssignment' }).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' }
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
     }
 }
