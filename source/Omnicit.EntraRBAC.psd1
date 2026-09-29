@@ -83,6 +83,9 @@
         # Directory roles
         'Get-OERDirectoryRoleManagementPolicy'
         'Set-OERDirectoryRoleManagementPolicy'
+        # Directory role assignments
+        'Get-OEREligibleDirectoryRoleAssignment'
+        'Get-OERActiveDirectoryRoleAssignment'
         'Get-OERManagementGroup'
         'Get-OERSubscription'
         'Get-OERRoleDefinition'
