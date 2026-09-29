@@ -364,4 +364,154 @@ Describe 'Resolve-OERPolicyRulePatch' {
             }
         }
     }
+
+    Context 'Graph mode (directory-role policies)' {
+        # Directory-role policies live in Microsoft Graph v1.0 and share the ARM rule ids and field
+        # names, so the same builder serves both transports. Two things differ: the approver shape
+        # (v1.0 singleUser{userId} / groupMembers{groupId}, beta-style id as a fallback) and the
+        # MFA / authentication-context convention (Graph leaves an untouched combination alone).
+
+        It 'keys approvers on the Graph object id in Graph mode, which the ARM key cannot see' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'; ruleType = 'RoleManagementPolicyApprovalRule'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'SingleStage'
+                            approvalStages = @([PSCustomObject]@{ approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; escalationTimeInMinutes = 0; isEscalationEnabled = $false
+                                    primaryApprovers = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000001' })
+                                    escalationApprovers = @() }) } }
+                )
+                $Setting = @{ PrimaryApprovers = @(@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000002' }) }
+
+                $Graph = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting -ApproverShape Graph
+                @($Graph.ChangedRuleId) | Should -Contain 'Approval_EndUser_Assignment'
+
+                # The default ARM key reads id and userType, which a v1.0 approver does not carry, so
+                # both sides describe as "||False" and a genuinely different approver reads as equal.
+                # That blindness is why the parameter exists.
+                $Arm = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting
+                @($Arm.ChangedRuleId).Count | Should -Be 0
+            }
+        }
+
+        It 'keeps the Graph key through an approvalStages array of more than one stage' {
+            # A one-stage approvalStages array reaches the comparison as the bare stage object (the
+            # field reader unrolls a one-element array), so only a multi-stage rule walks the ARRAY
+            # branch of the recursion -- which must hand the approver shape on as well.
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'Serial'
+                            approvalStages = @(
+                                [PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                    primaryApprovers = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000001' }) }
+                                [PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                    primaryApprovers = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000003' }) }
+                            ) } }
+                )
+                $Setting = @{ PrimaryApprovers = @(@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000002' }) }
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting -ApproverShape Graph
+                @($Plan.ChangedRuleId) | Should -Contain 'Approval_EndUser_Assignment'
+            }
+        }
+
+        It 'treats equal Graph approver sets as unchanged (id case, description and a missing isBackup ignored)' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'SingleStage'
+                            approvalStages = @([PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                    primaryApprovers = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'bbbbbbbb-0000-0000-0000-000000000001'; description = 'Approvers'; isBackup = $false }) }) } }
+                )
+                $Setting = @{ PrimaryApprovers = @(@{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'BBBBBBBB-0000-0000-0000-000000000001' }) }
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting -ApproverShape Graph
+                @($Plan.ChangedRuleId).Count | Should -Be 0
+                # Unchanged means the ORIGINAL rule is passed through, not the clone.
+                [object]::ReferenceEquals(@($Plan.Rules)[0], $Rules[0]) | Should -BeTrue
+            }
+        }
+
+        It 'reads the beta-style id of a live Graph approver as its object id' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'SingleStage'
+                            approvalStages = @([PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                    primaryApprovers = @([PSCustomObject]@{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'bbbbbbbb-0000-0000-0000-000000000001' }) }) } }
+                )
+                $Setting = @{ PrimaryApprovers = @(@{ groupId = 'bbbbbbbb-0000-0000-0000-000000000001' }) }
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting -ApproverShape Graph
+                @($Plan.ChangedRuleId).Count | Should -Be 0
+            }
+        }
+
+        It 'still reports a different Graph approver built by New-OERApproverObject as a change' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'SingleStage'
+                            approvalStages = @([PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                    primaryApprovers = @(New-OERApproverObject -Spec @{ Group = 'bbbbbbbb-0000-0000-0000-000000000001' }) }) } }
+                )
+                $Setting = @{ PrimaryApprovers = @(
+                        New-OERApproverObject -Spec @{ Group = 'bbbbbbbb-0000-0000-0000-000000000001' }
+                        New-OERApproverObject -Spec @{ User = 'aaaaaaaa-0000-0000-0000-000000000001' }
+                    ) }
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting $Setting -ApproverShape Graph
+                @($Plan.ChangedRuleId) | Should -Be @('Approval_EndUser_Assignment')
+                $Sent = @(@($Plan.Rules)[0].setting.approvalStages[0].primaryApprovers)
+                $Sent.Count | Should -Be 2
+            }
+        }
+
+        It 'leaves a pre-existing MFA and authentication-context combination alone when told not to resolve it' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+                    [PSCustomObject]@{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1' }
+                    [PSCustomObject]@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                )
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ ActivationMaxHours = 4 } -ResolveUnrequestedConflict $false
+                @($Plan.ChangedRuleId) | Should -Not -Contain 'Enablement_EndUser_Assignment'
+                @($Plan.ChangedRuleId) | Should -Not -Contain 'AuthenticationContext_EndUser_Assignment'
+                @($Plan.ChangedRuleId) | Should -Be @('Expiration_EndUser_Assignment')
+                $Plan.ConflictResolution.Action | Should -Be 'None'
+                @((@($Plan.Rules) | Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' }).enabledRules) | Should -Contain 'MultiFactorAuthentication'
+
+                # The default ($true, the ARM full-set PATCH) clears MFA on the same input.
+                $Default = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ ActivationMaxHours = 4 }
+                @($Default.ChangedRuleId) | Should -Contain 'Enablement_EndUser_Assignment'
+                $Default.ConflictResolution.Action | Should -Be 'ClearMfa'
+            }
+        }
+
+        It 'returns the conflict decision it applied as ConflictResolution' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+                    [PSCustomObject]@{ id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $false; claimValue = '' }
+                )
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ AuthenticationContextId = 'c2' } -ApproverShape Graph -ResolveUnrequestedConflict $false
+                $Plan.ConflictResolution.Action | Should -Be 'ClearMfa'
+                $Plan.ConflictResolution.Reason | Should -Not -BeNullOrEmpty
+                @($Plan.ChangedRuleId) | Should -Contain 'Enablement_EndUser_Assignment'
+                @($Plan.ChangedRuleId) | Should -Contain 'AuthenticationContext_EndUser_Assignment'
+            }
+        }
+
+        It 'returns a None ConflictResolution when no exclusion rule is involved' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @([PSCustomObject]@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' })
+                $Plan = Resolve-OERPolicyRulePatch -CurrentRule $Rules -Setting @{ ActivationMaxHours = 4 }
+                $Plan.ConflictResolution.Action | Should -Be 'None'
+                @($Plan.PSObject.Properties.Name) | Should -Be @('Rules', 'ChangedRuleId', 'ConflictResolution')
+            }
+        }
+
+        It 'refuses an approver shape other than Arm or Graph' {
+            InModuleScope Omnicit.EntraRBAC {
+                # The error id pins a ValidateSet refusal, not an unknown-parameter binding failure.
+                { Resolve-OERPolicyRulePatch -CurrentRule @() -Setting @{} -ApproverShape 'Beta' -ErrorAction Stop } | Should -Throw -ErrorId 'ParameterArgumentValidationError,Resolve-OERPolicyRulePatch'
+            }
+        }
+    }
 }

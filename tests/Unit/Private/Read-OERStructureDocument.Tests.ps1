@@ -317,3 +317,24 @@ Describe 'Read-OERStructureDocument' {
         }
     }
 }
+
+Describe 'Read-OERStructureDocument directoryRoleManagementPolicies' {
+    # The section carries no enum-valued field, so the casing normalization has nothing to rewrite in
+    # it: the document must come out exactly as it went in, and still validate.
+    It 'passes the section through unchanged, and the result validates' {
+        InModuleScope $script:moduleName {
+            $Json = @'
+{ "version": "1.0", "directoryRoleManagementPolicies": [ {
+  "role": "reports reader", "activationMaxHours": 4, "requireMfaOnActivation": false,
+  "requireApproval": true, "approvers": { "users": [ "Person1@Example.com" ], "groups": [] },
+  "authenticationContextId": null, "eligibleDurationDays": 365 } ] }
+'@
+            $Before = $Json | ConvertFrom-Json -Depth 32 | ConvertTo-Json -Depth 10
+            $Doc = Read-OERStructureDocument -Json $Json
+            ($Doc | ConvertTo-Json -Depth 10) | Should -BeExactly $Before
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+}

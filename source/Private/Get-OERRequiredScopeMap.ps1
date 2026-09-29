@@ -160,6 +160,11 @@ function Get-OERRequiredScopeMap {
             Note = 'Tenant Profile PSD1 files on local disk only. No tenant call.'
         }
         @{
+            Cmdlet = 'Get-OERDirectoryRoleManagementPolicy'; Transport = 'Graph'
+            GraphScope = 'RoleManagement.Read.Directory'
+            Note = 'RoleManagement.Read.Directory resolves -Role through roleDefinitions and also covers the policy read; with -PolicyId alone the least privileged permission is RoleManagementPolicy.Read.Directory. The default sign-in''s RoleManagement.ReadWrite.Directory covers both.'
+        }
+        @{
             Cmdlet = 'Get-OEREligibleRoleAssignment'; Transport = 'GraphAndArm'
             GraphScope = 'Application.Read.All', 'Group.Read.All', 'User.ReadBasic.All'
             AzureRole = 'Reader'
@@ -240,7 +245,7 @@ function Get-OERRequiredScopeMap {
                          'RoleManagement.ReadWrite.Directory',
                          'RoleManagementPolicy.ReadWrite.AzureADGroup'
             AzureRole = 'User Access Administrator', 'Owner', 'Role Based Access Control Administrator'
-            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups.'
+            Note = 'The scopes listed are the union over every document section; a document touching fewer sections needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user and service-principal reads behind the friendly-name lookups. RoleManagement.ReadWrite.Directory also covers the directoryRoleManagementPolicies section (role definition reads and policy rule updates).'
         }
         @{
             Cmdlet = 'New-OERAccessPackage'; Transport = 'Graph'
@@ -423,6 +428,12 @@ function Get-OERRequiredScopeMap {
         @{
             Cmdlet = 'Set-OERConfiguration'; Transport = 'None'
             Note = 'Tenant Profile PSD1 files on local disk only. No tenant call.'
+        }
+        @{
+            Cmdlet = 'Set-OERDirectoryRoleManagementPolicy'; Transport = 'Graph'
+            GraphScope = 'Application.Read.All', 'Group.Read.All', 'RoleManagement.Read.Directory',
+                         'RoleManagementPolicy.ReadWrite.Directory', 'User.ReadBasic.All'
+            Note = 'RoleManagementPolicy.ReadWrite.Directory is the least privileged permission for the rule update; RoleManagement.Read.Directory resolves -Role through roleDefinitions and is not used with -PolicyId. The default sign-in''s RoleManagement.ReadWrite.Directory covers both. User.ReadBasic.All, Group.Read.All and Application.Read.All only resolve -ApproverUser and -ApproverGroup, the same set the Set-OERRoleManagementPolicy row lists. A delegated caller also needs the Privileged Role Administrator role.'
         }
         @{
             Cmdlet = 'Set-OERGroup'; Transport = 'Graph'

@@ -33,7 +33,12 @@ function Test-OERStructureSchema {
     declared together with a non-empty approvers block is the same Warning naming the precedence, at
     the pimPolicy block's own path. requireMfaOnActivation together with a non-empty authenticationContextId is an Error -- Azure
     PIM rejects both being set at once, a rule draft-07 cannot express, so the offline validator
-    enforces it here. An unknown per-item key in the roleAssignments or roleManagementPolicies section, a
+    enforces it here. A directoryRoleManagementPolicies item (the PIM policy of a Microsoft Entra
+    directory role, which always lives at tenant scope) is validated by exactly the same rules as a
+    roleManagementPolicies item, through one shared nested helper so the two cannot drift, except that
+    it takes no scope: only role is required, a scope key is reported as an unknown key, and the
+    MFA/authentication-context Error names PIM rather than Azure PIM. An unknown per-item key in the
+    roleAssignments, roleManagementPolicies or directoryRoleManagementPolicies section, a
     groups[] item, or a groups[] pimPolicy block (root, or a nested member/owner block) is reported as a
     Warning naming the key, because the apply handlers for those sections and blocks read a fixed field
     list and would otherwise drop it silently. A pimPolicy key matching one of the five field names the
@@ -185,7 +190,8 @@ function Test-OERStructureSchema {
     }
 
     $KnownTop = @('version', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
-        'accessPackages', 'accessReviews', 'roleAssignments', 'roleManagementPolicies')
+        'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'roleAssignments',
+        'roleManagementPolicies')
 
     # Rule 1: version must be present and a non-empty string
     if (-not (Test-HasProp -Node $Document -Name 'version') -or
@@ -1200,6 +1206,135 @@ function Test-OERStructureSchema {
         }
     }
 
+    # Rules 10 and 10b share one item rule set. A roleManagementPolicies item (the PIM policy of an
+    # Azure role at an Azure scope) and a directoryRoleManagementPolicies item (the PIM policy of a
+    # Microsoft Entra directory role, always at tenant scope) declare the same policy fields, apart
+    # from scope, so both sections run this one nested helper and the rules cannot drift between
+    # them. Every message is built from -Path, so the roleManagementPolicies wording is unchanged;
+    # -PimLabel only names the product in the MFA/authentication-context message ('Azure PIM' for the
+    # Azure section, 'PIM' for the directory section).
+    function Test-PimPolicySectionItem {
+        param(
+            [object]$Node, [string]$Section, [string]$Path, [string]$Item,
+            [string[]]$KnownKey, [string[]]$RequiredKey, [string]$PimLabel
+        )
+
+        Add-UnknownKeyWarning -Node $Node -Section $Section -Item $Item -Path $Path -KnownKey $KnownKey
+
+        foreach ($Req in $RequiredKey) {
+            if (-not (Test-HasProp -Node $Node -Name $Req)) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.$Req" `
+                    -Message "'$Req' is required at $Path."
+            }
+        }
+
+        foreach ($RmpBoolProp in @('allowPermanentEligibility', 'allowPermanentActiveAssignment',
+                'requireMfaOnActivation', 'requireJustificationOnActivation',
+                'requireTicketOnActivation', 'requireApproval',
+                'requireMfaOnActiveAssignment', 'requireJustificationOnActiveAssignment')) {
+            if (Test-HasProp -Node $Node -Name $RmpBoolProp) {
+                if ($Node.$RmpBoolProp -isnot [bool]) {
+                    Add-Finding -Section $Section -Item $Item `
+                        -Path "$Path.$RmpBoolProp" `
+                        -Message "'$RmpBoolProp' at $Path must be a boolean."
+                }
+            }
+        }
+
+        if (Test-HasProp -Node $Node -Name 'activationMaxHours') {
+            if (-not (Test-IsInt -Value $Node.activationMaxHours -Min 1 -Max 24)) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.activationMaxHours" `
+                    -Message "'activationMaxHours' at $Path must be an integer between 1 and 24."
+            }
+        }
+
+        foreach ($RmpDurProp in @('eligibleDurationDays', 'activeDurationDays')) {
+            if (Test-HasProp -Node $Node -Name $RmpDurProp) {
+                if (-not (Test-IsInt -Value $Node.$RmpDurProp -Min 1 -Max 3650)) {
+                    Add-Finding -Section $Section -Item $Item `
+                        -Path "$Path.$RmpDurProp" `
+                        -Message "'$RmpDurProp' at $Path must be an integer between 1 and 3650."
+                }
+            }
+        }
+
+        # Approvers only take effect when approval is required. Both write paths turn approval on
+        # whenever approvers are sent -- Resolve-OERPolicyRulePatch sets isApprovalRequired = true
+        # unconditionally for the Azure section, and Set-OERDirectoryRoleManagementPolicy treats
+        # supplied approvers as implying approval -- so the apply engine drops the approvers rather
+        # than silently re-enabling approval on a policy the document says must have it off. Warn
+        # (never Error -- such a document is still valid, and Get-OERInventory itself can produce
+        # one) so the precedence is visible up front.
+        if ((Test-HasProp -Node $Node -Name 'requireApproval') -and ($Node.requireApproval -eq $false)) {
+            $DeclaredApproverCount = 0
+            foreach ($ApproverKind in @('users', 'groups')) {
+                if (Test-HasProp -Node $Node.approvers -Name $ApproverKind) {
+                    $DeclaredApproverCount += @($Node.approvers.$ApproverKind).Count
+                }
+            }
+            if ($DeclaredApproverCount -gt 0) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.approvers" `
+                    -Message "'requireApproval' is false at $Path, so the declared 'approvers' are ignored; requireApproval takes precedence and the approvers are not written. Set 'requireApproval' to true to apply them, or drop the approvers block." `
+                    -Severity 'Warning'
+            }
+        }
+
+        if (Test-HasProp -Node $Node -Name 'approvers') {
+            $Approvers = $Node.approvers
+            if ($Approvers -isnot [PSCustomObject]) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.approvers" `
+                    -Message "'approvers' at $Path must be an object with optional users and groups arrays."
+            } else {
+                foreach ($ApproverKind in @('users', 'groups')) {
+                    if (Test-HasProp -Node $Approvers -Name $ApproverKind) {
+                        $ApproverVal = $Approvers.$ApproverKind
+                        if ($ApproverVal -isnot [System.Collections.IEnumerable] -or $ApproverVal -is [string]) {
+                            Add-Finding -Section $Section -Item $Item `
+                                -Path "$Path.approvers.$ApproverKind" `
+                                -Message "'approvers.$ApproverKind' at $Path must be an array."
+                        }
+                    }
+                }
+            }
+        }
+
+        # An empty string is the documented "disable the authentication context" value; any other
+        # non-c<digits> value is rejected at runtime by Set-OERRoleManagementPolicy and
+        # Set-OERDirectoryRoleManagementPolicy alike, so catch it offline instead.
+        if (Test-HasProp -Node $Node -Name 'authenticationContextId') {
+            $AuthCtx = [string]$Node.authenticationContextId
+            if ($AuthCtx -and $AuthCtx -notmatch '^c\d+$') {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path "$Path.authenticationContextId" `
+                    -Message "'authenticationContextId' at $Path must look like 'c1', or be an empty string to disable it. Got: '$AuthCtx'."
+            }
+            # PIM treats MFA on activation and an authentication context as mutually exclusive;
+            # asking for both in one apply is rejected (by ARM for an Azure role, and by
+            # Set-OERDirectoryRoleManagementPolicy's InvalidPolicyChange refusal for a directory
+            # role), so fail offline.
+            if ($AuthCtx -and (Test-HasProp -Node $Node -Name 'requireMfaOnActivation') -and
+                ($Node.requireMfaOnActivation -eq $true)) {
+                Add-Finding -Section $Section -Item $Item `
+                    -Path $Path `
+                    -Message "'requireMfaOnActivation' and 'authenticationContextId' at $Path are mutually exclusive in $PimLabel; declare only one."
+            }
+        }
+    }
+
+    # The item fields both PIM policy sections declare, apart from scope. 'id' is the key
+    # Get-OERInventory -IncludeId stamps on an exported entry, accepted so a captured document
+    # re-applies without an unknown-key warning.
+    $PimPolicyItemKey = @('role', 'allowPermanentEligibility', 'eligibleDurationDays',
+        'allowPermanentActiveAssignment', 'activeDurationDays', 'activationMaxHours',
+        'requireMfaOnActivation', 'requireJustificationOnActivation',
+        'requireTicketOnActivation', 'requireApproval', 'approvers',
+        'authenticationContextId', 'requireMfaOnActiveAssignment',
+        'requireJustificationOnActiveAssignment', 'id')
+
     # Rule 10: roleManagementPolicies
     if (Test-HasProp -Node $Document -Name 'roleManagementPolicies') {
         if (Test-SectionIsArray -SectionName 'roleManagementPolicies') {
@@ -1208,113 +1343,24 @@ function Test-OERStructureSchema {
                 $RMP = $RMPs[$I]
                 $RMPPath = "roleManagementPolicies[$I]"
                 $RMPItem = if (Test-HasProp -Node $RMP -Name 'role') { $RMP.role } else { "roleManagementPolicies[$I]" }
+                Test-PimPolicySectionItem -Node $RMP -Section 'roleManagementPolicies' -Path $RMPPath -Item $RMPItem `
+                    -KnownKey (@('scope') + $PimPolicyItemKey) -RequiredKey @('scope', 'role') -PimLabel 'Azure PIM'
+            }
+        }
+    }
 
-                Add-UnknownKeyWarning -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath `
-                    -KnownKey @('scope', 'role', 'allowPermanentEligibility', 'eligibleDurationDays',
-                        'allowPermanentActiveAssignment', 'activeDurationDays', 'activationMaxHours',
-                        'requireMfaOnActivation', 'requireJustificationOnActivation',
-                        'requireTicketOnActivation', 'requireApproval', 'approvers',
-                        'authenticationContextId', 'requireMfaOnActiveAssignment',
-                        'requireJustificationOnActiveAssignment', 'id')
-
-                foreach ($Req in @('scope', 'role')) {
-                    if (-not (Test-HasProp -Node $RMP -Name $Req)) {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path "$RMPPath.$Req" `
-                            -Message "'$Req' is required at $RMPPath."
-                    }
-                }
-
-                foreach ($RmpBoolProp in @('allowPermanentEligibility', 'allowPermanentActiveAssignment',
-                        'requireMfaOnActivation', 'requireJustificationOnActivation',
-                        'requireTicketOnActivation', 'requireApproval',
-                        'requireMfaOnActiveAssignment', 'requireJustificationOnActiveAssignment')) {
-                    if (Test-HasProp -Node $RMP -Name $RmpBoolProp) {
-                        if ($RMP.$RmpBoolProp -isnot [bool]) {
-                            Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                                -Path "$RMPPath.$RmpBoolProp" `
-                                -Message "'$RmpBoolProp' at $RMPPath must be a boolean."
-                        }
-                    }
-                }
-
-                if (Test-HasProp -Node $RMP -Name 'activationMaxHours') {
-                    if (-not (Test-IsInt -Value $RMP.activationMaxHours -Min 1 -Max 24)) {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path "$RMPPath.activationMaxHours" `
-                            -Message "'activationMaxHours' at $RMPPath must be an integer between 1 and 24."
-                    }
-                }
-
-                foreach ($RmpDurProp in @('eligibleDurationDays', 'activeDurationDays')) {
-                    if (Test-HasProp -Node $RMP -Name $RmpDurProp) {
-                        if (-not (Test-IsInt -Value $RMP.$RmpDurProp -Min 1 -Max 3650)) {
-                            Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                                -Path "$RMPPath.$RmpDurProp" `
-                                -Message "'$RmpDurProp' at $RMPPath must be an integer between 1 and 3650."
-                        }
-                    }
-                }
-
-                # Approvers only take effect when approval is required. Resolve-OERPolicyRulePatch sets
-                # isApprovalRequired = true unconditionally whenever approvers are sent, so the apply
-                # engine drops the approvers rather than silently re-enabling approval on a policy the
-                # document says must have it off. Warn (never Error -- such a document is still valid,
-                # and Get-OERInventory itself can produce one) so the precedence is visible up front.
-                if ((Test-HasProp -Node $RMP -Name 'requireApproval') -and ($RMP.requireApproval -eq $false)) {
-                    $DeclaredApproverCount = 0
-                    foreach ($ApproverKind in @('users', 'groups')) {
-                        if (Test-HasProp -Node $RMP.approvers -Name $ApproverKind) {
-                            $DeclaredApproverCount += @($RMP.approvers.$ApproverKind).Count
-                        }
-                    }
-                    if ($DeclaredApproverCount -gt 0) {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path "$RMPPath.approvers" `
-                            -Message "'requireApproval' is false at $RMPPath, so the declared 'approvers' are ignored; requireApproval takes precedence and the approvers are not written. Set 'requireApproval' to true to apply them, or drop the approvers block." `
-                            -Severity 'Warning'
-                    }
-                }
-
-                if (Test-HasProp -Node $RMP -Name 'approvers') {
-                    $Approvers = $RMP.approvers
-                    if ($Approvers -isnot [PSCustomObject]) {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path "$RMPPath.approvers" `
-                            -Message "'approvers' at $RMPPath must be an object with optional users and groups arrays."
-                    } else {
-                        foreach ($ApproverKind in @('users', 'groups')) {
-                            if (Test-HasProp -Node $Approvers -Name $ApproverKind) {
-                                $ApproverVal = $Approvers.$ApproverKind
-                                if ($ApproverVal -isnot [System.Collections.IEnumerable] -or $ApproverVal -is [string]) {
-                                    Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                                        -Path "$RMPPath.approvers.$ApproverKind" `
-                                        -Message "'approvers.$ApproverKind' at $RMPPath must be an array."
-                                }
-                            }
-                        }
-                    }
-                }
-
-                # An empty string is the documented "disable the authentication context" value; any
-                # other non-c<digits> value is rejected by Set-OERRoleManagementPolicy at runtime, so
-                # catch it offline instead.
-                if (Test-HasProp -Node $RMP -Name 'authenticationContextId') {
-                    $AuthCtx = [string]$RMP.authenticationContextId
-                    if ($AuthCtx -and $AuthCtx -notmatch '^c\d+$') {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path "$RMPPath.authenticationContextId" `
-                            -Message "'authenticationContextId' at $RMPPath must look like 'c1', or be an empty string to disable it. Got: '$AuthCtx'."
-                    }
-                    # Azure PIM treats MFA on activation and an authentication context as mutually
-                    # exclusive; asking for both in one apply is rejected by ARM, so fail offline.
-                    if ($AuthCtx -and (Test-HasProp -Node $RMP -Name 'requireMfaOnActivation') -and
-                        ($RMP.requireMfaOnActivation -eq $true)) {
-                        Add-Finding -Section 'roleManagementPolicies' -Item $RMPItem `
-                            -Path $RMPPath `
-                            -Message "'requireMfaOnActivation' and 'authenticationContextId' at $RMPPath are mutually exclusive in Azure PIM; declare only one."
-                    }
-                }
+    # Rule 10b: directoryRoleManagementPolicies -- the same item rules without scope. A directory
+    # role policy always lives at tenant scope, so role is the only required key and a declared
+    # scope key is reported as an unknown key that the apply handler ignores.
+    if (Test-HasProp -Node $Document -Name 'directoryRoleManagementPolicies') {
+        if (Test-SectionIsArray -SectionName 'directoryRoleManagementPolicies') {
+            $DRMPs = @($Document.directoryRoleManagementPolicies)
+            for ($I = 0; $I -lt $DRMPs.Count; $I++) {
+                $DRMP = $DRMPs[$I]
+                $DRMPPath = "directoryRoleManagementPolicies[$I]"
+                $DRMPItem = if (Test-HasProp -Node $DRMP -Name 'role') { $DRMP.role } else { "directoryRoleManagementPolicies[$I]" }
+                Test-PimPolicySectionItem -Node $DRMP -Section 'directoryRoleManagementPolicies' -Path $DRMPPath -Item $DRMPItem `
+                    -KnownKey $PimPolicyItemKey -RequiredKey @('role') -PimLabel 'PIM'
             }
         }
     }

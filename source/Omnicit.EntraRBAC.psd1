@@ -80,6 +80,9 @@
         'Stop-OERAccessReviewInstance'
         'Invoke-OERAccessReviewInstanceDecision'
         'Send-OERAccessReviewReminder'
+        # Directory roles
+        'Get-OERDirectoryRoleManagementPolicy'
+        'Set-OERDirectoryRoleManagementPolicy'
         'Get-OERManagementGroup'
         'Get-OERSubscription'
         'Get-OERRoleDefinition'

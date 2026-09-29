@@ -443,3 +443,89 @@ Describe 'Invoke-OERStructure output for a group that gains PIM eligibility' {
         @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'eligibility' }).Count | Should -Be 2
     }
 }
+
+Describe 'Invoke-OERStructure directoryRoleManagementPolicies section' {
+    # The directory-role policy section is Graph-only: it is dispatched after accessReviews and before
+    # the two Azure sections, and it never asks Initialize-OERAuth for an ARM token.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        InModuleScope $script:moduleName {
+            $script:Order = [System.Collections.Generic.List[string]]::new()
+            Mock Sync-OERStructureGroup { $script:Order.Add('groups') }
+            Mock Sync-OERStructureAccessReview { $script:Order.Add('accessReviews') }
+            Mock Sync-OERStructureDirectoryRoleManagementPolicy { $script:Order.Add('directoryRoleManagementPolicies') }
+            Mock Sync-OERStructureRoleAssignment { $script:Order.Add('roleAssignments') }
+            Mock Sync-OERStructureRoleManagementPolicy { $script:Order.Add('roleManagementPolicies') }
+        }
+    }
+
+    It 'accepts DirectoryRoleManagementPolicies in -Include and includes it by default' {
+        $Param = (Get-Command -Module $script:moduleName -Name Invoke-OERStructure).Parameters['Include']
+        $ValidSet = @($Param.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }).ValidValues
+        $ValidSet | Should -Contain 'DirectoryRoleManagementPolicies'
+
+        $Json = '{ "version":"1.0", "directoryRoleManagementPolicies":[{"role":"Reports Reader"}] }'
+        Invoke-OERStructure -Json $Json -Confirm:$false | Out-Null
+        Invoke-OERStructure -Json $Json -Include DirectoryRoleManagementPolicies -Confirm:$false | Out-Null
+        Invoke-OERStructure -Json $Json -Include Groups -Confirm:$false | Out-Null
+        InModuleScope $script:moduleName {
+            Should -Invoke Sync-OERStructureDirectoryRoleManagementPolicy -Times 2 -Exactly
+        }
+    }
+
+    It 'dispatches the section after accessReviews and before roleAssignments' {
+        $Json = '{ "version":"1.0", ' +
+            '"roleManagementPolicies":[{"scope":"sub:Prod","role":"Reader"}], ' +
+            '"roleAssignments":[{"scope":"sub:Prod","role":"Reader","principal":"a"}], ' +
+            '"directoryRoleManagementPolicies":[{"role":"Reports Reader"}], ' +
+            '"accessReviews":[{"displayName":"r","accessPackage":"ap","assignmentPolicy":"pol"}], ' +
+            '"groups":[{"displayName":"g","members":null}] }'
+        Invoke-OERStructure -Json $Json -IncludeARM -Confirm:$false | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:Order) | Should -Be @('groups', 'accessReviews', 'directoryRoleManagementPolicies', 'roleAssignments', 'roleManagementPolicies')
+        }
+    }
+
+    It 'does not request an ARM token for a document holding only the directory section' {
+        Invoke-OERStructure -Json '{ "version":"1.0", "directoryRoleManagementPolicies":[{"role":"Reports Reader"}] }' -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        InModuleScope $script:moduleName {
+            Should -Invoke Sync-OERStructureDirectoryRoleManagementPolicy -Times 1 -Exactly
+        }
+    }
+
+    It 'labels a handler failure with the entry role' {
+        InModuleScope $script:moduleName {
+            Mock Sync-OERStructureDirectoryRoleManagementPolicy { throw [System.Exception]::new('handler blew up') }
+        }
+        $Json = '{ "version":"1.0", "directoryRoleManagementPolicies":[{"role":"Reports Reader"}] }'
+        $Records = @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue)
+        $Failed = @($Records | Where-Object { $_.Action -eq 'Failed' })
+        @($Failed).Count | Should -Be 1
+        $Failed[0].Section | Should -BeExactly 'directoryRoleManagementPolicies'
+        $Failed[0].Item | Should -BeExactly 'Reports Reader'
+    }
+}
+
+Describe 'Invoke-OERStructure help pointer to the worked example' {
+    # The help points at docs/examples/example-structure.json as showing every section the engine
+    # understands. Each schema section the example lacks must be named there as missing, and a
+    # section named as missing must really be missing -- so the sentence goes stale in neither
+    # direction when the example or the schema changes.
+    It 'names exactly the schema sections the worked example does not declare' {
+        $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
+        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantAlias') })
+        $ExamplePath = Join-Path $PSScriptRoot '../../../docs/examples/example-structure.json'
+        $Example = Get-Content -LiteralPath $ExamplePath -Raw | ConvertFrom-Json
+        $Missing = @($Sections | Where-Object { $Example.PSObject.Properties.Name -notcontains $_ } | Sort-Object)
+        $Help = (Get-Command -Module $script:moduleName -Name 'Invoke-OERStructure').Definition
+        $Help | Should -Match 'docs/examples/example-structure\.json'
+        # "except a and b, which are not in the example yet" (or "except a, which is ..."): the list
+        # between "except" and that phrase, split on commas and "and".
+        $Clause = [regex]::Match($Help, 'except\s+(?<List>[\w\s,]+?),\s+which\s+(?:is|are)\s+not\s+in\s+the\s+example\s+yet')
+        $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
+        ($Named -join ',') | Should -BeExactly ($Missing -join ',')
+    }
+}

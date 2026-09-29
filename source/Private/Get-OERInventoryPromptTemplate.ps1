@@ -61,10 +61,13 @@ PowerShell module.
 
 # Coverage limits -- read before you design
 
-The apply document has exactly seven sections: groups, administrativeUnits, catalogs,
-accessPackages, accessReviews, roleAssignments and roleManagementPolicies. Any other top-level key
-is rejected. Four areas fall outside that model, each in a different way, so treat them
-differently:
+The apply document has exactly eight sections: groups, administrativeUnits, catalogs,
+accessPackages, accessReviews, directoryRoleManagementPolicies, roleAssignments and
+roleManagementPolicies. Any other top-level key is rejected. directoryRoleManagementPolicies (the PIM
+settings of Microsoft Entra directory roles) is apply-only for now: Get-OERInventory does not read
+it, so inventory.json carries no current state for it and the field reference below does not cover
+it -- leave it out of your proposals. Four areas fall outside that model, each in a different way,
+so treat them differently:
 
 - Azure resource GROUPS and individual RESOURCES cannot be created or managed by the document.
   A role assignment AT a resource-group or resource scope does apply -- scope is passed through as

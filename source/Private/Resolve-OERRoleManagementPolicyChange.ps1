@@ -27,8 +27,14 @@ function Resolve-OERRoleManagementPolicyChange {
     approvers.groups sub-fields
     are independently presence-gated: when the document declares only one side, the other side is
     seeded from the live policy's approver ids (rather than defaulted to empty) so the write does not
-    silently wipe the half the document left alone. A null Current (the policy could not be read) is
-    treated as everything-declared-is-changed. No Graph, ARM, or authentication occurs.
+    silently wipe the half the document left alone. -SendDeclaredApproverSideOnly switches that off
+    for the directory-role caller, Sync-OERStructureDirectoryRoleManagementPolicy: there only the
+    declared side(s) are sent (ApproverUser only when approvers.users is declared, ApproverGroup only
+    when approvers.groups is declared), because Set-OERDirectoryRoleManagementPolicy follows the
+    Microsoft Graph semantics of replacing only the side it is bound for and carrying the other from
+    the live rule; the comparison itself is the same ids-against-ids set test either way. A null
+    Current (the policy could not be read) is treated as everything-declared-is-changed. No Graph,
+    ARM, or authentication occurs.
 
     .PARAMETER Declared
     One roleManagementPolicies[] entry from the structure document. Recognized fields:
@@ -44,6 +50,13 @@ function Resolve-OERRoleManagementPolicyChange {
     The live policy as returned by Get-OERRoleManagementPolicy for the same role and scope, or null
     when the policy could not be read, in which case every declared field is considered changed.
 
+    .PARAMETER SendDeclaredApproverSideOnly
+    Send only the approver side(s) the document declares, never a side seeded from the live policy,
+    and name only those sides in the Changes entry (approvers(users=[...]), approvers(groups=[...]) or
+    both). For Set-OERDirectoryRoleManagementPolicy, which replaces only the bound side. Omitted, the
+    Azure Resource Manager behaviour applies: when either side differs, both are sent, the undeclared
+    one seeded from the live policy.
+
     .EXAMPLE
     Resolve-OERRoleManagementPolicyChange -Declared $DocItem -Current (Get-OERRoleManagementPolicy -Role 'Owner' -Subscription 'Prod')
     Returns the SetParams needed to reconcile the Owner policy, or Changed = $false when it matches.
@@ -52,7 +65,8 @@ function Resolve-OERRoleManagementPolicyChange {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][PSCustomObject]$Declared,
-        [PSCustomObject]$Current
+        [PSCustomObject]$Current,
+        [switch]$SendDeclaredApproverSideOnly
     )
 
     $SetParams = @{}
@@ -192,9 +206,39 @@ function Resolve-OERRoleManagementPolicyChange {
             @()
         }
 
+        # Directory-role caller only: re-wrap both sides as genuine [string[]] before they are
+        # compared or sent. The if-statement assignments above unroll a declared [] to $null, and
+        # Test-ApproverSetEqual reads @($null) as ONE entry, so a declared empty side would never
+        # equal an empty live side and would report a change -- and a Failed NoChange write -- on
+        # every run.
+        if ($SendDeclaredApproverSideOnly) {
+            $DeclUser  = [string[]]@($DeclUser | Where-Object { $_ })
+            $DeclGroup = [string[]]@($DeclGroup | Where-Object { $_ })
+        }
+        # ARM path (switch not set), left unchanged in this step: the same unrolling means a
+        # declared empty side is compared as @($null) and never converges against an empty live
+        # side. That defect is reported as a finding outside this step.
         $UserChanged  = $HasDeclUser  -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclUser  -CurrentApprover $CurUser))
         $GroupChanged = $HasDeclGroup -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclGroup -CurrentApprover $CurGroup))
-        if ($UserChanged -or $GroupChanged) {
+        if (($UserChanged -or $GroupChanged) -and $SendDeclaredApproverSideOnly) {
+            # Microsoft Graph (the directory-role caller): Set-OERDirectoryRoleManagementPolicy
+            # replaces only the side it is bound for and carries the other from the live rule, so
+            # only a DECLARED side is sent -- the seeded side computed above is never bound. An
+            # explicit empty list is a declared side and clears it, reaching the Set cmdlet as the
+            # empty [string[]] built above. Same shape as Resolve-OERGroupPimPolicyChange's approver
+            # branch.
+            $Parts = [System.Collections.Generic.List[string]]::new()
+            if ($HasDeclUser) {
+                $SetParams.ApproverUser = $DeclUser
+                $Parts.Add("users=[$($DeclUser -join ',')]")
+            }
+            if ($HasDeclGroup) {
+                $SetParams.ApproverGroup = $DeclGroup
+                $Parts.Add("groups=[$($DeclGroup -join ',')]")
+            }
+            $Changes.Add("approvers($($Parts -join ','))")
+        }
+        elseif ($UserChanged -or $GroupChanged) {
             $SetParams.ApproverUser  = $DeclUser
             $SetParams.ApproverGroup = $DeclGroup
             $Changes.Add("approvers(users=[$($DeclUser -join ',')],groups=[$($DeclGroup -join ',')])")

@@ -86,4 +86,84 @@ Describe 'ConvertTo-OERRoleManagementPolicy' {
             $Policy.ActiveDurationDays   | Should -Be 180
         }
     }
+
+    Context 'Graph approver shape (directory-role policies)' {
+        # Directory-role policies are read from Microsoft Graph v1.0, whose approvers carry the object
+        # id as userId / groupId (beta-style reads carry it as id) and the kind in @odata.type -- not
+        # the ARM id / userType pair. The projection stays one owner for both transports.
+        BeforeAll {
+            $script:GraphRules = @(
+                [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                    setting = [PSCustomObject]@{ isApprovalRequired = $true; approvalMode = 'SingleStage'
+                        approvalStages = @([PSCustomObject]@{ approvalStageTimeOutInDays = 1
+                                primaryApprovers = @(
+                                    [PSCustomObject]@{ '@odata.type' = '#microsoft.graph.singleUser'; userId = 'aaaaaaaa-0000-0000-0000-000000000001'; description = 'Approver One' }
+                                    [PSCustomObject]@{ '@odata.type' = '#microsoft.graph.groupMembers'; groupId = 'bbbbbbbb-0000-0000-0000-000000000001' }
+                                    [PSCustomObject]@{ '@odata.type' = '#microsoft.graph.groupMembers'; id = 'bbbbbbbb-0000-0000-0000-000000000002'; description = 'Beta Group' }
+                                ) }) } }
+            )
+        }
+
+        It 'projects v1.0 and beta-style Graph approvers to Id, UserType and DisplayName' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Rules = $script:GraphRules } {
+                param($Rules)
+                $Policy = ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId 'pol-1' -Scope '/' -ApproverShape Graph
+                $Approver = @($Policy.Approvers)
+                $Approver.Count | Should -Be 3
+
+                $Approver[0].Id          | Should -Be 'aaaaaaaa-0000-0000-0000-000000000001'
+                $Approver[0].UserType    | Should -Be 'User'
+                $Approver[0].DisplayName | Should -Be 'Approver One'
+
+                $Approver[1].Id          | Should -Be 'bbbbbbbb-0000-0000-0000-000000000001'
+                $Approver[1].UserType    | Should -Be 'Group'
+                $Approver[1].DisplayName | Should -Be ''
+
+                $Approver[2].Id          | Should -Be 'bbbbbbbb-0000-0000-0000-000000000002'
+                $Approver[2].UserType    | Should -Be 'Group'
+                $Approver[2].DisplayName | Should -Be 'Beta Group'
+
+                # The approver objects carry the same three property names as the ARM projection.
+                @($Approver[0].PSObject.Properties.Name | Sort-Object) | Should -Be @('DisplayName', 'Id', 'UserType')
+                $Policy.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleManagementPolicy'
+                $Policy.Scope | Should -Be '/'
+                $Policy.RequireApproval | Should -BeTrue
+            }
+        }
+
+        It 'reads Graph-shaped approvers as id-less without -ApproverShape Graph (the ARM default)' {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Rules = $script:GraphRules } {
+                param($Rules)
+                $Policy = ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId 'pol-1' -Scope '/'
+                $Approver = @($Policy.Approvers)
+                $Approver.Count | Should -Be 3
+                # The ARM mapping reads id and userType, which v1.0 approvers do not carry: the two
+                # v1.0 approvers lose their object id entirely and no approver gets a UserType.
+                $Approver[0].Id | Should -Be ''
+                $Approver[1].Id | Should -Be ''
+                @($Approver | Where-Object { $_.UserType }).Count | Should -Be 0
+            }
+        }
+
+        It 'keeps the ARM projection when -ApproverShape Arm is named explicitly' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Rules = @(
+                    [PSCustomObject]@{ id = 'Approval_EndUser_Assignment'
+                        setting = [PSCustomObject]@{ isApprovalRequired = $true
+                            approvalStages = @([PSCustomObject]@{ primaryApprovers = @([PSCustomObject]@{ id = 'g1'; description = 'Approvers'; userType = 'Group' }) }) } }
+                )
+                $Policy = ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId '/s/pol1' -ApproverShape Arm
+                $Policy.Approvers[0].Id          | Should -Be 'g1'
+                $Policy.Approvers[0].UserType    | Should -Be 'Group'
+                $Policy.Approvers[0].DisplayName | Should -Be 'Approvers'
+            }
+        }
+
+        It 'refuses an approver shape other than Arm or Graph' {
+            InModuleScope Omnicit.EntraRBAC {
+                { ConvertTo-OERRoleManagementPolicy -Rules @() -PolicyId 'pol-1' -ApproverShape 'Beta' -ErrorAction Stop } |
+                    Should -Throw -ErrorId 'ParameterArgumentValidationError,ConvertTo-OERRoleManagementPolicy'
+            }
+        }
+    }
 }

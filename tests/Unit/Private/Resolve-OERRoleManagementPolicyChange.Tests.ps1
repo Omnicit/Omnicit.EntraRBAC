@@ -367,3 +367,147 @@ Describe 'Resolve-OERRoleManagementPolicyChange approver precedence' {
         }
     }
 }
+
+Describe 'Resolve-OERRoleManagementPolicyChange -SendDeclaredApproverSideOnly' {
+    # The directory-role handler (Sync-OERStructureDirectoryRoleManagementPolicy) passes this switch:
+    # Set-OERDirectoryRoleManagementPolicy replaces only the approver side it is bound for and carries
+    # the other side from the live rule, so the diff must send ONLY the declared side(s). Without the
+    # switch the Azure behaviour is unchanged: Azure Resource Manager replaces the whole approver list,
+    # so the undeclared side is seeded from the live policy.
+    Context 'Microsoft Graph approver semantics' {
+        BeforeEach {
+            $script:GraphPolicy = [PSCustomObject]@{
+                RequireApproval = $true
+                Approvers       = @(
+                    [PSCustomObject]@{ DisplayName = 'Person One'; Id = 'aaaaaaaa-0000-0000-0000-000000000001'; UserType = 'User' }
+                    [PSCustomObject]@{ DisplayName = 'Approvers'; Id = 'bbbbbbbb-0000-0000-0000-000000000002'; UserType = 'Group' }
+                )
+            }
+        }
+
+        It 'sends only ApproverUser when only approvers.users is declared' {
+            $Declared = '{ "role": "Reports Reader", "approvers": { "users": [ "aaaaaaaa-0000-0000-0000-000000000009" ] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeTrue
+                @($Change.SetParams.Keys) | Should -Contain 'ApproverUser'
+                @($Change.SetParams.Keys) | Should -Not -Contain 'ApproverGroup'
+                @($Change.SetParams.ApproverUser) | Should -Be @('aaaaaaaa-0000-0000-0000-000000000009')
+                @($Change.Changes) | Should -Contain 'approvers(users=[aaaaaaaa-0000-0000-0000-000000000009])'
+            }
+        }
+
+        It 'sends an explicit empty approvers.groups as an empty ApproverGroup and reports it changed' {
+            $Declared = '{ "role": "Reports Reader", "approvers": { "groups": [] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeTrue
+                @($Change.SetParams.Keys) | Should -Contain 'ApproverGroup'
+                @($Change.SetParams.ApproverGroup).Count | Should -Be 0
+                @($Change.SetParams.Keys) | Should -Not -Contain 'ApproverUser'
+                @($Change.Changes) | Should -Contain 'approvers(groups=[])'
+            }
+        }
+
+        It 'reports no change when the declared sides equal the live ids in another letter case' {
+            $Declared = ('{ "role": "Reports Reader", "approvers": { "users": [ "AAAAAAAA-0000-0000-0000-000000000001" ], ' +
+                '"groups": [ "BBBBBBBB-0000-0000-0000-000000000002" ] } }') | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeFalse
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'sends both sides, and names both, when both are declared and one differs' {
+            $Declared = ('{ "role": "Reports Reader", "approvers": { "users": [ "aaaaaaaa-0000-0000-0000-000000000001" ], ' +
+                '"groups": [ "bbbbbbbb-0000-0000-0000-000000000003" ] } }') | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                @($Change.SetParams.ApproverUser)  | Should -Be @('aaaaaaaa-0000-0000-0000-000000000001')
+                @($Change.SetParams.ApproverGroup) | Should -Be @('bbbbbbbb-0000-0000-0000-000000000003')
+                @($Change.Changes) | Should -Contain 'approvers(users=[aaaaaaaa-0000-0000-0000-000000000001],groups=[bbbbbbbb-0000-0000-0000-000000000003])'
+            }
+        }
+
+        It 'still drops the approvers when requireApproval is declared false' {
+            $Declared = '{ "role": "Reports Reader", "requireApproval": false, "approvers": { "groups": [ "bbbbbbbb-0000-0000-0000-000000000003" ] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                @($Change.SetParams.Keys) | Should -Not -Contain 'ApproverUser'
+                @($Change.SetParams.Keys) | Should -Not -Contain 'ApproverGroup'
+                $Change.SetParams.RequireApproval | Should -Be $false
+            }
+        }
+
+        It 'keeps the Azure seeding of the undeclared side when the switch is not passed' {
+            # Documents the default: the ARM caller still gets both sides, the undeclared one seeded
+            # from the live policy, since Azure Resource Manager replaces the whole approver list.
+            $Declared = '{ "role": "Reports Reader", "approvers": { "users": [ "aaaaaaaa-0000-0000-0000-000000000009" ] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GraphPolicy } {
+                param($Declared, $Current)
+                $P = (Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current).SetParams
+                @($P.ApproverGroup) | Should -Be @('bbbbbbbb-0000-0000-0000-000000000002')
+            }
+        }
+    }
+}
+
+Describe 'Resolve-OERRoleManagementPolicyChange -SendDeclaredApproverSideOnly declared empty side' {
+    # A declared [] must compare as a genuinely EMPTY side. An if-statement assignment unrolls @() to
+    # $null, and @($null) has one element, so without normalization a declared empty side never
+    # equals an empty live side and the directory-role document reports a change on every run.
+    Context 'convergence against a live side that is already empty' {
+        BeforeEach {
+            $script:UserOnlyPolicy = [PSCustomObject]@{
+                RequireApproval = $true
+                Approvers       = @(
+                    [PSCustomObject]@{ DisplayName = 'Person One'; Id = 'aaaaaaaa-0000-0000-0000-000000000001'; UserType = 'User' }
+                )
+            }
+            $script:GroupOnlyPolicy = [PSCustomObject]@{
+                RequireApproval = $true
+                Approvers       = @(
+                    [PSCustomObject]@{ DisplayName = 'Approvers'; Id = 'bbbbbbbb-0000-0000-0000-000000000002'; UserType = 'Group' }
+                )
+            }
+        }
+
+        It 'reports no change for a declared empty groups side when the live policy has no group approver' {
+            $Declared = '{ "role": "Reports Reader", "approvers": { "groups": [] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:UserOnlyPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeFalse
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'reports no change for a declared empty users side when the live policy has no user approver' {
+            $Declared = '{ "role": "Reports Reader", "approvers": { "users": [] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GroupOnlyPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeFalse
+                $Change.SetParams.Keys.Count | Should -Be 0
+            }
+        }
+
+        It 'still clears a live group side with an empty ApproverGroup' {
+            $Declared = '{ "role": "Reports Reader", "approvers": { "groups": [] } }' | ConvertFrom-Json
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Declared = $Declared; Current = $script:GroupOnlyPolicy } {
+                param($Declared, $Current)
+                $Change = Resolve-OERRoleManagementPolicyChange -Declared $Declared -Current $Current -SendDeclaredApproverSideOnly
+                $Change.Changed | Should -BeTrue
+                @($Change.SetParams.Keys) | Should -Be @('ApproverGroup')
+                , $Change.SetParams.ApproverGroup | Should -BeOfType [string[]]
+                $Change.SetParams.ApproverGroup.Count | Should -Be 0
+            }
+        }
+    }
+}

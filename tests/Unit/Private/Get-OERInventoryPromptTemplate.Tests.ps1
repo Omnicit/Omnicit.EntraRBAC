@@ -199,3 +199,21 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 }
+
+Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
+    # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
+    # schema.json declares, so a section added to the schema cannot leave the prompt claiming fewer.
+    It 'counts and names every section schema.json declares, and marks directoryRoleManagementPolicies apply-only' {
+        InModuleScope $script:moduleName {
+            $T = Get-OERInventoryPromptTemplate
+            $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
+                    Where-Object { $_ -notin @('version', 'tenantAlias') })
+            $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
+            $T | Should -Match "The apply document has exactly $Word sections"
+            foreach ($Section in $Sections) {
+                $T | Should -Match "\b$Section\b"
+            }
+            $T | Should -Match 'directoryRoleManagementPolicies \(the PIM\s+settings of Microsoft Entra directory roles\) is apply-only for now'
+        }
+    }
+}

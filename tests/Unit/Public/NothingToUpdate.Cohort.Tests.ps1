@@ -4,15 +4,16 @@ BeforeDiscovery {
     # speak three dialects -- NoUpdateSpecified, NoChange and NothingToUpdate -- so a caller writing
     # catch { if ($_.FullyQualifiedErrorId -match 'NothingToUpdate') { ... } } silently missed three of
     # the six cmdlets that carried the guard at the time. Issue #47 closed the coverage gap: the guard
-    # now reaches ALL ELEVEN exported Set-OER* cmdlets, and this cohort is COMPLETE -- any future
+    # now reaches ALL TWELVE exported Set-OER* cmdlets, and this cohort is COMPLETE -- any future
     # Set-OER* cmdlet is expected to join $script:NothingToUpdateCases below, not to be a documented
     # exception. Every one of them is asserted here in one place, so a fourth spelling cannot creep back
     # in unnoticed. Do not delete this file as an orphan when auditing the one-test-file-per-function
     # invariant.
     #
-    # Set-OERRoleManagementPolicy is a deliberate DIFFERENT case, not a gap: when a setting IS supplied
-    # but matches the live policy, it reports the separate NoChange id ("a setting was supplied, no rule
-    # differs"), asserted by the second It block below. NoChange and NothingToUpdate must stay distinct
+    # Set-OERRoleManagementPolicy and Set-OERDirectoryRoleManagementPolicy are a deliberate DIFFERENT
+    # case, not a gap: when a setting IS supplied but matches the live policy, each reports the separate
+    # NoChange id ("a setting was supplied, no rule differs"), asserted by the two NoChange It blocks
+    # below. NoChange and NothingToUpdate must stay distinct
     # -- collapsing them would make "you passed nothing" and "you passed something that already matches"
     # indistinguishable to a caller.
     #
@@ -81,6 +82,14 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Set-OERDirectoryRoleManagementPolicy'
+            Invoke = {
+                Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222' `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Set-OERResourceGroup'
             Invoke = {
                 Set-OERResourceGroup -Subscription 'a5555555-0000-0000-0000-000000000005' -Name 'rg-guard' `
@@ -139,9 +148,9 @@ Describe 'The no-updatable-property guard reports one id across the whole Set-* 
     }
 
     It 'covers every exported Set-OER* cmdlet, matching the header''s completeness claim' {
-        # The BeforeDiscovery header above claims the cohort is COMPLETE: all eleven exported Set-OER*
+        # The BeforeDiscovery header above claims the cohort is COMPLETE: all twelve exported Set-OER*
         # cmdlets carry the guard, and any future one is expected to join $script:NothingToUpdateCases.
-        # Nothing enforced that claim -- the case list is a hand-written literal, so a twelfth Set-OER*
+        # Nothing enforced that claim -- the case list is a hand-written literal, so a thirteenth Set-OER*
         # cmdlet added tomorrow would fail nothing here. Derive the live roster from the module itself,
         # the same approach the -BasePath carrier roster guard uses in
         # tests/Unit/Private/BasePathDefault.Cohort.Tests.ps1, and diff it against the case list on both
@@ -169,8 +178,8 @@ Describe 'The no-updatable-property guard reports one id across the whole Set-* 
         )
 
         $LiveRoster | Should -Be $CaseRoster
-        $LiveRoster.Count | Should -Be 11
-        $CaseRoster.Count | Should -Be 11
+        $LiveRoster.Count | Should -Be 12
+        $CaseRoster.Count | Should -Be 12
     }
 
     It '<Cmdlet> reports NothingToUpdate and issues no request when no updatable property is supplied' -ForEach $script:NothingToUpdateCases {
@@ -209,5 +218,27 @@ Describe 'The no-updatable-property guard reports one id across the whole Set-* 
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERRoleManagementPolicy' }).Count | Should -Be 0
         # No PATCH was attempted: the only ARM call is the policy read.
         Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+    }
+
+    It 'keeps NoChange distinct on Set-OERDirectoryRoleManagementPolicy: settings were supplied, no rule differs' {
+        # The directory-role twin of the case above, on the Microsoft Graph transport.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+        Mock -ModuleName $script:moduleName Get-OERDirectoryRolePolicy {
+            [PSCustomObject]@{ id = 'DirectoryRole_pol1'; scopeId = '/'; scopeType = 'DirectoryRole'; rules = @() }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPolicyRulePatch {
+            [PSCustomObject]@{ ChangedRuleId = @(); Rules = @() }
+        }
+
+        Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222' `
+            -ActivationMaxHours 8 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NoChange,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NothingToUpdate,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 0
+        # The builder was reached (so this is the NoChange branch, not an earlier refusal) and no
+        # rule was PATCHed.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERPolicyRulePatch -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
     }
 }

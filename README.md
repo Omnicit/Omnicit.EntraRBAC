@@ -7,7 +7,7 @@ Access Reviews, Azure resources and RBAC, Azure PIM, plus a JSON inventory and a
 engine. It is built by Omnicit AB for its own and its customers' tenants, is MIT licensed, and is
 published on the public PowerShell Gallery.
 
-All 90 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
+All 92 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
 `Get-Help <cmdlet> -Full` and `Get-Help about_Omnicit.EntraRBAC` are authoritative for details this
 README summarises. `Get-OERRequiredScope` is authoritative for permissions -- see
 [Permissions](#permissions).
@@ -336,7 +336,7 @@ Remove-OERConfiguration -TenantAlias contoso -Confirm
 
 ## Available Cmdlets
 
-All 90 exported cmdlets, grouped by the area they manage. The groups below are for orientation
+All 92 exported cmdlets, grouped by the area they manage. The groups below are for orientation
 only -- **they are not permission boundaries**, so this section makes no claim about scopes. Ask
 `Get-OERRequiredScope` instead; see [Permissions](#permissions).
 
@@ -420,6 +420,11 @@ Access review definitions and instances for access packages.
 - `Get-OERAccessReviewInstance`, `Get-OERAccessReviewInstanceDecision`
 - `Stop-OERAccessReviewInstance`, `Invoke-OERAccessReviewInstanceDecision`,
   `Send-OERAccessReviewReminder`
+
+### Directory roles (2)
+
+- `Get-OERDirectoryRoleManagementPolicy`, `Set-OERDirectoryRoleManagementPolicy` -- read and update
+  the PIM settings (role management policy) of a Microsoft Entra directory role
 
 ### Azure inventory and RBAC (7)
 
@@ -593,7 +598,8 @@ repository (or browse it on GitHub) to read it.
 - [docs/inventory-to-llm/README.md](docs/inventory-to-llm/README.md) -- the export -> LLM ->
   validate -> apply loop in full, including the `schema.json` / `Test-Json` escape hatch.
 - [docs/examples/example-structure.json](docs/examples/example-structure.json) -- a worked apply
-  document showing every section the engine understands.
+  document showing every section the engine understands, except `roleManagementPolicies` and
+  `directoryRoleManagementPolicies`, which are not in the example yet.
 - `Get-Help about_Omnicit.EntraRBAC` -- the in-box overview: command cohorts, Azure scope forms,
   the Tenant Profile schema, access package policy settings and the duration vocabulary. This one
   ships inside the module.

@@ -2880,3 +2880,181 @@ Describe 'Test-OERStructureSchema omitted collection key warning' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema directoryRoleManagementPolicies' {
+    # directoryRoleManagementPolicies[] items are validated by the same rules as roleManagementPolicies[]
+    # items (one shared nested helper), minus scope: a directory role policy always lives at tenant
+    # scope, so role is the only required key and a scope key is an unknown key.
+    BeforeAll {
+        function New-DrmpDoc {
+            param([string]$ItemJson)
+            ('{ "version": "1.0", "directoryRoleManagementPolicies": [ ' + $ItemJson + ' ] }') | ConvertFrom-Json
+        }
+    }
+
+    It 'accepts the section as a known top-level key' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Message -like 'Unknown top-level key*' }).Count | Should -Be 0
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'accepts every supported field, and the id key Get-OERInventory -IncludeId stamps, without a finding' {
+        $Doc = New-DrmpDoc ('{ "role": "Reports Reader", "id": "DirectoryRole_x_y", "allowPermanentEligibility": false, ' +
+            '"eligibleDurationDays": 365, "allowPermanentActiveAssignment": false, "activeDurationDays": 180, ' +
+            '"activationMaxHours": 4, "requireMfaOnActivation": false, "requireJustificationOnActivation": true, ' +
+            '"requireTicketOnActivation": false, "requireApproval": true, ' +
+            '"approvers": { "users": [ "person1@example.com" ], "groups": [ "Approvers" ] }, ' +
+            '"authenticationContextId": "c1", "requireMfaOnActiveAssignment": true, ' +
+            '"requireJustificationOnActiveAssignment": true }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'requires role' {
+        $Doc = New-DrmpDoc '{ "activationMaxHours": 4 }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleManagementPolicies[0].role' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section  | Should -BeExactly 'directoryRoleManagementPolicies'
+            $Hit[0].Item     | Should -BeExactly 'directoryRoleManagementPolicies[0]'
+            $Hit[0].Message  | Should -BeExactly "'role' is required at directoryRoleManagementPolicies[0]."
+        }
+    }
+
+    It 'reports a scope key as an unknown key that is ignored, without failing validation' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "scope": "/" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleManagementPolicies[0].scope' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Item     | Should -BeExactly 'Reports Reader'
+            $Hit[0].Message  | Should -BeExactly "Unknown key 'scope' at directoryRoleManagementPolicies[0] is not applied by Invoke-OERStructure and will be ignored."
+        }
+    }
+
+    It 'rejects a non-boolean toggle' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "requireJustificationOnActivation": "yes" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleManagementPolicies[0].requireJustificationOnActivation' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'requireJustificationOnActivation' at directoryRoleManagementPolicies[0] must be a boolean."
+        }
+    }
+
+    It 'rejects activationMaxHours 25' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "activationMaxHours": 25 }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Path | Should -Contain 'directoryRoleManagementPolicies[0].activationMaxHours'
+        }
+    }
+
+    It 'rejects eligibleDurationDays 0' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "eligibleDurationDays": 0 }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Path | Should -Contain 'directoryRoleManagementPolicies[0].eligibleDurationDays'
+        }
+    }
+
+    It 'rejects an approvers.users that is not an array' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "approvers": { "users": "person1@example.com" } }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Path | Should -Contain 'directoryRoleManagementPolicies[0].approvers.users'
+        }
+    }
+
+    It 'warns, without failing, when requireApproval is false beside declared approvers' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "requireApproval": false, "approvers": { "groups": [ "Approvers" ] } }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleManagementPolicies[0].approvers' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -Match 'requireApproval takes precedence'
+        }
+    }
+
+    It 'rejects requireMfaOnActivation true together with an authentication context, naming PIM rather than Azure PIM' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "requireMfaOnActivation": true, "authenticationContextId": "c1" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Message -match 'mutually exclusive' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Path | Should -BeExactly 'directoryRoleManagementPolicies[0]'
+            $Hit[0].Message | Should -BeExactly "'requireMfaOnActivation' and 'authenticationContextId' at directoryRoleManagementPolicies[0] are mutually exclusive in PIM; declare only one."
+        }
+    }
+
+    It 'rejects a malformed authenticationContextId' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "authenticationContextId": "x" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Path | Should -Contain 'directoryRoleManagementPolicies[0].authenticationContextId'
+        }
+    }
+
+    It 'reports nothing for an explicit null authenticationContextId' {
+        $Doc = New-DrmpDoc '{ "role": "Reports Reader", "requireMfaOnActivation": true, "authenticationContextId": null }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'requires the section to be an array' {
+        $Doc = '{ "version": "1.0", "directoryRoleManagementPolicies": { "role": "Reports Reader" } }' | ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Message | Should -Contain "Section 'directoryRoleManagementPolicies' must be an array."
+        }
+    }
+
+    It 'keeps the roleManagementPolicies mutually-exclusive message naming Azure PIM, byte for byte' {
+        # The two sections share one helper; the Azure section's wording must not move with it.
+        $Doc = '{ "version": "1.0", "roleManagementPolicies": [ { "scope": "/s", "role": "Owner", "requireMfaOnActivation": true, "authenticationContextId": "c1" } ] }' | ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $Hit = @((Test-OERStructureSchema -Document $Doc).Errors | Where-Object { $_.Message -match 'mutually exclusive' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'requireMfaOnActivation' and 'authenticationContextId' at roleManagementPolicies[0] are mutually exclusive in Azure PIM; declare only one."
+        }
+    }
+}

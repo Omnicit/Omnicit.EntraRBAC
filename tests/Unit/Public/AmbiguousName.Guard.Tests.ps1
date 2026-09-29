@@ -106,6 +106,14 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Get-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Get-OERDirectoryRoleManagementPolicy -Role 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OERGroupEligibility'; Resolver = 'Resolve-OERGroupId'
             ErrorId = 'AmbiguousGroupName'; Pre = @{}
             Invoke = {
@@ -216,6 +224,15 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
                 Set-OERCatalog -DisplayName 'Dup' -NewDisplayName 'Renamed' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Set-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERDirectoryRoleDefinitionId'
+            ErrorId = 'AmbiguousRoleName'; Pre = @{}
+            Invoke = {
+                Set-OERDirectoryRoleManagementPolicy -Role 'Dup' -ActivationMaxHours 8 -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }

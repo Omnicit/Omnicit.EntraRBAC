@@ -1,41 +1,59 @@
 function ConvertTo-OERRoleManagementPolicy {
     <#
     .SYNOPSIS
-    Converts an Azure role management policy's rules into a tagged friendly object.
+    Converts a role management policy's rules (Azure or Microsoft Entra directory role) into a tagged
+    friendly object.
 
     .DESCRIPTION
-    Maps the polymorphic ARM roleManagementPolicy rules (matched by their stable id strings) into a
+    Maps the polymorphic roleManagementPolicy rules (matched by their stable id strings) into a
     flat, readable Omnicit.EntraRBAC.RoleManagementPolicy object: activation window, MFA /
     justification / ticket requirements, approval and approvers, authentication context, eligible
     and active permanence plus max durations, and a notifications summary, alongside the raw
     EffectiveRules. Accepts rules from either the assignment effectiveRules or the policy rules. When
-    -ChangedRuleId is supplied (by Set-OERRoleManagementPolicy) a ChangedRuleIds property is added.
-    This private helper is the single owner of the friendly policy shape. EligibleDurationDays and
-    ActiveDurationDays carry the same maximum lifetimes parsed into whole days (null when the policy
-    stores a non-whole-day duration), because Set-OERRoleManagementPolicy and the apply document
-    express them in days.
+    -ChangedRuleId is supplied (by a Set cmdlet) a ChangedRuleIds property is added.
+    This private helper is the single owner of the friendly policy shape for BOTH transports: Azure
+    Resource Manager policies and Microsoft Entra directory-role policies read from Microsoft Graph
+    v1.0, which share the rule ids and field names. Only the approver shape differs, which
+    -ApproverShape selects; everything else, the type name included, is the same object.
+    EligibleDurationDays and ActiveDurationDays carry the same maximum lifetimes parsed into whole
+    days (null when the policy stores a non-whole-day duration), because Set-OERRoleManagementPolicy
+    and the apply document express them in days.
 
     .PARAMETER Rules
     The policy rules array (effectiveRules from an assignment, or rules from a policy resource).
 
     .PARAMETER PolicyId
-    The full ARM id of the policy.
+    The id of the policy: the full ARM id for an Azure policy, the Graph policy id for a directory
+    role.
 
     .PARAMETER Scope
-    The ARM scope of the policy.
+    The scope of the policy: the ARM scope for an Azure policy, '/' for a directory role.
 
     .PARAMETER RoleName
     The role display name (when known; null on a bare policy GET).
 
     .PARAMETER RoleDefinitionId
-    The full ARM role definition id (when known).
+    The role definition id (when known): the full ARM role definition id for an Azure policy.
 
     .PARAMETER ChangedRuleId
     The rule ids that were just patched (added as a ChangedRuleIds property on Set output).
 
+    .PARAMETER ApproverShape
+    Which approver shape the approval rule carries. Arm (the default) reads each primary approver's
+    id, userType and description. Graph reads each one through ConvertFrom-OERGraphApprover, the
+    single reader of a Graph approver (v1.0 userId / groupId, with a beta-style id as the fallback,
+    and the kind from @odata.type); the projected approver has the same DisplayName, Id and UserType
+    properties either way. A v1.0 approver carries no id or userType, so read with the ARM default
+    it would project with an empty Id.
+
     .EXAMPLE
     ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId $PolicyId -Scope $Scope -RoleName 'Reader'
     Returns the tagged friendly policy summary for the Reader role.
+
+    .EXAMPLE
+    ConvertTo-OERRoleManagementPolicy -Rules $Rules -PolicyId $PolicyId -Scope '/' -ApproverShape Graph
+    Returns the tagged friendly summary of a directory-role policy read from Microsoft Graph, with its
+    approvers projected from the Graph approver shape.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
@@ -50,7 +68,10 @@ function ConvertTo-OERRoleManagementPolicy {
         [string]$Scope,
         [string]$RoleName,
         [string]$RoleDefinitionId,
-        [string[]]$ChangedRuleId
+        [string[]]$ChangedRuleId,
+
+        [ValidateSet('Arm', 'Graph')]
+        [string]$ApproverShape = 'Arm'
     )
     $ById = @{}
     foreach ($Rule in $Rules) { if ($Rule.id) { $ById[[string]$Rule.id] = $Rule } }
@@ -71,6 +92,11 @@ function ConvertTo-OERRoleManagementPolicy {
         foreach ($Stage in @($Approval.setting.approvalStages)) {
             foreach ($Approver in @($Stage.primaryApprovers)) {
                 if ($null -eq $Approver) { continue }
+                if ($ApproverShape -eq 'Graph') {
+                    # Same DisplayName / Id / UserType properties, read from the Graph shape.
+                    $Approvers.Add((ConvertFrom-OERGraphApprover -Approver $Approver))
+                    continue
+                }
                 $Approvers.Add([PSCustomObject]@{
                     DisplayName = [string]$Approver.description
                     Id          = [string]$Approver.id

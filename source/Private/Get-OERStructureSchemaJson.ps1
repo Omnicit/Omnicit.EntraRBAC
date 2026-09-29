@@ -29,7 +29,8 @@ function Get-OERStructureSchemaJson {
     to object ids before the policy is compared, and requireApproval false takes precedence over a
     declared approvers block. Section item
     objects stay open (additionalProperties is not restricted); only the root object forbids unknown
-    keys at the draft-07 level. Unknown keys in the roleAssignments and roleManagementPolicies sections,
+    keys at the draft-07 level. Unknown keys in the roleAssignments, roleManagementPolicies and
+    directoryRoleManagementPolicies sections (a scope key in the directory section included),
     in a groups[] item, and in a groups[] pimPolicy block (root, or a nested member/owner block) stay
     schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply engine
     cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
@@ -43,7 +44,12 @@ function Get-OERStructureSchemaJson {
     and active permanence plus day counts; notification rules are readable and writable through
     Get-/Set-OERRoleManagementPolicy but are not part of this schema and do not round-trip. The
     offline validator also enforces the ARM rule that requireMfaOnActivation and an authentication
-    context are mutually exclusive, which draft-07 cannot express. accessReviews items declare the full set of
+    context are mutually exclusive, which draft-07 cannot express. directoryRoleManagementPolicies
+    items declare the same fields, typed identically, for a Microsoft Entra directory role, without
+    scope: a directory role policy always lives at tenant scope, so role is the only required key.
+    Their approvers follow the Microsoft Graph semantics -- only the declared side (users or groups)
+    is replaced and the other is kept -- and the same MFA/authentication-context exclusion is
+    enforced offline. accessReviews items declare the full set of
     fields the apply handler consumes -- reviewers and fallbackReviewers, both descriptions, the
     instance duration, the recurrence start/end/occurrences range, the five review settings booleans and
     defaultDecision (None/Approve/Deny/Recommendation) -- so a captured or hand-authored review is
@@ -434,6 +440,40 @@ function Get-OERStructureSchemaJson {
           "authenticationContextId": {
             "type": [ "string", "null" ],
             "description": "Authentication context claim value required on activation, for example c1. An empty string DISABLES the authentication context. An explicit null means NOT DECLARED -- the live setting is left untouched, the same as omitting the key. Mutually exclusive with requireMfaOnActivation true -- Azure PIM rejects both at once."
+          },
+          "requireMfaOnActiveAssignment": { "type": "boolean" },
+          "requireJustificationOnActiveAssignment": { "type": "boolean" }
+        }
+      }
+    },
+    "directoryRoleManagementPolicies": {
+      "type": "array",
+      "description": "PIM settings (the role management policy) of Microsoft Entra directory roles. A directory role policy always lives at tenant scope, so an entry has no scope: role (a directory role display name or role definition id) is the only required key and the match key. The policy always exists, so there is nothing to create or remove and -Prune has no effect here. Applied through Microsoft Graph only; no Azure Resource Manager token is requested.",
+      "items": {
+        "type": "object",
+        "required": [ "role" ],
+        "properties": {
+          "role": { "type": "string" },
+          "allowPermanentEligibility": { "type": "boolean" },
+          "eligibleDurationDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+          "allowPermanentActiveAssignment": { "type": "boolean" },
+          "activeDurationDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+          "activationMaxHours": { "type": "integer", "minimum": 1, "maximum": 24 },
+          "requireMfaOnActivation": { "type": "boolean" },
+          "requireJustificationOnActivation": { "type": "boolean" },
+          "requireTicketOnActivation": { "type": "boolean" },
+          "requireApproval": { "type": "boolean" },
+          "approvers": {
+            "type": "object",
+            "description": "Approvers applied when approval is required: users are user principal names or object ids, groups are group display names or object ids; each is resolved to an object id before the policy is compared. Only the declared side is replaced: declaring users alone keeps the live group approvers, and the reverse, and an empty array clears that side. requireApproval false TAKES PRECEDENCE: approvers declared alongside it are ignored, and the offline validator warns about the combination.",
+            "properties": {
+              "users": { "type": "array", "items": { "type": "string" } },
+              "groups": { "type": "array", "items": { "type": "string" } }
+            }
+          },
+          "authenticationContextId": {
+            "type": [ "string", "null" ],
+            "description": "Authentication context claim value required on activation, for example c1. An empty string DISABLES the authentication context. An explicit null means NOT DECLARED -- the live setting is left untouched, the same as omitting the key. Mutually exclusive with requireMfaOnActivation true -- PIM does not allow both at once."
           },
           "requireMfaOnActiveAssignment": { "type": "boolean" },
           "requireJustificationOnActiveAssignment": { "type": "boolean" }

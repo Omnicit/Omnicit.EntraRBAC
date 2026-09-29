@@ -85,7 +85,10 @@ Naming the object in clear text would rebuild the mapping this file just forbade
 | `...060` | an Azure subscription id, ARM subscription and scope-resolution tests | taken |
 | `...061` | an Azure tenant id, ARM subscription converter tests | taken |
 | `...062` | a deliberately non-existent tenant alias suffix, base-path cohort test | taken |
-| `...063` and up | -- | **FREE. Allocate from here.** |
+| `...063` | a directory role definition id in the directory-role PIM policy cmdlets' help examples and tests | taken |
+| `...064` | a tenant id inside a directory-role policy id (the second segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
+| `...065` | a policy guid inside a directory-role policy id (the third segment of DirectoryRole_tenantId_policyGuid), in the directory-role PIM policy cmdlets' help examples | taken |
+| `...066` and up | -- | **FREE. Allocate from here.** |
 | `...099` | a deliberately non-existent object id, used in a checklist to prove a not-found path | taken |
 | `...0aa` | an assignment target principal id, access-package assignment tests | taken |
 | `...abc` | an administrative unit id, group-creation tests | taken |
@@ -174,6 +177,12 @@ file under `docs/`, `specs/`, `source/` and `tests/` -- these checklists, the de
 the file and line of every hit and never prints the value it matched; printing it would copy the
 identifier, or the credential, into every CI log, which is precisely the leak the gate exists to
 prevent.
+
+**An object id wrapped over two lines is found too.** A formatted table breaks a long cell at the
+column edge and indents the rest, so a pasted id can land half on one line and half on the next,
+where neither line matches on its own. The object-id checks therefore also read each file with its
+line breaks, and the whitespace around them, removed, and report such an id at the line it starts
+on. Redact a wrapped id in place, keeping the break where the console put it.
 
 The email and credential rules are the same everywhere. The **object-id** rule is not, because the
 two halves of the tree are different kinds of writing:

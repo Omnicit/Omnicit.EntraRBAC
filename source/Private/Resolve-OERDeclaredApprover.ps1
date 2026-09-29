@@ -1,12 +1,13 @@
 function Resolve-OERDeclaredApprover {
     <#
     .SYNOPSIS
-    Resolves the declared approvers of a roleManagementPolicies[] entry or a group pimPolicy block from
-    names to object ids.
+    Resolves the declared approvers of a roleManagementPolicies[] or directoryRoleManagementPolicies[]
+    entry, or of a group pimPolicy block, from names to object ids.
 
     .DESCRIPTION
-    Runs before every approval diff, for both callers: Sync-OERStructureRoleManagementPolicy passes
-    each roleManagementPolicies[] entry, and Sync-OERStructureGroup passes each group pimPolicy block
+    Runs before every approval diff, for all three callers: Sync-OERStructureRoleManagementPolicy
+    passes each roleManagementPolicies[] entry, Sync-OERStructureDirectoryRoleManagementPolicy each
+    directoryRoleManagementPolicies[] entry, and Sync-OERStructureGroup each group pimPolicy block
     (member, owner, or the flat form) -- so the diff that follows compares ids with ids, never a name
     with an id. approvers.users
     entries resolve through Resolve-OERPrincipal -User (a user principal name or an object id both
@@ -26,8 +27,8 @@ function Resolve-OERDeclaredApprover {
     responsible for catching it and reporting a Failed record.
 
     .PARAMETER Declared
-    One roleManagementPolicies[] entry, or a group pimPolicy block, as a PSCustomObject produced by
-    ConvertFrom-Json. Only the requireApproval and approvers.users/approvers.groups properties are
+    One roleManagementPolicies[] or directoryRoleManagementPolicies[] entry, or a group pimPolicy
+    block, as a PSCustomObject produced by ConvertFrom-Json. Only the requireApproval and approvers.users/approvers.groups properties are
     read; every other property is preserved unchanged on the returned copy.
 
     .EXAMPLE

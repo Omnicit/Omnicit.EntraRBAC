@@ -173,6 +173,14 @@ BeforeAll {
 
                 IsAllowed is called with the matched value AND the file entry it came from, so a
                 check can apply one rule to prose under docs/ and another to code under source/.
+
+                AcrossLineBreak adds a second pass for a value that console output WRAPPED: a
+                formatted table breaks a long cell at the column edge and indents the rest, so one
+                identifier lands on two lines and neither line alone matches. That pass reads the
+                file as one string with every line break, and the whitespace on both sides of it,
+                removed. It reports only a match that crosses a line boundary, at the line the match
+                starts on; a match inside one line is the first pass's to report, so no location
+                is counted twice.
         #>
         [OutputType([string])]
         param (
@@ -184,7 +192,10 @@ BeforeAll {
             [regex]$Pattern,
 
             [Parameter(Mandatory = $true)]
-            [scriptblock]$IsAllowed
+            [scriptblock]$IsAllowed,
+
+            [Parameter()]
+            [switch]$AcrossLineBreak
         )
 
         $Locations = [System.Collections.Generic.List[string]]::new()
@@ -198,6 +209,54 @@ BeforeAll {
 
                     $Locations.Add(('{0}:{1}' -f $Entry.RelativePath, ($Index + 1)))
                 }
+            }
+
+            if (-not $AcrossLineBreak -or $Entry.Lines.Count -lt 2) {
+                continue
+            }
+
+            # One string, and the offset at which each line starts in it. An empty line starts
+            # where the next one does, so the lookup below takes the LAST line starting at or
+            # before an offset: that is the line the character at the offset belongs to.
+            $Joined = [System.Text.StringBuilder]::new()
+            $LineStart = [int[]]::new($Entry.Lines.Count)
+
+            for ($Index = 0; $Index -lt $Entry.Lines.Count; $Index++) {
+                $LineStart[$Index] = $Joined.Length
+                $null = $Joined.Append($Entry.Lines[$Index].Trim(" `t".ToCharArray()))
+            }
+
+            $GetLine = {
+                param ($Offset)
+
+                $Line = [System.Array]::BinarySearch($LineStart, [int]$Offset)
+
+                if ($Line -lt 0) {
+                    # Not an exact line start: the complement is the first line starting AFTER the
+                    # offset, so the one before it holds the character.
+                    return ((-bnot $Line) - 1)
+                }
+
+                while ($Line + 1 -lt $LineStart.Count -and $LineStart[$Line + 1] -eq $LineStart[$Line]) {
+                    $Line++
+                }
+
+                return $Line
+            }
+
+            foreach ($Match in $Pattern.Matches($Joined.ToString())) {
+                $FirstLine = & $GetLine $Match.Index
+                $LastLine = & $GetLine ($Match.Index + $Match.Length - 1)
+
+                if ($FirstLine -eq $LastLine) {
+                    continue
+                }
+
+                if (& $IsAllowed $Match.Value $Entry) {
+                    continue
+                }
+
+                $Locations.Add(('{0}:{1}' -f $Entry.RelativePath, ($FirstLine + 1)))
             }
         }
 
@@ -355,7 +414,10 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             $Value.StartsWith('00000000-0000-0000-', [System.StringComparison]::OrdinalIgnoreCase)
         }
 
-        $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $GuidPattern -IsAllowed $IsPlaceholder)
+        # AcrossLineBreak: a table cell pasted from a console wraps at the column edge, and a real
+        # id split over two lines, the second one indented, matched neither line on its own and
+        # stayed in a checklist on main. The second pass reads the file with the breaks removed.
+        $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $GuidPattern -IsAllowed $IsPlaceholder -AcrossLineBreak)
 
         # Double-wrapped on purpose. '$null.Count' is 0 and would pass vacuously; '@($null).Count'
         # is 1 and fails red. Both are recorded traps in this repository.
@@ -397,7 +459,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             return $false
         }
 
-        $Hits = @(Get-DocHygieneMatchLocation -File $Code -Pattern $GuidPattern -IsAllowed $IsNotIdentifierShaped)
+        # The same wrapped-value pass as the prose check: an id split over two lines in a comment
+        # or a here-string is as much a leak as one written on a single line.
+        $Hits = @(Get-DocHygieneMatchLocation -File $Code -Pattern $GuidPattern -IsAllowed $IsNotIdentifierShaped -AcrossLineBreak)
 
         @($Hits).Count |
             Should -Be 0 -Because ('no tracked file under source/ or tests/ may carry a version-4 GUID: every Entra ID and ARM object id is v4, so one here is either a real identifier or a fixture typed to look like one. Replace it with a 00000000-0000-0000-0000-0000000000NN placeholder and record it in docs/live-verification/README.md -- do NOT add it to the public-constant register. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))

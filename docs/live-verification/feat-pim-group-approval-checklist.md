@@ -2773,8 +2773,8 @@ deletes the resource group, and reads it again (T.5).
   4.2     roleManagementPolicies Reader @ /subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg Updated updated role management policy for 'Reader' at '/subscriptions/<SubscriptionId>/resourceGroups/oer-s62-rg' (requir
                                                                                                                                 eApproval=True, approvers(users=[00000000-0000-0000-0000-000000000001],groups=[00000000-0000-0000-0000-000000000003]))
   5.2     groups                 oer-s62-new                                                                            Created created group oer-s62-new (00000000-0000-0000-0000-000000000008)
-  5.2     groups                 oer-s62-new                                                                            Updated pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000001],groups=[1f60
-                                                                                                                                64f8-879e-49e5-bca4-1736c27f6c73])
+  5.2     groups                 oer-s62-new                                                                            Updated pimPolicy (owner) set: activationMaxHours=3; requireApproval=True; approvers(users=[00000000-0000-0000-0000-000000000001],groups=[0000
+                                                                                                                                0000-0000-0000-0000-000000000034])
   5.3     groups                 oer-s62-new                                                                            Updated set time-bound member eligibility for 'person2@example.com' (30 days): time-bound member eligibility (30 days) is
                                                                                                                                  absent
   5.3     groups                 oer-s62-new                                                                            Updated pimPolicy (member) set: activationMaxHours=2
