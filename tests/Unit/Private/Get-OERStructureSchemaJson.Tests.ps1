@@ -445,12 +445,13 @@ Describe 'Get-OERStructureSchemaJson' {
                 }
                 $Declared.Add(($Values -join ','))
             }
-            $Declared.Count | Should -Be 12 -Because 'the schema declares 12 enum arrays across 8 distinct enums'
+            $Declared.Count | Should -Be 14 -Because 'the schema declares 14 enum arrays across 9 distinct enums'
             $NullBearing | Should -Be 1 -Because 'accessReviews[].recurrence is the only nullable enum in the schema'
 
             $Owned = @{}
             foreach ($Name in 'accessType', 'enablement', 'membershipRuleProcessingState', 'catalogResourceType',
-                'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType') {
+                'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType',
+                'directoryRoleAssignmentType') {
                 $Owned[(@(Resolve-OERStructureEnumCasing -EnumName $Name -List) -join ',')] = $Name
             }
             foreach ($Set in $Declared) {
@@ -868,6 +869,62 @@ Describe 'Get-OERStructureSchemaJson directory role management policies' {
             Test-Json -Json '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "activationMaxHours": 4 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
                 Should -BeFalse
             Test-Json -Json '{ "version": "1.0", "directoryRoleManagementPolicies": [ { "role": "Reports Reader", "activationMaxHours": 25 } ] }' -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeFalse
+        }
+    }
+}
+
+Describe 'Get-OERStructureSchemaJson directory role assignments' {
+    # directoryRoleAssignments[] holds eligible and active assignments of Microsoft Entra directory
+    # roles at tenant scope, matched on role, principal and assignmentType.
+    It 'declares directoryRoleAssignments at the root, requiring role, principal and assignmentType, with no scope' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Schema.properties.PSObject.Properties.Name | Should -Contain 'directoryRoleAssignments'
+            $Section = $Schema.properties.directoryRoleAssignments
+            $Section.type | Should -BeExactly 'array'
+            $Section.items.type | Should -BeExactly 'object'
+            @($Section.items.required) | Should -Be @('role', 'principal', 'assignmentType')
+            @($Section.items.properties.PSObject.Properties.Name) |
+                Should -Be @('role', 'principal', 'principalType', 'assignmentType', 'durationDays', 'permanent', 'justification')
+            @($Section.items.properties.assignmentType.enum) | Should -Be @('Eligible', 'Active')
+            @($Section.items.properties.principalType.enum) | Should -Be @('User', 'Group', 'ServicePrincipal')
+            $Section.items.properties.durationDays.minimum | Should -Be 1
+            $Section.items.properties.durationDays.maximum | Should -Be 3650
+            $Section.items.properties.permanent.type | Should -BeExactly 'boolean'
+            $Section.items.properties.justification.type | Should -BeExactly 'string'
+        }
+    }
+
+    It 'documents the match key, the permanent default and what -Prune never touches' {
+        InModuleScope $script:moduleName {
+            $Desc = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.directoryRoleAssignments.description
+            $Desc | Should -Match 'matched on role, principal and assignmentType'
+            $Desc | Should -Match 'without durationDays, or with permanent true, it is permanent'
+            $Desc | Should -Match 'an activation is never counted or removed'
+            $Desc | Should -Match 'Microsoft Graph only'
+        }
+    }
+
+    It 'validates a time-bound eligible and a permanent active entry' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Doc = @'
+{ "version": "1.0", "directoryRoleAssignments": [
+  { "role": "Reports Reader", "principal": "person1@example.com", "principalType": "User", "assignmentType": "Eligible", "durationDays": 30, "justification": "Quarterly reporting" },
+  { "role": "Message Center Reader", "principal": "Reporting Readers", "principalType": "Group", "assignmentType": "Active", "permanent": true } ] }
+'@
+            Test-Json -Json $Doc -Schema (Get-OERStructureSchemaJson) | Should -BeTrue
+        }
+    }
+
+    It 'rejects an entry <Case>' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) -TestCases @(
+        @{ Case = 'without assignmentType'; Item = '{ "role": "Reports Reader", "principal": "person1@example.com" }' }
+        @{ Case = 'with an assignmentType outside the enum'; Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Pending" }' }
+        @{ Case = 'with durationDays outside 1-3650'; Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 3651 }' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Item = $Item } {
+            param($Item)
+            Test-Json -Json ('{ "version": "1.0", "directoryRoleAssignments": [ ' + $Item + ' ] }') -Schema (Get-OERStructureSchemaJson) -ErrorAction SilentlyContinue |
                 Should -BeFalse
         }
     }

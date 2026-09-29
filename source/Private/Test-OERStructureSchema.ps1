@@ -37,8 +37,18 @@ function Test-OERStructureSchema {
     directory role, which always lives at tenant scope) is validated by exactly the same rules as a
     roleManagementPolicies item, through one shared nested helper so the two cannot drift, except that
     it takes no scope: only role is required, a scope key is reported as an unknown key, and the
-    MFA/authentication-context Error names PIM rather than Azure PIM. An unknown per-item key in the
-    roleAssignments, roleManagementPolicies or directoryRoleManagementPolicies section, a
+    MFA/authentication-context Error names PIM rather than Azure PIM. A directoryRoleAssignments
+    item (an eligible or active assignment of a Microsoft Entra directory role at tenant scope)
+    requires role, principal and assignmentType; assignmentType must be Eligible or Active and
+    principalType, when present, User, Group or ServicePrincipal (either in any casing, with the casing
+    Warning described below); durationDays must be an integer 1-3650, permanent a boolean and
+    justification a string. durationDays together with permanent true is an Error (the two contradict
+    each other), and so is permanent false without durationDays (the time-bound window it asks for is
+    not declared); an entry with neither is permanent. A second entry naming the same role, principal
+    and assignmentType as an earlier one, compared as written without regard to letter case, is an
+    Error at the later entry's path naming the earlier index, since applying both would re-issue the
+    one live assignment's window on every run. An unknown per-item key in the roleAssignments,
+    roleManagementPolicies, directoryRoleManagementPolicies or directoryRoleAssignments section, a
     groups[] item, or a groups[] pimPolicy block (root, or a nested member/owner block) is reported as a
     Warning naming the key, because the apply handlers for those sections and blocks read a fixed field
     list and would otherwise drop it silently. A pimPolicy key matching one of the five field names the
@@ -74,8 +84,8 @@ function Test-OERStructureSchema {
     being created or updated (issue #70).
     Every closed enum value (accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
-    principalType) is accepted in any casing, but a non-canonically cased value is reported as a
-    Warning naming the canonical spelling Get-OERStructureSchemaJson declares, because draft-07 matches
+    principalType, directoryRoleAssignmentType) is accepted in any casing, but a non-canonically cased
+    value is reported as a Warning naming the canonical spelling Get-OERStructureSchemaJson declares, because draft-07 matches
     "enum" case-sensitively. An accessReviews item validates reviewers/fallbackReviewers as string arrays,
     descriptionForAdmins/descriptionForReviewers as strings, the five review settings booleans
     (mailNotification, reminderNotification, requireJustification, recommendationsEnabled,
@@ -190,8 +200,8 @@ function Test-OERStructureSchema {
     }
 
     $KnownTop = @('version', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
-        'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'roleAssignments',
-        'roleManagementPolicies')
+        'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+        'roleAssignments', 'roleManagementPolicies')
 
     # Rule 1: version must be present and a non-empty string
     if (-not (Test-HasProp -Node $Document -Name 'version') -or
@@ -1361,6 +1371,111 @@ function Test-OERStructureSchema {
                 $DRMPItem = if (Test-HasProp -Node $DRMP -Name 'role') { $DRMP.role } else { "directoryRoleManagementPolicies[$I]" }
                 Test-PimPolicySectionItem -Node $DRMP -Section 'directoryRoleManagementPolicies' -Path $DRMPPath -Item $DRMPItem `
                     -KnownKey $PimPolicyItemKey -RequiredKey @('role') -PimLabel 'PIM'
+            }
+        }
+    }
+
+    # Rule 10c: directoryRoleAssignments -- eligible and active assignments of Microsoft Entra
+    # directory roles at tenant scope. role, principal and assignmentType are required and are the
+    # match key. durationDays makes an entry time-bound and permanent true makes it permanent, so the
+    # two may not contradict each other, and an entry with neither is permanent. Two entries naming the
+    # same role, principal and assignmentType would describe one live assignment twice; the handler
+    # would re-issue its window for each of them on every run, so the second is an Error. The key is
+    # compared as written, without regard to letter case: a role written by name in one entry and by
+    # id in another cannot be told apart offline.
+    if (Test-HasProp -Node $Document -Name 'directoryRoleAssignments') {
+        if (Test-SectionIsArray -SectionName 'directoryRoleAssignments') {
+            $DRAs = @($Document.directoryRoleAssignments)
+            $DraSeen = @{}
+            for ($I = 0; $I -lt $DRAs.Count; $I++) {
+                $DRA = $DRAs[$I]
+                $DRAPath = "directoryRoleAssignments[$I]"
+                $DRAItem = if (Test-HasProp -Node $DRA -Name 'role') { [string]$DRA.role } else { $DRAPath }
+
+                Add-UnknownKeyWarning -Node $DRA -Section 'directoryRoleAssignments' -Item $DRAItem -Path $DRAPath `
+                    -KnownKey @('role', 'principal', 'principalType', 'assignmentType', 'durationDays',
+                        'permanent', 'justification', 'id')
+
+                foreach ($Req in @('role', 'principal', 'assignmentType')) {
+                    if (-not (Test-HasProp -Node $DRA -Name $Req)) {
+                        Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                            -Path "$DRAPath.$Req" `
+                            -Message "'$Req' is required at $DRAPath."
+                    }
+                }
+
+                if (Test-HasProp -Node $DRA -Name 'assignmentType') {
+                    $ValidDraTypes = @(Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -List)
+                    if ($ValidDraTypes -inotcontains [string]$DRA.assignmentType) {
+                        Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                            -Path "$DRAPath.assignmentType" `
+                            -Message "'assignmentType' at $DRAPath must be one of: $($ValidDraTypes -join ', '). Got: '$($DRA.assignmentType)'."
+                    } else {
+                        Add-EnumCasingWarning -EnumName 'directoryRoleAssignmentType' -Key 'assignmentType' -Value $DRA.assignmentType `
+                            -Section 'directoryRoleAssignments' -Item $DRAItem -Path "$DRAPath.assignmentType"
+                    }
+                }
+
+                if (Test-HasProp -Node $DRA -Name 'principalType') {
+                    $ValidDraPrincipalTypes = @(Resolve-OERStructureEnumCasing -EnumName 'principalType' -List)
+                    if ($ValidDraPrincipalTypes -inotcontains [string]$DRA.principalType) {
+                        Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                            -Path "$DRAPath.principalType" `
+                            -Message "'principalType' at $DRAPath must be one of: $($ValidDraPrincipalTypes -join ', '). Got: '$($DRA.principalType)'."
+                    } else {
+                        Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $DRA.principalType `
+                            -Section 'directoryRoleAssignments' -Item $DRAItem -Path "$DRAPath.principalType"
+                    }
+                }
+
+                $DraHasDays = Test-HasProp -Node $DRA -Name 'durationDays'
+                if ($DraHasDays -and -not (Test-IsInt -Value $DRA.durationDays -Min 1 -Max 3650)) {
+                    Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                        -Path "$DRAPath.durationDays" `
+                        -Message "'durationDays' at $DRAPath must be an integer between 1 and 3650."
+                }
+
+                # The window rules only read a real boolean: a non-boolean permanent is its own Error
+                # here and would otherwise be coerced into a second, misleading one.
+                $DraPermanent = $null
+                if (Test-HasProp -Node $DRA -Name 'permanent') {
+                    if ($DRA.permanent -is [bool]) {
+                        $DraPermanent = $DRA.permanent
+                    } else {
+                        Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                            -Path "$DRAPath.permanent" `
+                            -Message "'permanent' at $DRAPath must be a boolean."
+                    }
+                }
+                if ($DraHasDays -and $DraPermanent -eq $true) {
+                    Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem -Path $DRAPath `
+                        -Message "'durationDays' and 'permanent' true at $DRAPath are mutually exclusive; declare durationDays for a time-bound assignment, or permanent true (or neither) for a permanent one."
+                }
+                if (-not $DraHasDays -and $DraPermanent -eq $false) {
+                    Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem -Path "$DRAPath.durationDays" `
+                        -Message "'permanent' is false at $DRAPath but no 'durationDays' is declared; a time-bound assignment needs durationDays, and an entry without it is permanent."
+                }
+
+                if ((Test-HasProp -Node $DRA -Name 'justification') -and $DRA.justification -isnot [string]) {
+                    Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                        -Path "$DRAPath.justification" `
+                        -Message "'justification' at $DRAPath must be a string."
+                }
+
+                if ((Test-HasProp -Node $DRA -Name 'role') -and (Test-HasProp -Node $DRA -Name 'principal') -and
+                    (Test-HasProp -Node $DRA -Name 'assignmentType')) {
+                    $DraKey = "$($DRA.role)|$($DRA.principal)|$($DRA.assignmentType)".ToLowerInvariant()
+                    if ($DraSeen.ContainsKey($DraKey)) {
+                        $DraFirst = $DraSeen[$DraKey]
+                        Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem -Path $DRAPath `
+                            -Message ("$DRAPath declares the same role, principal and assignmentType as " +
+                                "directoryRoleAssignments[$DraFirst] (compared without regard to letter case). " +
+                                'Both entries describe one live assignment, and applying the document would re-issue ' +
+                                'its window for each of them on every run; keep one entry.')
+                    } else {
+                        $DraSeen[$DraKey] = $I
+                    }
+                }
             }
         }
     }

@@ -71,7 +71,7 @@ Describe 'Get-OERInventoryReadme' {
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
-    It 'counts and names every section schema.json declares, and marks directoryRoleManagementPolicies apply-only' {
+    It 'counts and names every section schema.json declares, and marks both directory role sections apply-only' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
@@ -81,7 +81,8 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
             foreach ($Section in $Sections) {
                 $Md | Should -Match "\b$Section\b"
             }
-            $Md | Should -Match 'is\s+apply-only for now: `Get-OERInventory` does not read it'
+            # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
+            ($Md -replace '\s+', ' ') | Should -Match '`directoryRoleManagementPolicies` \(the PIM settings of Microsoft Entra directory roles\) and `directoryRoleAssignments` \(eligible and active assignments of Microsoft Entra directory roles\) are apply-only for now: `Get-OERInventory` does not read them'
         }
     }
 }

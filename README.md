@@ -603,8 +603,8 @@ repository (or browse it on GitHub) to read it.
 - [docs/inventory-to-llm/README.md](docs/inventory-to-llm/README.md) -- the export -> LLM ->
   validate -> apply loop in full, including the `schema.json` / `Test-Json` escape hatch.
 - [docs/examples/example-structure.json](docs/examples/example-structure.json) -- a worked apply
-  document showing every section the engine understands, except `roleManagementPolicies` and
-  `directoryRoleManagementPolicies`, which are not in the example yet.
+  document showing every section the engine understands, except `roleManagementPolicies`,
+  `directoryRoleManagementPolicies` and `directoryRoleAssignments`, which are not in the example yet.
 - `Get-Help about_Omnicit.EntraRBAC` -- the in-box overview: command cohorts, Azure scope forms,
   the Tenant Profile schema, access package policy settings and the duration vocabulary. This one
   ships inside the module.

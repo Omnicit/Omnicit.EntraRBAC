@@ -804,8 +804,8 @@ BeforeAll {
         documentation as a violation of the rule it defines. A comment is a TOKEN the parser discards
         before this walk ever sees the tree, so an AST scan is immune to it by construction.
 
-        SCOPE is the SIXTEEN files listed below by name -- not a claim about the whole tree, and not
-        derived from one glob. They are the eight source/Private/Sync-OERStructure*.ps1 handlers plus
+        SCOPE is the SEVENTEEN files listed below by name -- not a claim about the whole tree, and not
+        derived from one glob. They are the nine source/Private/Sync-OERStructure*.ps1 handlers plus
         the eight private helpers that are handed an apply-document node and walk it:
 
           - source/Private/Read-OERStructureDocument.ps1 -- its nested Write-OEREnumValue helper walks
@@ -819,8 +819,6 @@ BeforeAll {
               Resolve-OERRoleManagementPolicyChange.ps1     <- Sync-OERStructureRoleManagementPolicy.ps1
                                                                 and Sync-OERStructureDirectoryRoleManagementPolicy.ps1
               Resolve-OERDirectoryRoleAssignmentChange.ps1  <- Sync-OERStructureDirectoryRoleAssignment.ps1
-                                                                (added in the next task; named here as the
-                                                                consumer this helper is built for)
           - source/Private/Get-OEROmittedPruneCollection.ps1 -- handed the whole parsed apply document
             (-Document) by Invoke-OERStructure and by Test-OERStructureSchema, it walks every groups,
             administrativeUnits, catalogs and accessPackages item and asks whether a collection key is
@@ -975,18 +973,21 @@ BeforeAll {
         file reads PSObject.Properties.Name (the change helper calls Test-OERDeclaredProperty
         throughout, mirroring Resolve-OERGroupEligibilityChange.ps1; the filter reads plain projection
         properties, never a document node), so the chain-predicate figures below are unchanged by
-        task 6's addition too. Re-measured with this gate's own counters on 2026-09-29 (a standalone
-        script replicating this gate's exact scan -- same file enumeration, same three-link chain
-        predicate, same handler-path set -- run against the tree after task 6's two new files landed):
-          - scanned files: 16 (the 8 Sync-OERStructure* handlers + the 8 named document consumers).
-          - source/**/*.ps1: 240 files (the 226 recorded on 2026-09-28 had gone stale: sprint 6 step 4
-            tasks 1-5 added the directory-role-assignment cmdlets, private helpers, format views and
-            completer before this task ever touched the tree, and this task's own two new private
-            files -- Select-OERManagedDirectoryRoleAssignment.ps1 and
-            Resolve-OERDirectoryRoleAssignmentChange.ps1 -- account for the last two of the 14-file
-            increase).
-          - chain predicate, module-wide: 25 (unchanged from 2026-09-28 -- neither new file contains
-            the chain).
+        task 6's addition too. Sprint 6 step 4 task 7 then added
+        Sync-OERStructureDirectoryRoleAssignment.ps1, a ninth Sync-OERStructure* handler, selected by the
+        glob, moving the scanned-file count from 16 to 17; it carries no chain either (every declared-value
+        question it asks goes through Test-OERDeclaredProperty, and the window through
+        Resolve-OERDirectoryRoleAssignmentChange), so the chain figures are unchanged by it. Re-measured
+        with this gate's own counters on 2026-09-29 (a standalone script replicating this gate's exact
+        scan -- same file enumeration, same three-link chain predicate, same handler-path set -- run
+        against the tree after task 7's handler landed):
+          - scanned files: 17 (the 9 Sync-OERStructure* handlers + the 8 named document consumers).
+          - source/**/*.ps1: 241 files (240 after task 6 -- whose two new private files,
+            Select-OERManagedDirectoryRoleAssignment.ps1 and Resolve-OERDirectoryRoleAssignmentChange.ps1,
+            closed a 14-file rise from the stale 226 of 2026-09-28 that sprint 6 step 4 tasks 1-5 had
+            begun -- and task 7's handler made it 241).
+          - chain predicate, module-wide: 25 (unchanged from 2026-09-28 -- none of the three new files
+            contains the chain).
           - of those, in-scope: exactly ONE -- the $PimResult check in Sync-OERStructureGroup.ps1
             that $script:declaredValueAllowlist documents below, keyed with its literal ('Applied').
 
@@ -1025,8 +1026,8 @@ BeforeAll {
         Sprint 6 step 2 added Resolve-OERDeclaredApprover.ps1, which reads a declared approvers block
         before the approval diffs. Sprint 6 step 4 task 6 added
         Resolve-OERDirectoryRoleAssignmentChange.ps1, which reads a declared directoryRoleAssignments[]
-        entry's durationDays before the Sync-OERStructureDirectoryRoleAssignment.ps1 handler arriving
-        in the next task diffs it against the live schedule.
+        entry's durationDays before the Sync-OERStructureDirectoryRoleAssignment.ps1 handler diffs it
+        against the live schedule.
     #>
     $script:declaredValueDocumentConsumerNames = @(
         'Get-OEROmittedPruneCollection.ps1'
@@ -1713,14 +1714,14 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             'a source file that fails to parse drops out of both scans below with no violation reported, the same silent-loss failure mode Pass 1 above documents; Pass 1 already asserts the whole tree parses, so this failing points at a file that parses for that gate and not for this one')
     }
 
-    It 'scans exactly the expected sixteen apply-document-walking files, by name' {
+    It 'scans exactly the expected seventeen apply-document-walking files, by name' {
         <#
             Named-FILE control, not a bare count (fix round 2). CLAUDE.md ## Module Layout and
             ## declared-property in docs/development/rationale.md both treat the Sync-OERStructure*
-            family as a fixed cohort -- eight since the directory-role policy handler joined:
-            AccessPackage, AccessReview, AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group,
-            RoleAssignment and RoleManagementPolicy. Fix round 2 added two non-Sync
-            document consumers; fix round 3 added the remaining three Resolve-OER*Change helpers that
+            family as a fixed cohort -- nine since the directory role assignment handler joined:
+            AccessPackage, AccessReview, AdministrativeUnit, Catalog, DirectoryRoleAssignment,
+            DirectoryRoleManagementPolicy, Group, RoleAssignment and RoleManagementPolicy. Fix round 2
+            added two non-Sync document consumers; fix round 3 added the remaining three Resolve-OER*Change helpers that
             take a -Declared document node, which round 2 had left out while claiming to cover every
             such file; sprint 6 added Get-OEROmittedPruneCollection.ps1, which walks the whole document
             for Invoke-OERStructure's -Prune warning. Sprint 6 step 2 added
@@ -1728,9 +1729,8 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             approval diffs. The directory-role policy section added
             Sync-OERStructureDirectoryRoleManagementPolicy.ps1. Sprint 6 step 4 task 6 added
             Resolve-OERDirectoryRoleAssignmentChange.ps1, a fifth Resolve-OER*Change helper that reads
-            a declared directoryRoleAssignments[] entry's durationDays -- its own Sync handler,
-            Sync-OERStructureDirectoryRoleAssignment.ps1, is added by task 7 and will join this list
-            then, not now.
+            a declared directoryRoleAssignments[] entry's durationDays. Sprint 6 step 4 task 7 added its
+            own Sync handler, Sync-OERStructureDirectoryRoleAssignment.ps1.
             Asserting the NAMES rather than the count says
             which file left the scan when one does -- a plain count told you only that "7" became "6", which is precisely the kind
             of silent narrowing this gate exists to stop. A file that appears means a new handler or
@@ -1750,6 +1750,7 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
             'Sync-OERStructureAccessReview.ps1'
             'Sync-OERStructureAdministrativeUnit.ps1'
             'Sync-OERStructureCatalog.ps1'
+            'Sync-OERStructureDirectoryRoleAssignment.ps1'
             'Sync-OERStructureDirectoryRoleManagementPolicy.ps1'
             'Sync-OERStructureGroup.ps1'
             'Sync-OERStructureRoleAssignment.ps1'
@@ -1762,7 +1763,7 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
                 Sort-Object)
 
         ($Actual -join ', ') | Should -BeExactly ($Expected -join ', ') -Because (
-            'this gate scans exactly these sixteen files: the eight source/Private/Sync-OERStructure*.ps1 handlers plus the eight document consumers named in the SCOPE note (Read-OERStructureDocument.ps1, Get-OEROmittedPruneCollection.ps1, Resolve-OERDeclaredApprover.ps1 and the five Resolve-OER*Change helpers that take a -Declared document node); a name missing here means the selection stopped matching that file and silently narrowed the gate, and a name added means a new apply-document walker needs a deliberate look')
+            'this gate scans exactly these seventeen files: the nine source/Private/Sync-OERStructure*.ps1 handlers plus the eight document consumers named in the SCOPE note (Read-OERStructureDocument.ps1, Get-OEROmittedPruneCollection.ps1, Resolve-OERDeclaredApprover.ps1 and the five Resolve-OER*Change helpers that take a -Declared document node); a name missing here means the selection stopped matching that file and silently narrowed the gate, and a name added means a new apply-document walker needs a deliberate look')
     }
 
     It 'scans a meaningful number of PSObject.Properties.Name member-access chains module-wide' {
@@ -1786,8 +1787,8 @@ Describe 'Apply-document declared-value hygiene' -Tags 'SourceHygiene' {
         $script:declaredValueViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 CLAUDE.md ## Code Style: Test-OERDeclaredProperty and Test-OERDeclaredNull are the single owners of
 the apply engine's declared-value rule (docs/development/rationale.md#declared-property). A property
-on an apply-document node is declared only when it is present AND not null; one of the sixteen scanned
-apply-document walkers (the eight Sync-OERStructure* handlers and the eight document consumers named in
+on an apply-document node is declared only when it is present AND not null; one of the seventeen scanned
+apply-document walkers (the nine Sync-OERStructure* handlers and the eight document consumers named in
 the SCOPE note) that instead reads a node's ".PSObject.Properties.Name" directly
 -- whether compared inline with -contains, assigned to a variable for a later comparison, or consumed
 any other way -- and pairs

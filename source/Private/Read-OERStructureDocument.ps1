@@ -204,6 +204,12 @@ function Read-OERStructureDocument {
         foreach ($Assignment in @($Doc.roleAssignments)) {
             Write-OEREnumValue -Node $Assignment -Key 'principalType' -EnumName 'principalType'
         }
+        # assignmentType picks the cmdlet pair Sync-OERStructureDirectoryRoleAssignment calls and is
+        # part of every row label it writes, so it must reach the handler in its canonical spelling.
+        foreach ($DirectoryAssignment in @($Doc.directoryRoleAssignments)) {
+            Write-OEREnumValue -Node $DirectoryAssignment -Key 'assignmentType' -EnumName 'directoryRoleAssignmentType'
+            Write-OEREnumValue -Node $DirectoryAssignment -Key 'principalType' -EnumName 'principalType'
+        }
     }
 
     $Doc
