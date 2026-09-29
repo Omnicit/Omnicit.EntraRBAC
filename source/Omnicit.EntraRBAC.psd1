@@ -86,6 +86,10 @@
         # Directory role assignments
         'Get-OEREligibleDirectoryRoleAssignment'
         'Get-OERActiveDirectoryRoleAssignment'
+        'New-OEREligibleDirectoryRoleAssignment'
+        'New-OERActiveDirectoryRoleAssignment'
+        'Remove-OEREligibleDirectoryRoleAssignment'
+        'Remove-OERActiveDirectoryRoleAssignment'
         'Get-OERManagementGroup'
         'Get-OERSubscription'
         'Get-OERRoleDefinition'
