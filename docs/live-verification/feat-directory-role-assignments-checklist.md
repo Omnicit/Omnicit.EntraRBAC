@@ -202,9 +202,10 @@ shapes the tests assume. They cannot prove the eight things this file is for:
 
 - A **test tenant** -- never a customer tenant -- with Microsoft Entra ID P2 or ID Governance
   licensing (PIM for Microsoft Entra roles), its tenant id and one verified domain. No subscription
-  is needed. A Tenant Profile alias for it (`Get-OERConfiguration`) is optional: every sign-in names
-  the tenant id, and a profile that exists on the machine running this file must name that same
-  tenant and the commercial cloud, or nothing runs.
+  is needed. A Tenant Profile for it (`Get-OERConfiguration`) is required: a profile for the alias
+  must exist on the machine running this file and name the test tenant's id, or the first block
+  below stops; the prerequisite script also refuses a profile that names another tenant or a cloud
+  other than the commercial one. Every sign-in still names the tenant id itself.
 - The **dedicated certificate identity** `oer-live-cc` ([README.md](README.md), first paragraph):
   an app whose only credential is a non-exportable certificate in `Cert:\CurrentUser\My`, with the
   Microsoft Graph application permissions the operator's identity script grants. This file needs,
@@ -279,6 +280,24 @@ if (Select-String -Path ($ModulePsd1 -replace '\.psd1$', '.psm1') -Pattern "^#Re
     throw 'The built module carries a PREFIX region: rebuild with the line above, never with ./build.ps1 in this window.'
 }
 New-Item -ItemType Directory -Path $Raw -Force | Out-Null
+# The Tenant Profile for $Alias must exist on this machine and name $TenantId; otherwise stop.
+# -ErrorAction Stop: a profile Get-OERConfiguration skips as unreadable or incomplete stops here too.
+# Printed as True/False, never as values.
+Import-Module Omnicit.EntraRBAC -Force
+try {
+    $S64Profile = @(Get-OERConfiguration -TenantAlias $Alias -ErrorAction Stop)
+} catch {
+    $global:Error.Clear()
+    throw 'The Tenant Profile for $Alias could not be read: the alias is not a valid profile name, or its profile file is unreadable or incomplete. Run Get-OERConfiguration -TenantAlias $Alias in this window to see why, and repair it with Set-OERConfiguration -TenantAlias $Alias -TenantId $TenantId. Nothing below may run.'
+}
+if ($S64Profile.Count -ne 1) {
+    throw "There is no Tenant Profile for `$Alias on this machine ($($S64Profile.Count) found). Create it first, in this window: New-OERConfiguration -TenantAlias `$Alias -TenantId `$TenantId. Nothing below may run."
+}
+$S64ProfileOk = [string]$S64Profile[0].TenantId -eq $TenantId
+"Tenant Profile for `$Alias names `$TenantId: $S64ProfileOk"
+if (-not $S64ProfileOk) {
+    throw 'The Tenant Profile for $Alias names another tenant than $TenantId: stop, and correct one of them (Set-OERConfiguration -TenantAlias $Alias -TenantId $TenantId). Nothing below may run.'
+}
 ```
 
 **Create the test objects and record the baselines.** The script runs in its own process, so this
@@ -288,8 +307,8 @@ window keeps its own sign-in. It signs in app-only as the certificate identity, 
 `identity check: tenant is the test tenant: True` -- and a `False` stops it before anything is
 written. Before its first write it identifies the tenant positively: the organization's display
 name must equal `-ExpectedTenantDisplayName` EXACTLY, `-UserDomain` must be one of its verified
-domains, and `-TenantId` must be the organization's id; a Tenant Profile for the alias, when one
-exists on the machine, must name the same tenant. Before each `Connect-MgGraph` it runs
+domains, and `-TenantId` must be the organization's id; the Tenant Profile for the alias, which
+the first block requires, must name the same tenant. Before each `Connect-MgGraph` it runs
 `Disconnect-OER` and then `Disconnect-MgGraph` (`Connect-OER` leaves its raw access token in the
 Graph SDK's process cache, which a later `Connect-MgGraph` would otherwise try to read as an MSAL
 cache). A read of an object it has just created is retried on a 404. With `-Unattended` -- a run
@@ -1163,7 +1182,7 @@ the Graph SDK has expired: paste the sign-in block again.
   `[oer-s64] WhatIf: nothing was created, restored, removed or written.` and `[oer-s64] Done.`
   **Failure looks like:** a target without the prefix other than those named above; a directory
   role other than the two; a refusal line -- `Refusing to run: ...` from the tenant identification
-  (check `$OrgName` exactly, case-sensitive, `$Domain`, `$TenantId` and any Tenant Profile for the
+  (check `$OrgName` exactly, case-sensitive, `$Domain`, `$TenantId` and the Tenant Profile for the
   alias; never weaken the check), a refusal naming a direct assignment of either role to a principal
   the script did not create (someone holds the role: stop, this file cannot restore what it did not
   record), or a user `oer-s64-nobody@...` that exists. Record it and stop.
