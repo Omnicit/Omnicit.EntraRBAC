@@ -19,36 +19,35 @@ still prunes, and `-Prune` lists them before writing; set such a key to `null` t
 
 PIM for Groups policies support approval. `Set-OERGroupPimPolicy` takes `-RequireApproval`,
 `-ApproverUser` and `-ApproverGroup`; `pimPolicy` takes `requireApproval` and
-`approvers { users[], groups[] }`, and `Get-OERInventory` exports them, `requireApproval` in every
-`pimPolicy`. Approvers named by UPN or group name are resolved before comparison in every apply
+`approvers { users[], groups[] }`, and `Get-OERInventory` exports them. Approvers named by UPN or group name are resolved before comparison in every apply
 section, so a re-run reports `Unchanged`; a `roleManagementPolicies` user approver must now be a
 UPN or object id. Earlier versions could apply a group's owner settings, a permanent-eligibility
 opening included, to its member policy while the owner policy was not yet listed: review the
 member policies of groups onboarded by an apply run. A refused policy read is
 `PimPolicyReadFailed`, not `PimPolicyNotFound`, and a group created in the same run gets up to
-30 seconds for its policies to appear, a `404 ResourceNotFound` counting as not there yet.
-`Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`, and
-`Invoke-OERStructure` no longer returns an eligibility request among its results.
+30 seconds for its policies to appear. `Test-OERStructure` warns about unknown keys in `groups`
+and `pimPolicy`, and `Invoke-OERStructure` no longer returns stray eligibility requests.
 
 `Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and change a
-directory role's PIM settings by role or policy id, Get also with `-All`. They return the Azure
-cmdlets' `RoleManagementPolicy` object with `Scope` `/` and need no Azure token. Unlike
+directory role's PIM settings by role or policy id. They return the Azure
+cmdlets' `RoleManagementPolicy` object and need no Azure token. Unlike
 `Set-OERRoleManagementPolicy`, approvers are replaced per side: `-ApproverUser` keeps the group
-approvers and vice versa, and an empty list clears that side. An MFA and authentication-context
-pair the call does not touch is left alone. The apply section `directoryRoleManagementPolicies[]`
-runs between access reviews and the Azure sections and is not yet exported. `-Role` tab-completes
-built-in role names, and a delegated sign-in needs Privileged Role Administrator to change a
-policy. `Get-OERRequiredScope` lists the least-privilege permissions of the new cmdlets, and
+approvers and vice versa, and an empty list clears that side. The apply section `directoryRoleManagementPolicies[]`
+runs before the Azure sections and is not yet exported. A delegated sign-in needs Privileged Role
+Administrator to change a policy. `Get-OERRequiredScope` lists the new cmdlets, and
 `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
 Directory roles can be assigned: `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment` and
-the same three for active assignments, and the apply section `directoryRoleAssignments[]`, which
-runs after the directory-role policies. A permanent assignment the role's policy does not allow is
+the same three for active assignments, and the apply section `directoryRoleAssignments[]`, after
+the directory-role policies. A permanent assignment the role's policy does not allow is
 refused instead of opening the policy, and a group that is not role-assignable is refused before the
 request. `-Prune` touches only the role and assignment-type pairs the document declares, and never an
 activation, a member's assignment inherited through a group, or the signed-in identity's own direct
-assignment. Directory role names now match in any letter case. `Get-OERRequiredScope` lists the new
-cmdlets too.
+assignment. It also leaves a group's assignment alone when the signed-in identity is a member of
+that group. Directory role names now match in any letter case. An ambiguous service principal
+display name is refused with the candidate ids instead of taking the first match, as
+`AmbiguousApplicationName` or `AmbiguousPrincipalName`; an ambiguous group principal name now also
+reports `AmbiguousPrincipalName`, not `PrincipalNotFound`.
 
 ## [1.0.1] - 2026-09-23
 
