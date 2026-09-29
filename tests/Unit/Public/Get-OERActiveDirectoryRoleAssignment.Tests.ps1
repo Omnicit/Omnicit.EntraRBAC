@@ -72,6 +72,15 @@ Describe 'Get-OERActiveDirectoryRoleAssignment' {
         }
     }
 
+    It 'lower-cases an upper-case -PrincipalId in the principalId filter clause, like the role id' {
+        Get-OERActiveDirectoryRoleAssignment -PrincipalId 'AAAAAAAA-0000-0000-0000-00000000000B' | Out-Null
+        # -clike, not -like: the point is the letter case of the id in the request.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -clike "*directoryScopeId eq '/' and principalId eq 'aaaaaaaa-0000-0000-0000-00000000000b'&*"
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0
+    }
+
     It 'reports RoleDefinitionNotFound and issues no schedule GET when -Role does not resolve' {
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { $null }
         $Err = $null

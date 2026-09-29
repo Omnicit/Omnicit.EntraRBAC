@@ -103,7 +103,9 @@ function Get-OEREligibleDirectoryRoleAssignment {
                     -TargetObject $Principal.TargetObject -Cmdlet $PSCmdlet
                 return
             }
-            $Filter += " and principalId eq '$(ConvertTo-OERODataFilterValue -Value $Principal.PrincipalId)'"
+            # Lower-cased like the role id (Resolve-OERDirectoryRoleDefinitionId), so a -PrincipalId
+            # typed in upper case still matches the lower-case id Graph stores.
+            $Filter += " and principalId eq '$(ConvertTo-OERODataFilterValue -Value ([string]$Principal.PrincipalId).ToLowerInvariant())'"
         }
 
         try {
