@@ -112,6 +112,77 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
+    It 'refuses a piped row inherited through a group with NotDirectAssignment, before any Graph call' {
+        # The adminRemove request names only the role and the principal, so a piped inherited row
+        # (the MEMBER's PrincipalId) would remove that member's own DIRECT active assignment instead.
+        $Piped = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'eeeeeeee-0000-0000-0000-000000000005'
+            MemberType       = 'Group'
+            AssignmentType   = 'Assigned'
+        }
+        $Err = $null
+        $Piped | Remove-OERActiveDirectoryRoleAssignment -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Hit = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OERActiveDirectoryRoleAssignment' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Hit[0].TargetObject | Should -Be 'eeeeeeee-0000-0000-0000-000000000005'
+        $Hit[0].Exception.Message | Should -Match ([regex]::Escape("is inherited through a group (MemberType 'Group')"))
+        $Hit[0].Exception.Message | Should -Match ([regex]::Escape("Remove the group's own active assignment"))
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a piped Activated row with NotDirectAssignment, before any Graph call' {
+        # An activation is the principal's own activation of an eligible assignment; removing "it" by
+        # role and principal would remove that principal's DIRECT, standing active assignment instead.
+        $Piped = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'eeeeeeee-0000-0000-0000-000000000005'
+            MemberType       = 'Direct'
+            AssignmentType   = 'Activated'
+        }
+        $Err = $null
+        $Piped | Remove-OERActiveDirectoryRoleAssignment -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Hit = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OERActiveDirectoryRoleAssignment' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Hit[0].Exception.Message | Should -Match ([regex]::Escape('is an activation, which PIM ends on its own'))
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'removes a piped Direct, Assigned row, and only that one when it is piped together with an inherited and an Activated row' {
+        $Inherited = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'eeeeeeee-0000-0000-0000-000000000005'
+            MemberType       = 'Group'
+            AssignmentType   = 'Assigned'
+        }
+        $Activated = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'dddddddd-0000-0000-0000-000000000004'
+            MemberType       = 'Direct'
+            AssignmentType   = 'Activated'
+        }
+        $Direct = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'cccccccc-0000-0000-0000-000000000003'
+            MemberType       = 'Direct'
+            AssignmentType   = 'Assigned'
+        }
+        $Err = $null
+        $Inherited, $Activated, $Direct | Remove-OERActiveDirectoryRoleAssignment -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OERActiveDirectoryRoleAssignment' }).Count | Should -Be 2
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Body.principalId -eq 'cccccccc-0000-0000-0000-000000000003'
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+    }
+
     It 'reports NoPrincipal and issues no POST when no principal is supplied' {
         $Err = $null
         Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -Confirm:$false `

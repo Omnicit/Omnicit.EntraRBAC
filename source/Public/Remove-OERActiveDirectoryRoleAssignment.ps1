@@ -22,6 +22,15 @@ function Remove-OERActiveDirectoryRoleAssignment {
     a non-terminating AmbiguousPrincipal error (Ruling P3) rather than silently removing each piped
     item's own principal's active assignment.
 
+    Only a DIRECT, standing active assignment can be removed. A piped row whose MemberType is set to
+    anything other than Direct (a row Get-OERActiveDirectoryRoleAssignment returns for a member who
+    holds the role through a group), or whose AssignmentType is Activated (an activation of an
+    eligible assignment), is refused with a non-terminating NotDirectAssignment error before any
+    Graph call: the request names only the role and the principal, so it would remove that
+    principal's own direct active assignment instead, if one exists. Remove the group's own
+    assignment, or the member from the group; an activation ends on its own schedule or through the
+    eligible assignment's removal.
+
     For least privilege, RoleAssignmentSchedule.ReadWrite.Directory is enough for the write and
     RoleManagement.Read.Directory resolves -Role; the module's default sign-in scope list already
     requests the broader RoleManagement.ReadWrite.Directory, which covers both. A delegated caller
@@ -69,9 +78,10 @@ function Remove-OERActiveDirectoryRoleAssignment {
         Where-Object { $_.MemberType -eq 'Direct' -and $_.AssignmentType -eq 'Assigned' } |
         Remove-OERActiveDirectoryRoleAssignment
     Removes the piped active assignment, filtered to a direct, standing one --
-    Get-OERActiveDirectoryRoleAssignment also returns activations and group-inherited rows, which
-    this cmdlet cannot remove directly (an activation ends on its own schedule or through the
-    eligible assignment's removal; a group-inherited row is removed from the group instead).
+    Get-OERActiveDirectoryRoleAssignment also returns activations and rows inherited through a
+    group, which this cmdlet refuses with NotDirectAssignment (an activation ends on its own
+    schedule or through the eligible assignment's removal; an inherited row is removed through the
+    group instead); the filter keeps them out of the pipe.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([PSCustomObject])]
@@ -113,6 +123,29 @@ function Remove-OERActiveDirectoryRoleAssignment {
                 -Message ([System.Exception]::new("A principal was supplied by name while objects carrying their own PrincipalId '$($PSItem.PrincipalId)' are being piped in. The piped -PrincipalId takes precedence, so the named principal would be ignored and each piped item's own principal would lose its active assignment instead. Supply either the named principal or the pipeline, not both.")) `
                 -ErrorId 'AmbiguousPrincipal' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
             return
+        }
+
+        # A piped row inherited through a group carries the MEMBER's PrincipalId, and an Activated row
+        # the activating principal's; the adminRemove request names only the role and the principal,
+        # so either would remove that principal's own DIRECT, standing active assignment (if one
+        # exists) instead of the piped row. Refused before any Graph call. A piped object with neither
+        # property (not Get- output) is left to the request as before.
+        if ($PSCmdlet.MyInvocation.ExpectingInput) {
+            $NotDirectReason = $null
+            $NotDirectAdvice = $null
+            if ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
+                $NotDirectReason = "is inherited through a group (MemberType '$($PSItem.MemberType)'), not a direct one"
+                $NotDirectAdvice = " Remove the group's own active assignment, or the principal from the group."
+            } elseif ([string]$PSItem.AssignmentType -eq 'Activated') {
+                $NotDirectReason = 'is an activation, which PIM ends on its own, not a standing assignment'
+                $NotDirectAdvice = ' It ends when its window closes, or when the eligible assignment is removed.'
+            }
+            if ($NotDirectReason) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("The piped active assignment of directory role '$Role' for principal '$($PSItem.PrincipalId)' $NotDirectReason, so it is not removed: the request names only the role and the principal, and would remove that principal's own direct active assignment instead, if one exists.$NotDirectAdvice")) `
+                    -ErrorId 'NotDirectAssignment' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
+                return
+            }
         }
 
         $RoleInput = Resolve-OERDirectoryRoleInput -Role $Role

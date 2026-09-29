@@ -112,6 +112,48 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
+    It 'refuses a piped row inherited through a group with NotDirectAssignment, before any Graph call' {
+        # The adminRemove request names only the role and the principal, so a piped inherited row
+        # (the MEMBER's PrincipalId) would remove that member's own DIRECT eligibility instead.
+        $Piped = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'eeeeeeee-0000-0000-0000-000000000005'
+            MemberType       = 'Group'
+        }
+        $Err = $null
+        $Piped | Remove-OEREligibleDirectoryRoleAssignment -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Hit = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OEREligibleDirectoryRoleAssignment' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Hit[0].TargetObject | Should -Be 'eeeeeeee-0000-0000-0000-000000000005'
+        $Hit[0].Exception.Message | Should -Match ([regex]::Escape("is inherited through a group (MemberType 'Group')"))
+        $Hit[0].Exception.Message | Should -Match ([regex]::Escape("Remove the group's own eligible assignment"))
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'removes a piped Direct row, and only that one when it is piped together with an inherited row' {
+        $Inherited = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'eeeeeeee-0000-0000-0000-000000000005'
+            MemberType       = 'Group'
+        }
+        $Direct = [PSCustomObject]@{
+            RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+            PrincipalId      = 'cccccccc-0000-0000-0000-000000000003'
+            MemberType       = 'Direct'
+        }
+        $Err = $null
+        $Inherited, $Direct | Remove-OEREligibleDirectoryRoleAssignment -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Body.principalId -eq 'cccccccc-0000-0000-0000-000000000003'
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+    }
+
     It 'reports NoPrincipal and issues no POST when no principal is supplied' {
         $Err = $null
         Remove-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -Confirm:$false `

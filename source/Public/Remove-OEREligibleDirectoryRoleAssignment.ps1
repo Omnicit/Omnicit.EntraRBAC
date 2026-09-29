@@ -20,6 +20,13 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     a non-terminating AmbiguousPrincipal error (Ruling P3) rather than silently removing each piped
     item's own principal's eligibility.
 
+    Only a DIRECT eligibility can be removed. A piped row whose MemberType is set to anything other
+    than Direct (a row Get-OEREligibleDirectoryRoleAssignment returns for a member who is eligible
+    through a group) is refused with a non-terminating NotDirectAssignment error before any Graph
+    call: the request names only the role and the principal, so it would remove that member's own
+    direct eligibility instead, if one exists. Remove the group's own eligibility, or the member from
+    the group, instead.
+
     For least privilege, RoleEligibilitySchedule.ReadWrite.Directory is enough for the write and
     RoleManagement.Read.Directory resolves -Role; the module's default sign-in scope list already
     requests the broader RoleManagement.ReadWrite.Directory, which covers both. A delegated caller
@@ -66,8 +73,8 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     Get-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'anna.berg@example.com' |
         Where-Object { $_.MemberType -eq 'Direct' } | Remove-OEREligibleDirectoryRoleAssignment
     Removes the piped eligibility, filtered to a direct one -- Get-OEREligibleDirectoryRoleAssignment
-    also returns group-inherited rows, which this cmdlet cannot remove directly (remove the group's
-    own eligibility instead).
+    also returns rows inherited through a group, which this cmdlet refuses with NotDirectAssignment
+    (remove the group's own eligibility instead); the filter keeps them out of the pipe.
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
     [OutputType([PSCustomObject])]
@@ -109,6 +116,27 @@ function Remove-OEREligibleDirectoryRoleAssignment {
                 -Message ([System.Exception]::new("A principal was supplied by name while objects carrying their own PrincipalId '$($PSItem.PrincipalId)' are being piped in. The piped -PrincipalId takes precedence, so the named principal would be ignored and each piped item's own principal would lose its eligible assignment instead. Supply either the named principal or the pipeline, not both.")) `
                 -ErrorId 'AmbiguousPrincipal' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
             return
+        }
+
+        # A piped row inherited through a group carries the MEMBER's PrincipalId; the adminRemove
+        # request names only the role and the principal, so it would remove that principal's own
+        # DIRECT eligible assignment (if one exists) instead of the piped row. Refused before any
+        # Graph call. A piped object without MemberType (not Get- output) is left to the request as
+        # before. An eligibility has no AssignmentType, so the Active twin's activation branch has
+        # no counterpart here.
+        if ($PSCmdlet.MyInvocation.ExpectingInput) {
+            $NotDirectReason = $null
+            $NotDirectAdvice = $null
+            if ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
+                $NotDirectReason = "is inherited through a group (MemberType '$($PSItem.MemberType)'), not a direct one"
+                $NotDirectAdvice = " Remove the group's own eligible assignment, or the principal from the group."
+            }
+            if ($NotDirectReason) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new("The piped eligible assignment of directory role '$Role' for principal '$($PSItem.PrincipalId)' $NotDirectReason, so it is not removed: the request names only the role and the principal, and would remove that principal's own direct eligible assignment instead, if one exists.$NotDirectAdvice")) `
+                    -ErrorId 'NotDirectAssignment' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
+                return
+            }
         }
 
         $RoleInput = Resolve-OERDirectoryRoleInput -Role $Role
