@@ -121,4 +121,72 @@ Describe 'Resolve-OERDirectoryRoleDefinitionId' {
             { Resolve-OERDirectoryRoleDefinitionId -Role '' } | Should -Throw -ExpectedMessage '*empty string*'
         }
     }
+
+    It 'matches a name typed in another letter case through the full list when the exact filter finds nothing' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -like '*$filter=*') { return @{ value = @() } }
+            @{ value = @(
+                    @{ id = 'aaaaaaaa-0000-0000-0000-000000000001'; displayName = 'Reports Reader' },
+                    @{ id = 'aaaaaaaa-0000-0000-0000-000000000002'; displayName = 'Message Center Reader' }) }
+        }
+        InModuleScope $script:moduleName {
+            Resolve-OERDirectoryRoleDefinitionId -Role 'reports reader' |
+                Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
+            $Uri -like "v1.0/roleManagement/directory/roleDefinitions?*displayName eq 'reports%20reader'*"
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
+            $Uri -eq 'v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName' -and $All
+        }
+    }
+
+    It 'throws AmbiguousName with every candidate id when two definitions differ only in letter case' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -like '*$filter=*') { return @{ value = @() } }
+            @{ value = @(
+                    @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Reports Reader' },
+                    @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'REPORTS READER' }) }
+        }
+        $Caught = InModuleScope $script:moduleName {
+            $Result = $null
+            try { Resolve-OERDirectoryRoleDefinitionId -Role 'reports reader' } catch { $Result = $PSItem }
+            $Result
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -Match '^AmbiguousName'
+        $Caught.Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+        $Caught.Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+    }
+
+    It 'returns an exact-case match without listing every role definition' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(@{ id = 'aaaaaaaa-0000-0000-0000-000000000001'; displayName = 'Reports Reader' }) }
+        }
+        InModuleScope $script:moduleName {
+            Resolve-OERDirectoryRoleDefinitionId -Role 'Reports Reader' | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $All }
+    }
+
+    It 'returns $null after both requests when no definition matches in any letter case' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -like '*$filter=*') { return @{ value = @() } }
+            @{ value = @(@{ id = 'aaaaaaaa-0000-0000-0000-000000000002'; displayName = 'Message Center Reader' }) }
+        }
+        InModuleScope $script:moduleName {
+            Resolve-OERDirectoryRoleDefinitionId -Role 'No Such Role' | Should -Be $null
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 2
+    }
+
+    It 'propagates a failure of the full list instead of reporting no match' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -like '*$filter=*') { return @{ value = @() } }
+            throw 'Forbidden: insufficient privileges'
+        }
+        InModuleScope $script:moduleName {
+            { Resolve-OERDirectoryRoleDefinitionId -Role 'reports reader' } | Should -Throw -ExpectedMessage '*Forbidden*'
+        }
+    }
 }
