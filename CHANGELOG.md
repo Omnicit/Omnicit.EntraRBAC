@@ -8,48 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 `Invoke-OERStructure -Prune` no longer removes anything because a lookup failed. When a declared
-entry cannot be resolved -- a group member, owner or PIM eligibility, an administrative unit member
-or scoped role, an access package resource role, or a role assignment under the same `scope` --
-nothing in that collection is removed: its undeclared live entries are reported `Skipped`, rather
-than removed or `Extra`, with the reason
-`prune withheld: declared entry '<entry>' could not be resolved`, and the unresolved entry is still
-`Failed`. Such a live entry could previously be deleted, PIM eligibility and Azure role assignments
-included. A service principal named in `roleAssignments` needs `"principalType": "ServicePrincipal"`
-to resolve.
+group member, owner or PIM eligibility, administrative unit member or scoped role, access package
+resource role, or role assignment under the same `scope` cannot be resolved, it is `Failed`, and
+the undeclared live entries of that collection are `Skipped`, rather than removed or `Extra`,
+with `prune withheld: declared entry '<entry>' could not be resolved`. Earlier versions could
+delete them, PIM eligibility and Azure role assignments included. A service principal in
+`roleAssignments` needs `"principalType": "ServicePrincipal"`. `Test-OERStructure` warns about an
+omitted `members`, `scopedRoles`, catalog `resources` or access package `resourceRoles` key, which
+still prunes, and `-Prune` lists them before writing; set such a key to `null` to leave it alone.
 
-`Test-OERStructure` now warns about an omitted `members`, `scopedRoles`, catalog `resources` or
-access package `resourceRoles` key, which still prunes, and `Invoke-OERStructure -Prune` lists them
-before it writes anything; set such a key to `null` to leave it untouched. `Get-OERRequiredScope`
-lists `RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
+PIM for Groups policies support approval. `Set-OERGroupPimPolicy` takes `-RequireApproval`,
+`-ApproverUser` and `-ApproverGroup`; `pimPolicy` takes `requireApproval` and
+`approvers { users[], groups[] }`, and `Get-OERInventory` exports them, `requireApproval` in every
+`pimPolicy`. Approvers named by UPN or group name are resolved before comparison in every apply
+section, so a re-run reports `Unchanged`; a `roleManagementPolicies` user approver must now be a
+UPN or object id. Earlier versions could apply a group's owner settings, a permanent-eligibility
+opening included, to its member policy while the owner policy was not yet listed: review the
+member policies of groups onboarded by an apply run. A refused policy read is
+`PimPolicyReadFailed`, not `PimPolicyNotFound`, and a group created in the same run gets up to
+30 seconds for its policies to appear, a `404 ResourceNotFound` counting as not there yet.
+`Test-OERStructure` warns about unknown keys in `groups` and `pimPolicy`, and
+`Invoke-OERStructure` no longer returns an eligibility request among its results.
 
-PIM for Groups policies now support approval: `Set-OERGroupPimPolicy` takes `-RequireApproval`,
-`-ApproverUser` and `-ApproverGroup`, and a group's `pimPolicy` accepts `requireApproval` and
-`approvers { users[], groups[] }`, which `Get-OERInventory` now exports (`requireApproval` appears
-in every exported `pimPolicy` block). Approvers declared by UPN or group name are resolved to object
-ids before comparison, in `pimPolicy` and `roleManagementPolicies` alike, so a re-run reports
-`Unchanged`; a `roleManagementPolicies` user approver must now be a UPN or object id, since a
-display name is reported `Failed`. Earlier versions could resolve the OWNER policy of a group whose
-owner policy was not yet listed to its MEMBER policy, so owner settings, a permanent-eligibility
-opening included, could land on the member policy: review the member policies of groups onboarded by
-an apply run. A refused policy read is now `PimPolicyReadFailed` rather than `PimPolicyNotFound`,
-and a group created in the same run gets up to 30 seconds for its policies to appear. During that
-wait, a `404 ResourceNotFound` from Microsoft Graph, on the listing of a policy or on the read of
-it, counts as a policy not there yet rather than a failed read. `Test-OERStructure` warns about
-unknown keys in `groups` and `pimPolicy`.
-`Invoke-OERStructure` no longer returns the eligibility request among its results when it adds a
-PIM eligibility to a group.
-
-`Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and update
-a directory role's PIM settings, by role or by policy id; Get also reads every directory role with
-`-All`. Both return the same `Omnicit.EntraRBAC.RoleManagementPolicy` object as the Azure cmdlets,
-`Scope` `/`, and need no Azure token. Unlike `Set-OERRoleManagementPolicy`, approvers are replaced
-per side (`-ApproverUser` keeps the group approvers and vice versa; an empty list clears that
-side), and an MFA and authentication-context combination the call does not touch is left alone.
-The new apply-document section `directoryRoleManagementPolicies[]` runs between access reviews and
-the Azure sections and is not yet exported by `Get-OERInventory`; approvers named by UPN or group
-name are resolved first, so a re-run reports `Unchanged`. `-Role` tab-completes built-in role
-names. `Get-OERRequiredScope` lists the least-privilege Graph permissions; delegated callers need
-the Privileged Role Administrator role to change a policy.
+`Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and change a
+directory role's PIM settings by role or policy id, Get also with `-All`. They return the Azure
+cmdlets' `RoleManagementPolicy` object with `Scope` `/` and need no Azure token. Unlike
+`Set-OERRoleManagementPolicy`, approvers are replaced per side: `-ApproverUser` keeps the group
+approvers and vice versa, and an empty list clears that side. An MFA and authentication-context
+pair the call does not touch is left alone. The apply section `directoryRoleManagementPolicies[]`
+runs between access reviews and the Azure sections and is not yet exported. `-Role` tab-completes
+built-in role names, and a delegated sign-in needs Privileged Role Administrator to change a
+policy. `Get-OERRequiredScope` lists the least-privilege permissions of the new cmdlets, and
+`RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
 
 ## [1.0.1] - 2026-09-23
 
