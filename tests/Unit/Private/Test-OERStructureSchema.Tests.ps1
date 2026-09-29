@@ -3173,6 +3173,51 @@ Describe 'Test-OERStructureSchema directoryRoleAssignments' {
         }
     }
 
+    It 'warns when a ServicePrincipal is named by display name (principalType <PrincipalType>), since the lookup takes the first match' -TestCases @(
+        @{ PrincipalType = 'ServicePrincipal' }
+        @{ PrincipalType = 'serviceprincipal' }
+    ) {
+        $Doc = New-DraDoc ('{ "role": "Reports Reader", "principal": "oer-test-app", "principalType": "' + $PrincipalType + '", "assignmentType": "Eligible" }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principal' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'directoryRoleAssignments'
+            $Hit[0].Item | Should -BeExactly 'Reports Reader'
+            $Hit[0].Message | Should -BeExactly ("'principal' at directoryRoleAssignments[0] names a service principal by display name ('oer-test-app'): " +
+                'service principal display names are not unique and the lookup takes the first match; ' +
+                'name a service principal by its object id.')
+        }
+    }
+
+    It 'does not warn about a ServicePrincipal named by object id' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "aaaaaaaa-0000-0000-0000-000000000003", "principalType": "ServicePrincipal", "assignmentType": "Eligible" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'does not give the service principal warning to a <PrincipalType> named by name, or to an entry without principalType' -TestCases @(
+        @{ PrincipalType = 'User'; Principal = 'person1@example.com' }
+        @{ PrincipalType = 'Group'; Principal = 'Reporting Readers' }
+        @{ PrincipalType = $null; Principal = 'oer-test-app' }
+    ) {
+        $TypeJson = if ($PrincipalType) { '"principalType": "' + $PrincipalType + '", ' } else { '' }
+        $Doc = New-DraDoc ('{ "role": "Reports Reader", "principal": "' + $Principal + '", ' + $TypeJson + '"assignmentType": "Eligible" }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
     It 'rejects durationDays <Value>' -TestCases @(
         @{ Value = '0' }
         @{ Value = '3651' }

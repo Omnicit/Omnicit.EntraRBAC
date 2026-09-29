@@ -47,7 +47,10 @@ function Test-OERStructureSchema {
     not declared); an entry with neither is permanent. A second entry naming the same role, principal
     and assignmentType as an earlier one, compared as written without regard to letter case, is an
     Error at the later entry's path naming the earlier index, since applying both would re-issue the
-    one live assignment's window on every run. An unknown per-item key in the roleAssignments,
+    one live assignment's window on every run. An entry whose principalType is ServicePrincipal (in
+    any casing) and whose principal is not a GUID is a Warning at its principal path: service
+    principal display names are not unique and the lookup takes the first match, so a service
+    principal is named by its object id. An unknown per-item key in the roleAssignments,
     roleManagementPolicies, directoryRoleManagementPolicies or directoryRoleAssignments section, a
     groups[] item, or a groups[] pimPolicy block (root, or a nested member/owner block) is reported as a
     Warning naming the key, because the apply handlers for those sections and blocks read a fixed field
@@ -1383,7 +1386,8 @@ function Test-OERStructureSchema {
     # same role, principal and assignmentType would describe one live assignment twice; the handler
     # would re-issue its window for each of them on every run, so the second is an Error. The key is
     # compared as written, without regard to letter case: a role written by name in one entry and by
-    # id in another cannot be told apart offline.
+    # id in another cannot be told apart offline. A service principal named by display name rather
+    # than object id is a Warning: display names are not unique and the lookup takes the first match.
     if (Test-HasProp -Node $Document -Name 'directoryRoleAssignments') {
         if (Test-SectionIsArray -SectionName 'directoryRoleAssignments') {
             $DRAs = @($Document.directoryRoleAssignments)
@@ -1426,6 +1430,18 @@ function Test-OERStructureSchema {
                     } else {
                         Add-EnumCasingWarning -EnumName 'principalType' -Key 'principalType' -Value $DRA.principalType `
                             -Section 'directoryRoleAssignments' -Item $DRAItem -Path "$DRAPath.principalType"
+                        # A service principal named by display name: the shared lookup takes the FIRST
+                        # service principal with that name, and display names are not unique, so the
+                        # entry could grant (or its pair could keep) a role for the wrong principal.
+                        if ([string]$DRA.principalType -ieq 'ServicePrincipal' -and
+                            (Test-HasProp -Node $DRA -Name 'principal') -and
+                            -not (Test-OERGuid -Value ([string]$DRA.principal))) {
+                            Add-Finding -Section 'directoryRoleAssignments' -Item $DRAItem `
+                                -Path "$DRAPath.principal" -Severity 'Warning' `
+                                -Message ("'principal' at $DRAPath names a service principal by display name ('$($DRA.principal)'): " +
+                                    'service principal display names are not unique and the lookup takes the first match; ' +
+                                    'name a service principal by its object id.')
+                        }
                     }
                 }
 
