@@ -2469,7 +2469,8 @@ A second guard now runs right after the own-assignment one. For a candidate whos
 neither `User` nor `ServicePrincipal` -- a `Group`, or a type the converter did not recognize, which
 might be one -- the pass reads the signed-in identity's transitive group memberships through the
 private `Get-OERMemberGroupId`, one `POST v1.0/directoryObjects/{oid}/getMemberGroups` with
-`securityEnabledOnly` false (a role-assignable Microsoft 365 group can hold a directory role too),
+`securityEnabledOnly` false (a role-assignable group is always security-enabled, so `true` would
+return it as well; `false` is kept because it can only return more groups, never miss one),
 and a candidate whose id is in that set is reported `Skipped`, with or without `-Prune`. That call
 names the object by the token's `oid`, so the same request serves a delegated user and an app-only
 service principal: `/me` does not exist app-only, and `/users/{id}` or `/servicePrincipals/{id}`
