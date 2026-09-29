@@ -102,6 +102,16 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
+    It 'errors AmbiguousPrincipal and issues no POST when -User is bound alongside a piped object carrying its own PrincipalId' {
+        $Piped = [PSCustomObject]@{ RoleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'; PrincipalId = 'eeeeeeee-0000-0000-0000-000000000005' }
+        $Err = $null
+        $Piped | Remove-OERActiveDirectoryRoleAssignment -User 'person1@example.com' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Err[0].FullyQualifiedErrorId | Should -Be 'AmbiguousPrincipal,Remove-OERActiveDirectoryRoleAssignment'
+        $Err[0].Exception.Message | Should -Match 'lose its active assignment'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
     It 'reports NoPrincipal and issues no POST when no principal is supplied' {
         $Err = $null
         Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -Confirm:$false `

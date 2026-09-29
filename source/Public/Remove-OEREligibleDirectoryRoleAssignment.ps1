@@ -14,6 +14,12 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     Supports -WhatIf/-Confirm. Authentication is ensured via Initialize-OERAuth (no ARM token is
     acquired; this is a Graph-only cmdlet).
 
+    Because -PrincipalId binds from the pipeline by property name and takes precedence over the
+    friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
+    their own PrincipalId (for example Get-OEREligibleDirectoryRoleAssignment output) is rejected with
+    a non-terminating AmbiguousPrincipal error (Ruling P3) rather than silently removing each piped
+    item's own principal's eligibility.
+
     For least privilege, RoleEligibilitySchedule.ReadWrite.Directory is enough for the write and
     RoleManagement.Read.Directory resolves -Role; the module's default sign-in scope list already
     requests the broader RoleManagement.ReadWrite.Directory, which covers both. A delegated caller
@@ -88,6 +94,23 @@ function Remove-OEREligibleDirectoryRoleAssignment {
         Initialize-OERAuth @AuthParams
     }
     process {
+        # -PrincipalId binds from the pipeline by property name and Resolve-OERPrincipalOrId gives it
+        # precedence over -User/-Group/-ServicePrincipal, so a pipe of objects that each carry their
+        # own PrincipalId (for example Get-OEREligibleDirectoryRoleAssignment output) would silently
+        # ignore a named principal and remove each piped item's OWN principal's eligibility instead.
+        # Refused, not warned about -- Ruling P3, the same AmbiguousPrincipal treatment the New twin
+        # and Remove-OERGroupEligibility give the identical collision. $PSItem is read rather than the
+        # frozen -PrincipalId parameter variable, since PowerShell freezes an explicitly bound
+        # parameter for the rest of the pipeline. Placed first in process, before any Graph call.
+        if ($PSCmdlet.MyInvocation.ExpectingInput -and $PSItem.PrincipalId -and
+            ($PSBoundParameters.ContainsKey('User') -or $PSBoundParameters.ContainsKey('Group') -or
+                $PSBoundParameters.ContainsKey('ServicePrincipal'))) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new("A principal was supplied by name while objects carrying their own PrincipalId '$($PSItem.PrincipalId)' are being piped in. The piped -PrincipalId takes precedence, so the named principal would be ignored and each piped item's own principal would lose its eligible assignment instead. Supply either the named principal or the pipeline, not both.")) `
+                -ErrorId 'AmbiguousPrincipal' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
+            return
+        }
+
         $RoleInput = Resolve-OERDirectoryRoleInput -Role $Role
         if ($RoleInput.ErrorId) {
             $ErrParams = @{
