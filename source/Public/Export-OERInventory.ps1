@@ -5,9 +5,10 @@ function Export-OERInventory {
 
     .DESCRIPTION
     Composes the existing Get-OER* read cmdlets into a timestamped bundle folder containing the
-    canonical round-trippable inventory.json, per-area JSON files, read-only context
-    (scopeHierarchy.json, groupsRoster.json), a formal JSON Schema (schema.json), a predefined LLM
-    prompt (rbac-architect-prompt.md), and a README. The bundle is designed to be handed to any LLM to produce appliable RBAC
+    canonical round-trippable inventory.json, per-area JSON files -- including
+    directoryRoleManagementPolicies.json and directoryRoleAssignments.json for the Microsoft Entra
+    directory role sections -- read-only context (scopeHierarchy.json, groupsRoster.json), a formal
+    JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The bundle is designed to be handed to any LLM to produce appliable RBAC
     proposals. Only RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with
     eligibility) are kept in full detail in inventory.json. Microsoft Graph lists PIM-for-groups
     policies for a group that was never used with PIM for Groups as well, so a group whose policy was
@@ -62,7 +63,10 @@ function Export-OERInventory {
     directory. Use the returned object's BundlePath to address the files afterwards.
 
     .PARAMETER Include
-    Which sections to gather from the tenant. Defaults to the Entra sections plus RoleAssignments.
+    Which sections to gather from the tenant. Defaults to the Entra sections (Groups,
+    AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, DirectoryRoleManagementPolicies,
+    DirectoryRoleAssignments) plus RoleAssignments. The two DirectoryRole* sections are Graph-only
+    and never acquire an ARM token by themselves.
 
     .PARAMETER AllGroupsDetailed
     Keep every group the Groups section covers in full detail in inventory.json, not just the
@@ -70,6 +74,12 @@ function Export-OERInventory {
     distribution group or a Microsoft 365 group whose securityEnabled is false -- neither is in
     inventory.json at any detail level. Use Get-OERInventory -GroupFilter to widen the scope
     itself; groupsRoster.json already lists every group in the tenant unfiltered.
+
+    .PARAMETER AllDirectoryRolePolicies
+    For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
+    directory role, instead of only the roles that have at least one row in the tenant-scope
+    eligibility or assignment schedules (the default). Forwarded to the internal Get-OERInventory
+    call; has no effect unless -Include names DirectoryRoleManagementPolicies.
 
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
@@ -106,9 +116,12 @@ function Export-OERInventory {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$OutputPath = '.',
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies')]
-        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments'),
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
+        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments'),
         [switch]$AllGroupsDetailed,
+        [switch]$AllDirectoryRolePolicies,
         [string]$ManagementGroup,
         [string]$Scope,
         [switch]$Force,
@@ -129,7 +142,10 @@ function Export-OERInventory {
     }
     process {
         # --- Gather the Entra ID sections (names only, for portability) ---
-        $EntraSections = @($Include | Where-Object { $_ -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews') })
+        # DirectoryRoleManagementPolicies and DirectoryRoleAssignments are Graph-only, same as the
+        # other five: they are deliberately absent from the ARM-triggering check above, so naming
+        # either one alone never acquires an ARM token.
+        $EntraSections = @($Include | Where-Object { $_ -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
         # -IncludeId is threaded through PURELY to key the roster member-count join on object id
         # instead of display name below (Entra permits duplicate group display names --
         # Add-OERGroupMember.ps1:43-45 -- so a display-name join can attribute one group's member
@@ -151,7 +167,21 @@ function Export-OERInventory {
             # keeps the record non-terminating while still delivering it to BOTH the caller's error
             # stream and $InventoryReadErrors; Export's own trailing Write-CmdletError is what
             # honours -ErrorAction Stop, and it runs after $Out has been emitted.
-            Get-OERInventory -Include $EntraSections -IncludeId -ErrorAction Continue -ErrorVariable InventoryReadErrors
+            #
+            # -AllDirectoryRolePolicies is added to the splat only when the switch is actually set,
+            # not forwarded unconditionally as -AllDirectoryRolePolicies:$AllDirectoryRolePolicies
+            # would be: Get-OERInventory's own default behaviour (policy of only the in-use roles) is
+            # what every OTHER -Include combination in this file's test suite already relies on, and
+            # binding the parameter at all -- even to $false -- is observable to a caller's
+            # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
+            $InvParams = @{
+                Include       = $EntraSections
+                IncludeId     = $true
+                ErrorAction   = 'Continue'
+                ErrorVariable = 'InventoryReadErrors'
+            }
+            if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
+            Get-OERInventory @InvParams
         } else {
             ConvertTo-OERInventory
         }
@@ -307,7 +337,8 @@ function Export-OERInventory {
         # reaches that nested collection as well.
         $StampedSections = @(
             $Inv.Groups, $Inv.AdministrativeUnits, $Inv.Catalogs,
-            $Inv.AccessPackages, $Inv.AccessReviews
+            $Inv.AccessPackages, $Inv.AccessReviews,
+            $Inv.DirectoryRoleManagementPolicies, $Inv.DirectoryRoleAssignments
         )
         foreach ($Section in $StampedSections) {
             foreach ($Item in @($Section)) {
@@ -360,12 +391,20 @@ function Export-OERInventory {
         }
 
         # --- Reassemble the canonical inventory object with the (possibly filtered) groups ---
+        # The two directory-role sections are filtered with Where-Object { $null -ne $_ } rather than
+        # a bare @(...) wrap: @($null) is a ONE-element array holding a null, not an empty one, and a
+        # caller whose Get-OERInventory result omits these properties entirely (a $null property
+        # read) would otherwise hand ConvertTo-OERInventory a single null entry -- which then fails
+        # apply-schema validation ("'role' is required at directoryRoleManagementPolicies[0]")
+        # instead of writing a genuinely empty section, same footgun $AllGroups above guards against.
         $Canonical = ConvertTo-OERInventory `
             -Groups $DetailedGroups `
             -AdministrativeUnits @($Inv.AdministrativeUnits) `
             -Catalogs @($Inv.Catalogs) `
             -AccessPackages @($Inv.AccessPackages) `
             -AccessReviews @($Inv.AccessReviews) `
+            -DirectoryRoleManagementPolicies @($Inv.DirectoryRoleManagementPolicies | Where-Object { $null -ne $_ }) `
+            -DirectoryRoleAssignments @($Inv.DirectoryRoleAssignments | Where-Object { $null -ne $_ }) `
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
 
@@ -404,6 +443,8 @@ function Export-OERInventory {
         Write-OERBundleJson -Name 'catalogs.json'               -Data @($Canonical.Catalogs)
         Write-OERBundleJson -Name 'accessPackages.json'         -Data @($Canonical.AccessPackages)
         Write-OERBundleJson -Name 'accessReviews.json'          -Data @($Canonical.AccessReviews)
+        Write-OERBundleJson -Name 'directoryRoleManagementPolicies.json' -Data @($Canonical.DirectoryRoleManagementPolicies)
+        Write-OERBundleJson -Name 'directoryRoleAssignments.json'        -Data @($Canonical.DirectoryRoleAssignments)
         Write-OERBundleJson -Name 'roleAssignments.json'        -Data @($Canonical.RoleAssignments)
         Write-OERBundleJson -Name 'roleManagementPolicies.json' -Data @($Canonical.RoleManagementPolicies)
         Write-OERBundleJson -Name 'groupsRoster.json'           -Data $Roster
@@ -460,6 +501,8 @@ function Export-OERInventory {
             Catalogs               = @($Canonical.Catalogs).Count
             AccessPackages         = @($Canonical.AccessPackages).Count
             AccessReviews          = @($Canonical.AccessReviews).Count
+            DirectoryRoleManagementPolicies = @($Canonical.DirectoryRoleManagementPolicies).Count
+            DirectoryRoleAssignments        = @($Canonical.DirectoryRoleAssignments).Count
             RoleAssignments        = @($Canonical.RoleAssignments).Count
             RoleManagementPolicies = @($Canonical.RoleManagementPolicies).Count
             RosterCount            = @($Roster).Count

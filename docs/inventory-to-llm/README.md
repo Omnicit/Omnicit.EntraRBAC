@@ -16,17 +16,22 @@ Export-OERInventory -OutputPath C:\Temp
 This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 
 - `inventory.json` -- canonical, round-trippable inventory (all sections).
-- per-area JSON files (`groups.json`, `catalogs.json`, ...).
+- per-area JSON files (`groups.json`, `catalogs.json`, `directoryRoleManagementPolicies.json`,
+  `directoryRoleAssignments.json`, ...).
 - `groupsRoster.json`, `scopeHierarchy.json` -- read-only context.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
 - `README.md` -- a short next-steps guide.
 
-By default the Entra sections plus tenant-wide `RoleAssignments` are captured. Add
-`RoleManagementPolicies` to `-Include` to also read PIM policies at every scope (slower). Only
-RBAC-relevant groups are detailed in `inventory.json`; the full landscape is in `groupsRoster.json`.
-Use `-AllGroupsDetailed` to keep every group in full detail.
+By default the Entra sections -- including the Microsoft Entra directory role sections,
+`DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
+`RoleAssignments` are captured. The two directory role sections are Graph-only and never acquire an
+ARM token by themselves. `DirectoryRoleManagementPolicies` exports the policy of every directory
+role that is actually in use; add `-AllDirectoryRolePolicies` to export the policy of every
+directory role instead. Add `RoleManagementPolicies` to `-Include` to also read Azure PIM policies
+at every scope (slower). Only RBAC-relevant groups are detailed in `inventory.json`; the full
+landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every group in full detail.
 
 ## 2. Ask an LLM
 

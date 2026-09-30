@@ -1033,3 +1033,108 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $ParamText | Should -Match 'PARENT'
     }
 }
+
+Describe 'Export-OERInventory (directory role sections)' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # -All-scope Azure walk zeroed out (Scopes empty) so a default -Include (which still carries
+        # RoleAssignments) does not need the Azure per-scope mocking this Describe does not set up.
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @()
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $IncludeId, $AllDirectoryRolePolicies)
+            $Policy = [PSCustomObject]@{ role = 'Reports Reader'; activationMaxHours = 8 }
+            $Assignment = [PSCustomObject]@{ role = 'Reports Reader'; principal = 'person26@example.com'; assignmentType = 'Eligible' }
+            if ($IncludeId) {
+                $Policy | Add-Member -NotePropertyName id -NotePropertyValue 'pol-1' -Force
+                $Assignment | Add-Member -NotePropertyName id -NotePropertyValue 'sched-1' -Force
+            }
+            $inv = [PSCustomObject]@{
+                Version                          = '1.0'
+                Groups                           = @()
+                AdministrativeUnits              = @()
+                Catalogs                         = @()
+                AccessPackages                   = @()
+                AccessReviews                    = @()
+                DirectoryRoleManagementPolicies  = @($Policy)
+                DirectoryRoleAssignments         = @($Assignment)
+                RoleAssignments                  = @()
+                RoleManagementPolicies           = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+    }
+
+    It 'passes both directory sections to Get-OERInventory under the default -Include' {
+        Export-OERInventory -OutputPath $TestDrive | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
+            $Include -contains 'DirectoryRoleManagementPolicies' -and $Include -contains 'DirectoryRoleAssignments'
+        }
+    }
+
+    It 'does NOT acquire an ARM token for -Include DirectoryRoleAssignments alone' {
+        Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleAssignments | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+            -not $IncludeARM
+        }
+    }
+
+    It 'forwards -AllDirectoryRolePolicies to the internal Get-OERInventory call' {
+        Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
+            $AllDirectoryRolePolicies -eq $true
+        }
+    }
+
+    It 'does not forward -AllDirectoryRolePolicies when the switch is absent' {
+        Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter {
+            -not $AllDirectoryRolePolicies
+        }
+    }
+
+    It 'lists the two per-area files in the WhatIf plan' {
+        $Out = Join-Path $TestDrive 'dir-whatif'
+        New-Item -ItemType Directory -Path $Out -Force | Out-Null
+        $Result = Export-OERInventory -OutputPath $Out -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -WhatIf
+        $Result.Files | Should -Contain 'directoryRoleManagementPolicies.json'
+        $Result.Files | Should -Contain 'directoryRoleAssignments.json'
+    }
+
+    It 'writes the two per-area files to disk' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+        Test-Path (Join-Path $Result.BundlePath 'directoryRoleManagementPolicies.json') | Should -BeTrue
+        Test-Path (Join-Path $Result.BundlePath 'directoryRoleAssignments.json') | Should -BeTrue
+        $Result.Files | Should -Contain 'directoryRoleManagementPolicies.json'
+        $Result.Files | Should -Contain 'directoryRoleAssignments.json'
+    }
+
+    It 'strips id from both directory sections in the written inventory.json' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.DirectoryRoleManagementPolicies[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+        $Inv.DirectoryRoleAssignments[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+    }
+
+    It 'reports the directory section counts on the bundle summary' {
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+        $Result.DirectoryRoleManagementPolicies | Should -Be 1
+        $Result.DirectoryRoleAssignments | Should -Be 1
+    }
+
+    It 'renders the DirRoleAsgn column when the returned InventoryBundle is formatted' {
+        $Formatted = Export-OERInventory -OutputPath $TestDrive -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments |
+            Format-Table | Out-String -Width 200
+        $Formatted | Should -Match 'DirRolePol'
+        $Formatted | Should -Match 'DirRoleAsgn'
+    }
+}
