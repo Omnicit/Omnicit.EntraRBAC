@@ -4216,7 +4216,7 @@ the own-assignment guard held.
   (6.1f's apply and the line "rows naming you in the (Reports Reader, Active) pair" were NOT run.)
   ```
 
-- [~] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
+- [x] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
 
   In the admin center: **My roles > Microsoft Entra roles > Active assignments**, **Reports
   Reader**, **Deactivate** (PIM may refuse a deactivation in the first minutes after an activation:
@@ -4254,7 +4254,7 @@ the own-assignment guard held.
   again, and do not leave it active.
   **Result:**
 
-  Everything in Expect is met in the output except its last line: 6.2 your active rows 0 (deactivated); the plan one What if line; the removal one POST with the warning and one object; both raw reads 0 rows; Disconnect-OER run. The Privileged Role Administrator deactivation does not appear in the output -- the operator confirms it separately -- so this stays [~] until he has.
+  Everything in Expect is met in the output except its last line: 6.2 your active rows 0 (deactivated); the plan one What if line; the removal one POST with the warning and one object; both raw reads 0 rows; Disconnect-OER run. The Privileged Role Administrator deactivation does not appear in the output -- the operator confirms it separately -- so this stayed [~] until the operator confirmed it.
 
   ```text
   6.2 your active rows (after the deactivation in the portal): objects returned: 0, errors 0
@@ -4265,6 +4265,8 @@ the own-assignment guard held.
   Disconnect-OER: run.
   Privileged Role Administrator deactivation: not in this output; the operator confirms it separately.
   ```
+
+  **Operator, 2026-09-30 (recorded by CC; no live run after it):** the operator confirms the Privileged Role Administrator activation is deactivated, the last line of Expect, so 6.2 is met in full.
 
 ---
 
@@ -4589,7 +4591,7 @@ Azure object to restore or delete (R17).
   direct oer-s64 rows left: 0
   ```
 
-- [~] **T.2 The prerequisite script's teardown -- its plan, then the run.**
+- [x] **T.2 The prerequisite script's teardown -- its plan, then the run.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -Teardown -WhatIf
@@ -4729,7 +4731,9 @@ Azure object to restore or delete (R17).
   [oer-s64] Stopped after this run had written to the tenant or the baseline files (see the lines above): Microsoft Graph answered 403 to DELETE v1.0/users/<id>: Authorization_RequestDenied -- Insufficient privileges to complete the operation.
   ```
 
-- [~] **T.3 Read everything back: both policies and both roles' assignments equal the baselines, no test object is left, and every write of this file named a test object.**
+  **Operator, 2026-09-30 (recorded by CC; no live run after it):** the operator deleted oer-s64-user2 by hand in the portal, since app-only got 403 on deleting a user who had been a member of a role-assignable group; with that the teardown is complete.
+
+- [x] **T.3 Read everything back: both policies and both roles' assignments equal the baselines, no test object is left, and every write of this file named a test object.**
 
   ```powershell
   Show-S64BaselineDiff -Label 'T.3'
@@ -4840,6 +4844,8 @@ Azure object to restore or delete (R17).
       6.1c Reports Reader -> <oer-s64-user2> (Eligible) | Removed
       6.1c Reports Reader -> <oer-s64-rag> (Active) | Removed
   ```
+
+  **Operator, 2026-09-30 (recorded by CC; no live run after it):** oer-s64-user2 was deleted by hand by the operator, since app-only got 403 on deleting a user who had been a member of a role-assignable group (T.2); with that no test object is left. CC did not read it back: the certificate identity is disabled.
 
 - [x] **T.4 Redact, then delete `raw/s64`.** Only once T.3 printed `differing from the baseline: 0` twice and the assignment diff was empty: the raw folder holds both baseline files, the only records of the original state. Move what the results above need from `docs/live-verification/raw/s64/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
