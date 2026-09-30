@@ -2506,3 +2506,32 @@ This is the same family of trap `#bearer-scrub-tests` already documents for a re
 recurs here because every one of the six new cmdlets, and the new
 `Sync-OERStructureDirectoryRoleAssignment` handler, catches Graph and lookup failures internally
 before reporting its own outcome.
+
+**An eligible window cannot change beside a permanent active assignment -- a Graph limit, measured
+live, and reported rather than worked around.** The step 4 live run (check 3.3) found Microsoft Graph
+refusing the engine's `adminUpdate` of an ELIGIBLE window (five days to seven) with HTTP 400
+`ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.` The
+follow-up measured, on test objects, which condition triggers it:
+
+- eligible five days beside a TIME-BOUND active assignment (one day): `adminUpdate` succeeds, both
+  with `targetScheduleId` set to the eligibility schedule's id and without it (the control) --
+  `targetScheduleId` is not the difference;
+- eligible five days beside a PERMANENT active assignment (the state check 3.3 had): `adminUpdate`
+  answers `ActiveDurationTooShort` with `targetScheduleId`, and again with `targetScheduleId` and
+  no `startDateTime` in `scheduleInfo`;
+- an ACTIVE window changes (`adminUpdate`, permanent to one day) while the principal holds no
+  eligible assignment of the role (check 6.1c);
+- updating an active assignment to PERMANENT while an eligible assignment of the same role exists
+  succeeds -- and Graph then removes the eligible assignment by itself, with no request for it.
+
+The write path is therefore unchanged, and the engine never answers the refusal by removing the
+eligible assignment and creating it again: a failure between those two requests leaves the principal
+with no eligibility at all, the same class of harm as a prune that deletes on a failed lookup. The
+handler instead recognizes the refusal (an eligible `adminUpdate` failing with
+`ActiveDurationTooShort`) and reports the row Failed with the cause and the way out: declare the
+active assignment time-bound, or change the eligible window by hand with
+`Remove-OEREligibleDirectoryRoleAssignment` and `New-OEREligibleDirectoryRoleAssignment`, knowingly.
+When Graph removes an eligible assignment because the active one became permanent, the next run
+finds the declared eligible assignment absent and creates it (`adminAssign` beside a permanent
+active assignment succeeds, measured). The run that makes the active assignment permanent cannot see
+that removal: it reads the eligible row before the active update is sent.

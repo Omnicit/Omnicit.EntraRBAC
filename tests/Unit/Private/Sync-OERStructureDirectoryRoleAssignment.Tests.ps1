@@ -315,6 +315,50 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment' {
         }
     }
 
+    It 'names the cause and the way out when Graph refuses an eligible window update with ActiveDurationTooShort (<Case>)' -TestCases @(
+        @{ Case = 'only the error id carries the code'; ErrorId = 'ActiveDurationTooShort'; Message = 'The Active duration is too short. Miniumum Required is 5 minutes.' }
+        @{ Case = 'only the message carries the code'; ErrorId = 'GraphRequestFailed'; Message = 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' }
+    ) {
+        # Measured live (step 4, check 3.3): Graph refuses an adminUpdate of an ELIGIBLE window while the
+        # principal holds a PERMANENT active assignment of the same role. The row must say so, and the
+        # handler must leave the eligible assignment alone: no removal, no second request.
+        InModuleScope $script:moduleName -Parameters @{ ErrorId = $ErrorId; Message = $Message } {
+            param($ErrorId, $Message)
+            Mock Get-OEREligibleDirectoryRoleAssignment { New-DraLiveRow }
+            Mock New-OEREligibleDirectoryRoleAssignment -MockWith ([scriptblock]::Create("Write-Error -Message '$Message' -ErrorId '$ErrorId' -Category InvalidOperation"))
+            Mock Remove-OEREligibleDirectoryRoleAssignment {}
+            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 7 }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly ('failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), ' +
+                'which it does while the principal holds a permanent active assignment of the same role, so the ' +
+                'eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or ' +
+                'change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then ' +
+                'New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it')
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Action -eq 'adminUpdate' }
+            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
+        }
+    }
+
+    It 'keeps the plain Detail for ActiveDurationTooShort on <Case>' -TestCases @(
+        @{ Case = 'an eligible create'; Kind = 'Eligible'; Live = $false; NewName = 'New-OEREligibleDirectoryRoleAssignment'; Verb = 'create' }
+        @{ Case = 'an active update'; Kind = 'Active'; Live = $true; NewName = 'New-OERActiveDirectoryRoleAssignment'; Verb = 'update' }
+    ) {
+        # The special wording belongs to the one measured case only: an eligible adminUpdate.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Live = $Live; NewName = $NewName; Verb = $Verb } {
+            param($Kind, $Live, $NewName, $Verb)
+            if ($Live) {
+                Mock Get-OERActiveDirectoryRoleAssignment { New-DraLiveRow -Kind Active }
+            }
+            Mock $NewName { Write-Error -Message 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' -ErrorId 'ActiveDurationTooShort' -Category InvalidOperation }
+            $Item = "{ `"role`": `"Reports Reader`", `"principal`": `"person1@example.com`", `"assignmentType`": `"$Kind`", `"durationDays`": 7 }" | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes."
+        }
+    }
+
     It 'sends a declared justification as -Justification' {
         InModuleScope $script:moduleName {
             $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30, "justification": "Quarterly reporting" }' | ConvertFrom-Json

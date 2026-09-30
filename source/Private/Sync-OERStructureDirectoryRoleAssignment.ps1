@@ -46,6 +46,14 @@ function Sync-OERStructureDirectoryRoleAssignment {
        with -Action adminAssign and reports Created; a changed window or permanence is re-issued with
        -Action adminUpdate and reports Updated, so a live assignment is never removed to be re-created.
        A matching window reports Unchanged.
+       Known Microsoft Graph limit: Graph refuses an adminUpdate of an ELIGIBLE window with
+       ActiveDurationTooShort while the same principal holds a PERMANENT active assignment of the same
+       role (measured live; the same update goes through beside a time-bound active assignment, and an
+       active window changes while no eligible assignment exists). That row reports Failed with a Detail
+       naming the cause and the way out -- declare the active assignment time-bound, or change the
+       eligible window by hand -- and the eligible assignment is left as it is: the handler never removes
+       an assignment to re-create it. Graph also removes an eligible assignment by itself when the same
+       principal's active assignment of the role is updated to permanent; the next run re-creates it.
 
     justification, when declared, is sent as -Justification with a create or an update; it is never
     compared, so a changed justification alone changes nothing. Without it the cmdlets send their own
@@ -427,8 +435,21 @@ function Sync-OERStructureDirectoryRoleAssignment {
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)
-            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+            $FailDetail = "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: $($PSItem.Exception.Message)"
+            # Measured live: Graph refuses an adminUpdate of an ELIGIBLE window with ActiveDurationTooShort
+            # while the principal holds a PERMANENT active assignment of the same role (targetScheduleId and
+            # an omitted startDateTime change nothing); beside a time-bound active assignment it succeeds.
+            # The write path stays as it is -- never a remove plus a re-create -- and the row names the way out.
+            $DurationTooShort = ([string]$PSItem.FullyQualifiedErrorId).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal) -or
+                ([string]$PSItem.Exception.Message).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal)
+            if ($Kind -eq 'Eligible' -and $Action -eq 'adminUpdate' -and $DurationTooShort) {
+                $FailDetail = 'failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), ' +
+                    'which it does while the principal holds a permanent active assignment of the same role, so the ' +
+                    'eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or ' +
+                    'change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then ' +
+                    'New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it'
+            }
+            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' -Detail $FailDetail -ErrorRecord $PSItem
         }
     }
 }
