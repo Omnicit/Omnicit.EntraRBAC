@@ -20,9 +20,12 @@ them first and compares with them last), and the Reader role management policy o
 (nothing in this file changes it, but it is recorded right after the resource group is created --
 only once it has passed a residue check, so an earlier run's leftover is never recorded as the
 original state -- and restored BEFORE the resource group is deleted: an Azure role management policy
-outlives its resource group, so a leftover change would reach the next resource group of that name). Two
-groups, `oer-s65-pim-policy` and `oer-s65-pim-elig`, are onboarded to PIM for Groups by the script on purpose, which cannot be undone
-for them; the teardown deletes both. Section 6 is the one place a person's account appears:
+outlives its resource group, so a leftover change would reach the next resource group of that name).
+The one exception to "put back": when setup stopped on that residue check, NO baseline of that policy
+exists, and the teardown only reads it -- it deletes the resource group when the policy reads clean,
+and otherwise leaves both for a human, with a stop line (0.3, T.1). Two groups, `oer-s65-pim-policy`
+and `oer-s65-pim-elig`, are onboarded to PIM for Groups by the script on purpose, which cannot be
+undone for them; the teardown deletes both. Section 6 is the one place a person's account appears:
 Philip's own, in his own window, run by him.
 
 **Every write is preceded by its `-WhatIf` plan.** Read the plan against the `Expect:` line first,
@@ -104,29 +107,40 @@ the hashes change when the branch is rebased onto `main` before it merges.
   `-NewDisplayName` is sent in the same PATCH as any other property; with no property at all the
   cmdlet reports `NothingToUpdate`, naming `-NewDisplayName` among the properties.
 - **E. Rename through the document** ("feat: rename a group through the apply document with
-  previousDisplayName", "fix: verify a previousDisplayName given as an object id"). A `groups[]`
-  entry declares its new name as `displayName` and its current name (or object id) as
-  `previousDisplayName`. Only the previous name resolving: the rename is folded into the property
-  update and reported `Updated` "renamed group '<previous>' to '<new>'". Both resolving to DIFFERENT
-  groups: one `Failed` row and a `GroupRenameConflict` error, and nothing written -- the document
-  never merges two groups. The validator warns when `previousDisplayName` equals `displayName`.
+  previousDisplayName", "fix: verify a previousDisplayName given as an object id", "fix: word the
+  onboarding and case-only rename warnings as what they know", "docs: state the rename lookup delay
+  and the references a rename must update"). A `groups[]` entry declares its new name as
+  `displayName` and its current name (or object id) as `previousDisplayName`. Only the previous name
+  resolving: the rename is folded into the property update and reported `Updated` "renamed group
+  '<previous>' to '<new>'". Both resolving to DIFFERENT groups: one `Failed` row and a
+  `GroupRenameConflict` error, and nothing written -- the document never merges two groups. Neither
+  resolving: the group is created (R9, unchanged) -- which is why the documentation now says Graph's
+  name lookup can follow a rename with a delay, and to re-apply only once the new name resolves. The
+  validator warns when `previousDisplayName` equals `displayName` ignoring case (a case-only rename
+  is not possible through the document).
 - **F. pimPolicy only for groups that use PIM for Groups** ("feat: export pimPolicy only for groups
   that use PIM for Groups", "fix: report pimPolicy unread when the eligibility half of the criterion
-  was not read"). `Test-OERGroupPimInUse` decides "in use": PIM eligibility counted, or one of the
-  group's policies, listed in ONE beta request, carries a non-empty `lastModifiedDateTime`,
-  `lastModifiedBy.id` or `lastModifiedBy.displayName`. `Get-OERInventory` asks it before the four
-  policy calls and skips them for a group not in use; `Sync-OERStructureGroup` warns before the first
-  changed `pimPolicy` write of an existing group not in use, because that write onboards the group.
+  was not read", "fix: treat a group PIM for Groups cannot manage as not using it").
+  `Test-OERGroupPimInUse` decides "in use": PIM eligibility counted, or one of the group's policies,
+  listed in ONE beta request, carries a non-empty `lastModifiedDateTime`, `lastModifiedBy.id` or
+  `lastModifiedBy.displayName`. A 404 `ResourceNotFound` on that listing, or a 400
+  `ResourceTypeNotSupported` (a dynamic group or one synchronized from on-premises, which PIM for
+  Groups cannot manage), means not in use. `Get-OERInventory` asks it before the four policy calls
+  and skips them for a group not in use; `Sync-OERStructureGroup` warns before the first changed
+  `pimPolicy` write of an existing group it was not found to use PIM for Groups, because that write
+  onboards the group.
 - **G. Docs** ("docs: describe the exported directory role sections in the bundle prompt and
   README", "docs: show every apply section in the worked example", "docs: release notes for the
-  directory role export and group rename", "docs: live-verification checklist for the directory role
-  export and group rename").
+  directory role export and group rename", "docs: tighten the bundle README, help and release notes",
+  "docs: live-verification checklist for the directory role export and group rename", "docs: measure
+  the rename window and a dynamic group in the step 5 checklist").
 
 **Every unit test on this branch mocks the transport.** They prove the module's decisions given the
 shapes the tests assume. They cannot prove the six things this file is for:
 
 1. That the pimPolicy criterion reads Graph's REAL policy fields right, for an untouched group, a
-   group whose policy was changed, and a group onboarded only through an eligibility -- the
+   group whose policy was changed, a group onboarded only through an eligibility, and a dynamic group
+   PIM for Groups cannot manage (what Graph's listing answers for it is measured here first) -- the
    criterion is "NOT counted as proven until it is measured live in the step 5 checklist"
    (docs/development/rationale.md, `pim-in-use-criterion`) -- and that the export and the onboarding
    warning follow it (section 1).
@@ -138,8 +152,10 @@ shapes the tests assume. They cannot prove the six things this file is for:
    resource group below it -- the one claim of ruling R4 that is measured rather than documented
    (docs/development/rationale.md, `inventory-azure-eligibility`), and how many requests the walk
    costs (section 4).
-5. That Graph renames a group as the document and the cmdlet ask, that a conflict writes nothing, and
-   that the next run is `Unchanged` (section 5, ruling R9).
+5. That Graph renames a group as the document and the cmdlet ask, that a conflict writes nothing,
+   what an IMMEDIATE re-run of the renaming document would do while Graph's name lookup catches up
+   (the window the documentation warns about, measured), and that a run once the new name resolves is
+   `Unchanged` (section 5, ruling R9).
 6. That a management-group eligibility reaches the file through the full tree walk, which only a
    person who can read a management group can run (section 6, ruling R14).
 
@@ -271,7 +287,7 @@ $AssignmentBaselinePath = Join-Path $Raw 'baseline-directory-assignments.json'  
 $RgBaselinePath         = Join-Path $Raw 'baseline-rg-reader-policy.json'        # written by the prerequisite script
 $StatePath              = Join-Path $Raw 'prereq-state.json'                     # written by the prerequisite script
 
-Set-Location $Repo
+Set-Location $Repo -ErrorAction Stop
 git remote get-url origin
 git branch --show-current
 # Build in a process of its own. ModuleBuilder fills every Build-Module parameter build.yaml leaves
@@ -327,8 +343,11 @@ ever done; `oer-s65-pim-policy`, whose PIM-for-Groups MEMBER policy is changed o
 `Expiration_EndUser_Assignment`, `maximumDuration` `PT4H`), which onboards it; `oer-s65-pim-elig`,
 in which `oer-s65-user1` gets a time-bound (`P5D`) PIM-for-Groups MEMBER eligibility (beta
 `eligibilityScheduleRequests`), which onboards it; and `oer-s65-rename-old`, `oer-s65-conflict-a` and
-`oer-s65-conflict-b` for section 5. Then Reports Reader's activation maximum set to `PT3H`, and four
-directory role assignments at directory scope `/` (Microsoft Graph v1.0 schedule requests,
+`oer-s65-conflict-b` for section 5; and one DYNAMIC security group, `oer-s65-pim-dynamic` (not
+role-assignable; membership rule `(user.department -eq "oer-s65-none")`, which matches no user;
+processing On), which PIM for Groups cannot manage (Microsoft Learn) and to which nothing PIM is ever
+done -- check 1.5 measures what Graph answers for it. Then Reports Reader's activation maximum set to
+`PT3H`, and four directory role assignments at directory scope `/` (Microsoft Graph v1.0 schedule requests,
 `adminAssign`): Reports Reader ELIGIBLE for `oer-s65-user1`, time-bound `P5D`; Reports Reader
 ELIGIBLE for `oer-s65-rag`, permanent when the role's policy allows a permanent eligibility, else
 `P10D`; Message Center Reader ACTIVE for `oer-s65-rag`, time-bound `P2D`; Message Center Reader
@@ -363,16 +382,19 @@ are the defaults. The helpers read them in exactly these shapes:
   renamed), the resource group, and the Azure eligibility.
 
 It refuses to run -- before its first write, and so writing nothing -- while either directory role
-holds a direct assignment of a principal it did not create; while a group under one of its seven
+holds a direct assignment of a principal it did not create; while a group under one of its eight
 names has the wrong shape (`oer-s65-rag` must be a role-assignable security group whose only member
-is `oer-s65-user2`, every other one a security group that is NOT role-assignable); and, from the Azure
+is `oer-s65-user2`, `oer-s65-pim-dynamic` a dynamic security group that is NOT role-assignable, every
+other one an assigned security group that is NOT role-assignable); and, from the Azure
 pre-flight, when the subscription is not the test tenant's or not Enabled, when a resource group
 `oer-s65-rg` exists without its purpose tag, and when an existing `oer-s65-rg` without a baseline has a
 Reader policy with residue. **The residue check comes BEFORE the resource group's baseline is
 written** (step 2's finding: an Azure role management policy outlives its resource group, so a new
 `oer-s65-rg` can inherit an earlier run's approval): approval required, or any approver named, stops
-the run with NO baseline for that policy, so the residue is never recorded as the original state and
-nothing ever puts it back. The residue of a resource group this run creates can only be read once it
+the run. With no baseline yet, NONE is written for that policy, so the residue is never recorded as
+the original state and nothing puts it back (a human resets it); with a baseline from an earlier run
+-- only ever written for a clean policy -- the baseline is kept, and the teardown restores the policy
+from it. The residue of a resource group this run creates can only be read once it
 exists, after the directory writes; a stop there is a stop after a write. If any run stops after its
 first write, it puts back what the baselines record before it exits, and prints each step: the
 resource group's Reader policy from its baseline (when there is one and the Azure session is up), then
@@ -419,8 +441,9 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Wrote the policy baseline (<n> + <m> rules): <path>` and
   `Wrote the assignment baseline (Reports Reader: eligible <a>, active <b>; Message Center Reader: eligible <c>, active <d>): <path>`
   (on a later run `The directory baseline files exist; comparing the live state with them.` and the
-  per-role comparison lines); `Created user <upn> (disabled).` (twice); `Created group <name>.` seven
-  times, `oer-s65-rag` as `Created group oer-s65-rag (role-assignable).`;
+  per-role comparison lines); `Created user <upn> (disabled).` (twice); `Created group <name>.` eight
+  times, `oer-s65-rag` as `Created group oer-s65-rag (role-assignable).` and `oer-s65-pim-dynamic` as
+  `Created group oer-s65-pim-dynamic (dynamic).`;
   `Added <upn of oer-s65-user2> to oer-s65-rag.`;
   `PIM for Groups: changed the member policy of oer-s65-pim-policy (Expiration_EndUser_Assignment maximumDuration PT4H); this onboarded the group.`;
   `PIM for Groups: requested a time-bound (P5D) member eligibility of <upn of oer-s65-user1> in oer-s65-pim-elig: <status>; this onboarded the group.`;
@@ -455,15 +478,20 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Teardown: oer-s65 assignments on the two roles: <n>`, before a removal a line
   `waiting <n> s: Microsoft Graph refuses to change or remove a principal's assignments of a role until its active assignment has run for five minutes`
   when an active assignment of that principal and role is younger than five minutes, one
-  `Removed the <eligible|active> '<role>' assignment of <name>.` per removal; per role
+  `Removed the <eligible|active> '<role>' assignment of <name>.` per removal (an assignment of a
+  principal whose current name lacks the prefix as
+  `Teardown: left in place: the <eligible|active> '<role>' assignment of '<name>', which does not carry the prefix 'oer-s65'; it is never touched.`); per role
   `Teardown: directory role '<role>': rules differing from the policy baseline: <n>` (the rule ids in
   parentheses), one `Restored rule <rule id> of '<role>'.` per rule and
   `Teardown: directory role '<role>': restored: <True|False|not attempted (WhatIf)>`; per role
   `Teardown: directory role '<role>': baseline assignments missing and re-created: <n>`;
   `Teardown: PIM-for-Groups eligibility of oer-s65 users in oer-s65-pim-elig: <n>` and
-  `Removed the member eligibility of <upn> in oer-s65-pim-elig.`;
+  `Removed the member eligibility of <upn> in oer-s65-pim-elig.` (when that group's current name lacks
+  the prefix,
+  `Teardown: left in place: group '<name>' (created as oer-s65-pim-elig) does not carry the prefix 'oer-s65'; its PIM-for-Groups eligibility is never touched.`
+  instead);
   `Removed <upn of oer-s65-user2> from oer-s65-rag.` BEFORE `Deleted group oer-s65-rag.`, then the
-  other six `Deleted group <current name>.` (the renamed one as
+  other seven `Deleted group <current name>.` (the renamed one as
   `Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).`, anything the prefix sweep
   found besides as `... (found by the prefix sweep).`, and a group whose current name lacks the prefix
   as `Teardown: left in place: group '<name>' ... does not carry the prefix 'oer-s65'; it is never touched.`);
@@ -471,12 +499,15 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Teardown: directory role '<role>': direct assignments equal the assignment baseline: <True|False|not checked (WhatIf)>`;
   and `Sweep: no user or group starting with 'oer-s65' is left.` (or one
   `Sweep, still present: <user|group> '<name>' (<id>)` line each -- with a REAL id: redact it). A
-  refused user deletion, or a resource group left for a human, ends the run with one
-  `Stopped after this run had written ...: everything else is done, but: ...` line naming it. Under
+  refused user deletion, a resource group left for a human, or any `left in place` line above (an
+  object without the prefix, which the sweep and T.2 cannot see) ends the run with one
+  `Stopped after this run had written ...: everything else is done, but: ...` line naming each, and
+  exit code 1 -- the `left in place` ones as
+  `<n> object(s) were left in place because their current name does not carry the prefix 'oer-s65' (...)`. Under
   `-WhatIf` every write is a PowerShell `What if:` line instead, and since nothing is deleted, the
   sweep lists every test object still there.
 - Last: a summary headed `Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:`
-  -- a table of `Kind`, `Name`, `Id` with the kinds `user` (2), `group` (7), `group member`,
+  -- a table of `Kind`, `Name`, `Id` with the kinds `user` (2), `group` (8), `group member`,
   `directory role (built-in, fixed)` and `directory role policy` (2 each), `directory policy change`,
   `directory assignment (schedule)` (4), `PIM for Groups member policy`, `PIM for Groups eligibility`,
   `resource group`, `Azure role (built-in, fixed)`, `resource group Reader policy`,
@@ -545,6 +576,7 @@ function Get-S65Name {
         "$Prefix-pim-untouched" = $IdPimUntouched
         "$Prefix-pim-policy"    = $IdPimPolicy
         "$Prefix-pim-elig"      = $IdPimElig
+        "$Prefix-pim-dynamic"   = $IdPimDynamic
         "$Prefix-rename-group"  = $IdRename      # created as oer-s65-rename-old; section 5 renames it
         "$Prefix-conflict-a"    = $IdConflictA
         "$Prefix-conflict-b"    = $IdConflictB
@@ -931,13 +963,14 @@ function Invoke-S65Check {
 $User1Upn = "$Prefix-user1@$Domain"
 $User2Upn = "$Prefix-user2@$Domain"   # the only member of oer-s65-rag
 $RagName  = "$Prefix-rag"             # role-assignable
-$Pim      = "$Prefix-pim"             # the three section 1 groups start with this
+$Pim      = "$Prefix-pim"             # the four section 1 groups start with this
 ```
 
 In the `Expect:` lines below, a name in angle brackets is an id the helpers have already named:
 `<oer-s65-user1>`, `<oer-s65-user2>`, `<oer-s65-rag>`, `<oer-s65-pim-untouched>`,
-`<oer-s65-pim-policy>`, `<oer-s65-pim-elig>`, `<oer-s65-rename-group>` (the group created as
-`oer-s65-rename-old`, whatever its name at the time), `<oer-s65-conflict-a>`, `<oer-s65-conflict-b>`,
+`<oer-s65-pim-policy>`, `<oer-s65-pim-elig>`, `<oer-s65-pim-dynamic>`, `<oer-s65-rename-group>`
+(the group created as `oer-s65-rename-old`, whatever its name at the time), `<oer-s65-conflict-a>`,
+`<oer-s65-conflict-b>`,
 `<oer-live-cc>` (the certificate identity's service principal), `<Reports Reader>` and
 `<Message Center Reader>` (the role definition ids), `<policy of Reports Reader>` and
 `<policy of Message Center Reader>`, `<TenantId>`, `<SubId>`, and in section 6 `<Me>` (Philip).
@@ -990,8 +1023,12 @@ SDK has expired: sign in again.
   object id", "feat: export pimPolicy only for groups that use PIM for Groups", "fix: report pimPolicy
   unread when the eligibility half of the criterion was not read", "docs: describe the exported
   directory role sections in the bundle prompt and README", "docs: show every apply section in the
-  worked example", "docs: release notes for the directory role export and group rename" and "docs:
-  live-verification checklist for the directory role export and group rename". Subjects, not hashes: a
+  worked example", "docs: release notes for the directory role export and group rename", "docs:
+  live-verification checklist for the directory role export and group rename", "fix: treat a group
+  PIM for Groups cannot manage as not using it", "fix: word the onboarding and case-only rename
+  warnings as what they know", "docs: state the rename lookup delay and the references a rename must
+  update", "docs: tighten the bundle README, help and release notes" and "docs: measure the rename
+  window and a dynamic group in the step 5 checklist". Subjects, not hashes: a
   rebase onto `main` rewrites every hash. After the merge the range is empty. `ModuleBase` lies under
   `<Repo>/output/module/Omnicit.EntraRBAC/`; the five private functions are listed as `Function`; the
   `-Include` line names `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` among nine
@@ -1026,7 +1063,9 @@ SDK has expired: sign in again.
   `<Repo>\docs\live-verification\raw\s65\` (the two directory baselines, the resource group
   baseline, and the state file twice -- after the Graph phase and after the Azure phase); the
   DISABLED users `oer-s65-user1` and `oer-s65-user2` (printed as user principal names -- redact);
-  the seven groups, `oer-s65-rag` role-assignable and the other six not; the membership
+  the eight groups, `oer-s65-rag` role-assignable and the other seven not, `oer-s65-pim-dynamic` as
+  `Create a DYNAMIC security group that is NOT role-assignable (membershipRule (user.department -eq "oer-s65-none"), which matches no user; processing On) -- a group PIM for Groups cannot manage`;
+  the membership
   `oer-s65-rag <- oer-s65-user2`; `oer-s65-pim-policy`
   (`Change the PIM-for-Groups MEMBER policy once: rule Expiration_EndUser_Assignment, maximumDuration PT4H ...`);
   `member eligibility of <oer-s65-user1's user principal name> in oer-s65-pim-elig`
@@ -1049,7 +1088,7 @@ SDK has expired: sign in again.
   `$OrgName` exactly, case-sensitive, `$Domain` and `$TenantId`; never weaken the check), from the
   subscription (`$SubId` is not the test subscription, or it is not Enabled), a resource group
   `oer-s65-rg` the script did not create, an existing `oer-s65-rg` whose Reader policy has residue and
-  no baseline (reset it by hand), a group under one of the seven names with the wrong shape (delete it
+  no baseline (reset it by hand), a group under one of the eight names with the wrong shape (delete it
   by hand), or a direct assignment of either role to a principal the script did not create (someone
   holds the role: stop). Every one of these comes before the run's first write, in the real run as
   well. Record it and stop.
@@ -1098,8 +1137,8 @@ SDK has expired: sign in again.
   A `likely replication delay` line or two are normal. The block: all four files `exists True`; both
   policy baselines with rules and a policy id; the assignment baseline `eligible 0, active 0` twice;
   `resource group baseline: scope is oer-s65-rg True; role Reader; <n> rules; the policy lies under the resource group True`;
-  `state file: prefix oer-s65; written after Azure; users 2; groups 7 (rag, pimuntouched, pimpolicy, pimelig, rename, conflicta, conflictb); resource group recorded as existing True; Azure eligibility recorded True`
-  (the seven keys in any order).
+  `state file: prefix oer-s65; written after Azure; users 2; groups 8 (rag, pimuntouched, pimpolicy, pimelig, pimdynamic, rename, conflicta, conflictb); resource group recorded as existing True; Azure eligibility recorded True`
+  (the eight keys in any order).
   **Failure looks like:** a `Stopped ...` line -- read the `Restore: ...` lines above it (the script
   puts the resource group's Reader policy back from its baseline, when there is one, and both
   directory policies from the policy baseline, signing in to Microsoft Graph again first when it has
@@ -1109,7 +1148,10 @@ SDK has expired: sign in again.
   the original state and nothing will put it back. Stop; the operator resets that policy by hand
   (approval off, no approver), then either runs the prerequisite script again -- it records the now
   clean policy and carries on -- or runs the teardown, which deletes the resource group only once
-  the policy reads clean;
+  the policy reads clean. (On a LATER run, with `baseline-rg-reader-policy.json` already written,
+  the warning says instead that the policy differs from that baseline, which is kept: the run's stop
+  restores it when the run wrote anything -- see its `Restore: ...` lines -- and the teardown
+  restores it from the baseline otherwise.);
   `The 'Reader' policy listed at oer-s65-rg is the resource group's own: False` -- Azure listed a
   policy of a wider scope there: the script stops, since it never records or restores a policy
   beyond the resource group; record it; a `403` or
@@ -1141,7 +1183,7 @@ SDK has expired: sign in again.
   $IdRag = [string]$ST['groups']['rag']['id']; $IdPimUntouched = [string]$ST['groups']['pimuntouched']['id']
   $IdPimPolicy = [string]$ST['groups']['pimpolicy']['id']; $IdPimElig = [string]$ST['groups']['pimelig']['id']
   $IdRename = [string]$ST['groups']['rename']['id']; $IdConflictA = [string]$ST['groups']['conflicta']['id']
-  $IdConflictB = [string]$ST['groups']['conflictb']['id']
+  $IdConflictB = [string]$ST['groups']['conflictb']['id']; $IdPimDynamic = [string]$ST['groups']['pimdynamic']['id']
   $IdCc = [string]$S65Sp.id
   $RoleIdRR  = Get-S65RawRoleDefinitionId -Name $RoleRR
   $RoleIdMCR = Get-S65RawRoleDefinitionId -Name $RoleMCR
@@ -1151,17 +1193,21 @@ SDK has expired: sign in again.
       $R = Get-S65RawStatus -Uri "v1.0/users/$($U.Id)?`$select=id,userPrincipalName,accountEnabled"
       '<{0}>: status {1}; user principal name as expected {2}; enabled {3}' -f (Get-S65Name $U.Id), $R.Status, ([string]$R.Body['userPrincipalName'] -eq $U.Upn), $R.Body['accountEnabled']
   }
-  foreach ($Id in $IdRag, $IdPimUntouched, $IdPimPolicy, $IdPimElig, $IdRename, $IdConflictA, $IdConflictB) { $null = Get-S65RawGroup -Id $Id -Label "0.5-$(Get-S65Name $Id)" }
-  $S05Ids = @($IdUser1, $IdUser2, $IdRag, $IdPimUntouched, $IdPimPolicy, $IdPimElig, $IdRename, $IdConflictA, $IdConflictB, $IdCc, $RoleIdRR, $RoleIdMCR)
-  "ids read: $(@($S05Ids | Where-Object { Test-S65Guid $_ }).Count) of 12; all different: $(@($S05Ids | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique).Count -eq 12)"
+  foreach ($Id in $IdRag, $IdPimUntouched, $IdPimPolicy, $IdPimElig, $IdPimDynamic, $IdRename, $IdConflictA, $IdConflictB) { $null = Get-S65RawGroup -Id $Id -Label "0.5-$(Get-S65Name $Id)" }
+  $D05 = Get-S65RawStatus -Uri "v1.0/groups/$IdPimDynamic`?`$select=groupTypes,membershipRule,membershipRuleProcessingState"
+  "0.5 oer-s65-pim-dynamic: status $($D05.Status); dynamic $(@($D05.Body['groupTypes']) -contains 'DynamicMembership'); rule as set $([string]$D05.Body['membershipRule'] -ceq '(user.department -eq "oer-s65-none")'); processing $($D05.Body['membershipRuleProcessingState'])"
+  $S05Ids = @($IdUser1, $IdUser2, $IdRag, $IdPimUntouched, $IdPimPolicy, $IdPimElig, $IdPimDynamic, $IdRename, $IdConflictA, $IdConflictB, $IdCc, $RoleIdRR, $RoleIdMCR)
+  "ids read: $(@($S05Ids | Where-Object { Test-S65Guid $_ }).Count) of 13; all different: $(@($S05Ids | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique).Count -eq 13)"
   "policy ids read: $([bool]$PolicyIdRR) $([bool]$PolicyIdMCR); different: $($PolicyIdRR -ne $PolicyIdMCR)"
   ```
 
   **Expect:** `<oer-s65-user1>: status 200; user principal name as expected True; enabled False` and
   the same for `<oer-s65-user2>`; `0.5-oer-s65-rag: group <oer-s65-rag>: displayName 'oer-s65-rag'; ... isAssignableToRole 'True'; securityEnabled True; members [oer-s65-user2]`;
-  the six others each with its setup name as `displayName`, `isAssignableToRole 'False'` or `''`
+  the seven others each with its setup name as `displayName`, `isAssignableToRole 'False'` or `''`
   (null prints as `''`; both mean not role-assignable -- record which), `securityEnabled True` and
-  `members []`; `ids read: 12 of 12; all different: True`; `policy ids read: True True; different: True`.
+  `members []`;
+  `0.5 oer-s65-pim-dynamic: status 200; dynamic True; rule as set True; processing On`;
+  `ids read: 13 of 13; all different: True`; `policy ids read: True True; different: True`.
   **Failure looks like:** a status other than 200, an enabled user, a group of the wrong shape or with
   a member it should not have, or a count off -- the prerequisite run did not finish: read its output
   again. A 403 is a missing permission (Stop conditions).
@@ -1173,12 +1219,15 @@ SDK has expired: sign in again.
 
 `Test-OERGroupPimInUse` decides whether a group uses PIM for Groups, and the rationale
 (docs/development/rationale.md, `pim-in-use-criterion`) says the criterion is "NOT counted as proven
-until it is measured live" on exactly these three groups: `oer-s65-pim-untouched` (nothing PIM ever
-done), `oer-s65-pim-policy` (its member policy changed once by the prerequisite script) and
-`oer-s65-pim-elig` (onboarded only through an eligibility). Microsoft Learn documents the untouched
-shape for a GROUP policy (`lastModifiedDateTime` null, `lastModifiedBy` with a null id and display
-name), but shows a modified shape only for a directory policy, and does not say whether an
-eligibility request stamps the group's policies -- 1.1 measures all three. **What this section does
+until it is measured live" on these groups: `oer-s65-pim-untouched` (nothing PIM ever done),
+`oer-s65-pim-policy` (its member policy changed once by the prerequisite script),
+`oer-s65-pim-elig` (onboarded only through an eligibility) and -- measured in 1.5 --
+`oer-s65-pim-dynamic`, a dynamic group, which PIM for Groups cannot manage (Microsoft Learn), and
+for which the criterion takes a 400 `ResourceTypeNotSupported` on its listing as "not in use".
+Microsoft Learn documents the untouched shape for a GROUP policy (`lastModifiedDateTime` null,
+`lastModifiedBy` with a null id and display name), but shows a modified shape only for a directory
+policy, does not say whether an eligibility request stamps the group's policies, and does not say
+what the listing answers for a dynamic group -- 1.1 and 1.5 measure all of it. **What this section does
 not measure:** a group used only through PIM ACTIVE assignments, with untouched policies, reads as
 "not in use" by design (the documented blind spot); the certificate identity can no longer create an
 active group assignment, so it is not run live ("What this file does not check").
@@ -1244,13 +1293,13 @@ active group assignment, so it is not run live ("What this file does not check")
   other than 200 or 404 (a 403 is a missing permission).
   **Result:**
 
-- [ ] **1.3 The export follows the criterion: `pimPolicy` for the two groups in use only, and the untouched group costs one PIM listing and no policy read.** Read-only.
+- [ ] **1.3 The export follows the criterion: `pimPolicy` for the two groups in use only, and the untouched and the dynamic group each cost one PIM listing and no policy read.** Read-only.
 
   ```powershell
-  Invoke-S65Call -Cmdlet Get-OERInventory -Splat @{ Include = 'Groups'; GroupFilter = "startswith(displayName,'$Pim')" } -Label '1.3 the three oer-s65-pim groups'
+  Invoke-S65Call -Cmdlet Get-OERInventory -Splat @{ Include = 'Groups'; GroupFilter = "startswith(displayName,'$Pim')" } -Label '1.3 the four oer-s65-pim groups'
   $Inv13 = $S65Out | Select-Object -First 1
   ConvertTo-Json -InputObject $Inv13 -Depth 20 | Set-Content -Path (Join-Path $Raw '1.3-inventory.json') -Encoding utf8NoBOM
-  foreach ($N in "$Pim-untouched", "$Pim-policy", "$Pim-elig") {
+  foreach ($N in "$Pim-untouched", "$Pim-policy", "$Pim-elig", "$Pim-dynamic") {
       $G = @($Inv13.groups | Where-Object { $_.displayName -eq $N })
       $Has = ($G.Count -eq 1) -and ($G[0].PSObject.Properties.Name -contains 'pimPolicy')
       $Max = if ($Has -and $G[0].pimPolicy.PSObject.Properties.Name -contains 'member') { $G[0].pimPolicy.member.activationMaxHours } else { '-' }
@@ -1271,12 +1320,20 @@ active group assignment, so it is not run live ("What this file does not check")
   `oer-s65-pim-policy: in the inventory 1; pimPolicy present True (member activationMaxHours 4); requests: eligibility read 1, criterion listing 1, policy-assignment listings 4, rule reads 2`
   (two listings ask whether each access type has a policy, two more come with the two policy reads).
   `oer-s65-pim-elig: in the inventory 1; pimPolicy present True (member activationMaxHours <n>); requests: eligibility read 1, criterion listing 0, policy-assignment listings 4, rule reads 2`
-  -- its counted eligibility decides without a listing. `rule reads in all: 4`. The rule-read split
+  -- its counted eligibility decides without a listing.
+  `oer-s65-pim-dynamic: in the inventory 1; pimPolicy present False (member activationMaxHours -); requests: eligibility read 1, criterion listing 1, policy-assignment listings 0, rule reads 0`,
+  with the verbose line
+  `Get-OERInventory: group 'oer-s65-pim-dynamic': pimPolicy not exported -- PIM for Groups cannot manage the group (ResourceTypeNotSupported).`
+  (or the reason 1.5 reads for it). `rule reads in all: 4`. The rule-read split
   per group relies on Graph's policy id carrying the group id (`Group_<group id>_<guid>`); when it
   does not, the per-group counts read 0 and only the total counts -- record which.
-  **Failure looks like:** `pimPolicy present True` for the untouched group, or any policy read for it
-  -- the criterion runs after the reads, or says "in use" (1.2); `pimPolicy present False` for either
-  of the others; a warning or an `InventoryPartial` error -- a read failed: record its message.
+  **Failure looks like:** `pimPolicy present True` for the untouched or the dynamic group, or any
+  policy read for either -- the criterion runs after the reads, or says "in use" (1.2, 1.5);
+  `pimPolicy present False` for either of the others; a warning or an `InventoryPartial` error -- a
+  read failed: record its message. An `InventoryPartial` naming `groups/oer-s65-pim-dynamic/pimPolicy`
+  with a `Could not determine whether group ...` cause is the defect the fix "treat a group PIM for
+  Groups cannot manage as not using it" exists for: Graph answered the dynamic group's listing with a
+  code the criterion does not declare -- record it with 1.5's raw answer.
   **Result:**
 
 - [ ] **1.4 The onboarding warning, `-WhatIf` ONLY: a changed `pimPolicy` for the untouched group warns, for the modified one it does not, and nothing is written.** Never run these two documents without `-WhatIf` -- `Invoke-S65Check` without `-Apply` IS `-WhatIf`.
@@ -1293,7 +1350,7 @@ active group assignment, so it is not run live ("What this file does not check")
   the call runs and the warnings it captured only after the call -- 1.4a: `Valid = True`; the line
   `What if: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s65-pim-untouched"`;
   then `--- warnings, in the order written: 1` and the ONE warning,
-  `WARNING: Sync-OERStructureGroup: group 'oer-s65-pim-untouched' does not use PIM for Groups yet (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').`
+  `WARNING: Sync-OERStructureGroup: group 'oer-s65-pim-untouched' was not found to use PIM for Groups (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').`
   -- the handler writes it BEFORE its `ShouldProcess` gate, which is why `-WhatIf` shows it at all.
   The reason says "no PIM eligibility was counted" because a `pimPolicy`-only entry makes the
   handler read no eligibility (it reads PIM eligibility only when the entry declares `eligibility`),
@@ -1309,6 +1366,38 @@ active group assignment, so it is not run live ("What this file does not check")
   criterion said "in use"; a warning in 1.4b -- the criterion missed the modified policy; any row
   `Updated`, or `1.4-untouched-after` with a field `True` -- the plan WROTE: stop, the untouched
   group is onboarded and section 1's measurement is spent; record it.
+  **Result:**
+
+- [ ] **1.5 A dynamic group PIM for Groups cannot manage: Graph's raw answer on the criterion's listing, and the criterion's answer.** Read-only; nothing PIM is ever written to `oer-s65-pim-dynamic`.
+
+  ```powershell
+  $P15 = Get-S65RawGroupPim -GroupId $IdPimDynamic -Label '1.5-dynamic'
+  $M = Get-Module Omnicit.EntraRBAC
+  try {
+      $R15 = & $M { param($Id) Test-OERGroupPimInUse -GroupId $Id } $IdPimDynamic
+      "oer-s65-pim-dynamic (eligibility count 0): InUse $($R15.InUse); Reason: $($R15.Reason)"
+  } catch {
+      'oer-s65-pim-dynamic: the criterion THREW: {0}' -f (Format-S65Text $PSItem.Exception.Message)
+      $global:Error.Clear()
+  }
+  ```
+
+  **Expect:** `1.5-dynamic: <oer-s65-pim-dynamic>: policy listing status <status> <code>` -- RECORD
+  the status and code: this is the first measurement of what the criterion's listing
+  (`beta/policies/roleManagementPolicies?$filter=scopeId eq '<id>' and scopeType eq 'Group'`) answers
+  for a group PIM for Groups cannot manage. Expected: `400 ResourceTypeNotSupported`, the answer the
+  module's sibling reads of the same family already take for such a group. A `404 ResourceNotFound`,
+  or `200` with untouched policies (`any policy modified: False`), are the two other answers the
+  criterion reads as not in use -- record which Graph gave. Record the eligibility reads' status and
+  code too (expected `400 ResourceTypeNotSupported`). Then the criterion, with the 400:
+  `oer-s65-pim-dynamic (eligibility count 0): InUse False; Reason: PIM for Groups cannot manage the group (ResourceTypeNotSupported)`
+  -- or, with the other two answers, `Reason: PIM for Groups does not know the group (404 ResourceNotFound)`
+  or `Reason: no PIM policy of the group has been modified and no PIM eligibility was counted`. 1.3
+  showed the export of the same group: no `pimPolicy`, and no `InventoryPartial`.
+  **Failure looks like:** a `THREW` line -- the listing answered a code the criterion does not
+  declare: record the status and code `1.5-dynamic` printed (it names the code), it is a defect of
+  the fix for dynamic groups; `InUse True` -- a group PIM cannot manage shows a modified policy:
+  record the fields; a 403 -- a missing permission (Stop conditions).
   **Result:**
 
 ---
@@ -1439,7 +1528,8 @@ shows.
   **Failure looks like:** a missing file; an `id` in either section; a count mismatch; `Valid False`
   or a `directoryRole*` finding -- the exported sections do not validate: record the finding;
   `IncompleteReads` above 0 -- a default section could not be read: record the entry (a missing
-  permission is a stop condition); an `InventoryPartial` naming a subscription -- the Azure walk could
+  permission is a stop condition; `groups/oer-s65-pim-dynamic/pimPolicy` is the dynamic-group defect
+  of 1.3 and 1.5); an `InventoryPartial` naming a subscription -- the Azure walk could
   not read the test subscription: stop, sections 2 to 4 need it.
   **Result:**
 
@@ -1619,7 +1709,7 @@ Every write below is preceded by its `-WhatIf` plan. The group created as `oer-s
 tracked by its id throughout (`<oer-s65-rename-group>`); it ends as `oer-s65-rename-direct`, and the
 teardown finds it by that id.
 
-- [ ] **5.1 A rename through the document: planned, applied, read back by the same id, and `Unchanged` on the next run.**
+- [ ] **5.1 A rename through the document: planned, applied, read back by the same id, the window measured with an immediate `-WhatIf` plan, and `Unchanged` once the new name resolves.**
 
   ```powershell
   $null = Get-S65RawGroup -Id $IdRename -Label '5.1-before'
@@ -1631,12 +1721,19 @@ teardown finds it by that id.
 
   ```powershell
   Invoke-S65Check -Id '5.1b' -Json $Doc51 -Include Groups -Apply
+  $Renamed51 = Get-Date
   $null = Get-S65RawGroup -Id $IdRename -Label '5.1b-after'
+  # THE WINDOW, MEASURED: the same document planned again at once -- -WhatIf, NEVER -Apply -- before
+  # Graph's name lookup has been given any time. Read-only. It records what an immediate re-run would do.
+  Invoke-S65Check -Id '5.1b-now' -Json $Doc51 -Include Groups
+  $Row51 = @($S65Result | Where-Object { [string]$_.Item -eq "$Prefix-rename-new" }) | Select-Object -First 1
+  $Verdict51 = if (-not $Row51) { 'no row' } elseif ($Row51.Action -eq 'Unchanged') { 'Unchanged' } elseif ([string]$Row51.Detail -match '^would rename') { 'rename it again' } elseif ([string]$Row51.Detail -match '^would create') { 'CREATE A NEW GROUP' } else { "other: $($Row51.Action) | $(Format-S65Text ([string]$Row51.Detail))" }
+  "an immediate re-run, $([int]((Get-Date) - $Renamed51).TotalSeconds) s after the rename, would: $Verdict51"
   for ($Try = 1; $Try -le 6; $Try++) {
       $New = @((Get-S65RawStatus -Uri ("v1.0/groups?`$filter=" + [uri]::EscapeDataString("displayName eq '$Prefix-rename-new'") + '&$select=id')).Body['value'])
       $Old = @((Get-S65RawStatus -Uri ("v1.0/groups?`$filter=" + [uri]::EscapeDataString("displayName eq '$Prefix-rename-old'") + '&$select=id')).Body['value'])
       $Ready = ($New.Count -eq 1) -and ([string]$New[0]['id'] -eq $IdRename) -and ($Old.Count -eq 0)
-      "the name filter lists the new name under the same id and the old name nowhere: $Ready"
+      "try $Try, $([int]((Get-Date) - $Renamed51).TotalSeconds) s after the rename: new name listed $($New.Count), old name listed $($Old.Count); the name filter lists the new name under the same id and the old name nowhere: $Ready"
       if ($Ready) { break }
       Start-Sleep -Seconds 10
   }
@@ -1654,16 +1751,25 @@ teardown finds it by that id.
   one row, `[groups] oer-s65-rename-new | Skipped | would rename group 'oer-s65-rename-old' to 'oer-s65-rename-new'; would update group properties (Description)`.
   5.1b: no error; one row,
   `[groups] oer-s65-rename-new | Updated | renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)`;
-  `5.1b-after`, read BY THE SAME ID: `displayName 'oer-s65-rename-new'; description 's65 renamed'`;
-  then `... under the same id and the old name nowhere: True` (after a wait or two -- Graph's name
-  filter follows a rename a moment late). 5.1c and 5.1d: one row each,
+  `5.1b-after`, read BY THE SAME ID: `displayName 'oer-s65-rename-new'; description 's65 renamed'`.
+  Then 5.1b-now, the immediate plan: `Valid = True`, no error, and one line
+  `an immediate re-run, <s> s after the rename, would: <verdict>` -- RECORD the verdict, the seconds
+  and 5.1b-now's row and `What if:` line (redact). Each verdict is data, not a pass or fail:
+  `Unchanged` (the name lookup had already caught up), `rename it again` (the old name still
+  resolved to the group, the new one not yet -- a harmless second PATCH of the same name), or
+  `CREATE A NEW GROUP` (neither name resolved -- the window the documentation warns about, in which
+  an immediate real re-run would create a duplicate group). Then the wait: one
+  `try <n>, <s> s after the rename: new name listed <a>, old name listed <b>; ...: <True|False>` line
+  per try until `True` -- record every line: together they measure how long Graph's name filter
+  trails the rename. 5.1c and 5.1d: one row each,
   `[groups] oer-s65-rename-new | Unchanged | group properties match` -- the previous name finds no
   group any more, so the entry is applied normally (G11).
   **Failure looks like:** 5.1a `would create group oer-s65-rename-new` -- the previous name did not
   resolve: stop, a real run would create a second group; 5.1b `Failed` -- record the message; the
-  read-back with the old name or description -- the PATCH did not carry them; the wait never
-  printing `True` -- do NOT run 5.1c/5.1d until it does (with neither name resolving, the document
-  would create a new group); 5.1c anything but `Unchanged`.
+  read-back with the old name or description -- the PATCH did not carry them; ANY write in 5.1b-now
+  (a row `Created` or `Updated`) -- the plan was run with `-Apply`: record it, and look for a second
+  `oer-s65-rename-new` group; the wait never printing `True` -- do NOT run 5.1c/5.1d until it does
+  (with neither name resolving, the document would create a new group); 5.1c anything but `Unchanged`.
   **Result:**
 
 - [ ] **5.2 A conflict: both names exist as different groups -- one `Failed` row, `GroupRenameConflict`, and both groups untouched.** The entry writes nothing by design; the plan runs first all the same.
@@ -1736,8 +1842,9 @@ teardown finds it by that id.
   ```
 
   **Expect:** `Valid True; findings 1` and
-  `[Warning] groups groups[0].previousDisplayName: 'previousDisplayName' at groups[0] equals displayName; there is nothing to rename.`
-  -- equal ignoring letter case, as Graph matches display names.
+  `[Warning] groups groups[0].previousDisplayName: 'previousDisplayName' at groups[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName.`
+  -- equal ignoring letter case, as Graph matches display names, so the document cannot express a
+  case-only rename.
   **Failure looks like:** no finding, an Error, or `Valid False`.
   **Result:**
 
@@ -1760,7 +1867,7 @@ continues with the Teardown afterwards**, once Philip has done both boxes.
   only -- not the build lines), then this block:
 
   ```powershell
-  Set-Location $Repo
+  Set-Location $Repo -ErrorAction Stop
   $Sep = [System.IO.Path]::PathSeparator
   $env:PSModulePath = (Resolve-Path ./output/module).Path + $Sep + (Resolve-Path ./output/RequiredModules).Path + $Sep + $env:PSModulePath
   Import-Module Omnicit.EntraRBAC -Force
@@ -1820,7 +1927,7 @@ continues with the Teardown afterwards**, once Philip has done both boxes.
   "summary: ScopesEnumerated $($B61.ScopesEnumerated); ScopeCount $($B61.ScopeCount); SkippedScopes $(@($B61.SkippedScopes).Count); SkippedEligibilityScopes $(@($B61.SkippedEligibilityScopes).Count); AzurePimEligibility $($B61.AzurePimEligibility)"
   ```
 
-  **Expect:** (a) all four lines `True`, no exception; 0.5's block then prints `ids read: 11 of 12`
+  **Expect:** (a) all four lines `True`, no exception; 0.5's block then prints `ids read: 12 of 13`
   in this window -- there is no certificate-identity sign-in here, so `$IdCc` is empty -- and every
   other line as in 0.5. (b) the plan: the role and user lookups, one
   `What if:` line naming the eligible Reader role for `<oer-s65-user1's user principal name>` at the
@@ -1924,12 +2031,13 @@ assignment baseline, and the sweep.
   `... baseline assignments missing and re-created: 0`;
   `Teardown: PIM-for-Groups eligibility of oer-s65 users in oer-s65-pim-elig: 1` and its removal;
   `Removed oer-s65-user2@<test domain> from oer-s65-rag.` BEFORE `Deleted group oer-s65-rag.`; the
-  other six groups -- `Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).` among
-  them -- and nothing `(found by the prefix sweep)`; the two users; per role
+  other seven groups -- `Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).` and
+  `Deleted group oer-s65-pim-dynamic.` among them -- no `left in place` line, and nothing
+  `(found by the prefix sweep)`; the two users; per role
   `... direct assignments equal the assignment baseline: not checked (WhatIf)` in the plan and
   `... True` in the run; the sweep -- in the PLAN, which deletes nothing, one
   `[oer-s65] Sweep, still present: <user|group> '<name>' (<id>)` line for each of the two users and
-  seven groups (`oer-s65-rename-direct` among them), each with its REAL id: redact every one; in the
+  eight groups (`oer-s65-rename-direct` among them), each with its REAL id: redact every one; in the
   RUN `[oer-s65] Sweep: no user or group starting with 'oer-s65' is left.` (Graph's list can lag a
   moment behind the deletes -- a `Sweep, still present: ...` line in the run is then not a failure,
   T.2 reads again); the summary; `WhatIf: nothing was created, restored, removed or written.` in the
@@ -1949,8 +2057,12 @@ assignment baseline, and the sweep.
   `restored: False` -- the script stops before it deletes anything; a user deletion refused (the line
   `Teardown: user ... was NOT deleted: ...` and a final stop line) -- step 4 measured that app-only
   cannot delete a user Entra still treats as privileged: the operator deletes it by hand, and records
-  it. Re-run the teardown after a fix (it only restores what differs and removes what is still there)
-  and record both runs.
+  it; a `Teardown: left in place: ...` line (a test group, or an assignment or PIM eligibility of one,
+  whose current name no longer carries the prefix) and a final `Stopped ...: everything else is done,
+  but: <n> object(s) were left in place ...` line with exit code 1 -- the sweep and T.2 cannot see
+  such an object: the operator removes it by hand, or renames it back to an `oer-s65` name and runs
+  the teardown again, and records it. Re-run the teardown after a fix (it only restores what differs
+  and removes what is still there) and record both runs.
   **Result:**
 
 - [ ] **T.2 Read everything back: both directory policies and both roles' assignments equal their baselines, the resource group is gone, no test object is left, and every write of this file named a test object.**
