@@ -141,4 +141,38 @@ Describe 'Select-OERManagedDirectoryRoleAssignment' {
             }
         }
     }
+
+    Context '-Excluded returns the other side, with every reason' {
+        # The same guard lines decide both sides; -Excluded names each guard that drops an assignment.
+        It 'names <Expected> for a <Kind> assignment that is <Case>' -TestCases @(
+            @{ Case = 'an activation'; Kind = 'Active'; Scope = '/'; MemberType = 'Direct'; AssignmentType = 'Activated'; Expected = 'Activation' }
+            @{ Case = 'held through a group'; Kind = 'Active'; Scope = '/'; MemberType = 'Group'; AssignmentType = 'Assigned'; Expected = 'Group' }
+            @{ Case = 'Inherited'; Kind = 'Eligible'; Scope = '/'; MemberType = 'Inherited'; AssignmentType = $null; Expected = 'Group' }
+            @{ Case = 'scoped to an administrative unit'; Kind = 'Eligible'; Scope = '/administrativeUnits/cccccccc-0000-0000-0000-000000000003'; MemberType = 'Direct'; AssignmentType = $null; Expected = 'Scope' }
+            @{ Case = 'an activation through a group at a unit scope'; Kind = 'Active'; Scope = '/administrativeUnits/cccccccc-0000-0000-0000-000000000003'; MemberType = 'Group'; AssignmentType = 'Activated'; Expected = 'Scope,Group,Activation' }
+        ) {
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; Scope = $Scope; MemberType = $MemberType; AssignmentType = $AssignmentType; Expected = $Expected } {
+                param($Kind, $Scope, $MemberType, $AssignmentType, $Expected)
+                $Candidate = [PSCustomObject]@{
+                    DirectoryScopeId = $Scope
+                    MemberType       = $MemberType
+                    AssignmentType   = $AssignmentType
+                    PrincipalId      = 'aaaaaaaa-0000-0000-0000-000000000001'
+                }
+                $Result = @(Select-OERManagedDirectoryRoleAssignment -Assignment @($Candidate) -Kind $Kind -Excluded)
+                $Result.Count | Should -Be 1
+                $Result[0].Assignment.PrincipalId | Should -Be 'aaaaaaaa-0000-0000-0000-000000000001'
+                ($Result[0].Reason -join ',') | Should -BeExactly $Expected
+                @(Select-OERManagedDirectoryRoleAssignment -Assignment @($Candidate) -Kind $Kind).Count | Should -Be 0
+            }
+        }
+
+        It 'returns nothing for a managed assignment, and skips a null entry' {
+            InModuleScope Omnicit.EntraRBAC {
+                $Kept = [PSCustomObject]@{ DirectoryScopeId = '/'; MemberType = 'Direct'; AssignmentType = 'Assigned'; PrincipalId = 'aaaaaaaa-0000-0000-0000-000000000001' }
+                @(Select-OERManagedDirectoryRoleAssignment -Assignment @($Kept, $null) -Kind Active -Excluded).Count | Should -Be 0
+                @(Select-OERManagedDirectoryRoleAssignment -Assignment @($Kept, $null) -Kind Active).Count | Should -Be 1
+            }
+        }
+    }
 }

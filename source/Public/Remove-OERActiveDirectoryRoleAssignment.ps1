@@ -45,7 +45,9 @@ function Remove-OERActiveDirectoryRoleAssignment {
     standing assignment of the role at tenant scope, the removal counts as done: no error is written,
     no request object is returned, and a verbose line says why. That also holds for an assignment
     that was already gone before the call. When the read fails, or finds the assignment still in
-    place, the RoleAssignmentDoesNotExist error is written as before.
+    place, the RoleAssignmentDoesNotExist error is written as before. When the removal counts as done
+    but the read shows the principal still holding the role another way -- as an activation, through
+    a group, or at a directory scope narrower than the tenant -- a warning says which.
 
     .PARAMETER Role
     The directory role: display name (matched without regard to letter case) or role definition id.
@@ -215,7 +217,11 @@ function Remove-OERActiveDirectoryRoleAssignment {
                 $Check = Test-OERDirectoryRoleAssignmentGone -Record $RemoveError -Kind Active `
                     -RoleDefinitionId $RoleInput.RoleDefinitionId -PrincipalId $Principal.PrincipalId
                 if ($Check.Detail) { Write-Verbose "[Remove-OERActiveDirectoryRoleAssignment] $($Check.Detail)" }
-                if ($Check.Gone) { return }
+                if ($Check.Gone) {
+                    # Done, but the principal keeps the role another way: say so, with no id beyond $Target's.
+                    if ($Check.StillHeld) { Write-Warning "Removed $Target, but the principal still holds the role $($Check.StillHeld)." }
+                    return
+                }
                 $PSCmdlet.WriteError($RemoveError)
                 return
             }

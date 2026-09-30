@@ -1581,8 +1581,38 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment prune removal Microsoft Graph
                     -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
             @($Records).Action | Should -Be @('Removed', 'Unchanged')
             $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraExtra) ($Kind)"
+            # No row left at all: the plain Detail, nothing added.
+            $Records[0].Detail | Should -BeExactly "removed undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal '$($script:DraExtra)'"
             @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraGone' }).Count | Should -Be 0
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Body.action -eq 'adminRemove' }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -ne 'POST' }
+        }
+    }
+
+    It 'adds to the Removed Detail how the principal still holds the role when <Case> is left, from the cmdlet warning and without a second read' -TestCases @(
+        @{ Case = 'an activation'; Kind = 'Active'; MemberType = 'Direct'; AssignmentType = 'Activated'; Ways = 'as an activation of an eligible assignment' }
+        @{ Case = 'an eligible row through a group'; Kind = 'Eligible'; MemberType = 'Group'; AssignmentType = $null; Ways = 'through a group' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; MemberType = $MemberType; AssignmentType = $AssignmentType; Ways = $Ways } {
+            param($Kind, $MemberType, $AssignmentType, $Ways)
+            $Left = $script:DraStillThere.PSObject.Copy()
+            $Left.memberType = $MemberType
+            $Left.assignmentType = $AssignmentType
+            $script:DraReadBack = @($Left)
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            # The warning stream itself is captured (3>&1): -WarningVariable would also collect the
+            # warnings the cmdlet writes under the pass's SilentlyContinue, which never reach the stream.
+            $All = @(Invoke-SyncDraGone -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -ErrorAction SilentlyContinue -ErrorVariable DraErrors 3>&1)
+            $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+            $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Detail | Should -BeExactly ("removed undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal " +
+                "'$($script:DraExtra)', but the principal still holds the role $Ways")
+            @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraGone' }).Count | Should -Be 0
+            # The pass's own "removing ..." warning only: the cmdlet's warning goes into the Detail, not the stream.
+            $Streamed.Count | Should -Be 1
+            $Streamed[0] | Should -BeLike 'Sync-OERStructureDirectoryRoleAssignment: removing undeclared*'
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -ne 'POST' }
         }
     }

@@ -42,7 +42,9 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     as done: no error is written, no request object is returned, and a verbose line says why. That
     also holds for an eligible assignment that was already gone before the call. When the read fails,
     or finds the eligible assignment still in place, the RoleAssignmentDoesNotExist error is written
-    as before.
+    as before. When the removal counts as done but the read shows the principal still eligible
+    another way -- through a group, or at a directory scope narrower than the tenant -- a warning
+    says which.
 
     .PARAMETER Role
     The directory role: display name (matched without regard to letter case) or role definition id.
@@ -207,7 +209,11 @@ function Remove-OEREligibleDirectoryRoleAssignment {
                 $Check = Test-OERDirectoryRoleAssignmentGone -Record $RemoveError -Kind Eligible `
                     -RoleDefinitionId $RoleInput.RoleDefinitionId -PrincipalId $Principal.PrincipalId
                 if ($Check.Detail) { Write-Verbose "[Remove-OEREligibleDirectoryRoleAssignment] $($Check.Detail)" }
-                if ($Check.Gone) { return }
+                if ($Check.Gone) {
+                    # Done, but the principal keeps the role another way: say so, with no id beyond $Target's.
+                    if ($Check.StillHeld) { Write-Warning "Removed $Target, but the principal still holds the role $($Check.StillHeld)." }
+                    return
+                }
                 $PSCmdlet.WriteError($RemoveError)
                 return
             }

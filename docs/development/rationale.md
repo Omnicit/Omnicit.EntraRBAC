@@ -2573,7 +2573,7 @@ live session, before one active removal, would settle it: a 503 or 504 then surf
 `RoleAssignmentDoesNotExist`.
 
 The fix holds whichever it is. On `RoleAssignmentDoesNotExist` the Remove cmdlet reads the
-principal's schedules of the role at tenant scope again (`Test-OERDirectoryRoleAssignmentGone`), and
+principal's schedules of the role again, at every scope (`Test-OERDirectoryRoleAssignmentGone`), and
 only a read that succeeds and keeps no direct, tenant-scope schedule -- for Active an Assigned one,
 through `Select-OERManagedDirectoryRoleAssignment` -- makes the removal a success, with a verbose line
 and no request object. A read that fails, or finds the assignment still in place, leaves the original
@@ -2581,3 +2581,19 @@ error exactly as before: a failed read is never an absent assignment. The prune 
 the same cmdlets, so its row is Removed or Failed by the same rule. One consequence is deliberate: a
 removal of an assignment that never existed now also ends without an error, since the state the
 caller asked for holds; the verbose line says what was found.
+
+**A removal counted as done still warns when the principal keeps the role another way.** The
+direct assignment the caller named is gone, so the removal succeeds -- but a principal that still
+holds the role as an activation, through a group, or at a narrower directory scope has not lost it,
+and a verbose line alone would hide that. The re-read's filter names only the role and the principal,
+no directory scope, so the same single request also returns those rows: widening it costs no
+request, only the few extra rows in the answer. `Select-OERManagedDirectoryRoleAssignment -Excluded`
+names why each such row is not the one the removal stood for (Scope, Group, Activation) from the same
+three guard lines that decide the kept side, so the two sides cannot drift, and the Remove cmdlet
+writes a warning naming how the principal still holds the role, with no id beyond those its own
+"Removing ..." warning already shows. The prune pass captures that warning with `-WarningVariable`
+and adds the same words to its Removed Detail, so it makes no second read either. Not verified live:
+Learn documents `$filter` on `roleDefinitionId` and `principalId` without `directoryScopeId`, and a
+refusal would fail the read and keep the original error; and step 4 measured that Graph lists no
+inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
+at all.

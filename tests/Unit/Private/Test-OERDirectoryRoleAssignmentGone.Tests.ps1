@@ -70,21 +70,23 @@ Describe 'Test-OERDirectoryRoleAssignmentGone' {
         }
     }
 
-    It 'is Gone when the re-read of the <Kind> schedules succeeds and finds none, reading only that role and principal at tenant scope' -TestCases @(
-        @{ Kind = 'Active'; Path = 'roleAssignmentSchedules'; KindText = 'active' }
-        @{ Kind = 'Eligible'; Path = 'roleEligibilitySchedules'; KindText = 'eligible' }
+    It 'is Gone, with nothing still held, when the re-read of the <Kind> schedules succeeds and finds none, in ONE read of that role and principal at every scope' -TestCases @(
+        @{ Kind = 'Active'; Path = 'roleAssignmentSchedules'; KindText = 'active'; Kept = 'direct, standing' }
+        @{ Kind = 'Eligible'; Path = 'roleEligibilitySchedules'; KindText = 'eligible'; Kept = 'direct' }
     ) {
-        InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; Path = $Path; KindText = $KindText } {
-            param($Kind, $Path, $KindText)
-            # An upper-case principal id is filtered lower-case, as Graph stores it.
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; Path = $Path; KindText = $KindText; Kept = $Kept } {
+            param($Kind, $Path, $KindText, $Kept)
+            # An upper-case principal id is filtered lower-case, as Graph stores it. The filter names no
+            # directory scope, so a schedule at a narrower scope comes back in the same read.
             $Check = Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind $Kind `
                 -RoleDefinitionId $script:GoneRole -PrincipalId $script:GonePrincipal.ToUpperInvariant()
             $Check.Gone | Should -BeTrue
+            $Check.StillHeld | Should -BeNullOrEmpty
             $Check.Detail | Should -BeExactly ("Microsoft Graph answered RoleAssignmentDoesNotExist, and reading the $KindText assignment of directory role " +
-                "'$($script:GoneRole)' for principal '$($script:GonePrincipal.ToUpperInvariant())' again found none, so it is gone and the removal " +
-                'is reported as done. (Graph has been measured answering this to a removal it carried out.)')
+                "'$($script:GoneRole)' for principal '$($script:GonePrincipal.ToUpperInvariant())' again found no $Kept one at tenant scope, so it is " +
+                'gone and the removal is reported as done. (Graph has been measured answering this to a removal it carried out.)')
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
-                $Uri -ceq ("v1.0/roleManagement/directory/$Path`?`$filter=directoryScopeId eq '/' and roleDefinitionId eq " +
+                $Uri -ceq ("v1.0/roleManagement/directory/$Path`?`$filter=roleDefinitionId eq " +
                     "'$($script:GoneRole)' and principalId eq '$($script:GonePrincipal)'") -and $All -and
                 -not $PesterBoundParameters.ContainsKey('Method') -and -not $PesterBoundParameters.ContainsKey('Body')
             }
@@ -92,17 +94,49 @@ Describe 'Test-OERDirectoryRoleAssignmentGone' {
         }
     }
 
-    It 'is Gone when the only rows left are ones a removal does not stand for (<Case>)' -TestCases @(
-        @{ Case = 'an activation'; MemberType = 'Direct'; AssignmentType = 'Activated'; DirectoryScopeId = '/'; Principal = 'bbbbbbbb-0000-0000-0000-000000000002' }
-        @{ Case = 'inherited through a group'; MemberType = 'Group'; AssignmentType = 'Assigned'; DirectoryScopeId = '/'; Principal = 'bbbbbbbb-0000-0000-0000-000000000002' }
-        @{ Case = 'scoped to an administrative unit'; MemberType = 'Direct'; AssignmentType = 'Assigned'; DirectoryScopeId = '/administrativeUnits/cccccccc-0000-0000-0000-000000000003'; Principal = 'bbbbbbbb-0000-0000-0000-000000000002' }
-        @{ Case = 'another principal'; MemberType = 'Direct'; AssignmentType = 'Assigned'; DirectoryScopeId = '/'; Principal = 'bbbbbbbb-0000-0000-0000-000000000009' }
+    It 'is Gone, and names how the principal still holds the role, when the only rows left are <Case>' -TestCases @(
+        @{ Case = 'an activation'; Kind = 'Active'; MemberType = 'Direct'; AssignmentType = 'Activated'; DirectoryScopeId = '/'; Expected = 'as an activation of an eligible assignment' }
+        @{ Case = 'an active assignment through a group'; Kind = 'Active'; MemberType = 'Group'; AssignmentType = 'Assigned'; DirectoryScopeId = '/'; Expected = 'through a group' }
+        @{ Case = 'an eligible assignment through a group'; Kind = 'Eligible'; MemberType = 'Group'; AssignmentType = $null; DirectoryScopeId = '/'; Expected = 'through a group' }
+        @{ Case = 'scoped to an administrative unit'; Kind = 'Active'; MemberType = 'Direct'; AssignmentType = 'Assigned'; DirectoryScopeId = '/administrativeUnits/cccccccc-0000-0000-0000-000000000003'; Expected = 'at a directory scope narrower than the tenant, such as an administrative unit' }
     ) {
-        InModuleScope Omnicit.EntraRBAC -Parameters @{ MemberType = $MemberType; AssignmentType = $AssignmentType; DirectoryScopeId = $DirectoryScopeId; Principal = $Principal } {
-            param($MemberType, $AssignmentType, $DirectoryScopeId, $Principal)
-            $script:GoneLive = @(New-GoneRawRow -Principal $Principal -MemberType $MemberType -AssignmentType $AssignmentType -DirectoryScopeId $DirectoryScopeId)
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; MemberType = $MemberType; AssignmentType = $AssignmentType; DirectoryScopeId = $DirectoryScopeId; Expected = $Expected } {
+            param($Kind, $MemberType, $AssignmentType, $DirectoryScopeId, $Expected)
+            $script:GoneLive = @(New-GoneRawRow -MemberType $MemberType -AssignmentType $AssignmentType -DirectoryScopeId $DirectoryScopeId)
+            $Check = Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind $Kind -RoleDefinitionId $script:GoneRole -PrincipalId $script:GonePrincipal
+            $Check.Gone | Should -BeTrue
+            $Check.StillHeld | Should -BeExactly $Expected
+            $Check.StillHeld | Should -Not -Match '[0-9a-f]{8}-'
+        }
+    }
+
+    It 'joins every way the principal still holds the role, in a fixed order, and names each once' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:GoneLive = @(
+                New-GoneRawRow -DirectoryScopeId '/administrativeUnits/cccccccc-0000-0000-0000-000000000003'
+                New-GoneRawRow -MemberType 'Group'
+                New-GoneRawRow -AssignmentType 'Activated'
+                New-GoneRawRow -AssignmentType 'Activated'
+            )
             $Check = Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind Active -RoleDefinitionId $script:GoneRole -PrincipalId $script:GonePrincipal
             $Check.Gone | Should -BeTrue
+            $Check.StillHeld | Should -BeExactly ('as an activation of an eligible assignment, through a group and at a directory scope narrower ' +
+                'than the tenant, such as an administrative unit')
+            $script:GoneLive = @((New-GoneRawRow -AssignmentType 'Activated'), (New-GoneRawRow -MemberType 'Group'))
+            (Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind Active -RoleDefinitionId $script:GoneRole -PrincipalId $script:GonePrincipal).StillHeld |
+                Should -BeExactly 'as an activation of an eligible assignment and through a group'
+        }
+    }
+
+    It 'names nothing still held for a row of another principal or another role' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:GoneLive = @(
+                New-GoneRawRow -Principal 'bbbbbbbb-0000-0000-0000-000000000009' -AssignmentType 'Activated'
+                New-GoneRawRow -Role 'aaaaaaaa-0000-0000-0000-000000000009' -MemberType 'Group'
+            )
+            $Check = Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind Active -RoleDefinitionId $script:GoneRole -PrincipalId $script:GonePrincipal
+            $Check.Gone | Should -BeTrue
+            $Check.StillHeld | Should -BeNullOrEmpty
         }
     }
 
@@ -112,13 +146,15 @@ Describe 'Test-OERDirectoryRoleAssignmentGone' {
     ) {
         InModuleScope Omnicit.EntraRBAC -Parameters @{ Kind = $Kind; KindText = $KindText } {
             param($Kind, $KindText)
-            $script:GoneLive = @(New-GoneRawRow)
+            # The assignment is still in place beside an activation: not Gone, and nothing is named.
+            $script:GoneLive = @((New-GoneRawRow), (New-GoneRawRow -AssignmentType 'Activated'))
             # Upper case on the way in still matches the lower-case row Graph returns.
             $Check = Test-OERDirectoryRoleAssignmentGone -Record (New-GoneRecord) -Kind $Kind `
                 -RoleDefinitionId $script:GoneRole.ToUpperInvariant() -PrincipalId $script:GonePrincipal.ToUpperInvariant()
             $Check.Gone | Should -BeFalse
             $Check.Detail | Should -BeExactly ("Microsoft Graph answered RoleAssignmentDoesNotExist, but reading the $KindText assignment of directory role " +
                 "'$($script:GoneRole.ToUpperInvariant())' for principal '$($script:GonePrincipal.ToUpperInvariant())' again found it still in place; the error stands.")
+            $Check.StillHeld | Should -BeNullOrEmpty
         }
     }
 
@@ -131,6 +167,7 @@ Describe 'Test-OERDirectoryRoleAssignmentGone' {
             $Check.Detail | Should -BeExactly ("Microsoft Graph answered RoleAssignmentDoesNotExist, and reading the active assignment of directory role " +
                 "'$($script:GoneRole)' for principal '$($script:GonePrincipal)' again failed, so whether it is gone is unknown; the error stands: " +
                 'Graph 403 Authorization_RequestDenied')
+            $Check.StillHeld | Should -BeNullOrEmpty
             Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly
         }
     }

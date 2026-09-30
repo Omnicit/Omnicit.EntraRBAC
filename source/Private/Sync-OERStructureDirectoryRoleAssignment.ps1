@@ -123,8 +123,10 @@ function Sync-OERStructureDirectoryRoleAssignment {
          reported Failed and its error is written. A removal Graph answers with
          RoleAssignmentDoesNotExist is Removed when the Remove cmdlet's re-read proves the assignment
          gone, and Failed when that re-read fails or finds it still in place (the cmdlets' help has
-         the rule). Under -WhatIf, or when the prompt is declined, it is reported Skipped
-         ("would remove ...").
+         the rule). When the cmdlet warns that the principal still holds the role another way, the
+         Removed Detail adds how ("..., but the principal still holds the role through a group"),
+         taken from that warning without a second read. Under -WhatIf, or when the prompt is
+         declined, it is reported Skipped ("would remove ...").
       Guards 2, 3 and 4 are this module's own, not a Graph rejection, and their Details say so.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler
@@ -341,10 +343,18 @@ function Sync-OERStructureDirectoryRoleAssignment {
                         Write-Warning "Sync-OERStructureDirectoryRoleAssignment: $PruneVerb $CandLabel."
                         if ($Caller.ShouldProcess($CandItem, "Remove undeclared $($PairKind.ToLowerInvariant()) directory role assignment")) {
                             try {
-                                $RemoveParams = @{ Role = $PairRoleId; PrincipalId = $Candidate.PrincipalId; Confirm = $false; ErrorAction = 'Stop' }
+                                $RemoveParams = @{ Role = $PairRoleId; PrincipalId = $Candidate.PrincipalId; Confirm = $false; ErrorAction = 'Stop'; WarningVariable = 'RemoveWarning' }
                                 $null = if ($PairKind -eq 'Eligible') { Remove-OEREligibleDirectoryRoleAssignment @RemoveParams -WarningAction SilentlyContinue }
                                         else { Remove-OERActiveDirectoryRoleAssignment @RemoveParams -WarningAction SilentlyContinue }
-                                ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Removed' -Detail "removed $CandLabel"
+                                # A removal the Remove cmdlet counted as done after RoleAssignmentDoesNotExist
+                                # warns when the principal still holds the role another way; its how (no ids)
+                                # joins the Detail, from the warning already captured -- no second read.
+                                $StillHeld = @(foreach ($Warn in @($RemoveWarning)) {
+                                        if ([string]$Warn.Message -match ', but the principal still holds the role (?<Ways>.+)\.$') { $Matches['Ways'] }
+                                    })
+                                $RemovedDetail = if ($StillHeld.Count -gt 0) { "removed $CandLabel, but the principal still holds the role $($StillHeld[0])" }
+                                                 else { "removed $CandLabel" }
+                                ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Removed' -Detail $RemovedDetail
                             } catch {
                                 Remove-OERErrorRecord -Record $PSItem
                                 $Caller.WriteError($PSItem)
