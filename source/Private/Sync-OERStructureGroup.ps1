@@ -21,10 +21,14 @@ function Sync-OERStructureGroup {
     - Both resolve to the SAME group, or only displayName resolves: the item is applied normally.
     - Neither resolves: the group is created under displayName.
     A previousDisplayName matching several groups throws AmbiguousName, as an ambiguous displayName
-    does, and the item fails with nothing created or renamed. previousDisplayName can stay in the
-    document after the rename -- the next run finds the group under displayName and reports it
-    Unchanged -- but a group created later under the old name then makes the item fail, so remove it
-    once the rename is applied.
+    does, and the item fails with nothing created or renamed. previousDisplayName also accepts the
+    group's object id, which is the way to rename a group whose old name is ambiguous. An object id
+    is verified with one read (v1.0/groups/<id>?$select=id): an id that no longer names a group counts
+    as not matching, so a stale id never blocks a create or reports a false conflict, and any other
+    failure of that read throws, again with nothing created or renamed. previousDisplayName can stay
+    in the document after the rename -- the next run finds the group under displayName and reports
+    it Unchanged -- but a group created later under the old name then makes the item fail, so remove
+    it once the rename is applied.
 
     Processing order within a single group (the PIM chicken-and-egg ordering):
     1. Create the group when absent, or diff and update mutable properties (the display name when
@@ -205,7 +209,19 @@ function Sync-OERStructureGroup {
         $RenameFrom = $null
         if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
             $PrevName = [string]$Item.previousDisplayName
-            $PrevGid = Resolve-OERGroupId -DisplayName $PrevName
+            if (Test-OERGuid -Value $PrevName) {
+                # An object id. Resolve-OERGroupId would hand it back verbatim without asking Graph,
+                # so a stale id of a deleted group would look like a live one: a false conflict when
+                # displayName exists, and a failed read instead of a create when it does not. One
+                # read settles it. The not-found answer is declared to the transport and means "no
+                # group under that id"; any other failure is not evidence either way and throws, so
+                # the engine reports the item Failed with nothing written.
+                $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/groups/$PrevName`?`$select=id" `
+                    -ExpectedErrorCode 'Request_ResourceNotFound', 'ResourceNotFound'
+                $PrevGid = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+            } else {
+                $PrevGid = Resolve-OERGroupId -DisplayName $PrevName
+            }
             # Both names on DIFFERENT groups: the document never merges two groups, so this is the
             # item's only row -- no read, no write, no child reconciled. -ne compares the two ids
             # case-insensitively, so one group reached under an upper-case id is never two groups.

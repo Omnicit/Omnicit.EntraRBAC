@@ -105,9 +105,9 @@ function Test-OERStructureSchema {
     reports Failed without creating the review. A DECLARED but EMPTY reviewers array is not that
     case and is never flagged: it means a self review on both the create and the update path, and a
     self review needs no fallback. A groups[] entry's previousDisplayName (the group's current display
-    name, when displayName declares a new one and the apply engine is to rename the group) must be a
-    non-empty string (Error); one equal to displayName, ignoring case, is a Warning, since both names
-    then find the same group and there is nothing to rename. An explicit null is not declared, as for
+    name or object id, when displayName declares a new one and the apply engine is to rename the
+    group) must be a non-empty string (Error); one equal to displayName, ignoring case, is a
+    Warning, since both names then find the same group and there is nothing to rename. An explicit null is not declared, as for
     every other key, and a template-based group's computed name is not compared. A groups[] entry
     declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
     displayName, case-insensitively) exists in the same

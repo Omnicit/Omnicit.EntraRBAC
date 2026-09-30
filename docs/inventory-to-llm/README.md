@@ -184,6 +184,19 @@ would make the entry fail. `Get-OERInventory` never exports `previousDisplayName
 (ignoring case) as a warning. Administrative units, catalogs and access packages cannot be renamed
 through the document.
 
+`previousDisplayName` also accepts the group's object id instead of its old name. That is the way to
+rename a group whose old name is ambiguous, since a name that matches several groups fails the
+entry. The apply engine checks that the id still names a group: an id that no longer exists (a
+deleted group, say) counts as not matching, exactly like an old name nobody carries any more.
+
+Everywhere else in the SAME document, refer to the group by its NEW name: in
+`administrativeUnits[].members`, catalog `resources`, access package `resourceRoles`,
+`roleAssignments` principals, and eligibility, owner, member or approver entries. After the rename
+the old name resolves to nothing, so a reference that still uses it fails or is reported as not
+found. Under `-WhatIf` the rename is only planned, so the new name does not resolve yet either --
+those references are reported the same way as references to a group that the same run would
+create.
+
 ## Access package assignment policy schema
 
 `accessPackages[].assignmentPolicies[]` in an apply document supports a rich set of optional fields

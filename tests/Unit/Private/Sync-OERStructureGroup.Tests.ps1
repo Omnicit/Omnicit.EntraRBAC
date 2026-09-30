@@ -3711,7 +3711,11 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'compares the two resolved ids case-insensitively' {
+        # previousDisplayName may be the group's object id. Resolve-OERGroupId hands a GUID back
+        # verbatim WITHOUT asking Graph, so the handler verifies the id with one read of its own: an id
+        # that names no group must count as not matching, never as a second group. The Resolve mocks
+        # below mirror that verbatim pass-through, which is what made a stale id look like a group.
+        It 'treats an object id that names no group as not matching: displayName exists, so a normal update and no conflict' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncGroupViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
@@ -3720,10 +3724,151 @@ Describe 'Sync-OERStructureGroup' {
                 }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructureDefault { $null }
-                # Resolve-OERGroupId returns a GUID-shaped name verbatim, so an object id typed in
-                # upper case as previousDisplayName reaches the comparison exactly as written.
-                Mock Resolve-OERGroupId { 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
-                Mock Resolve-OERGroupId { 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' } -ParameterFilter { $DisplayName -eq 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Resolve-OERGroupId { 'g-1' } -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                # What Invoke-OERGraphRequest returns for a declared not-found answer.
+                Mock Invoke-OERGraphRequest {
+                    $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Resource does not exist.'; Uri = $Uri }
+                    $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                    $Marker
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_hr_emea'; Description = 'old'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "description": "new", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                # ONE existence read, declaring the not-found answer to the transport.
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' -and
+                    @($ExpectedErrorCode) -contains 'Request_ResourceNotFound' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly 'updated group properties (Description)'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERGroup -Exactly -Times 1 -ParameterFilter { $Group -eq 'g-1' -and -not $NewDisplayName -and $Description -eq 'new' }
+                Should -Invoke Set-OERGroup -Exactly -Times 1
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'treats an object id that names no group as not matching: displayName absent, so the group is created under the new name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                Mock Invoke-OERGraphRequest {
+                    $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Resource does not exist.'; Uri = $Uri }
+                    $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                    $Marker
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' }
+                # A stale id of a deleted group: reading it as the group to rename would fail here.
+                Mock Get-OERGroup { throw "Resource 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' does not exist." }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                Mock Set-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke New-OERGroup -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Should -Invoke New-OERGroup -Exactly -Times 1
+                Should -Invoke Get-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Created'
+                $r[0].Detail | Should -BeExactly 'created group role_sec_hr_emea (g-new)'
+                @($Err).Count | Should -Be 0
+            }
+        }
+
+        It 'renames the group an object id names when displayName is absent (the route around an ambiguous old name)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                Mock Invoke-OERGraphRequest { @{ id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' } } -ParameterFilter { $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'; DisplayName = 'role_sec_hr'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+
+                Should -Invoke Set-OERGroup -Exactly -Times 1 -ParameterFilter { $Group -eq 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' -and $NewDisplayName -eq 'role_sec_hr_emea' }
+                Should -Invoke Set-OERGroup -Exactly -Times 1
+                Should -Invoke New-OERGroup -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed group 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' to 'role_sec_hr_emea'"
+            }
+        }
+
+        It 'fails with GroupRenameConflict when an object id names a different existing group and displayName exists' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Resolve-OERGroupId { 'g-1' } -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                Mock Invoke-OERGraphRequest { @{ id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' } } -ParameterFilter { $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; Members = @(); PimEligibility = @() } }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "description": "new", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "both 'role_sec_hr_emea' and its previousDisplayName 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName"
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupRenameConflict*' }).Count | Should -Be 1
+                Should -Invoke Get-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'takes the normal path when an object id is the group displayName resolves to, the ids compared case-insensitively' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Resolve-OERGroupId { 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Invoke-OERGraphRequest { throw "unexpected Graph call: $Uri" }
+                # The id is typed in upper case; Graph finds the group all the same.
+                Mock Invoke-OERGraphRequest { @{ id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' } } -ParameterFilter { $Uri -ceq 'v1.0/groups/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA?$select=id' }
                 Mock Get-OERGroup {
                     [PSCustomObject]@{
                         Id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; DisplayName = 'role_sec_hr'; Description = 'HR'; MailNickname = $null
@@ -3735,11 +3880,39 @@ Describe 'Sync-OERStructureGroup' {
                 $Item = '{ "displayName": "role_sec_hr", "previousDisplayName": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "description": "HR", "members": null }' | ConvertFrom-Json
                 $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
 
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -ceq 'v1.0/groups/AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA?$select=id' }
                 @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
                 @($Err).Count | Should -Be 0
                 @($r).Count | Should -Be 1
                 $r[0].Action | Should -BeExactly 'Unchanged'
                 Should -Invoke Set-OERGroup -Times 0
+            }
+        }
+
+        It 'throws, writing nothing, when the object-id read fails for any reason other than not found' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { if (Test-OERGuid -Value $DisplayName) { $DisplayName } else { $null } }
+                Mock Invoke-OERGraphRequest { throw 'Graph 403 Authorization_RequestDenied' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'; Description = $null; Members = @(); PimEligibility = @() } }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                Mock Set-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "members": null }' | ConvertFrom-Json
+
+                # A refused read is not evidence the id names no group: the engine reports the item
+                # Failed ("handler error") and nothing is created or renamed.
+                { Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue } |
+                    Should -Throw -ExpectedMessage '*Authorization_RequestDenied*'
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke Get-OERGroup -Times 0
             }
         }
 

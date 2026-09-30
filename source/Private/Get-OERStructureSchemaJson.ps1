@@ -65,10 +65,10 @@ function Get-OERStructureSchemaJson {
     defaultDecision (None/Approve/Deny/Recommendation) -- so a captured or hand-authored review is
     validated instead of silently stripped.
     A groups[] item may declare previousDisplayName, a non-empty string naming the group's current
-    display name when displayName declares a new one. The groups description states what the apply
-    engine does with it: the group found only under previousDisplayName is renamed, an entry whose two
-    names match different groups fails without merging them, and an entry neither name matches is
-    created. Get-OERInventory never exports it.
+    display name or object id when displayName declares a new one. The groups description states
+    what the apply engine does with it: the group found only under previousDisplayName is renamed, an
+    entry whose two names match different groups fails without merging them, and an entry neither
+    name matches is created. Get-OERInventory never exports it.
     Exactly three keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles. For those three an omitted
     key still reconciles and still PRUNES, so an explicit null is the only way a document can say
@@ -151,7 +151,7 @@ function Get-OERStructureSchemaJson {
         ],
         "properties": {
           "displayName": { "type": "string" },
-          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name, when displayName declares a new one. Rename only; ignored once displayName matches. Not exported by Get-OERInventory." },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Remove it once the rename is applied. Not exported by Get-OERInventory." },
           "template": { "type": "string" },
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },

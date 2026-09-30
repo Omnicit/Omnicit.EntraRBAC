@@ -959,8 +959,11 @@ Describe 'Get-OERStructureSchemaJson group previousDisplayName' {
             $Prev = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.groups.items.properties.previousDisplayName
             $Prev.type | Should -BeExactly 'string'
             $Prev.minLength | Should -Be 1
+            # Not "ignored once displayName matches": a different group under the old name, or an
+            # ambiguous old name, fails the entry, so the description must tell the author to remove it.
             $Prev.description |
-                Should -BeExactly 'The group''s current display name, when displayName declares a new one. Rename only; ignored once displayName matches. Not exported by Get-OERInventory.'
+                Should -BeExactly 'The group''s current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Remove it once the rename is applied. Not exported by Get-OERInventory.'
+            $Prev.description | Should -Not -Match 'ignored once displayName matches'
         }
     }
 
