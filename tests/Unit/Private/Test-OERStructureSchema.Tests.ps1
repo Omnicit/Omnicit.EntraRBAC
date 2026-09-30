@@ -3373,3 +3373,71 @@ Describe 'Test-OERStructureSchema directory role sections as Get-OERInventory -I
         }
     }
 }
+
+Describe 'Test-OERStructureSchema group previousDisplayName' {
+    # R9: previousDisplayName names a group's current display name when displayName declares a new
+    # one. A known key; a non-string or empty value is an Error; one equal to displayName, ignoring
+    # case, is a Warning, since there is nothing to rename.
+    It 'accepts a non-empty previousDisplayName with no finding at all' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'reports an Error for a previousDisplayName that is <Case>' -TestCases @(
+        @{ Case = 'an empty string'; Value = '""' }
+        @{ Case = 'a number'; Value = '42' }
+        @{ Case = 'an array'; Value = '[ "role_sec_hr" ]' }
+        @{ Case = 'an object'; Value = '{ "name": "role_sec_hr" }' }
+        @{ Case = 'a boolean'; Value = 'true' }
+    ) {
+        $Doc = ('{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": ' + $Value + ', "members": null } ] }') | ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].previousDisplayName' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'role_sec_hr_emea'
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] must be a non-empty string."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    It 'warns, and stays Valid, when previousDisplayName equals displayName ignoring case' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr", "previousDisplayName": "ROLE_SEC_HR", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].previousDisplayName' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Item | Should -BeExactly 'role_sec_hr'
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] equals displayName; there is nothing to rename."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'treats an explicit null previousDisplayName as undeclared, like every other key' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr", "previousDisplayName": null, "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'accepts previousDisplayName on a template-based group without comparing it to the computed name' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+}

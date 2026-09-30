@@ -3537,4 +3537,383 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
     }
+
+    # R9: previousDisplayName is resolved on every run next to displayName. Both names on DIFFERENT
+    # groups is one Failed row and nothing else; only the previous name is a rename folded into the
+    # one property PATCH; the same group under both names is the normal path; neither is a create
+    # under the new name.
+    Context 'previousDisplayName' {
+
+        It 'renames the group found only under its previous name through Set-OERGroup -NewDisplayName and reports one Updated row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-old'; DisplayName = 'role_sec_hr'; Description = 'HR'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "description": "HR", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+
+                Should -Invoke Set-OERGroup -Exactly -Times 1 -ParameterFilter { $Group -eq 'g-old' -and $NewDisplayName -eq 'role_sec_hr_emea' }
+                Should -Invoke Set-OERGroup -Exactly -Times 1
+                Should -Invoke New-OERGroup -Times 0
+                # The existing-group path read the group found under its PREVIOUS name.
+                Should -Invoke Get-OERGroup -Exactly -Times 1 -ParameterFilter { $Group -eq 'g-old' }
+                # Exactly one row: the rename, never also a 'group properties match' Unchanged.
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'groups'
+                $r[0].Item | Should -BeExactly 'role_sec_hr_emea'
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed group 'role_sec_hr' to 'role_sec_hr_emea'"
+            }
+        }
+
+        It 'folds a rename and a changed description into ONE Set-OERGroup call' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-old'; DisplayName = 'role_sec_hr'; Description = 'old'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "description": "new", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+
+                Should -Invoke Set-OERGroup -Exactly -Times 1 -ParameterFilter {
+                    $Group -eq 'g-old' -and $NewDisplayName -eq 'role_sec_hr_emea' -and $Description -eq 'new'
+                }
+                Should -Invoke Set-OERGroup -Exactly -Times 1
+                Should -Invoke New-OERGroup -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Updated'
+                $r[0].Detail | Should -BeExactly "renamed group 'role_sec_hr' to 'role_sec_hr_emea'; updated group properties (Description)"
+            }
+        }
+
+        It 'fails the item with one row and a GroupRenameConflict error, reading and writing nothing, when both names exist as different groups' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-new' } -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-new'; DisplayName = 'role_sec_hr_emea'; Description = 'old'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); Owners = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                Mock Add-OERGroupMember { }
+                Mock Add-OERGroupEligibility { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                # Every collection and a changed property are declared, so a missing guard has
+                # something to read, reconcile and write.
+                $Item = [PSCustomObject]@{
+                    displayName         = 'role_sec_hr_emea'
+                    previousDisplayName = 'role_sec_hr'
+                    description         = 'new'
+                    members             = @('person9@example.com')
+                    owners              = @('person16@example.com')
+                    eligibility         = @([PSCustomObject]@{ principal = 'person9@example.com'; durationDays = 30 })
+                    pimPolicy           = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                # Positive identity first: the ONLY row the item emits.
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'groups'
+                $r[0].Item | Should -BeExactly 'role_sec_hr_emea'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "both 'role_sec_hr_emea' and its previousDisplayName 'role_sec_hr' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GroupRenameConflict'
+
+                Should -Invoke Get-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Add-OERGroupMember -Times 0
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                Should -Invoke Get-OERGroupPimPolicy -Times 0
+                Should -Invoke Set-OERGroupPimPolicy -Times 0
+
+                # The Failed row carries the record either way; only the caller's -ErrorVariable
+                # proves it was published through $Caller.WriteError.
+                @($Err).Count | Should -Be 1
+                $Conflict = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupRenameConflict*' })
+                $Conflict.Count | Should -Be 1
+                $Conflict[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ResourceExists)
+                $Conflict[0].TargetObject | Should -BeExactly 'role_sec_hr_emea'
+            }
+        }
+
+        It 'takes the normal path when both names resolve to the same group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # Graph matches displayName case-insensitively, so a previous name differing only in
+                # case from the new one resolves to the same group.
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-1'; DisplayName = 'role_sec_hr'; Description = 'HR'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr", "previousDisplayName": "ROLE_SEC_HR", "description": "HR", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Resolve-OERGroupId -Exactly -Times 1 -ParameterFilter { $DisplayName -ceq 'ROLE_SEC_HR' }
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'group properties match'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'compares the two resolved ids case-insensitively' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # Resolve-OERGroupId returns a GUID-shaped name verbatim, so an object id typed in
+                # upper case as previousDisplayName reaches the comparison exactly as written.
+                Mock Resolve-OERGroupId { 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
+                Mock Resolve-OERGroupId { 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' } -ParameterFilter { $DisplayName -eq 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'; DisplayName = 'role_sec_hr'; Description = 'HR'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr", "previousDisplayName": "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA", "description": "HR", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                Should -Invoke Set-OERGroup -Times 0
+            }
+        }
+
+        It 'creates the group under the NEW name when neither name resolves' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                Mock Set-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+
+                # The previous name was consulted, and found nothing.
+                Should -Invoke Resolve-OERGroupId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Should -Invoke New-OERGroup -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Should -Invoke New-OERGroup -Exactly -Times 1
+                Should -Invoke Set-OERGroup -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Created'
+                $r[0].Detail | Should -BeExactly 'created group role_sec_hr_emea (g-new)'
+            }
+        }
+
+        It 'fails loudly, creating and renaming nothing, when the previous name matches several groups' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                # The record Resolve-OERGroupId itself throws for a name matching several groups.
+                Mock Resolve-OERGroupId {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Group display name 'role_sec_hr' matches 2 groups (g-a, g-b). Entra does not enforce unique group display names, so this name cannot identify a single group. Re-run with the object id instead of the display name."),
+                        'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        'role_sec_hr')
+                } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                Mock Set-OERGroup { }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-a'; Description = $null; Members = @(); PimEligibility = @() } }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null }' | ConvertFrom-Json
+
+                # Thrown out of the handler, as an ambiguous displayName is: the engine turns it into
+                # the item's one Failed ("handler error") row.
+                { Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue } |
+                    Should -Throw -ErrorId 'AmbiguousName'
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke Get-OERGroup -Times 0
+            }
+        }
+
+        It 'under -WhatIf reports would rename, writes nothing, and plans the children against the group found under its previous name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-old'; DisplayName = 'role_sec_hr'; Description = 'old'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                Mock Add-OERGroupMember { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'role_sec_hr_emea'
+                    previousDisplayName = 'role_sec_hr'
+                    description         = 'new'
+                    members             = @('person9@example.com')
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -WhatIf)
+
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Add-OERGroupMember -Times 0
+                # Reads run under -WhatIf: the group found under its previous name was read.
+                Should -Invoke Get-OERGroup -Exactly -Times 1 -ParameterFilter { $Group -eq 'g-old' }
+                @($r).Count | Should -Be 2
+                $Rename = @($r | Where-Object { $_.Detail -like 'would rename*' })
+                $Rename.Count | Should -Be 1
+                $Rename[0].Action | Should -BeExactly 'Skipped'
+                $Rename[0].Item | Should -BeExactly 'role_sec_hr_emea'
+                $Rename[0].Detail | Should -BeExactly "would rename group 'role_sec_hr' to 'role_sec_hr_emea'; would update group properties (Description)"
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add member 'person9@example.com'" }).Count | Should -Be 1
+            }
+        }
+
+        It 'reports Failed and reconciles no child of a group whose rename failed' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-old'; DisplayName = 'role_sec_hr'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { throw 'graph 400' }
+                Mock New-OERGroup { }
+                Mock Add-OERGroupMember { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                $Item = [PSCustomObject]@{
+                    displayName         = 'role_sec_hr_emea'
+                    previousDisplayName = 'role_sec_hr'
+                    members             = @('person9@example.com')
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+
+                Should -Invoke Set-OERGroup -Exactly -Times 1 -ParameterFilter { $NewDisplayName -eq 'role_sec_hr_emea' }
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -Match '^update failed: graph 400'
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Add-OERGroupMember -Times 0
+            }
+        }
+
+        It 'reports Unchanged on the run after the rename, with previousDisplayName still declared' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                # After the rename only the new name exists; the old one resolves to nothing.
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'g-old' } -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{
+                        Id = 'g-old'; DisplayName = 'role_sec_hr_emea'; Description = 'HR'; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @()
+                    }
+                }
+                Mock Set-OERGroup { }
+                Mock New-OERGroup { }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "description": "HR", "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                Should -Invoke Resolve-OERGroupId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Unchanged'
+                $r[0].Detail | Should -BeExactly 'group properties match'
+                @($Err).Count | Should -Be 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+    }
 }

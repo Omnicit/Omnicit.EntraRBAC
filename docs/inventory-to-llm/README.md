@@ -152,6 +152,38 @@ practice a group created moments ago -- is not silently skipped: the apply repor
 apply run, the engine first waits up to about 30 seconds for its policies to be listed and
 readable.
 
+## Renaming a group
+
+`displayName` is the match key for a group. To rename a group through the apply document, declare
+its new name as `displayName` and its current name as `previousDisplayName`, next to the entry's
+other keys:
+
+```json
+{
+  "displayName": "role_sec_hr_emea",
+  "previousDisplayName": "role_sec_hr"
+}
+```
+
+Every apply run looks up both names, with three outcomes:
+
+- **Only `previousDisplayName` matches a live group.** That group is renamed to `displayName`, in
+  the same update as any other property that changed, and reported `Updated`. Its members, owners,
+  eligibility and `pimPolicy` are then reconciled as usual.
+- **Both names match, and they are different groups.** The entry fails and nothing is changed for
+  it -- the document never merges two groups. Rename or delete one of them, or remove
+  `previousDisplayName`.
+- **Neither name matches.** The group is created under `displayName`, exactly as without
+  `previousDisplayName`.
+
+When both names find the same group, the entry is applied as usual. `previousDisplayName` can stay
+in the document after the rename -- the next run finds the group under `displayName` and reports it
+`Unchanged` -- but remove it once the rename is applied: a group created later under the old name
+would make the entry fail. `Get-OERInventory` never exports `previousDisplayName`, and
+`Test-OERStructure` reports an empty or non-string one as an error and one equal to `displayName`
+(ignoring case) as a warning. Administrative units, catalogs and access packages cannot be renamed
+through the document.
+
 ## Access package assignment policy schema
 
 `accessPackages[].assignmentPolicies[]` in an apply document supports a rich set of optional fields

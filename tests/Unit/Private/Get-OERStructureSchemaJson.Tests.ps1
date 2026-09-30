@@ -941,3 +941,36 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
         }
     }
 }
+
+Describe 'Get-OERStructureSchemaJson group previousDisplayName' {
+    # R9: a group is renamed through the document by declaring its new name as displayName and its
+    # current name as previousDisplayName. The groups description states the three outcomes, and the
+    # property itself is a non-empty string that Get-OERInventory never exports.
+    It 'states the rename rule in the groups description, keeping displayName as the match key' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Schema.properties.groups.description |
+                Should -BeExactly 'Entra ID groups. displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: when only previousDisplayName matches a live group, that group is renamed; when both names match different groups, the entry fails and the groups are never merged; when neither matches, the group is created.'
+        }
+    }
+
+    It 'declares previousDisplayName as a non-empty string on the group item' {
+        InModuleScope $script:moduleName {
+            $Prev = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.groups.items.properties.previousDisplayName
+            $Prev.type | Should -BeExactly 'string'
+            $Prev.minLength | Should -Be 1
+            $Prev.description |
+                Should -BeExactly 'The group''s current display name, when displayName declares a new one. Rename only; ignored once displayName matches. Not exported by Get-OERInventory.'
+        }
+    }
+
+    It 'validates a group declaring previousDisplayName, and rejects an empty one' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Good = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr" } ] }'
+            $Empty = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "" } ] }'
+            Test-Json -Json $Good -Schema $Schema | Should -BeTrue
+            Test-Json -Json $Empty -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+}

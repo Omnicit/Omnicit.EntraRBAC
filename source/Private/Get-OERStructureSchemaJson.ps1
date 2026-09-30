@@ -64,6 +64,11 @@ function Get-OERStructureSchemaJson {
     instance duration, the recurrence start/end/occurrences range, the five review settings booleans and
     defaultDecision (None/Approve/Deny/Recommendation) -- so a captured or hand-authored review is
     validated instead of silently stripped.
+    A groups[] item may declare previousDisplayName, a non-empty string naming the group's current
+    display name when displayName declares a new one. The groups description states what the apply
+    engine does with it: the group found only under previousDisplayName is renamed, an entry whose two
+    names match different groups fails without merging them, and an entry neither name matches is
+    created. Get-OERInventory never exports it.
     Exactly three keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles. For those three an omitted
     key still reconciles and still PRUNES, so an explicit null is the only way a document can say
@@ -137,7 +142,7 @@ function Get-OERStructureSchemaJson {
     "tenantAlias": { "type": "string" },
     "groups": {
       "type": "array",
-      "description": "Entra ID groups. displayName is the match key: an existing group is matched and updated by it. Renaming through the document is not possible -- changing displayName creates a new group and leaves the old one in place, unreported.",
+      "description": "Entra ID groups. displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: when only previousDisplayName matches a live group, that group is renamed; when both names match different groups, the entry fails and the groups are never merged; when neither matches, the group is created.",
       "items": {
         "type": "object",
         "oneOf": [
@@ -146,6 +151,7 @@ function Get-OERStructureSchemaJson {
         ],
         "properties": {
           "displayName": { "type": "string" },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name, when displayName declares a new one. Rename only; ignored once displayName matches. Not exported by Get-OERInventory." },
           "template": { "type": "string" },
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },

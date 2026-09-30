@@ -156,16 +156,20 @@ $NamingLine
 Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), tenantAlias
 (optional), and the section arrays. Any other top-level key is rejected.
 
-- groups[]: { displayName (or template + tokens object), roleAssignable (bool), dynamic (bool),
+- groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
+  group's current name when displayName declares a new one; NOT captured by inventory),
+  roleAssignable (bool), dynamic (bool),
   description, mailNickname, administrativeUnit (create-only -- applied when the group is created and
   NOT captured by inventory), membershipRule, membershipRuleProcessingState (On|Paused; dynamic
   groups only), members[] (UPNs / object ids), owners[] (UPNs / object ids -- a group owner can ADD
   MEMBERS, so this is a privilege path in its own right, not a cosmetic field), eligibility[] {
   principal (required), accessType (member|owner, default member), durationDays (1-3650;
   omit it to declare a PERMANENT eligibility) }, pimPolicy }
-  - displayName is the match key: an existing group is matched and updated by it. Renaming through
-    the document is not possible -- changing displayName creates a new group and leaves the old one
-    in place, unreported.
+  - displayName is the match key: an existing group is matched and updated by it. To rename a
+    group, declare its new name as displayName and its current name as previousDisplayName: the
+    group found under previousDisplayName alone is renamed in place. When both names match
+    different groups the entry fails and nothing is changed (two groups are never merged), and when
+    neither matches the group is created under displayName.
   - IMPORTANT (issue #59): administrativeUnit is create-only and never round-trips, so if you set it,
     you MUST also add this group's displayName to the members[] array of the matching
     administrativeUnits[] entry (same displayName, case-insensitive) in this SAME document. Otherwise

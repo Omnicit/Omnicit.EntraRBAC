@@ -236,3 +236,22 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
         }
     }
 }
+
+Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayName' {
+    # The groups bullet used to tell the model a rename was impossible. previousDisplayName now
+    # renames a group in place, so the prompt must teach the rule -- while the units, catalogs and
+    # access packages, which still cannot be renamed, keep their sentences.
+    It 'teaches the rename rule and lists previousDisplayName among the group fields' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: the group found under previousDisplayName alone is renamed in place. When both names match different groups the entry fails and nothing is changed (two groups are never merged), and when neither matches the group is created under displayName.'))
+            $T | Should -Match ([regex]::Escape('{ displayName (or template + tokens object), previousDisplayName (rename only'))
+            $T | Should -Not -Match 'changing displayName creates a new group'
+            # The three sections that still cannot be renamed keep saying so.
+            $T | Should -Match 'changing displayName creates a new unit'
+            $T | Should -Match 'changing displayName creates a new catalog'
+            $T | Should -Match 'changing displayName creates a new package'
+        }
+    }
+}

@@ -8,13 +8,28 @@ function Sync-OERStructureGroup {
     the Invoke-OERStructure engine and emits one or more ConvertTo-OERStructureResult records
     describing what was created, updated, removed, skipped, or left unchanged.
 
-    displayName is the match key: an existing group is matched and updated by it. Renaming through
-    the document is not possible -- changing displayName creates a new group and leaves the old one
-    in place, unreported (Set-OERGroup has no -NewDisplayName parameter at all).
+    displayName is the match key: an existing group is matched and updated by it. To rename a group,
+    the document declares its new name as displayName and its current name as previousDisplayName,
+    and both names are resolved on every run before anything is read or written:
+    - Both resolve to DIFFERENT groups: the item emits exactly one Failed row and a non-terminating
+      GroupRenameConflict error (category ResourceExists, target the new name), and nothing else is
+      read or written for it -- the document never merges two groups.
+    - Only previousDisplayName resolves: that group takes the existing-group path, and the rename is
+      folded into the step-1 property update (Set-OERGroup -NewDisplayName, in the same PATCH as every
+      other changed property), reported as one Updated row "renamed group '<previous>' to '<new>'".
+      When that update fails, the Failed row is the last one: no child of the group is reconciled.
+    - Both resolve to the SAME group, or only displayName resolves: the item is applied normally.
+    - Neither resolves: the group is created under displayName.
+    A previousDisplayName matching several groups throws AmbiguousName, as an ambiguous displayName
+    does, and the item fails with nothing created or renamed. previousDisplayName can stay in the
+    document after the rename -- the next run finds the group under displayName and reports it
+    Unchanged -- but a group created later under the old name then makes the item fail, so remove it
+    once the rename is applied.
 
     Processing order within a single group (the PIM chicken-and-egg ordering):
-    1. Create the group when absent, or diff and update mutable properties (Description, MailNickname,
-       and MembershipRule/MembershipRuleProcessingState when the live group is already dynamic) when it
+    1. Create the group when absent, or diff and update mutable properties (the display name when
+       previousDisplayName renames the group, Description, MailNickname, and
+       MembershipRule/MembershipRuleProcessingState when the live group is already dynamic) when it
        already exists. Two properties
        are Graph-immutable once the group is created -- isAssignableToRole ("can only be set while
        creating the group and is immutable" per Microsoft Learn) and the static/dynamic membership type
@@ -111,11 +126,14 @@ function Sync-OERStructureGroup {
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the group itself does not exist and
-    its creation is skipped under -WhatIf, no child read or write calls are made.
+    its creation is skipped under -WhatIf, no child read or write calls are made. A rename under
+    -WhatIf is reported Skipped ("would rename group '<previous>' to '<new>'"), and the group found
+    under its previous name is still read, so its children are planned against it.
 
     .PARAMETER Item
     One element from the groups[] array in the structure document, as a PSCustomObject produced by
-    ConvertFrom-Json.
+    ConvertFrom-Json. Its optional previousDisplayName names the group's current display name when
+    displayName declares a new one; see the rename rule above.
 
     .PARAMETER Caller
     The engine's $PSCmdlet reference, used to gate writes with ShouldProcess and to route errors
@@ -179,6 +197,38 @@ function Sync-OERStructureGroup {
 
         # -- Check existence ----------------------------------------------------------------
         $Gid = Resolve-OERGroupId -DisplayName $Name
+
+        # -- Rename through previousDisplayName -------------------------------------------
+        # Resolved on every run, before anything is read or written. Not wrapped in try: a previous
+        # name matching several groups throws AmbiguousName exactly as an ambiguous displayName does,
+        # and the engine reports the item Failed with nothing written for it.
+        $RenameFrom = $null
+        if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
+            $PrevName = [string]$Item.previousDisplayName
+            $PrevGid = Resolve-OERGroupId -DisplayName $PrevName
+            # Both names on DIFFERENT groups: the document never merges two groups, so this is the
+            # item's only row -- no read, no write, no child reconciled. -ne compares the two ids
+            # case-insensitively, so one group reached under an upper-case id is never two groups.
+            if ($Gid -and $PrevGid -and ([string]$Gid -ne [string]$PrevGid)) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Group '$Name' ($Gid) and its previousDisplayName '$PrevName' ($PrevGid) are different groups. The document never merges two groups, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName."),
+                    'GroupRenameConflict',
+                    [System.Management.Automation.ErrorCategory]::ResourceExists,
+                    $Name
+                )
+                $Caller.WriteError($ErrRec)
+                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                    -Detail "both '$Name' and its previousDisplayName '$PrevName' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName" `
+                    -ErrorRecord $ErrRec
+                return
+            }
+            # Only the previous name exists: that group takes the existing-group path below, and the
+            # rename is folded into its property update.
+            if (-not $Gid -and $PrevGid) {
+                $Gid = $PrevGid
+                $RenameFrom = $PrevName
+            }
+        }
 
         # Whether THIS run created the group, consulted only by the step-4 pimPolicy wait below: a
         # brand-new group's policy assignments can take a moment to be listed by Graph, but a missing
@@ -309,6 +359,12 @@ function Sync-OERStructureGroup {
             # contradictory 'group properties match' Unchanged for the same group.
             $DriftReported = $false
 
+            # A rename through previousDisplayName travels in the same PATCH as every other changed
+            # property, so the group is renamed and updated in one call.
+            if ($RenameFrom) {
+                $UpdateParams.NewDisplayName = $Name
+            }
+
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') {
                 if ($Cur.Description -ne $Item.description) {
                     $UpdateParams.Description = $Item.description
@@ -356,17 +412,38 @@ function Sync-OERStructureGroup {
             }
 
             if ($UpdateParams.Count -gt 0) {
-                if ($Caller.ShouldProcess($Name, 'Update group properties')) {
+                # The rename is reported on its own terms; the other changed keys keep the wording
+                # every property update has always had.
+                $PropertyKeys = @($UpdateParams.Keys | Where-Object { $_ -ne 'NewDisplayName' })
+                $PropertyList = $PropertyKeys -join ', '
+                if ($RenameFrom) {
+                    $UpdateAction = "Rename group '$RenameFrom' to '$Name'"
+                    $UpdatedDetail = "renamed group '$RenameFrom' to '$Name'"
+                    $PlannedDetail = "would rename group '$RenameFrom' to '$Name'"
+                    if ($PropertyKeys.Count -gt 0) {
+                        $UpdateAction += " and update group properties ($PropertyList)"
+                        $UpdatedDetail += "; updated group properties ($PropertyList)"
+                        $PlannedDetail += "; would update group properties ($PropertyList)"
+                    }
+                } else {
+                    $UpdateAction = 'Update group properties'
+                    $UpdatedDetail = "updated group properties ($PropertyList)"
+                    $PlannedDetail = "would update group properties ($PropertyList)"
+                }
+                if ($Caller.ShouldProcess($Name, $UpdateAction)) {
                     try {
                         Set-OERGroup -Id $Gid @UpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
-                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "updated group properties ($($UpdateParams.Keys -join ', '))"
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail $UpdatedDetail
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "update failed: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        # The group still carries its previous name, not the one the document
+                        # declares, so none of its children is reconciled under the new name.
+                        if ($RenameFrom) { return }
                     }
                 } else {
-                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would update group properties ($($UpdateParams.Keys -join ', '))"
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail $PlannedDetail
                 }
             } elseif (-not $DriftReported) {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail 'group properties match'
