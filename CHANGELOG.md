@@ -7,24 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-`Invoke-OERStructure -Prune` no longer removes anything because a lookup failed: a declared member,
-owner, eligibility, scoped role, resource role or role assignment that cannot be resolved is
-`Failed`, and the undeclared live entries of its collection are `Skipped` with `prune withheld`;
-earlier versions could delete them. A service principal in `roleAssignments` needs
-`"principalType": "ServicePrincipal"`. `Test-OERStructure` and `-Prune` warn about an omitted
-`members`, `scopedRoles`, `resources` or `resourceRoles` key, which still prunes; set such a key to
-`null` to leave it alone.
+`Invoke-OERStructure -Prune` no longer removes anything because a lookup failed: a declared entry
+that cannot be resolved is `Failed`, and the undeclared live entries of its collection are `Skipped`
+with `prune withheld`; earlier versions could delete them. An ambiguous service principal name is
+refused with the candidate ids instead of taking the first match; the cmdlets report
+`AmbiguousApplicationName` for a catalog or access package resource and `AmbiguousPrincipalName` for
+a principal, which an ambiguous group principal now reports instead of `PrincipalNotFound`. A
+service principal in `roleAssignments` needs `"principalType": "ServicePrincipal"`.
+`Test-OERStructure` and `-Prune` warn about an omitted `members`, `scopedRoles`, `resources` or
+`resourceRoles` key, which still prunes; set such a key to `null` to leave it alone.
 
 PIM for Groups policies support approval: `Set-OERGroupPimPolicy -RequireApproval`, `-ApproverUser`
 and `-ApproverGroup`, and `requireApproval` and `approvers { users[], groups[] }` in `pimPolicy`.
-Approvers named by UPN or group name are resolved before comparison in every apply section, so a
-re-run is `Unchanged`; a `roleManagementPolicies` user approver must be a UPN or object id. Earlier
-versions could apply a group's owner settings, a permanent-eligibility opening included, to its
-member policy: review the member policies of groups an apply run onboarded. A refused policy read is
-`PimPolicyReadFailed`, not `PimPolicyNotFound`; a group created in the same run waits up to 30
-seconds for its policies. Exports carry `pimPolicy` only for a group with PIM eligibility or a
-modified policy, where earlier ones gave every group a default one, and `Invoke-OERStructure` warns
-before a `pimPolicy` change onboards an existing group, which cannot be undone.
+Approvers named by UPN or group name are resolved before comparison, so a re-run is `Unchanged`; a
+`roleManagementPolicies` user approver must be a UPN or object id. Earlier versions could apply a
+group's owner settings, a permanent-eligibility opening included, to its member policy: review the
+member policies of groups an apply run onboarded. A refused policy read is `PimPolicyReadFailed`,
+not `PimPolicyNotFound`; a group created in the same run waits up to 30 seconds for its policies.
+Exports carry `pimPolicy` only for a group with PIM eligibility or a modified policy, not a default
+one for every group, and `Invoke-OERStructure` warns before a `pimPolicy` change onboards an
+existing group, which cannot be undone.
 
 `Get-` and `Set-OERDirectoryRoleManagementPolicy` manage a directory role's PIM settings with no
 Azure token; approvers are set per side, so `-ApproverUser` keeps the group approvers and an empty
@@ -34,11 +36,9 @@ sections `directoryRoleManagementPolicies[]` and `directoryRoleAssignments[]` ru
 sections. A permanent assignment the role's policy forbids is refused instead of opening the policy,
 as is a group that is not role-assignable. `-Prune` touches only the declared role and
 assignment-type pairs, never an activation, an inherited assignment, or a direct assignment of the
-signed-in identity or its groups. Role names match in any letter case. An ambiguous service
-principal or group name is refused with the candidate ids (`AmbiguousApplicationName`,
-`AmbiguousPrincipalName`). Graph refuses changes to a principal's assignments of a role for five
-minutes after an active one starts; that row is `Failed`. A removal answered
-`RoleAssignmentDoesNotExist` is done once a re-read finds it gone.
+signed-in identity or its groups. Role names are case-insensitive. Graph refuses changes to a
+principal's assignments of a role for five minutes after an active one starts; that row is `Failed`.
+A removal answered `RoleAssignmentDoesNotExist` is done once a re-read finds it gone.
 
 `Export-OERInventory` includes both directory role sections by default, as
 `directoryRoleManagementPolicies.json` and `directoryRoleAssignments.json`; `Get-OERInventory` reads
@@ -46,9 +46,9 @@ them with `-Include`. Policies are exported for roles with an assignment, or for
 `-AllDirectoryRolePolicies`. Only direct, tenant-scope assignments are exported, never activations
 or group-inherited ones. Applied back to the same tenant, both are `Unchanged`; a failed read is
 `InventoryPartial`, never an empty section. With an Azure section included,
-`azurePimEligibility.json` lists the Azure PIM eligible assignments of the walked scopes as
-read-only context; unread scopes are named in `SkippedEligibilityScopes`. Every per-area file is now
-a JSON array, `[]` when empty.
+`azurePimEligibility.json` lists the walked scopes' Azure PIM eligible assignments as read-only
+context; unread scopes are named in `SkippedEligibilityScopes`. Every per-area file is now a JSON
+array, `[]` when empty.
 
 Groups can be renamed with `Set-OERGroup -NewDisplayName`, or with `previousDisplayName` (the
 current name or object id) beside the new `displayName`; if both names match different groups, the
