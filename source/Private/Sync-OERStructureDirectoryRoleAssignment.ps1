@@ -120,8 +120,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
          warning naming it, gates $Caller.ShouldProcess, and removes it with
          Remove-OEREligibleDirectoryRoleAssignment or Remove-OERActiveDirectoryRoleAssignment
          -Role <id> -PrincipalId <id> -Confirm:$false, reporting Removed; a removal that fails is
-         reported Failed and its error is written. Under -WhatIf, or when the prompt is declined, it
-         is reported Skipped ("would remove ...").
+         reported Failed and its error is written. A removal Graph answers with
+         RoleAssignmentDoesNotExist is Removed when the Remove cmdlet's re-read proves the assignment
+         gone, and Failed when that re-read fails or finds it still in place (the cmdlets' help has
+         the rule). Under -WhatIf, or when the prompt is declined, it is reported Skipped
+         ("would remove ...").
       Guards 2, 3 and 4 are this module's own, not a Graph rejection, and their Details say so.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false and the handler

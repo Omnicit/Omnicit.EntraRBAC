@@ -29,26 +29,26 @@ same run gets up to 30 seconds for its policies to appear. `Test-OERStructure` w
 keys in `groups` and `pimPolicy`.
 
 `Get-OERDirectoryRoleManagementPolicy` and `Set-OERDirectoryRoleManagementPolicy` read and change a
-directory role's PIM settings by role or policy id. They return the Azure cmdlets'
-`RoleManagementPolicy` object and need no Azure token. Unlike `Set-OERRoleManagementPolicy`,
-approvers are replaced per side: `-ApproverUser` keeps the group approvers and vice versa, and an
-empty list clears that side. The apply section `directoryRoleManagementPolicies[]` runs before the
-Azure sections and is not yet exported. `Get-OERRequiredScope` lists the new cmdlets, and
-`RoleManagement.ReadWrite.Directory` for `Set-OERGroup`.
+directory role's PIM settings by role or policy id. They need no Azure token. Unlike
+`Set-OERRoleManagementPolicy`, approvers are replaced per side: `-ApproverUser` keeps the group
+approvers and vice versa, and an empty list clears that side. The apply section
+`directoryRoleManagementPolicies[]` runs before the Azure sections and is not yet exported.
+`Get-OERRequiredScope` lists the new cmdlets, and `RoleManagement.ReadWrite.Directory` for
+`Set-OERGroup`.
 
 Directory roles can be assigned: `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment` and
 the same three for active assignments, and the apply section `directoryRoleAssignments[]`, after the
 directory-role policies. A permanent assignment the role's policy does not allow is refused instead
 of opening the policy, and a group that is not role-assignable is refused before the request.
 `-Prune` touches only the role and assignment-type pairs the document declares, and never an
-activation, a member's assignment inherited through a group, or the signed-in identity's own direct
-assignment. It also leaves a group's assignment alone when the signed-in identity is a member of
-that group. Directory role names now match in any letter case. An ambiguous service principal
-display name is refused with the candidate ids instead of taking the first match, as
-`AmbiguousApplicationName` or `AmbiguousPrincipalName`; an ambiguous group principal name now also
-reports `AmbiguousPrincipalName`, not `PrincipalNotFound`. Graph refuses to change or remove a
-principal's assignments of a role until its active assignment has run for five minutes; that row
-reports Failed with this cause.
+activation, a member's assignment inherited through a group, or a direct assignment of the signed-in
+identity or of a group it is a member of. Directory role names now match in any letter case. An
+ambiguous service principal display name is refused with the candidate ids instead of taking the
+first match, as `AmbiguousApplicationName` or `AmbiguousPrincipalName`; an ambiguous group principal
+name now also reports `AmbiguousPrincipalName`, not `PrincipalNotFound`. Graph refuses to change or
+remove a principal's assignments of a role until its active assignment has run for five minutes;
+that row reports Failed with this cause. A removal Graph answers with `RoleAssignmentDoesNotExist`
+counts as done once a re-read finds the assignment gone.
 
 ## [1.0.1] - 2026-09-23
 

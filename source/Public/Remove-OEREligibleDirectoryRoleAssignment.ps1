@@ -35,6 +35,15 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     Microsoft Graph refuses the removal with ActiveDurationTooShort until the principal's active
     assignment of the role has run for five minutes (measured live); remove it again after that.
 
+    Microsoft Graph can answer RoleAssignmentDoesNotExist to a removal it carried out (measured live
+    for an active assignment: the request is listed Revoked and the assignment is gone). On that
+    answer the cmdlet reads the principal's eligible assignments of the role again. When that read
+    succeeds and finds no direct eligible assignment of the role at tenant scope, the removal counts
+    as done: no error is written, no request object is returned, and a verbose line says why. That
+    also holds for an eligible assignment that was already gone before the call. When the read fails,
+    or finds the eligible assignment still in place, the RoleAssignmentDoesNotExist error is written
+    as before.
+
     .PARAMETER Role
     The directory role: display name (matched without regard to letter case) or role definition id.
     Pipeline by property name (RoleDefinitionId). A name matching more than one role definition is
@@ -191,7 +200,15 @@ function Remove-OEREligibleDirectoryRoleAssignment {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleEligibilityScheduleRequests' -Body $Body
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $PSCmdlet.WriteError($PSItem)
+                $RemoveError = $PSItem
+                # Measured live: Graph can answer RoleAssignmentDoesNotExist to a removal it carried out.
+                # Only a re-read that succeeds and finds no direct eligibility left makes it a success;
+                # a failed re-read, or an eligibility still in place, keeps the error.
+                $Check = Test-OERDirectoryRoleAssignmentGone -Record $RemoveError -Kind Eligible `
+                    -RoleDefinitionId $RoleInput.RoleDefinitionId -PrincipalId $Principal.PrincipalId
+                if ($Check.Detail) { Write-Verbose "[Remove-OEREligibleDirectoryRoleAssignment] $($Check.Detail)" }
+                if ($Check.Gone) { return }
+                $PSCmdlet.WriteError($RemoveError)
                 return
             }
             ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Response -Kind Eligible

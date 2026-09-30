@@ -1489,3 +1489,139 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment group guard with the real mem
         }
     }
 }
+
+Describe 'Sync-OERStructureDirectoryRoleAssignment prune removal Microsoft Graph answers with RoleAssignmentDoesNotExist' {
+    # Measured live (teardown T.1): Graph answered an adminRemove of an active assignment with
+    # RoleAssignmentDoesNotExist although the request is listed Revoked and the assignment is gone.
+    # The pass removes through the Remove cmdlets, which run for REAL here: only the Graph transport
+    # is mocked, so its adminRemove POST answers RoleAssignmentDoesNotExist and its re-read of the
+    # schedule answers from $script:DraReadBack. The pass's own reads, the resolvers and the
+    # signed-in identity are mocked as in the suites above. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DraKept = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DraExtra = 'bbbbbbbb-0000-0000-0000-000000000002'
+            $script:DraReadBack = @()
+            function script:Invoke-SyncDraGone {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection, [switch]$Prune)
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection
+            }
+            # A permanent, direct, tenant-scope schedule of Reports Reader, projected as the pass reads it.
+            function script:New-DraGoneRow {
+                param([string]$Principal, [string]$Kind)
+                $Row = [ordered]@{
+                    ScheduleId       = "schedule-$Principal"
+                    RoleDefinitionId = $script:RR
+                    RoleName         = 'Reports Reader'
+                    PrincipalId      = $Principal
+                    PrincipalType    = 'User'
+                    DirectoryScopeId = '/'
+                    MemberType       = 'Direct'
+                }
+                if ($Kind -eq 'Active') { $Row.AssignmentType = 'Assigned' }
+                $Row.StartDateTime = '2026-01-01T00:00:00Z'
+                $Row.EndDateTime = $null
+                [PSCustomObject]$Row
+            }
+            # The undeclared schedule as Graph returns it to the Remove cmdlet's re-read.
+            $script:DraStillThere = [PSCustomObject]@{
+                id               = 'schedule-extra'
+                roleDefinitionId = $script:RR
+                principalId      = $script:DraExtra
+                directoryScopeId = '/'
+                memberType       = 'Direct'
+                assignmentType   = 'Assigned'
+                status           = 'Provisioned'
+                scheduleInfo     = [PSCustomObject]@{ startDateTime = '2026-01-01T00:00:00Z'; expiration = [PSCustomObject]@{ type = 'noExpiration' } }
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -eq 'Reports Reader') { return $script:RR }
+                if (Test-OERGuid -Value $Role) { return $Role.ToLowerInvariant() }
+                return $null
+            }
+            Mock Resolve-OERStructurePrincipal {
+                if (Test-OERGuid -Value $Reference) { return $Reference }
+                return $null
+            }
+            Mock Get-OEREligibleDirectoryRoleAssignment {
+                @((New-DraGoneRow -Principal $script:DraKept -Kind Eligible), (New-DraGoneRow -Principal $script:DraExtra -Kind Eligible)) |
+                    Where-Object { -not $PrincipalId -or $_.PrincipalId -eq $PrincipalId }
+            }
+            Mock Get-OERActiveDirectoryRoleAssignment {
+                @((New-DraGoneRow -Principal $script:DraKept -Kind Active), (New-DraGoneRow -Principal $script:DraExtra -Kind Active)) |
+                    Where-Object { -not $PrincipalId -or $_.PrincipalId -eq $PrincipalId }
+            }
+            Mock New-OEREligibleDirectoryRoleAssignment {}
+            Mock New-OERActiveDirectoryRoleAssignment {}
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+            Mock Get-OERMemberGroupId { throw 'unexpected membership read' }
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('RoleAssignmentDoesNotExist: The Role assignment does not exist.'),
+                    'RoleAssignmentDoesNotExist',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null)
+            }
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'POST' } -MockWith { @{ value = @($script:DraReadBack) } }
+        }
+    }
+
+    It 'reports the <Kind> removal Removed, and writes no error, when the re-read proves it gone' -TestCases @(
+        @{ Kind = 'Active' }
+        @{ Kind = 'Eligible' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind } {
+            param($Kind)
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            $Records = @(Invoke-SyncDraGone -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraExtra) ($Kind)"
+            @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraGone' }).Count | Should -Be 0
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Body.action -eq 'adminRemove' }
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -ne 'POST' }
+        }
+    }
+
+    It 'reports the <Kind> removal Failed, and writes the error, when the re-read finds it still in place' -TestCases @(
+        @{ Kind = 'Active' }
+        @{ Kind = 'Eligible' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind } {
+            param($Kind)
+            $script:DraReadBack = @($script:DraStillThere)
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            $Records = @(Invoke-SyncDraGone -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Failed', 'Unchanged')
+            $Records[0].Detail | Should -BeExactly ("failed to remove undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal " +
+                "'$($script:DraExtra)': RoleAssignmentDoesNotExist: The Role assignment does not exist.")
+            $Written = @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraGone' })
+            @($Written).Count | Should -Be 1
+            "$($Written[0])" | Should -Match 'RoleAssignmentDoesNotExist'
+        }
+    }
+
+    It 'reports the <Kind> removal Failed, and writes the removal error, when the re-read fails' -TestCases @(
+        @{ Kind = 'Active' }
+        @{ Kind = 'Eligible' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind } {
+            param($Kind)
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'POST' } -MockWith { throw 'Graph 403 Authorization_RequestDenied' }
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            $Records = @(Invoke-SyncDraGone -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            @($Records).Action | Should -Be @('Failed', 'Unchanged')
+            $Records[0].Detail | Should -BeExactly ("failed to remove undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' for principal " +
+                "'$($script:DraExtra)': RoleAssignmentDoesNotExist: The Role assignment does not exist.")
+            $Written = @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraGone' })
+            @($Written).Count | Should -Be 1
+            "$($Written[0])" | Should -Not -Match 'Authorization_RequestDenied'
+        }
+    }
+}

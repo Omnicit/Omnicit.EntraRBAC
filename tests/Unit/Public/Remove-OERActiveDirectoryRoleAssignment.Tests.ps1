@@ -211,4 +211,90 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
         $Out | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OERActiveDirectoryRoleAssignment' }).Count | Should -Be 1
     }
+
+    Context 'a removal Microsoft Graph answers with RoleAssignmentDoesNotExist' {
+        # Measured live: Graph answered an adminRemove of an active assignment with
+        # RoleAssignmentDoesNotExist although the request is listed Revoked and the assignment is gone.
+        # The cmdlet reads the schedule again; only a read that succeeds and finds no direct, standing
+        # assignment makes it a success. The POST and the re-read are told apart by -Method.
+        BeforeEach {
+            $script:ReadBack = @()
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('RoleAssignmentDoesNotExist: The Role assignment does not exist.'),
+                    'RoleAssignmentDoesNotExist',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null)
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'POST' } {
+                @{ value = @($script:ReadBack) }
+            }
+            # One raw schedule as Graph returns it: the assignment the POST named, still in place.
+            $script:StillThere = [PSCustomObject]@{
+                id               = 'schedule-1'
+                roleDefinitionId = 'aaaaaaaa-0000-0000-0000-000000000001'
+                principalId      = 'bbbbbbbb-0000-0000-0000-000000000002'
+                directoryScopeId = '/'
+                memberType       = 'Direct'
+                assignmentType   = 'Assigned'
+                status           = 'Provisioned'
+                scheduleInfo     = [PSCustomObject]@{ startDateTime = '2026-01-01T00:00:00Z'; expiration = [PSCustomObject]@{ type = 'noExpiration' } }
+            }
+            function script:Invoke-RemoveActiveGone {
+                $Err = $null
+                $All = @(Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                        -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+                [PSCustomObject]@{
+                    Output  = @($All | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                    Verbose = @($All | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+                    Written = @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OERActiveDirectoryRoleAssignment' })
+                }
+            }
+        }
+
+        It 'counts the removal as done, with a verbose line and no error, when the re-read finds the assignment gone' {
+            $R = Invoke-RemoveActiveGone
+            $R.Written.Count | Should -Be 0
+            $R.Output | Should -BeNullOrEmpty
+            @($R.Verbose | Where-Object { $_ -like '`[Remove-OERActiveDirectoryRoleAssignment`] Microsoft Graph answered RoleAssignmentDoesNotExist, and reading the active assignment of directory role ''aaaaaaaa-0000-0000-0000-000000000001'' for principal ''bbbbbbbb-0000-0000-0000-000000000002'' again found none, so it is gone*' }).Count |
+                Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -ne 'POST' -and $Uri -like 'v1.0/roleManagement/directory/roleAssignmentSchedules?*' -and
+                $Uri -like "*roleDefinitionId eq 'aaaaaaaa-0000-0000-0000-000000000001' and principalId eq 'bbbbbbbb-0000-0000-0000-000000000002'"
+            }
+        }
+
+        It 'keeps the RoleAssignmentDoesNotExist error when the re-read finds the assignment still in place' {
+            $script:ReadBack = @($script:StillThere)
+            $R = Invoke-RemoveActiveGone
+            $R.Written.Count | Should -Be 1
+            $R.Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment'
+            $R.Written[0].Exception.Message | Should -BeExactly 'RoleAssignmentDoesNotExist: The Role assignment does not exist.'
+            $R.Output | Should -BeNullOrEmpty
+            @($R.Verbose | Where-Object { $_ -like '*again found it still in place; the error stands.' }).Count | Should -Be 1
+        }
+
+        It 'keeps the RoleAssignmentDoesNotExist error, never the read failure, when the re-read fails' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'POST' } { throw 'Graph 403 Authorization_RequestDenied' }
+            $R = Invoke-RemoveActiveGone
+            $R.Written.Count | Should -Be 1
+            $R.Written[0].FullyQualifiedErrorId | Should -BeExactly 'RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment'
+            $R.Output | Should -BeNullOrEmpty
+            @($R.Verbose | Where-Object { $_ -like '*again failed, so whether it is gone is unknown; the error stands: Graph 403 Authorization_RequestDenied' }).Count | Should -Be 1
+        }
+
+        It 'reads nothing again for any other error' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.'),
+                    'ActiveDurationTooShort',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null)
+            }
+            $R = Invoke-RemoveActiveGone
+            $R.Written.Count | Should -Be 1
+            $R.Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort,Remove-OERActiveDirectoryRoleAssignment'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -ne 'POST' }
+        }
+    }
 }

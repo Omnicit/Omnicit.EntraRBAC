@@ -2543,3 +2543,41 @@ directory-role schedule `adminUpdate` replaces the schedule rather than updating
 schedule id changes (check 2.7), which is why the engine matches on role, principal and kind only.
 A document that declares both kinds for one principal and role can therefore need two runs to
 converge, and the help of the New cmdlets, the engine and the schema says so.
+
+**A removal answered `RoleAssignmentDoesNotExist` is read back, and counts as done only when the read
+proves the assignment gone.** The step 4 teardown removed four active assignments with
+`Remove-OERActiveDirectoryRoleAssignment`, and all four answered `RoleAssignmentDoesNotExist: The Role
+assignment does not exist.`, while Graph lists each `adminRemove` request as Revoked and the
+assignments were gone. The prerequisite script's own raw removal of the certificate identity's active
+assignment answered the same, as a 404. What the evidence shows:
+
+- the wrapper logged ONE POST per call, and the prerequisite script, which calls the SDK directly
+  without the wrapper, got the same answer -- so the wrapper's own retries are not the cause;
+- Graph holds ONE `adminRemove` request per principal, and a refused request leaves none (the
+  `ActiveDurationTooShort` refusals left no request either), so a rejected second send would leave no
+  trace;
+- the removals ran back to back, and the Revoked requests' creation times put each active removal at
+  about 33 to 44 seconds against about one second for an eligible one -- each active request was
+  created some half a minute after its call began, not at its start;
+- the Microsoft Graph SDK below the wrapper (2.41.0, request context `MaxRetry` 3, `RetryDelay` 3)
+  resends a request, a POST included, when it is answered 503 or 504, three seconds later, and hands
+  back only the last answer; measured offline with its own retry handler over a stubbed transport,
+  and not for 500 or 502.
+
+A slow first answer that the SDK resends, whose second answer finds the assignment already removed,
+fits all of that; so does Graph answering the one slow request with `RoleAssignmentDoesNotExist`
+itself. Nothing in the module's streams can tell the two apart, since the SDK's intermediate answers
+never reach them, so the transport is left as it is: changing the retry of every POST on an
+unproven cause would trade a known behaviour for a guess. `Set-MgRequestContext -MaxRetry 0` in the
+live session, before one active removal, would settle it: a 503 or 504 then surfaces instead of
+`RoleAssignmentDoesNotExist`.
+
+The fix holds whichever it is. On `RoleAssignmentDoesNotExist` the Remove cmdlet reads the
+principal's schedules of the role at tenant scope again (`Test-OERDirectoryRoleAssignmentGone`), and
+only a read that succeeds and keeps no direct, tenant-scope schedule -- for Active an Assigned one,
+through `Select-OERManagedDirectoryRoleAssignment` -- makes the removal a success, with a verbose line
+and no request object. A read that fails, or finds the assignment still in place, leaves the original
+error exactly as before: a failed read is never an absent assignment. The prune pass removes through
+the same cmdlets, so its row is Removed or Failed by the same rule. One consequence is deliberate: a
+removal of an assignment that never existed now also ends without an error, since the state the
+caller asked for holds; the verbose line says what was found.
