@@ -14,6 +14,8 @@
           <TableColumnHeader><Label>Catalogs</Label></TableColumnHeader>
           <TableColumnHeader><Label>AccessPackages</Label></TableColumnHeader>
           <TableColumnHeader><Label>AccessReviews</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRolePolicies</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRoleAssignments</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleAssignments</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleMgmtPolicies</Label></TableColumnHeader>
         </TableHeaders>
@@ -26,6 +28,8 @@
               <TableColumnItem><ScriptBlock>@($_.Catalogs).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.AccessPackages).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.AccessReviews).Count</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>@($_.DirectoryRoleManagementPolicies).Count</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>@($_.DirectoryRoleAssignments).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.RoleAssignments).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.RoleManagementPolicies).Count</ScriptBlock></TableColumnItem>
             </TableColumnItems>

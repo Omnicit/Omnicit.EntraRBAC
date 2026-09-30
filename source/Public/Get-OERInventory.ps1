@@ -6,8 +6,8 @@ function Get-OERInventory {
     .DESCRIPTION
     Composes the existing Get-OER* cmdlets into a single tagged Omnicit.EntraRBAC.Inventory object whose
     shape matches the Phase 5 JSON document schema, so the output round-trips into the orchestration
-    apply engine. Select which building blocks to read with -Include (default: the Entra ID sections that
-    do not require Azure Resource Manager).
+    apply engine. Select which building blocks to read with -Include (default: Groups,
+    AdministrativeUnits, Catalogs and AccessPackages).
     Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token: pass -IncludeARM to
     acquire it up front (the Azure sections otherwise acquire it on first use) and supply their
     targeting parameters. Names are emitted by default for portability;
@@ -76,13 +76,34 @@ function Get-OERInventory {
     roleManagementPolicies (the governing policy) grants, captures or removes one -- manage them
     directly with New-OEREligibleRoleAssignment, Get-OEREligibleRoleAssignment,
     New-OERActiveRoleAssignment and Get-OERActiveRoleAssignment.
+    The DirectoryRoleAssignments and DirectoryRoleManagementPolicies sections cover Microsoft Entra
+    directory roles. DirectoryRoleAssignments exports only the eligible and active assignments the
+    apply engine manages: direct and at tenant scope, and for an active one a standing assignment --
+    an activation of an eligible assignment, an assignment a principal holds through a group, and one
+    scoped to an administrative unit are never exported, by the same rule Invoke-OERStructure matches
+    and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
+    name and a group by its display name, each falling back to the object id when no name can be
+    read; a service principal, or a principal of unknown type, is named by its object id, and
+    principalType is carried whenever the type is known. A time-bound assignment carries
+    durationDays reconstructed from the schedule window the same way the apply engine measures it, so
+    a re-applied export is Unchanged; a permanent one carries neither durationDays nor permanent. Two
+    live schedules for one role, principal and kind export only the first, with a warning.
+    DirectoryRoleManagementPolicies exports the policy of every directory role that has at least one
+    row in the tenant-scope eligibility or assignment schedules -- any member type, activations
+    included -- or, with -AllDirectoryRolePolicies, of every directory role; a directory policy
+    carries approvers only while approval is required. A failed read of either schedule list or of
+    the policies is reported through the InventoryPartial error and never stated as a fact: the kind
+    whose read failed exports no entry, and a role selection made from an incomplete read is
+    reported as partial.
 
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only access-package-scoped, single-stage review
     definitions (optionally narrowed by -AccessReviewFilter); a group, application, directory-role
-    or multi-stage review is skipped with a warning. RoleAssignments and RoleManagementPolicies
-    require -IncludeARM plus their targeting parameters.
+    or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
+    DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
+    ARM token. RoleAssignments and RoleManagementPolicies require -IncludeARM plus their targeting
+    parameters.
 
     .PARAMETER GroupFilter
     An OData filter (without the $filter= prefix) selecting which groups to read. When omitted,
@@ -127,6 +148,12 @@ function Get-OERInventory {
     single roleManagementPolicyAssignments list-for-scope call (one paged ARM list, not one lookup per
     role). Mutually exclusive with -Role and -CommonRoles.
 
+    .PARAMETER AllDirectoryRolePolicies
+    For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
+    directory role, instead of only the roles that have at least one row in the tenant-scope
+    eligibility or assignment schedules. The schedules are then not read for the policy section at
+    all; they are still read, once, when DirectoryRoleAssignments is included too.
+
     .PARAMETER IncludeId
     Stamp each top-level object with its id property (handy for same-tenant round-trips).
 
@@ -147,11 +174,17 @@ function Get-OERInventory {
     .EXAMPLE
     Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -CommonRoles -IncludeARM
     Reads the PIM policy for each curated common role on the Prod subscription into the inventory.
+
+    .EXAMPLE
+    Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+    Reads the Microsoft Entra directory role assignments the apply engine manages, and the PIM policy
+    of every directory role in use, through Microsoft Graph only.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies')]
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
         [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages'),
 
         [string]$GroupFilter,
@@ -163,6 +196,7 @@ function Get-OERInventory {
         [string[]]$Role,
         [switch]$CommonRoles,
         [switch]$AllRolesAtScope,
+        [switch]$AllDirectoryRolePolicies,
         [switch]$IncludeId,
         [switch]$IncludeARM,
         [string]$TenantId
@@ -180,6 +214,8 @@ function Get-OERInventory {
         $Catalogs               = [System.Collections.Generic.List[object]]::new()
         $AccessPackages         = [System.Collections.Generic.List[object]]::new()
         $AccessReviews          = [System.Collections.Generic.List[object]]::new()
+        $DirectoryRoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
+        $DirectoryRoleAssignments        = [System.Collections.Generic.List[object]]::new()
         $RoleAssignments        = [System.Collections.Generic.List[object]]::new()
         $RoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
         # Collections a section asked for and did not get back. An inventory document must never
@@ -201,15 +237,16 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits six
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits nine
         # read-failure message shapes (group members, group owners, group PIM eligibility, group PIM
-        # policy, AU members, AU scoped roles), so six admits one of each and a normal partial run is
-        # still reported in full; only a genuinely heterogeneous large-tenant failure is truncated,
-        # and the dropped count is stated rather than silently lost. Nothing is discarded either way
-        # -- every cause is written to the verbose stream as it is seen. Raise this with the shape
-        # count when a seventh read-failure message is added, or one shape starts crowding out
-        # another purely by ordering.
-        $UnreadCauseCap = 6
+        # policy, AU members, AU scoped roles, directory role eligibility schedules, directory role
+        # assignment schedules, directory role policies), so nine admits one of each and a normal
+        # partial run is still reported in full; only a genuinely heterogeneous large-tenant failure
+        # is truncated, and the dropped count is stated rather than silently lost. Nothing is
+        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
+        # this with the shape count when a tenth read-failure message is added, or one shape starts
+        # crowding out another purely by ordering.
+        $UnreadCauseCap = 9
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -1119,6 +1156,171 @@ function Get-OERInventory {
             }
         }
 
+        # Microsoft Entra directory roles, read through Microsoft Graph only. The two tenant-wide
+        # schedule reads are shared by both sections and issued at most once per call: the
+        # assignments section exports from them, and the policy section selects the roles in use from
+        # them -- unless -AllDirectoryRolePolicies asks for every role, when they are read only if the
+        # assignments section needs them.
+        $IncludeDirectoryAssignments = $Include -contains 'DirectoryRoleAssignments'
+        $IncludeDirectoryPolicies = $Include -contains 'DirectoryRoleManagementPolicies'
+        # Per kind: the rows read, and whether the read succeeded. A failed read is not an empty one,
+        # so the flag -- never the row count -- decides what the document may state.
+        $DirectoryRows = @{ Eligible = @(); Active = @() }
+        $DirectoryRead = @{ Eligible = $false; Active = $false }
+        if ($IncludeDirectoryAssignments -or ($IncludeDirectoryPolicies -and -not $AllDirectoryRolePolicies)) {
+            # Unfiltered: every tenant-scope schedule, direct and group-inherited, activations
+            # included. -ErrorAction Stop, each read in its own try/catch, so a refused read lands in
+            # the catch and is reported, never mistaken for an empty list.
+            try {
+                $DirectoryRows.Eligible = @(Get-OEREligibleDirectoryRoleAssignment -ErrorAction Stop)
+                $DirectoryRead.Eligible = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role eligibility schedules: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                if ($IncludeDirectoryAssignments) { $UnreadCollections.Add('directoryRoleAssignments/Eligible') }
+            }
+            try {
+                $DirectoryRows.Active = @(Get-OERActiveDirectoryRoleAssignment -ErrorAction Stop)
+                $DirectoryRead.Active = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role assignment schedules: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                if ($IncludeDirectoryAssignments) { $UnreadCollections.Add('directoryRoleAssignments/Active') }
+            }
+        }
+
+        if ($IncludeDirectoryAssignments) {
+            $DirectoryKept = [System.Collections.Generic.List[object]]::new()
+            foreach ($DirectoryKind in @('Eligible', 'Active')) {
+                if (-not $DirectoryRead[$DirectoryKind]) { continue }
+                $DirectorySeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # Only the rows the apply engine may match or prune -- tenant scope, direct, and for
+                # Active an Assigned schedule, never an activation -- decided by the same single owner
+                # Sync-OERStructureDirectoryRoleAssignment uses, so the export can never emit a row
+                # the apply engine would not match.
+                foreach ($DirectoryRow in @(Select-OERManagedDirectoryRoleAssignment -Assignment $DirectoryRows[$DirectoryKind] -Kind $DirectoryKind)) {
+                    # Two schedules for one role, principal and kind (a future-dated second one, for
+                    # example) would be two entries the validator refuses as a duplicate. Keep the
+                    # first -- the one the handler compares against -- and say so.
+                    if (-not $DirectorySeen.Add("$($DirectoryRow.RoleDefinitionId)|$($DirectoryRow.PrincipalId)")) {
+                        $DuplicateRole = if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
+                        Write-Warning ("Get-OERInventory: directory role '$DuplicateRole' has more than one $($DirectoryKind.ToLowerInvariant()) " +
+                            "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first, which is the one Invoke-OERStructure compares against.")
+                        continue
+                    }
+                    $DirectoryKept.Add([PSCustomObject]@{ Kind = $DirectoryKind; Row = $DirectoryRow })
+                }
+            }
+
+            # Users and groups are named in ONE batched lookup through the shared per-invocation
+            # cache. A service principal is never looked up: it is exported by object id, since its
+            # display name is not unique and an ambiguous one fails on apply.
+            $DirectoryNameIds = @($DirectoryKept |
+                    Where-Object { [string]$_.Row.PrincipalType -in @('User', 'Group') } |
+                    ForEach-Object { [string]$_.Row.PrincipalId } |
+                    Where-Object { $_ -and -not $PrincipalNameCache.ContainsKey($_) } |
+                    Select-Object -Unique)
+            if ($DirectoryNameIds.Count -gt 0) {
+                $ResolvedDirectory = Resolve-OERPrincipalName -Id $DirectoryNameIds
+                foreach ($K in $ResolvedDirectory.Keys) { $PrincipalNameCache[$K] = $ResolvedDirectory[$K] }
+            }
+
+            $DirectoryEntries = [System.Collections.Generic.List[object]]::new()
+            foreach ($Kept in $DirectoryKept) {
+                $DirectoryRow = $Kept.Row
+                $DirectoryPrincipalId = [string]$DirectoryRow.PrincipalId
+                $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
+                # A user by its UPN and a group by its display name, each falling back to the object
+                # id when no name was read; a service principal, or a principal of unknown type, by
+                # its object id, which the apply engine resolves verbatim.
+                $DirectoryPrincipal = if ($DirectoryPrincipalType -in @('User', 'Group') -and $PrincipalNameCache.ContainsKey($DirectoryPrincipalId)) {
+                    [string]$PrincipalNameCache[$DirectoryPrincipalId]
+                } else {
+                    $DirectoryPrincipalId
+                }
+                $Proj = [ordered]@{
+                    role      = $(if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
+                    principal = $DirectoryPrincipal
+                }
+                if ($DirectoryPrincipalType) { $Proj.principalType = $DirectoryPrincipalType }
+                $Proj.assignmentType = $Kept.Kind
+                # DurationDays is the schedule window in whole days as the reader reconstructed it
+                # through Resolve-OEREligibilityDuration -- the measure the apply engine compares
+                # against -- so a re-applied export is Unchanged. A permanent assignment carries
+                # neither durationDays nor permanent: the absence is how the document says permanent.
+                if ($null -ne $DirectoryRow.DurationDays) { $Proj.durationDays = [int]$DirectoryRow.DurationDays }
+                if ($IncludeId) { $Proj.id = [string]$DirectoryRow.ScheduleId }
+                $DirectoryEntries.Add([PSCustomObject]$Proj)
+            }
+            # Role, then Eligible before Active, then principal -- ordinal, ignoring letter case, so
+            # the document reads the same on every run and every machine.
+            $DirectoryEntries.Sort([System.Comparison[object]] {
+                    param($Left, $Right)
+                    $Order = [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.role, [string]$Right.role)
+                    if ($Order -eq 0) {
+                        $LeftRank = if ($Left.assignmentType -eq 'Eligible') { 0 } else { 1 }
+                        $RightRank = if ($Right.assignmentType -eq 'Eligible') { 0 } else { 1 }
+                        $Order = $LeftRank.CompareTo($RightRank)
+                    }
+                    if ($Order -eq 0) {
+                        $Order = [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.principal, [string]$Right.principal)
+                    }
+                    $Order
+                })
+            foreach ($DirectoryEntry in $DirectoryEntries) { $DirectoryRoleAssignments.Add($DirectoryEntry) }
+        }
+
+        if ($IncludeDirectoryPolicies) {
+            $DirectoryPolicies = @()
+            $DirectoryPoliciesRead = $false
+            try {
+                $DirectoryPolicies = @(Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop)
+                $DirectoryPoliciesRead = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role management policies: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                $UnreadCollections.Add('directoryRoleManagementPolicies')
+            }
+            if ($DirectoryPoliciesRead) {
+                if (-not $AllDirectoryRolePolicies) {
+                    # The policy of every role that has at least one row in the tenant-scope schedule
+                    # reads -- the UNFILTERED rows, so a role held only through a group or only as an
+                    # activation still counts. A policy customized on a role nobody holds is exported
+                    # only by -AllDirectoryRolePolicies.
+                    $DirectoryRolesInUse = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($DirectoryKind in @('Eligible', 'Active')) {
+                        foreach ($DirectoryRow in @($DirectoryRows[$DirectoryKind])) {
+                            if ($DirectoryRow -and $DirectoryRow.RoleDefinitionId) { $null = $DirectoryRolesInUse.Add([string]$DirectoryRow.RoleDefinitionId) }
+                        }
+                    }
+                    # A selection made from an incomplete read still exports the roles the read that
+                    # succeeded found, but is reported as partial, never presented as complete.
+                    if (-not ($DirectoryRead.Eligible -and $DirectoryRead.Active)) {
+                        $UnreadCollections.Add('directoryRoleManagementPolicies/role selection')
+                    }
+                    $DirectoryPolicies = @($DirectoryPolicies | Where-Object { $_ -and $DirectoryRolesInUse.Contains([string]$_.RoleDefinitionId) })
+                }
+                $DirectoryPolicyEntries = [System.Collections.Generic.List[object]]::new()
+                foreach ($DirectoryPolicy in $DirectoryPolicies) {
+                    if ($null -eq $DirectoryPolicy) { continue }
+                    $DirectoryPolicyEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $DirectoryPolicy -Directory
+                    if ($IncludeId) { $DirectoryPolicyEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue ([string]$DirectoryPolicy.PolicyId) }
+                    $DirectoryPolicyEntries.Add($DirectoryPolicyEntry)
+                }
+                $DirectoryPolicyEntries.Sort([System.Comparison[object]] {
+                        param($Left, $Right)
+                        [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.role, [string]$Right.role)
+                    })
+                foreach ($DirectoryPolicyEntry in $DirectoryPolicyEntries) { $DirectoryRoleManagementPolicies.Add($DirectoryPolicyEntry) }
+            }
+        }
+
         if ($Include -contains 'RoleManagementPolicies') {
             $RoleSources = @()
             if ($Role) { $RoleSources += 'Role' }
@@ -1147,50 +1349,12 @@ function Get-OERInventory {
                     else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams } }
                 )
                 foreach ($Rmp in $Policies) {
-                    # scope/role/allowPermanentEligibility/activationMaxHours keep their original
-                    # unconditional emission so an existing document keeps its shape. Everything else
-                    # is emitted only when the live policy actually carries a value, so a policy whose
-                    # rule set omits an optional field does not produce a null the apply must interpret.
-                    # Approvers project as object IDS: they resolve verbatim through
-                    # Set-OERRoleManagementPolicy -ApproverUser / -ApproverGroup, whereas an ARM
-                    # approver description is a display name a user lookup cannot resolve.
-                    $Proj = [ordered]@{
-                        scope                     = $Rmp.Scope
-                        role                      = $(if ($Rmp.RoleName) { $Rmp.RoleName } else { $Rmp.RoleDefinitionId })
-                        allowPermanentEligibility = $Rmp.AllowPermanentEligibility
-                        activationMaxHours        = $Rmp.ActivationMaxHours
-                    }
-                    if ($null -ne $Rmp.EligibleDurationDays) { $Proj.eligibleDurationDays = [int]$Rmp.EligibleDurationDays }
-                    if ($null -ne $Rmp.AllowPermanentActiveAssignment) { $Proj.allowPermanentActiveAssignment = [bool]$Rmp.AllowPermanentActiveAssignment }
-                    if ($null -ne $Rmp.ActiveDurationDays) { $Proj.activeDurationDays = [int]$Rmp.ActiveDurationDays }
-                    # Azure PIM treats MFA on activation and an authentication context as mutually
-                    # exclusive -- ARM rejects both at once and Test-OERStructureSchema raises an Error
-                    # on a document carrying both. A live policy can still report MultiFactorAuthentication
-                    # in Enablement_EndUser_Assignment while the context is enabled, so emitting both
-                    # would produce an inventory that fails its own validation (and the
-                    # Export-OERInventory schema self-check). The authentication context is the
-                    # authoritative, more specific control, so it is the one carried; requireMfaOnActivation
-                    # is omitted in that case.
-                    $HasAuthContext = [bool]$Rmp.AuthenticationContextId
-                    if (-not $HasAuthContext) {
-                        $Proj.requireMfaOnActivation             = [bool]$Rmp.RequireMfaOnActivation
-                    }
-                    $Proj.requireJustificationOnActivation       = [bool]$Rmp.RequireJustificationOnActivation
-                    $Proj.requireTicketOnActivation              = [bool]$Rmp.RequireTicketOnActivation
-                    $Proj.requireApproval                        = [bool]$Rmp.RequireApproval
-                    $Proj.requireMfaOnActiveAssignment           = [bool]$Rmp.RequireMfaOnActiveAssignment
-                    $Proj.requireJustificationOnActiveAssignment = [bool]$Rmp.RequireJustificationOnActiveAssignment
-                    if ($HasAuthContext) { $Proj.authenticationContextId = [string]$Rmp.AuthenticationContextId }
-                    $ApproverUser  = @(@($Rmp.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    $ApproverGroup = @(@($Rmp.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    if ($ApproverUser.Count -gt 0 -or $ApproverGroup.Count -gt 0) {
-                        $ApproverProj = [ordered]@{}
-                        if ($ApproverUser.Count -gt 0)  { $ApproverProj.users = $ApproverUser }
-                        if ($ApproverGroup.Count -gt 0) { $ApproverProj.groups = $ApproverGroup }
-                        $Proj.approvers = [PSCustomObject]$ApproverProj
-                    }
-                    if ($IncludeId) { $Proj.id = $Rmp.PolicyId }
-                    $RoleManagementPolicies.Add([PSCustomObject]$Proj)
+                    # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the
+                    # directoryRoleManagementPolicies section; without -Directory it is the Azure
+                    # entry, scope first, unchanged from when it was built inline here.
+                    $RmpEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $Rmp
+                    if ($IncludeId) { $RmpEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue $Rmp.PolicyId }
+                    $RoleManagementPolicies.Add($RmpEntry)
                 }
             }
         }
@@ -1201,6 +1365,8 @@ function Get-OERInventory {
             -Catalogs $Catalogs.ToArray() `
             -AccessPackages $AccessPackages.ToArray() `
             -AccessReviews $AccessReviews.ToArray() `
+            -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
+            -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
 

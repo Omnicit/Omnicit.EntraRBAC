@@ -3348,3 +3348,28 @@ Describe 'Test-OERStructureSchema directoryRoleAssignments' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema directory role sections as Get-OERInventory -IncludeId exports them' {
+    # Get-OERInventory -IncludeId stamps id on every directoryRoleManagementPolicies and
+    # directoryRoleAssignments entry (the policy id and the schedule id). Both sections' known-key
+    # lists admit it, so a captured document re-applies without an unknown-key Warning on every entry.
+    It 'reports no finding at all, and none on an id key, for an exported entry of each section' {
+        $Doc = ('{ "version": "1.0", ' +
+            '"directoryRoleManagementPolicies": [ { "role": "Fixture Role A", "id": "policy-a", "allowPermanentEligibility": false, ' +
+            '"activationMaxHours": 8, "eligibleDurationDays": 365, "allowPermanentActiveAssignment": false, "activeDurationDays": 180, ' +
+            '"requireJustificationOnActivation": true, "requireTicketOnActivation": false, "requireApproval": true, ' +
+            '"requireMfaOnActiveAssignment": false, "requireJustificationOnActiveAssignment": true, "authenticationContextId": "c1", ' +
+            '"approvers": { "users": [ "aaaaaaaa-0000-0000-0000-000000000001" ], "groups": [ "bbbbbbbb-0000-0000-0000-000000000001" ] } } ], ' +
+            '"directoryRoleAssignments": [ ' +
+            '{ "role": "Fixture Role A", "principal": "person1@example.com", "principalType": "User", "assignmentType": "Eligible", "durationDays": 30, "id": "schedule-0001" }, ' +
+            '{ "role": "Fixture Role A", "principal": "cccccccc-0000-0000-0000-000000000001", "principalType": "ServicePrincipal", "assignmentType": "Active", "id": "schedule-0002" } ] }') |
+            ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -like '*.id' }) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+}

@@ -172,7 +172,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Six cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Seven cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -191,6 +191,10 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
   the piped parent unit.
+- `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
+  (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
+  `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
+  asserting every row is `Unchanged`.
 
 ---
 

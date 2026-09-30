@@ -253,15 +253,19 @@ Describe 'Omnicit.EntraRBAC.Inventory format view' {
                 -Catalogs @([PSCustomObject]@{ displayName = 'c1' }) `
                 -AccessPackages @([PSCustomObject]@{ displayName = 'ap1' }, [PSCustomObject]@{ displayName = 'ap2' }, [PSCustomObject]@{ displayName = 'ap3' }, [PSCustomObject]@{ displayName = 'ap4' }) `
                 -AccessReviews @([PSCustomObject]@{ displayName = 'ar1' }, [PSCustomObject]@{ displayName = 'ar2' }, [PSCustomObject]@{ displayName = 'ar3' }, [PSCustomObject]@{ displayName = 'ar4' }, [PSCustomObject]@{ displayName = 'ar5' }) `
+                -DirectoryRoleManagementPolicies @(1..8 | ForEach-Object { [PSCustomObject]@{ role = "r$_" } }) `
+                -DirectoryRoleAssignments @(1..9 | ForEach-Object { [PSCustomObject]@{ role = "r$_" } }) `
                 -RoleAssignments @(1..6 | ForEach-Object { [PSCustomObject]@{ scope = "s$_" } }) `
                 -RoleManagementPolicies @(1..7 | ForEach-Object { [PSCustomObject]@{ scope = "s$_" } })
         }
         $Rendered = ($Inv | Format-Table | Out-String -Width 200)
         $Rendered | Should -Match '1\.0'
+        $Rendered | Should -Match 'AccessReviews\s+DirRolePolicies\s+DirRoleAssignments\s+RoleAssignments'
         # Column order is Version, Groups, AdminUnits, Catalogs, AccessPackages, AccessReviews,
-        # RoleAssignments, RoleMgmtPolicies. Every counted column below carries a distinct non-zero
-        # value, so the assertion cannot pass on a property lookup that silently returned $null --
-        # unlike a zero, a blank cell here has no digit for the regex to match at all.
-        $Rendered | Should -Match '2\s+3\s+1\s+4\s+5\s+6\s+7\s'
+        # DirRolePolicies, DirRoleAssignments, RoleAssignments, RoleMgmtPolicies. Every counted column
+        # below carries a distinct non-zero value, so the assertion cannot pass on a property lookup
+        # that silently returned $null -- unlike a zero, a blank cell here has no digit for the regex
+        # to match at all.
+        $Rendered | Should -Match '2\s+3\s+1\s+4\s+5\s+8\s+9\s+6\s+7\s'
     }
 }

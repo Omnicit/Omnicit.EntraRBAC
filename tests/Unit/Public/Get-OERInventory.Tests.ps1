@@ -2939,18 +2939,19 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- six of them since a failed PIM policy
-            # read became its own shape (group members, group owners, group PIM eligibility, group
-            # PIM policy, AU members, AU scoped roles) -- and the remainder is counted rather than
-            # silently lost. Raise the numbers here and $UnreadCauseCap together, or a whole shape
-            # can be crowded out of the clause purely by the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- nine of them since the directory role
+            # sections added their three (group members, group owners, group PIM eligibility, group
+            # PIM policy, AU members, AU scoped roles, directory role eligibility schedules, directory
+            # role assignment schedules, directory role policies) -- and the remainder is counted
+            # rather than silently lost. Raise the numbers here and $UnreadCauseCap together, or a
+            # whole shape can be crowded out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..8) {
+                foreach ($N in 1..11) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..8) {
+                foreach ($N in 1..11) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -2967,10 +2968,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 6 -Because 'the clause names at most six distinct causes, one per read-failure shape'
+                Should -Be 9 -Because 'the clause names at most nine distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 2 more distinct cause\(s\)'
-            # All eight units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..8) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All eleven units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..11) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3055,6 +3056,362 @@ Describe 'Get-OERInventory' {
             } | ConvertTo-Json -Depth 10
             $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson }
             Test-Json -Json $Doc -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+        }
+    }
+
+    Context 'Directory role sections' {
+        # The four readers are mocked; Select-OERManagedDirectoryRoleAssignment and
+        # ConvertTo-OERInventoryRoleManagementPolicy run for real, since which live row may be
+        # exported, and in what shape, is exactly what these tests pin. No id below is version-4
+        # shaped.
+        BeforeAll {
+            $script:DirRoleA = '11111111-1111-1111-1111-111111111111'
+            $script:DirRoleB = '22222222-2222-2222-2222-222222222222'
+            $script:DirRoleC = '33333333-3333-3333-3333-333333333333'
+            $script:DirUser1 = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DirUser2 = 'aaaaaaaa-0000-0000-0000-000000000002'
+            $script:DirGroup1 = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DirSp1 = 'cccccccc-0000-0000-0000-000000000001'
+            $script:DirNames = @{
+                $script:DirUser1  = 'person1@example.com'
+                $script:DirUser2  = 'person2@example.com'
+                $script:DirGroup1 = 'Fixture Group'
+            }
+            $script:DirRoleNames = @{
+                $script:DirRoleA = 'Fixture Role A'
+                $script:DirRoleB = 'Fixture Role B'
+                $script:DirRoleC = 'Fixture Role C'
+            }
+
+            # One projected schedule row, the shape ConvertTo-OERDirectoryRoleAssignment emits. The
+            # default is a direct, tenant-scope, 30-day row of person1 for role A.
+            function script:New-DirRow {
+                param(
+                    [ValidateSet('Eligible', 'Active')][string]$Kind = 'Eligible',
+                    [string]$ScheduleId = 'schedule-0001',
+                    [string]$RoleDefinitionId = $script:DirRoleA,
+                    [object]$RoleName = 'Fixture Role A',
+                    [string]$PrincipalId = $script:DirUser1,
+                    [object]$PrincipalType = 'User',
+                    [string]$MemberType = 'Direct',
+                    [string]$AssignmentType = 'Assigned',
+                    [object]$Start = '2026-01-01T00:00:00Z',
+                    [object]$End = '2026-01-31T00:00:00Z',
+                    [object]$DurationDays = 30
+                )
+                $Row = [ordered]@{
+                    ScheduleId           = $ScheduleId
+                    RoleDefinitionId     = $RoleDefinitionId
+                    RoleName             = $RoleName
+                    PrincipalId          = $PrincipalId
+                    PrincipalDisplayName = 'fixture'
+                    PrincipalType        = $PrincipalType
+                    DirectoryScopeId     = '/'
+                    MemberType           = $MemberType
+                }
+                if ($Kind -eq 'Active') { $Row.AssignmentType = $AssignmentType }
+                $Row.Status = 'Provisioned'
+                $Row.StartDateTime = $Start
+                $Row.EndDateTime = $End
+                $Row.ExpirationType = $(if ($End) { 'afterDateTime' } else { 'noExpiration' })
+                $Row.DurationDays = $DurationDays
+                $Out = [PSCustomObject]$Row
+                $Out.PSObject.TypeNames.Insert(0, "Omnicit.EntraRBAC.$($Kind)DirectoryRoleAssignment")
+                $Out
+            }
+
+            # One directory role policy, the shape Get-OERDirectoryRoleManagementPolicy returns.
+            function script:New-DirPolicy {
+                param([string]$RoleDefinitionId, [string]$PolicyId)
+                $Out = [PSCustomObject]@{
+                    PolicyId                               = $PolicyId
+                    Scope                                  = '/'
+                    RoleName                               = $script:DirRoleNames[$RoleDefinitionId]
+                    RoleDefinitionId                       = $RoleDefinitionId
+                    ActivationMaxHours                     = 8
+                    RequireMfaOnActivation                 = $true
+                    RequireJustificationOnActivation       = $true
+                    RequireTicketOnActivation              = $false
+                    RequireApproval                        = $false
+                    Approvers                              = @()
+                    AuthenticationContextId                = $null
+                    AllowPermanentEligibility              = $false
+                    EligibleDurationDays                   = 365
+                    AllowPermanentActiveAssignment         = $false
+                    ActiveDurationDays                     = 180
+                    RequireMfaOnActiveAssignment           = $false
+                    RequireJustificationOnActiveAssignment = $true
+                }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RoleManagementPolicy')
+                $Out
+            }
+        }
+
+        BeforeEach {
+            $script:DirEligible = @()
+            $script:DirActive = @()
+            $script:DirPolicies = @(
+                New-DirPolicy -RoleDefinitionId $script:DirRoleA -PolicyId 'policy-a'
+                New-DirPolicy -RoleDefinitionId $script:DirRoleB -PolicyId 'policy-b'
+                New-DirPolicy -RoleDefinitionId $script:DirRoleC -PolicyId 'policy-c'
+            )
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:DirEligible }
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { $script:DirActive }
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy { $script:DirPolicies }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                $Map = @{}
+                foreach ($One in @($Id)) {
+                    $Map[$One] = $(if ($script:DirNames.ContainsKey($One)) { $script:DirNames[$One] } else { $One })
+                }
+                $Map
+            }
+            # Nothing in this Context may reach the transport: a helper that would is a missing mock.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        }
+
+        It 'exports a direct tenant-scope eligible row of a user as its UPN, with principalType, assignmentType and durationDays' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1
+            @($Entries[0].PSObject.Properties.Name) | Should -Be @('role', 'principal', 'principalType', 'assignmentType', 'durationDays')
+            $Entries[0].role | Should -BeExactly 'Fixture Role A'
+            $Entries[0].principal | Should -BeExactly 'person1@example.com'
+            $Entries[0].principalType | Should -BeExactly 'User'
+            $Entries[0].assignmentType | Should -BeExactly 'Eligible'
+            $Entries[0].durationDays | Should -Be 30
+            $Entries[0].durationDays | Should -BeOfType [int]
+        }
+
+        It 'falls back to the role definition id when the row carries no role name' {
+            $script:DirEligible = @(New-DirRow -RoleName '')
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments)[0].role | Should -BeExactly $script:DirRoleA
+        }
+
+        It 'does not export an activation (an Active row whose AssignmentType is Activated)' {
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'activation-0001' -AssignmentType 'Activated' -End '2026-01-01T08:00:00Z' -DurationDays 1
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1 -Because 'the activation of person1 must not be exported as a standing active assignment'
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Active'
+        }
+
+        It 'does not export a row a principal holds through a group (MemberType Group)' {
+            $script:DirEligible = @(
+                New-DirRow
+                New-DirRow -ScheduleId 'schedule-0002' -PrincipalId $script:DirUser2 -MemberType 'Group'
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1 -Because 'the group-inherited row of person2 is managed through the group'
+            $Entries[0].principal | Should -BeExactly 'person1@example.com'
+        }
+
+        It 'exports a service principal as its object id with principalType ServicePrincipal, and never asks Resolve-OERPrincipalName to name it' {
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -PrincipalId $script:DirSp1 -PrincipalType 'ServicePrincipal' -End $null -DurationDays $null
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Sp = @($Inv.directoryRoleAssignments | Where-Object { $_.assignmentType -eq 'Active' })
+            $Sp.Count | Should -Be 1
+            $Sp[0].principal | Should -BeExactly $script:DirSp1
+            $Sp[0].principalType | Should -BeExactly 'ServicePrincipal'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0 -ParameterFilter { @($Id) -contains $script:DirSp1 }
+            # One batched call names every user and group principal of the section.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+        }
+
+        It 'exports a principal of unknown type as its object id, without principalType, and does not name it' {
+            $script:DirEligible = @(New-DirRow -PrincipalId $script:DirUser2 -PrincipalType $null)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entry = @($Inv.directoryRoleAssignments)[0]
+            $Entry.principal | Should -BeExactly $script:DirUser2
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+        }
+
+        It 'exports a permanent row with neither durationDays nor permanent' {
+            $script:DirEligible = @(New-DirRow -End $null -DurationDays $null)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entry = @($Inv.directoryRoleAssignments)[0]
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'durationDays'
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'permanent'
+        }
+
+        It 'exports one entry, the first, and warns once for two schedules of one role, principal and kind' {
+            # The second row spells the role id in upper case: the duplicate check ignores letter case.
+            $script:DirEligible = @(
+                New-DirRow
+                New-DirRow -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleA.ToUpperInvariant() -End '2026-03-02T00:00:00Z' -DurationDays 60
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments -WarningAction SilentlyContinue -WarningVariable DirWarn
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1
+            $Entries[0].durationDays | Should -Be 30 -Because 'the first schedule is the one Invoke-OERStructure compares against'
+            @($DirWarn).Count | Should -Be 1
+            [string]@($DirWarn)[0].Message | Should -BeExactly ("Get-OERInventory: directory role 'Fixture Role A' has more than one eligible schedule for principal " +
+                "'$($script:DirUser1)'; exporting the first, which is the one Invoke-OERStructure compares against.")
+        }
+
+        It 'sorts the entries by role, then Eligible before Active, then principal' {
+            $script:DirEligible = @(
+                New-DirRow -ScheduleId 's-1' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+                New-DirRow -ScheduleId 's-2' -PrincipalId $script:DirUser2
+                New-DirRow -ScheduleId 's-3' -PrincipalId $script:DirGroup1 -PrincipalType 'Group' -End $null -DurationDays $null
+            )
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 's-4' -PrincipalId $script:DirUser1
+                New-DirRow -Kind Active -ScheduleId 's-5' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser1
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.assignmentType)|$($_.principal)" }) | Should -Be @(
+                'Fixture Role A|Eligible|Fixture Group'
+                'Fixture Role A|Eligible|person2@example.com'
+                'Fixture Role A|Active|person1@example.com'
+                'Fixture Role B|Eligible|person2@example.com'
+                'Fixture Role B|Active|person1@example.com'
+            )
+            @($Inv.directoryRoleAssignments)[0].principalType | Should -BeExactly 'Group'
+        }
+
+        It 'exports only the policies of roles that appear in either schedule read, activations included' {
+            # Role A has a direct eligible row; role B appears ONLY as an activation, which the
+            # assignments section never exports but the policy selection still counts; role C has
+            # no row at all.
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'activation-0001' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -AssignmentType 'Activated'
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A', 'Fixture Role B')
+            @($Inv.directoryRoleManagementPolicies)[0].PSObject.Properties.Name | Should -Not -Contain 'scope'
+            @($Inv.directoryRoleAssignments).Count | Should -Be 0 -Because 'the assignments section was not included'
+            Should -Invoke -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $All }
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'exports every policy with -AllDirectoryRolePolicies and issues no schedule read when the assignments section is not included' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A', 'Fixture Role B', 'Fixture Role C')
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 0
+        }
+
+        It 'still reads the schedules once with -AllDirectoryRolePolicies when the assignments section is included' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -AllDirectoryRolePolicies
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 3
+            @($Inv.directoryRoleAssignments).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'on a failed eligible read exports no eligible entry, still exports the active ones, and reports both gaps' {
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+                # A real advanced function honours the caller's -ErrorAction; a mock body does not
+                # inherit it across the session-state boundary, so it is passed on explicitly here.
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the eligibility schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleAssignments)
+            @($Entries | Where-Object { $_.assignmentType -eq 'Eligible' }).Count | Should -Be 0
+            $Entries.Count | Should -Be 1
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Active'
+            # The selection still exports the roles the read that succeeded found.
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role B')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'directoryRoleAssignments/Eligible'
+            $Unread | Should -Contain 'directoryRoleManagementPolicies/role selection'
+            $Unread | Should -Not -Contain 'directoryRoleAssignments/Active'
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the eligibility schedules'
+        }
+
+        It 'on a failed schedule read with only the policy section included reports the role selection, not the assignments' {
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the assignment schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies/role selection')
+        }
+
+        It 'on a failed policy read reports directoryRoleManagementPolicies and exports no policy entry' {
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the policies.' -ErrorId 'PolicyReadFailed' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the policies'
+        }
+
+        It 'reads each schedule list exactly once, unfiltered, when both directory sections are included' {
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(New-DirRow -Kind Active -ScheduleId 'schedule-0002')
+            $null = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                -not $Role -and -not $PrincipalId -and -not $User -and -not $Group -and -not $ServicePrincipal
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                -not $Role -and -not $PrincipalId -and -not $User -and -not $Group -and -not $ServicePrincipal
+            }
+        }
+
+        It 'calls no directory reader under the default -Include' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {}
+            Mock -ModuleName $script:moduleName Get-OERCatalog {}
+            $Inv = Get-OERInventory
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy -Times 0
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            @($Inv.directoryRoleAssignments).Count | Should -Be 0
+        }
+
+        It 'stamps the schedule id on an assignment entry and the policy id on a policy entry under -IncludeId' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -IncludeId
+            @($Inv.directoryRoleAssignments)[0].id | Should -BeExactly 'schedule-0001'
+            @($Inv.directoryRoleManagementPolicies)[0].id | Should -BeExactly 'policy-a'
+        }
+
+        It 'stamps no id without -IncludeId' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments)[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+            @($Inv.directoryRoleManagementPolicies)[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+        }
+
+        It 'emits the inventory keys in the documented section order' {
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            @($Inv.PSObject.Properties.Name) | Should -Be @('version', 'groups', 'administrativeUnits', 'catalogs',
+                'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+                'roleAssignments', 'roleManagementPolicies')
         }
     }
 }

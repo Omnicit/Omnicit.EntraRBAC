@@ -16,7 +16,8 @@ Describe 'ConvertTo-OERInventory' {
     It 'defaults every section to an empty array' {
         InModuleScope $script:moduleName {
             $Out = ConvertTo-OERInventory
-            foreach ($Section in 'Groups','AdministrativeUnits','Catalogs','AccessPackages','AccessReviews','RoleAssignments','RoleManagementPolicies') {
+            foreach ($Section in 'Groups','AdministrativeUnits','Catalogs','AccessPackages','AccessReviews',
+                'DirectoryRoleManagementPolicies','DirectoryRoleAssignments','RoleAssignments','RoleManagementPolicies') {
                 @($Out.$Section).Count | Should -Be 0
             }
         }
@@ -32,6 +33,21 @@ Describe 'ConvertTo-OERInventory' {
         }
     }
 
+    It 'passes the directory role sections through unchanged' {
+        InModuleScope $script:moduleName {
+            $Out = ConvertTo-OERInventory `
+                -DirectoryRoleManagementPolicies @([PSCustomObject]@{ role = 'Fixture Role A' }) `
+                -DirectoryRoleAssignments @(
+                    [PSCustomObject]@{ role = 'Fixture Role A'; principal = 'person1@example.com'; assignmentType = 'Eligible' }
+                    [PSCustomObject]@{ role = 'Fixture Role A'; principal = 'person2@example.com'; assignmentType = 'Active' }
+                )
+            @($Out.directoryRoleManagementPolicies).Count | Should -Be 1
+            $Out.directoryRoleManagementPolicies[0].role | Should -BeExactly 'Fixture Role A'
+            @($Out.directoryRoleAssignments).Count | Should -Be 2
+            $Out.directoryRoleAssignments[1].principal | Should -BeExactly 'person2@example.com'
+        }
+    }
+
     It 'serializes to a document that validates against the shipped schema.json' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
         InModuleScope $script:moduleName {
             # This is the module's headline loop: Export-OERInventory writes this object as
@@ -44,6 +60,8 @@ Describe 'ConvertTo-OERInventory' {
                 -Catalogs @([PSCustomObject]@{ displayName = 'CAT-IT-Core' }) `
                 -AccessPackages @([PSCustomObject]@{ displayName = 'AP-Reader'; catalog = 'CAT-IT-Core' }) `
                 -AccessReviews @([PSCustomObject]@{ displayName = 'AR-Quarterly'; accessPackage = 'AP-Reader'; assignmentPolicy = 'AP-Reader-Policy' }) `
+                -DirectoryRoleManagementPolicies @([PSCustomObject]@{ role = 'Fixture Role A'; requireApproval = $false }) `
+                -DirectoryRoleAssignments @([PSCustomObject]@{ role = 'Fixture Role A'; principal = 'person1@example.com'; principalType = 'User'; assignmentType = 'Eligible'; durationDays = 30 }) `
                 -RoleAssignments @([PSCustomObject]@{ scope = '/subscriptions/00000000-0000-0000-0000-000000000001'; role = 'Reader'; principal = 'role_sec_identity_reader' }) `
                 -RoleManagementPolicies @([PSCustomObject]@{ scope = '/subscriptions/00000000-0000-0000-0000-000000000001'; role = 'Reader' })
             $Json = $Out | ConvertTo-Json -Depth 32
@@ -59,14 +77,25 @@ Describe 'ConvertTo-OERInventory' {
             # -ccontains is case-SENSITIVE on purpose: it is the only operator that can tell the two
             # spellings apart, and the point of this assertion is that exactly one of them is stored.
             foreach ($Key in 'version', 'groups', 'administrativeUnits', 'catalogs', 'accessPackages',
-                'accessReviews', 'roleAssignments', 'roleManagementPolicies') {
+                'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments',
+                'roleManagementPolicies') {
                 $Names -ccontains $Key | Should -Be $true -Because "'$Key' is the spelling schema.json declares"
             }
             foreach ($Key in 'Version', 'Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages',
-                'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies') {
+                'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments',
+                'RoleManagementPolicies') {
                 $Names -ccontains $Key | Should -Be $false -Because "a second stored copy of '$Key' would violate additionalProperties:false"
             }
-            $Names.Count | Should -Be 8
+            $Names.Count | Should -Be 10
+        }
+    }
+
+    It 'emits the sections in the order the apply engine dispatches them' {
+        InModuleScope $script:moduleName {
+            $Out = ConvertTo-OERInventory
+            @($Out.PSObject.Properties.Name) | Should -Be @('version', 'groups', 'administrativeUnits', 'catalogs',
+                'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+                'roleAssignments', 'roleManagementPolicies')
         }
     }
 
