@@ -18,7 +18,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - `inventory.json` -- canonical, round-trippable inventory (all sections).
 - per-area JSON files (`groups.json`, `catalogs.json`, `directoryRoleManagementPolicies.json`,
   `directoryRoleAssignments.json`, ...).
-- `groupsRoster.json`, `scopeHierarchy.json` -- read-only context.
+- `groupsRoster.json`, `scopeHierarchy.json`, `azurePimEligibility.json` -- read-only context.
+  `azurePimEligibility.json` (the Azure PIM eligible role assignments at the walked scopes) is
+  written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.

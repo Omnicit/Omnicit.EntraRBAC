@@ -55,6 +55,9 @@ PowerShell module.
 - scopeHierarchy.json -- the management group / subscription tree. Use it to place role
   assignments at the correct scope. NOTE: management groups and subscriptions are context only;
   do not try to create them.
+- azurePimEligibility.json -- read-only context: the Azure PIM eligible role assignments at the
+  scopes in scopeHierarchy.json. Use it to see who can already activate what; you cannot create or
+  remove an eligibility through the document.
 - the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
 - schema.json -- a formal JSON Schema (draft-07) for the apply document. Validate every proposal
   you emit against it; it encodes the required fields, enums, and numeric ranges exactly.
@@ -77,11 +80,13 @@ Four areas fall outside that model, each in a different way, so treat them diffe
   resource scope string. If one already appears in inventory.json, you may preserve it verbatim;
   otherwise place the assignment at a subscription or management group scope, and say in your
   rationale where a narrower scope would be better once the operator supplies the names.
-- Azure PIM eligible and active role assignments are NOT captured and NOT appliable.
-  roleAssignments[] is PERMANENT Azure RBAC only, and roleManagementPolicies[] configures the PIM
-  policy that GOVERNS eligibility -- neither one grants, captures or removes an eligible or active
-  PIM assignment. Propose the policy that makes a role PIM-ready; do not try to express the
-  eligibility itself, and do not read its absence as evidence that the tenant has none.
+- Azure PIM eligible and active role assignments are NOT appliable. roleAssignments[] is PERMANENT
+  Azure RBAC only, and roleManagementPolicies[] configures the PIM policy that GOVERNS eligibility --
+  neither one grants, captures or removes an eligible or active PIM assignment. The eligible ones are
+  listed read-only in azurePimEligibility.json (attached; not part of the apply document); active
+  ones that are not permanent are not captured anywhere in this bundle. Propose the policy that makes
+  a role PIM-ready; do not try to express the eligibility itself, and do not read an absence from the
+  apply document as evidence that the tenant has none.
 - A multi-stage access review is SKIPPED entirely, not exported lossily: its reviewers live under
   stageSettings, which accessReviews[] does not model, so it is skipped with a warning instead of
   being fabricated as a single-stage self review. It never appears in accessReviews.json or

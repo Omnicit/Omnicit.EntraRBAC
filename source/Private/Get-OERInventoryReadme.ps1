@@ -35,6 +35,10 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   wider than `inventory.json`: see "Which groups are covered" below.
 - `scopeHierarchy.json` -- the management group / subscription tree. Read-only context, not an
   apply document.
+- `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in
+  `scopeHierarchy.json`, written only when an Azure section (`RoleAssignments` or
+  `RoleManagementPolicies`) is included. Read-only context, not an apply document -- see "Azure PIM
+  eligibility" under Coverage limits below.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (for example with Test-Json).
 - `rbac-architect-prompt.md` -- the predefined prompt. Open it, optionally edit the
@@ -67,11 +71,12 @@ bundle as a complete picture of the tenant:
   A role assignment at a resource-group or resource scope does apply, but `scopeHierarchy.json`
   lists management groups and subscriptions only, so no resource-group names are available to
   propose against. Use `New-OERResourceGroup` and `Get-OERResource`.
-- Azure PIM eligible and active role assignments are not captured at all. `roleAssignments[]`
-  covers permanent Azure RBAC and `roleManagementPolicies[]` the PIM policy that governs
-  eligibility, but neither grants or captures an eligible or active assignment -- their absence
-  here says nothing about the tenant. Use `New-OEREligibleRoleAssignment` and
-  `New-OERActiveRoleAssignment`.
+- Eligible Azure PIM assignments are in `azurePimEligibility.json` as read-only context, not an apply section.
+  Neither `roleAssignments[]` (permanent Azure RBAC only) nor `roleManagementPolicies[]` (only the
+  PIM policy that governs eligibility) grants, captures or removes one. Manage them with
+  `New-OEREligibleRoleAssignment` and `Remove-OEREligibleRoleAssignment`.
+  Active PIM assignments that are not permanent are not captured anywhere in this bundle; use
+  `New-OERActiveRoleAssignment` and `Get-OERActiveRoleAssignment`.
 - A multi-stage access review is SKIPPED entirely, not exported lossily: its reviewers live under
   `stageSettings`, which `accessReviews[]` does not model, so it is skipped with a warning instead
   of being fabricated as a single-stage self review. It never appears in `accessReviews.json` or

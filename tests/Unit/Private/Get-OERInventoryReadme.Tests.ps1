@@ -10,8 +10,8 @@ Describe 'Get-OERInventoryReadme' {
             $Md = Get-OERInventoryReadme
             $Md | Should -BeOfType ([string])
             foreach ($File in @('inventory.json', 'groups.json', 'groupsRoster.json',
-                    'scopeHierarchy.json', 'roleAssignments.json', 'roleManagementPolicies.json',
-                    'schema.json', 'rbac-architect-prompt.md')) {
+                    'scopeHierarchy.json', 'azurePimEligibility.json', 'roleAssignments.json',
+                    'roleManagementPolicies.json', 'schema.json', 'rbac-architect-prompt.md')) {
                 $Md | Should -Match ([regex]::Escape($File))
             }
             $Md | Should -Match 'Test-OERStructure'
@@ -27,14 +27,26 @@ Describe 'Get-OERInventoryReadme' {
             # fabricated as a lossy single-stage self review; it is skipped instead).
             $Md | Should -Match 'Coverage limits'
             $Md | Should -Match 'Azure resource groups and individual Azure resources'
-            $Md | Should -Match 'not captured at all'
+            $Md | Should -Match 'not captured anywhere in this bundle'
             $Md | Should -Match 'SKIPPED entirely'
             $Md | Should -Match 'ACCESS-PACKAGE-SCOPED'
             foreach ($Cmdlet in @('New-OERResourceGroup', 'Get-OERResource',
-                    'New-OEREligibleRoleAssignment', 'New-OERActiveRoleAssignment',
-                    'New-OERAccessReviewStage')) {
+                    'New-OEREligibleRoleAssignment', 'Remove-OEREligibleRoleAssignment',
+                    'New-OERActiveRoleAssignment', 'New-OERAccessReviewStage')) {
                 $Md | Should -Match ([regex]::Escape($Cmdlet))
             }
+        }
+    }
+
+    It 'states eligible Azure PIM assignments are read-only context in azurePimEligibility.json' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme
+            # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
+            # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
+            # read-only context, so the README must say so rather than repeat the old blanket claim.
+            $Md | Should -Match ([regex]::Escape('azurePimEligibility.json'))
+            $Md | Should -Match 'read-only context'
+            $Md | Should -Match 'not an apply section'
         }
     }
 

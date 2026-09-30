@@ -377,6 +377,14 @@ Describe 'Export-OERInventory (Azure walk)' {
                 }
             }
         }
+        # This Describe is about the roleAssignments/roleManagementPolicies walk; the eligibility
+        # read (R4) is its own pass over the same scope list and gets its own Describe below. Mocked
+        # to an empty, all-read result here so it never reaches the real Get-OEREligibleRoleAssignment
+        # (which would otherwise attempt a real ARM call with no cached token) and never pollutes
+        # these tests' SkippedScopes / InventoryPartial assertions with an unrelated failure.
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() }
+        }
         # Entra call returns empties; per-scope Azure calls return one assignment each (s1's is shared/duplicated).
         Mock -ModuleName $script:moduleName Get-OERInventory {
             param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
@@ -474,6 +482,116 @@ Describe 'Export-OERInventory (Azure walk)' {
     }
 }
 
+Describe 'Export-OERInventory (Azure PIM eligibility)' {
+    # R4: one bounded Get-OERInventoryAzureEligibility read of the walked scope list, written into
+    # azurePimEligibility.json only when an Azure section is requested, folding its own
+    # SkippedEligibilityScopes into the existing InventoryPartial error.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @('/subscriptions/s1', '/subscriptions/s2')
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $inv = [PSCustomObject]@{
+                Version = '1.0'; Groups = @(); AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{
+                Eligibilities = @(
+                    [PSCustomObject]@{
+                        scope = '/subscriptions/s1'; role = 'Owner'; principal = 'person26@example.com'
+                        principalType = 'User'; memberType = 'Direct'; status = 'Provisioned'
+                        startDateTime = $null; endDateTime = $null
+                    }
+                )
+                SkippedScopes = @()
+            }
+        }
+    }
+
+    It 'writes azurePimEligibility.json only when an Azure section is included' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-write') -Include RoleAssignments
+        Test-Path (Join-Path $Result.BundlePath 'azurePimEligibility.json') | Should -BeTrue
+        $Result.Files | Should -Contain 'azurePimEligibility.json'
+        $Data = Get-Content (Join-Path $Result.BundlePath 'azurePimEligibility.json') -Raw | ConvertFrom-Json
+        @($Data).Count | Should -Be 1
+        $Data[0].scope | Should -Be '/subscriptions/s1'
+    }
+
+    It 'does not write azurePimEligibility.json, and never calls the helper, for a pure-Entra -Include' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-entra-only') -Include Groups
+        Test-Path (Join-Path $Result.BundlePath 'azurePimEligibility.json') | Should -BeFalse
+        $Result.Files | Should -Not -Contain 'azurePimEligibility.json'
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 0
+    }
+
+    It 'reports the AzurePimEligibility count on the bundle summary' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-count') -Include RoleAssignments
+        $Result.AzurePimEligibility | Should -Be 1
+    }
+
+    It 'reports zero AzurePimEligibility for a pure-Entra -Include' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-zero') -Include Groups
+        $Result.AzurePimEligibility | Should -Be 0
+        @($Result.SkippedEligibilityScopes).Count | Should -Be 0
+    }
+
+    It 'calls the eligibility helper once with the walked scopes, after the role-assignment walk' {
+        Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-call') -Include RoleAssignments | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly -ParameterFilter {
+            @($Scope).Count -eq 2 -and $Scope -contains '/subscriptions/s1' -and $Scope -contains '/subscriptions/s2'
+        }
+    }
+
+    It 'raises InventoryPartial naming azurePimEligibility.json when an eligibility scope was skipped' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @('/subscriptions/s2') }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig1') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Bundle.SkippedEligibilityScopes | Should -Contain '/subscriptions/s2'
+        $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        @($Partial).Count | Should -Be 1 -Because 'the eligibility gap folds into the SAME trailing error, not a second one'
+        $Partial[0].Exception.Message | Should -Match 'azurePimEligibility\.json'
+        $Partial[0].Exception.Message | Should -Match '/subscriptions/s2'
+    }
+
+    It 'does not raise InventoryPartial when the eligibility read of every scope succeeded' {
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-ok') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Bundle.SkippedEligibilityScopes).Count | Should -Be 0
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 0
+    }
+
+    It 'sets SkippedEligibilityScopes to the enumeration-failure sentinel and raises InventoryPartial when the scope walk fails' {
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig2') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Bundle.SkippedEligibilityScopes).Count | Should -Be 1
+        $Bundle.SkippedEligibilityScopes | Should -Contain '<all Azure scopes: scope enumeration failed>'
+        $Bundle.AzurePimEligibility | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 0 -Because (
+            'there is no scope tree to walk, so the helper must never be called at all')
+        $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        @($Partial).Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'azurePimEligibility\.json'
+        Test-Path (Join-Path $Bundle.BundlePath 'azurePimEligibility.json') | Should -BeTrue
+        $EmptyElig = @(Get-Content (Join-Path $Bundle.BundlePath 'azurePimEligibility.json') -Raw | ConvertFrom-Json)
+        @($EmptyElig).Count | Should -Be 0
+    }
+}
+
 Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
@@ -481,6 +599,12 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
         Mock -ModuleName $script:moduleName Get-OERConfiguration {}
         Mock -ModuleName $script:moduleName Get-OERGroup {}
         Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # Default to an empty, all-read eligibility result so the many RoleAssignments-including
+        # tests below (none of which are about azurePimEligibility.json) never reach the real
+        # Get-OEREligibleRoleAssignment and never pick up a spurious SkippedEligibilityScopes entry.
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() }
+        }
     }
 
     It 'raises InventoryPartial and reports the skipped scopes when a scope cannot be read' {

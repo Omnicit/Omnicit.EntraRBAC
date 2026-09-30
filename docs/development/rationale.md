@@ -2597,3 +2597,54 @@ Learn documents `$filter` on `roleDefinitionId` and `principalId` without `direc
 refusal would fail the read and keep the original error; and step 4 measured that Graph lists no
 inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
 at all.
+
+## inventory-azure-eligibility
+
+Task 3 of Sprint 6 step 5 added `azurePimEligibility.json` to the `Export-OERInventory` bundle: the
+Azure PIM eligible role assignments at the scopes `Resolve-OERInventoryScopeTree` already walks for
+`roleAssignments.json` and `roleManagementPolicies.json`, projected read-only and never fed back
+through `Invoke-OERStructure`. This anchor records ruling R4 and the one claim in it that is
+measured rather than documented.
+
+**R4 (decided): one paged `roleEligibilitySchedules` list per scope of the walk, not per
+role-assignment-and-eligibility pair.** `Get-OERInventoryAzureEligibility` calls
+`Get-OEREligibleRoleAssignment` exactly once for each scope `Export-OERInventory`'s Azure walk
+visits: a management group scope is read with `-AtScope` (eligibilities at or above it, matching how
+Learn documents the `atScope()` filter); every other scope -- a subscription, a resource group, a
+resource -- is read with no filter at all. The read runs as its own pass AFTER the existing
+role-assignment / policy walk over the same scope list, not interleaved with it, so a throttled
+request against one file is never blamed on the other and a scope that fails one read can still
+succeed the other. Results are deduplicated on `RoleEligibilityScheduleId` (falling back to a
+scope/role/principal composite key on the rare row that carries none), so an eligibility visible from
+several scopes in the walk -- a subscription-scoped one seen again while reading its resource groups,
+for instance -- is written once. A scope whose read fails is named in `SkippedScopes`
+(`Export-OERInventory`'s `SkippedEligibilityScopes`) and folds into the bundle's existing
+`InventoryPartial` error with its own clause naming `azurePimEligibility.json`, exactly as a failed
+role-assignment scope already named `roleAssignments.json` and `roleManagementPolicies.json` --
+never presented as a scope with no eligibility, since that would read as a fact nothing measured.
+
+**Why per-scope, not per management group only, and not filtered by `-AsTarget` or a principal:**
+the bundle's job is to tell an LLM (and an operator) who can already activate what at the scopes the
+rest of the bundle proposes against, not to answer "what can the signed-in identity activate" -- so
+`-AsTarget` is wrong on its face, and a principal filter would require already knowing which
+principal to ask about, which is exactly what this file exists to surface. Reading every scope
+unfiltered, rather than only management groups with `-AtScope`, is what makes a subscription's own
+directly-scoped eligibilities visible at all: `-AtScope` on a subscription would show only
+eligibilities inherited from a management group above it, silently dropping every eligibility
+declared AT that subscription or below it.
+
+**The below-scope coverage of an unfiltered read is a MEASURED claim, not a documented one.**
+Microsoft Learn's `roleEligibilitySchedules` reference names exactly two supported filters --
+`atScope()` and `assignedTo('{principalId}')` (used here as the module's `-User`/`-Group`/
+`-ServicePrincipal` filters) -- and says nothing about what an unfiltered `$filter`-less list
+returns relative to the scope in the URL. `Get-OEREligibleRoleAssignment`'s own help states the
+observed behaviour plainly: "Without a filter, every eligibility that applies at the scope (direct
+and inherited) is returned," which in practice has been read as covering below the scope too (a
+subscription-scoped read surfacing a resource-group-scoped eligibility under it). That reading is
+carried into this helper's own `.DESCRIPTION` and into `Export-OERInventory`'s help the same way:
+worded as what was OBSERVED, not as a contract Microsoft has published, because an undocumented
+service behaviour can change without notice in a way a documented filter cannot. Nothing in this
+change relies on the below-scope case for correctness -- the tenant-wide scope list already walks
+every management group and subscription, so an eligibility missed below one scope by an API change
+would still be caught by the walk visiting that narrower scope directly, only later and via a
+different scope entry, not silently dropped from the bundle altogether.

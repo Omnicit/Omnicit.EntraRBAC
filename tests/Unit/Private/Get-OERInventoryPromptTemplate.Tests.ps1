@@ -95,7 +95,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # declaring invented resource-group scopes, PIM eligibility, or a "corrected" review.
             $T | Should -Match 'Coverage limits'
             $T | Should -Match 'Azure resource GROUPS and individual RESOURCES'
-            $T | Should -Match 'Azure PIM eligible and active role assignments are NOT captured'
+            $T | Should -Match 'Azure PIM eligible and active role assignments are NOT appliable'
             $T | Should -Match 'SKIPPED entirely'
             $T | Should -Match 'ACCESS-PACKAGE-SCOPED'
             # each area must point at the cmdlet that does manage it
@@ -104,6 +104,18 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'New-OEREligibleRoleAssignment'
             $T | Should -Match 'New-OERActiveRoleAssignment'
             $T | Should -Match 'New-OERAccessReviewStage'
+        }
+    }
+
+    It 'points the model at azurePimEligibility.json for the eligible half, but never lets it express eligibility itself' {
+        InModuleScope $script:moduleName {
+            $T = Get-OERInventoryPromptTemplate
+            # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
+            # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
+            # read-only context, so the Inputs list and the coverage bullet must both say so -- while
+            # still refusing to let the model express an eligibility inside the apply document.
+            $T | Should -Match ([regex]::Escape('azurePimEligibility.json'))
+            $T | Should -Match 'do not try to express the eligibility itself'
         }
     }
 

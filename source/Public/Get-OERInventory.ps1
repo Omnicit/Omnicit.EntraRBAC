@@ -71,11 +71,13 @@ function Get-OERInventory {
     the activation window. Notification rules are excluded from that projection: they are readable
     through Get-OERRoleManagementPolicy and writable through Set-OERRoleManagementPolicy
     -NotificationRule, but are not part of this document and do not round-trip. Azure PIM eligible
-    and active ROLE ASSIGNMENTS (as opposed to the policy that governs them) are out of scope for
-    every section here: neither roleAssignments (permanent Azure RBAC only) nor
-    roleManagementPolicies (the governing policy) grants, captures or removes one -- manage them
-    directly with New-OEREligibleRoleAssignment, Get-OEREligibleRoleAssignment,
-    New-OERActiveRoleAssignment and Get-OERActiveRoleAssignment.
+    and active ROLE ASSIGNMENTS (as opposed to the policy that governs them) remain outside every
+    APPLY section here: neither roleAssignments (permanent Azure RBAC only) nor
+    roleManagementPolicies (the governing policy) grants, captures or removes one, and this cmdlet
+    itself still does not read them. Export-OERInventory writes the eligible ones into
+    azurePimEligibility.json as read-only context, outside the apply document -- active assignments
+    are not captured there either. Manage them directly with New-OEREligibleRoleAssignment,
+    Get-OEREligibleRoleAssignment, New-OERActiveRoleAssignment and Get-OERActiveRoleAssignment.
     The DirectoryRoleAssignments and DirectoryRoleManagementPolicies sections cover Microsoft Entra
     directory roles. DirectoryRoleAssignments exports only the eligible and active assignments the
     apply engine manages: direct and at tenant scope, and for an active one a standing assignment --
