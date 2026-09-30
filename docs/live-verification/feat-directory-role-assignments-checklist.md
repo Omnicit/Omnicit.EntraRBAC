@@ -1164,13 +1164,17 @@ principals) and re-run 0.5 -- it also sets `$IdCcRag`, which 4.5 needs; from 3.3
 section 3's document block and the first two lines of 3.3 (its seven-day `$E1` and `$Doc33`), and
 from section 4 on section 4's document block (4.5 builds its own document). A raw read answering
 401 after a long pause means the token `Connect-OER` handed the Graph SDK has expired: paste the
-sign-in block again.
+sign-in block again. **Wait five minutes after a write that starts a principal's active assignment
+before updating or removing any of that principal's assignments of the same role** -- Microsoft
+Graph refuses those with `ActiveDurationTooShort` until the active assignment has run for five
+minutes (measured in this file's run; see 3.3 and T.1). That means five minutes between 3.1c and
+3.3b, and between the last write of section 6 and T.1.
 
 ---
 
 ### 0. Preparation
 
-- [ ] **0.1 The session runs THIS branch's build.**
+- [x] **0.1 The session runs THIS branch's build.**
 
   ```powershell
   git -C $Repo fetch origin
@@ -1223,9 +1227,84 @@ sign-in block again.
   **Failure looks like:** `CommandNotFound` for any of the functions, `False`, a missing or
   different scope row, or no completion -- a build without this branch's change is loaded. Rebuild,
   fix `PSModulePath`, re-import; nothing below means anything until this passes.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass (2026-09-29, CC as oer-live-cc, the clone at e955842). The log lists the branch's 33 subjects, the 17 this check names among them, plus the two fix subjects of the follow-up; the 13 private and 6 public functions are Function; True; the six scope rows as expected; the completion lists 'Reports Reader'.
 
-- [ ] **0.2 The prerequisite script's plan names only `oer-s64` targets, the two baseline files and the certificate identity's own assignment.** Paste the `-WhatIf` run's output from Setup, redacted per the rules at the top.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  docs: correct why the group guard reads every group membership
+  test: pin the service principal lookup in the ambiguity tests
+  fix: emit the signed-in identity's group ids one by one
+  docs: release note for the service principal refusal and the group guard
+  docs: live checks for the group guard and the service principal refusal
+  docs: drop the tenant profile requirement and relabel the manual checks
+  fix: never prune a directory role the signed-in identity holds through a group
+  fix: refuse an ambiguous service principal display name
+  docs: require the tenant profile in the directory role assignment checklist
+  docs: name what the principal scopes resolve on directory role writes
+  fix: lower-case the principal id in the directory role assignment filter
+  fix: refuse inherited or activated rows piped into directory role removal
+  docs: state that a group's own directory role assignment can be pruned
+  fix: warn when a directory role assignment names a service principal by display name
+  fix: pass the Graph token to the oid reader as a secure string
+  docs: stop the refused-read run on a failed identity check and harden the prune gate
+  docs: live-verification checklist for directory role assignments
+  docs: release note and rules for directory role assignments
+  fix: decide principalType alike in the prune pass and the item, and reword the unknown-identity reason
+  test: prove a declared principal id matches its live assignment in any letter case
+  feat: prune directory role assignments only within declared role and type pairs
+  fix: report an unknown assignmentType and prove both directory role reads
+  feat: record the signed-in identity's object id from the token's oid claim
+  feat: directoryRoleAssignments section in the apply document
+  feat: decide which live directory role assignment a document entry can match
+  feat: tab-complete, format and list the directory role assignment cmdlets
+  test: require directory schedule permissions for the directory role assignment paths
+  fix: refuse a named principal alongside piped assignments on directory role removal
+  test: prove the error paths of the directory role assignment cmdlets
+  feat: grant and remove eligible and active directory role assignments
+  test: pin exact call counts in the directory role assignment read tests
+  feat: read eligible and active directory role assignments
+  fix: match a directory role name without regard to letter case
+  Omnicit.EntraRBAC 1.1.0 from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0
+  
+  Name                                      CommandType
+  ----                                      -----------
+  Resolve-OERDirectoryRoleDefinitionId         Function
+  Resolve-OERDirectoryRoleInput                Function
+  Get-OERRoleAssignableState                   Function
+  Test-OERDirectoryRolePermanentAllowed        Function
+  New-OERDirectoryRoleScheduleRequestBody      Function
+  ConvertTo-OERDirectoryRoleAssignment         Function
+  ConvertTo-OERDirectoryRoleScheduleRequest    Function
+  Select-OERManagedDirectoryRoleAssignment     Function
+  Resolve-OERDirectoryRoleAssignmentChange     Function
+  Get-OERTokenObjectId                         Function
+  Get-OERSignedInObjectId                      Function
+  Sync-OERStructureDirectoryRoleAssignment     Function
+  Get-OERMemberGroupId                         Function
+  
+  
+  Name                                      CommandType
+  ----                                      -----------
+  Get-OEREligibleDirectoryRoleAssignment       Function
+  New-OEREligibleDirectoryRoleAssignment       Function
+  Remove-OEREligibleDirectoryRoleAssignment    Function
+  Get-OERActiveDirectoryRoleAssignment         Function
+  New-OERActiveDirectoryRoleAssignment         Function
+  Remove-OERActiveDirectoryRoleAssignment      Function
+  
+  True
+  Get-OEREligibleDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleEligibilitySchedule.Read.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  New-OEREligibleDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleEligibilitySchedule.ReadWrite.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  Remove-OEREligibleDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleEligibilitySchedule.ReadWrite.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  Get-OERActiveDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleAssignmentSchedule.Read.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  New-OERActiveDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleAssignmentSchedule.ReadWrite.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  Remove-OERActiveDirectoryRoleAssignment [Graph]: Application.Read.All, Group.Read.All, RoleAssignmentSchedule.ReadWrite.Directory, RoleManagement.Read.Directory, User.ReadBasic.All
+  'Reports Reader'
+  ```
+
+- [x] **0.2 The prerequisite script's plan names only `oer-s64` targets, the two baseline files and the certificate identity's own assignment.** Paste the `-WhatIf` run's output from Setup, redacted per the rules at the top.
 
   **Expect:** the lines Setup lists under "What the script prints": first
   `[oer-s64] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.`
@@ -1255,9 +1334,59 @@ sign-in block again.
   is never repaired: delete it by hand), a refusal naming a direct assignment of either role to a
   principal the script did not create (someone holds the role: stop, this file cannot restore what
   it did not record), or a user `oer-s64-nobody@...` that exists. Record it and stop.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Every What if target carries the prefix oer-s64, apart from the two baseline files, the certificate identity's own Message Center Reader assignment and its membership of oer-s64-ccrag; no directory role but the two; both identity lines True; the tenant identified; no Tenant Profile on this machine.
 
-- [ ] **0.3 The prerequisite script ran, every test object exists, and both baseline files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
+  ```text
+  [oer-s64] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.
+  [oer-s64] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Policy baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json (exists: False). Assignment baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json (exists: False).
+  [oer-s64] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s64] No Tenant Profile '<Alias>' on this machine; the sign-in names -TenantId.
+  [oer-s64] Microsoft Graph sign-in: signing in to Microsoft Graph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s64] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s64] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s64] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s64] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] No baseline files yet; this run captures both before its first write.
+  What if: Performing the operation "Write the policy baseline: the raw Microsoft Graph v1.0 rules of both directory-role policies, which -Teardown restores" on target "<Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json".
+  What if: Performing the operation "Write the assignment baseline: the direct eligible and active assignments of both directory roles, which -Teardown verifies and restores" on target "<Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person1@example.com".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "person2@example.com".
+  What if: Performing the operation "Create a ROLE-ASSIGNABLE security group (isAssignableToRole true, which can be set only when a group is created)" on target "oer-s64-rag".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s64-plain".
+  What if: Performing the operation "Create a ROLE-ASSIGNABLE security group (isAssignableToRole true, which can be set only when a group is created)" on target "oer-s64-ccrag".
+  What if: Performing the operation "Add member 'person2@example.com'" on target "oer-s64-rag".
+  What if: Performing the operation "Request an ACTIVE, time-bound (P2D) assignment (Microsoft Graph v1.0 roleAssignmentScheduleRequests, adminAssign)" on target "active directory role 'Message Center Reader' for the service principal of oer-live-cc at directory scope '/'".
+  What if: Performing the operation "Add member 'the service principal of oer-live-cc'" on target "oer-s64-ccrag".
+  What if: Performing the operation "Request an ACTIVE, time-bound (P2D) assignment (Microsoft Graph v1.0 roleAssignmentScheduleRequests, adminAssign)" on target "active directory role 'Message Center Reader' for oer-s64-ccrag at directory scope '/'".
+  
+  [oer-s64] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  
+  Kind                                       Name                                                                                        Id
+  ----                                       ----                                                                                        --
+  user                                       person1@example.com                                                       (none -- not created)
+  user                                       person2@example.com                                                       (none -- not created)
+  group                                      oer-s64-rag                                                                                 (none -- not created)
+  group                                      oer-s64-plain                                                                               (none -- not created)
+  group                                      oer-s64-ccrag                                                                               (none -- not created)
+  group member                               oer-s64-rag <- person2@example.com                                        (none -- not created)
+  group member                               oer-s64-ccrag <- oer-live-cc                                                                (none -- not created)
+  directory role (built-in, fixed)           Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy                      Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)           Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy                      Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  own assignment                             Message Center Reader, active, P2D, of oer-live-cc (schedule)                               (none -- not created)
+  group assignment                           Message Center Reader, active, P2D, of oer-s64-ccrag (schedule)                             (none -- not created)
+  policy baseline (not written (WhatIf))     <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json    -
+  assignment baseline (not written (WhatIf)) <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json -
+  
+  
+  [oer-s64] WhatIf: nothing was created, restored, removed or written.
+  [oer-s64] Done.
+  ```
+
+- [x] **0.3 The prerequisite script ran, every test object exists, and both baseline files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
 
   ```powershell
   foreach ($P in $BaselinePath, $AssignmentBaselinePath) {
@@ -1312,9 +1441,72 @@ sign-in block again.
   or holding another shape than Setup describes: the helpers cannot compare with it -- stop before
   any write, since the teardown restores from exactly these files. `raw/s64 is ignored by git:
   False`: stop, the baseline files would be committable.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Both baselines written BEFORE the first Created line (17 + 17 rules; every assignment count 0). Graph ACCEPTED the service principal as a member of the role-assignable group ("Added the service principal of oer-live-cc to oer-s64-ccrag.") and the group's P2D assignment is Provisioned. Two retries after a 404 on oer-s64-rag (replication), then success. raw/s64 is ignored by git: True.
 
-- [ ] **0.4 The identity check, the signed-in object id and no Azure Resource Manager token.** Read-only. Paste the two identity lines the sign-in block printed, then run:
+  ```text
+  [oer-s64] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.
+  [oer-s64] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Policy baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json (exists: False). Assignment baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json (exists: False).
+  [oer-s64] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s64] No Tenant Profile '<Alias>' on this machine; the sign-in names -TenantId.
+  [oer-s64] Microsoft Graph sign-in: signing in to Microsoft Graph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s64] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s64] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s64] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s64] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s64] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] No baseline files yet; this run captures both before its first write.
+  [oer-s64] Wrote the policy baseline (17 + 17 rules): <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json
+  [oer-s64] Wrote the assignment baseline (Reports Reader: eligible 0, active 0; Message Center Reader: eligible 0, active 0): <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json
+  [oer-s64] Created user person1@example.com (disabled).
+  [oer-s64] Created user person2@example.com (disabled).
+  [oer-s64] Created group oer-s64-rag (role-assignable).
+  [oer-s64] Created group oer-s64-plain.
+  [oer-s64] Created group oer-s64-ccrag (role-assignable).
+  [oer-s64] Reading the members of oer-s64-rag, created moments ago failed (attempt 1 of 6, likely replication delay): Microsoft Graph answered 404 to GET v1.0/groups/<id>/members: Request_ResourceNotFound -- Resource '<id>' does not exist or one of its queried reference-property objects are not present. -- retrying in 5 s.
+  [oer-s64] Adding person2@example.com to oer-s64-rag failed (attempt 1 of 6, likely replication delay): Microsoft Graph answered 404 to POST v1.0/groups/<id>/members/$ref: Request_ResourceNotFound -- Resource '<id>' does not exist or one of its queried reference-property objects are not present. -- retrying in 5 s.
+  [oer-s64] Added person2@example.com to oer-s64-rag.
+  [oer-s64] Requested the active Message Center Reader assignment of oer-live-cc (P2D): Provisioned.
+  [oer-s64] Added the service principal of oer-live-cc to oer-s64-ccrag.
+  [oer-s64] Requested the active Message Center Reader assignment of oer-s64-ccrag (P2D): Provisioned.
+  [oer-s64] Reading back the active Message Center Reader assignment of oer-s64-ccrag failed (attempt 1 of 6, likely replication delay): the schedule is not listed yet -- retrying in 10 s.
+  [oer-s64] Reading back the active Message Center Reader assignment of oer-s64-ccrag failed (attempt 2 of 6, likely replication delay): the schedule is not listed yet -- retrying in 10 s.
+  
+  [oer-s64] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  
+  Kind                                      Name                                                                                        Id
+  ----                                      ----                                                                                        --
+  user                                      person1@example.com                                                       00000000-0000-0000-0000-000000000005
+  user                                      person2@example.com                                                       00000000-0000-0000-0000-000000000006
+  group                                     oer-s64-rag                                                                                 00000000-0000-0000-0000-000000000007
+  group                                     oer-s64-plain                                                                               00000000-0000-0000-0000-000000000008
+  group                                     oer-s64-ccrag                                                                               00000000-0000-0000-0000-000000000009
+  group member                              oer-s64-rag <- person2@example.com                                        00000000-0000-0000-0000-000000000006
+  group member                              oer-s64-ccrag <- oer-live-cc                                                                00000000-0000-0000-0000-000000000010
+  directory role (built-in, fixed)          Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy                     Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)          Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy                     Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  own assignment                            Message Center Reader, active, P2D, of oer-live-cc (schedule)                               00000000-0000-0000-0000-000000000011
+  group assignment                          Message Center Reader, active, P2D, of oer-s64-ccrag (schedule)                             00000000-0000-0000-0000-000000000012
+  policy baseline (written by this run)     <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json    -
+  assignment baseline (written by this run) <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json -
+  
+  
+  [oer-s64] Done.
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  baseline-directory-policies.json: exists True; written 2026-09-29T22:13:39
+  baseline-directory-assignments.json: exists True; written 2026-09-29T22:13:39
+  policy baseline: Reports Reader: 17 rules; policyId recorded True; roleDefinitionId recorded True
+  policy baseline: Message Center Reader: 17 rules; policyId recorded True; roleDefinitionId recorded True
+  assignment baseline: Reports Reader: eligible 0, active 0; roleDefinitionId recorded True
+  assignment baseline: Message Center Reader: eligible 0, active 0; roleDefinitionId recorded True
+  raw/s64 is ignored by git: True
+  ```
+
+- [x] **0.4 The identity check, the signed-in object id and no Azure Resource Manager token.** Read-only. Paste the two identity lines the sign-in block printed, then run:
 
   ```powershell
   $S64SignedIn = & (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }
@@ -1334,9 +1526,18 @@ sign-in block again.
   would be withheld with `prune withheld: the signed-in identity's object id is unknown`; record it
   and stop before section 4. `oer-live-cc's service principal: False` with a GUID: the claim names
   someone else -- stop. An ARM token `True`: the sign-in block was changed; sign in again as given.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. identity check True, True; the signed-in object id is a GUID and is oer-live-cc's service principal: True, True; no Azure Resource Manager token.
 
-- [ ] **0.5 Record the object ids every later check compares against.** Read-only.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  the module's signed-in object id is a GUID: True
+  the module's signed-in object id is oer-live-cc's service principal: True
+  the session holds an Azure Resource Manager token: False
+  ```
+
+- [x] **0.5 Record the object ids every later check compares against.** Read-only.
 
   ```powershell
   $U1 = Get-S64RawUser -Upn $User1Upn
@@ -1377,7 +1578,21 @@ sign-in block again.
   a member missing from `oer-s64-rag` or an extra one, any member of `oer-s64-ccrag` other than
   `oer-live-cc`, or a `raw ... read FAILED` line -- a 403 there is a missing permission (see Stop
   conditions). `1 users match` for `oer-s64-nobody`: stop, 4.2 cannot run as written.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass, with one measured deviation: "oer-s64-ccrag: ... members []". App-only, Graph's untyped groups/{id}/members does not list a service principal member: the same group read as groups/{id}/members/microsoft.graph.servicePrincipal returns [oer-live-cc], and the service principal's own memberOf lists oer-s64-ccrag (raw reads 22:15-22:16). The membership exists; Get-S64RawGroup reads the untyped form -- a checklist fix, not a module one. ids 8 of 8, all different.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  users: oer-s64-user1 enabled False; oer-s64-user2 enabled False
+  oer-s64-rag: isAssignableToRole 'True'; securityEnabled True; members [oer-s64-user2]
+  oer-s64-plain: isAssignableToRole '' (null prints as ''); securityEnabled True; members 0
+  oer-s64-ccrag: isAssignableToRole 'True'; securityEnabled True; members []
+  oer-live-cc service principal: status 200; displayName is oer-live-cc: True
+  --- raw user read: 0 users match 'oer-s64-nobody@<test domain>', not one
+  ids read: 8 of 8; all different: True
+  policy ids read: True True; different: True
+  ```
 
 ---
 
@@ -1386,7 +1601,7 @@ sign-in block again.
 Nothing below this section may run before it: 1.1 and 1.3 prove the tenant starts where the two
 baseline files say, and the Teardown restores exactly what those files hold.
 
-- [ ] **1.1 Both Get cmdlets, on both roles, against the assignment baseline -- and the Message Center Reader rows of the certificate identity and of `oer-s64-ccrag`.** Read-only.
+- [x] **1.1 Both Get cmdlets, on both roles, against the assignment baseline -- and the Message Center Reader rows of the certificate identity and of `oer-s64-ccrag`.** Read-only.
 
   ```powershell
   foreach ($R in $RoleRR, $RoleMCR) {
@@ -1432,9 +1647,62 @@ baseline files say, and the Teardown restores exactly what those files hold.
   although the prerequisite run added the membership: 4.5 cannot run -- re-run the prerequisite
   script. A third request in any call: the exact-case name did not match in one request -- record
   it.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Two requests per call; Message Center Reader Active holds <oer-live-cc> and <oer-s64-ccrag>, both Assigned, Direct, afterDateTime, 2 days; no inherited row for oer-live-cc (direct 1, other 0); the baseline diff only-live [oer-live-cc, oer-s64-ccrag]; both raw reads one row.
 
-- [ ] **1.2 A name in another letter case now matches -- the step 3 finding closed.** Read-only. The active read of Message Center Reader is used because it has a row (1.1), so "the same rows" is not vacuous.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 1.1 eligible, Reports Reader -- Get-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleEligibilitySchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Reports Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  === 1.1 active, Reports Reader -- Get-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Reports Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  === 1.1 eligible, Message Center Reader -- Get-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleEligibilitySchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  === 1.1 active, Message Center Reader -- Get-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 2
+  --- 1.1: Reports Reader, Eligible: 0 row(s)
+  --- 1.1: Reports Reader, Active: 0 row(s)
+  --- 1.1: Message Center Reader, Eligible: 0 row(s)
+  --- 1.1: Message Center Reader, Active: 2 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+  --- 1.1: Reports Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- 1.1: Reports Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  --- 1.1: Message Center Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- 1.1: Message Center Reader, Active: direct principals live 2, baseline 0; only live [oer-live-cc, oer-s64-ccrag]; only baseline []
+  oer-live-cc's own Message Center Reader rows: direct 1, other 0
+  --- 1.1-cc-mcr-active-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-live-cc>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  --- 1.1-ccrag-mcr-active-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-ccrag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  ```
+
+- [x] **1.2 A name in another letter case now matches -- the step 3 finding closed.** Read-only. The active read of Message Center Reader is used because it has a row (1.1), so "the same rows" is not vacuous.
 
   ```powershell
   Invoke-S64Call -Cmdlet Get-OERActiveDirectoryRoleAssignment -Splat @{ Role = $RoleMCR } -Label '1.2a exact case'
@@ -1469,9 +1737,60 @@ baseline files say, and the Teardown restores exactly what those files hold.
   case after all (not a defect; record it, since the rationale says the filter is case-sensitive);
   a schedule request in (e), or `RoleDefinitionReadFailed` there (a lookup that answered is not a
   refused one); a role lookup in (c).
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. (b) three requests and the same schedules; (c) one request; (d) three requests, True, True; (e) the filter and the list, RoleDefinitionNotFound, no schedule request.
 
-- [ ] **1.3 Both roles' PIM policies against the policy baseline, and their two permanent settings.** Read-only. Sections 2 and 3 change these settings; T.3 compares with this.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 1.2a exact case -- Get-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 2
+  === 1.2b lower case -- Get-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'message center reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 2
+  rows: exact 2, lower case 2; the same schedules: True
+  === 1.2c by role definition id -- Get-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 2
+  by id: the same schedules: True
+  === 1.2d policy by name in lower case -- Get-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'reports reader'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Reports Reader>'&$expand=policy($expand=rules)
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  policy: the one by exact name: True; RoleName as typed: True
+  === 1.2e a name no role has -- Get-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'oer-s64-no-such-role'&$select=id,displayName
+      GET v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Get-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [RoleDefinitionNotFound,Get-OEREligibleDirectoryRoleAssignment]: No Microsoft Entra directory role definition named 'oer-s64-no-such-role' was found. Use Tab completion on -Role, or pass the role definition id directly.
+  --- objects returned: 0
+  ```
+
+- [x] **1.3 Both roles' PIM policies against the policy baseline, and their two permanent settings.** Read-only. Sections 2 and 3 change these settings; T.3 compares with this.
 
   ```powershell
   Show-S64BaselineDiff -Label '1.3'
@@ -1494,7 +1813,18 @@ baseline files say, and the Teardown restores exactly what those files hold.
   **Failure looks like:** a count above `0` -- a policy differs from the baseline the script just
   recorded: someone changed it in between; stop. A permanent setting already `False`: 2.5 or 3.1's
   closing step then answers `NoChange` for it -- carry on, and record it.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Both policies 0 rules differing; both roles eligible permanent True P365D, active permanent True P180D; activation maximum 1 hour.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 1.3: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- 1.3: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- 1.3 Reports Reader: <policy of Reports Reader>; RoleName 'Reports Reader'; eligible: permanent allowed True, P365D; active: permanent allowed True, P180D
+  --- 1.3 Message Center Reader: <policy of Message Center Reader>; RoleName 'Message Center Reader'; eligible: permanent allowed True, P365D; active: permanent allowed True, P180D
+  Reports Reader: activation max hours 1 -- section 6 activates for at most this long
+  ```
 
 ---
 
@@ -1504,7 +1834,7 @@ Each write is run twice: first with `-WhatIf` (a guard that failed would print a
 nothing is written), then for real, only once the plan matches. Every read-back waits for Graph to
 list what it has just accepted.
 
-- [ ] **2.1 A time-bound ELIGIBLE assignment for `oer-s64-user1` on Reports Reader, read back raw.**
+- [x] **2.1 A time-bound ELIGIBLE assignment for `oer-s64-user1` on Reports Reader, read back raw.**
 
   The plan:
 
@@ -1542,9 +1872,43 @@ list what it has just accepted.
   body -- record its message verbatim (redacted); the raw window other than 3 days, or the module's
   `DurationDays` other than the raw window rounded; `DurationDays (none)` with an end -- the converter
   misreads Graph's shape.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Provisioned. Graph stores the P3D request as afterDateTime (endDateTime set, no duration); a window of 3 days; the module DurationDays 3.
 
-- [ ] **2.2 A time-bound ACTIVE assignment for the role-assignable group on Message Center Reader.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Create eligible directory role assignment" on target "eligible directory role 'Reports Reader' for User 'person1@example.com' at directory scope '/'".
+  === 2.1 plan -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.1 write -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminAssign; Status Provisioned; role <Reports Reader>; principal <oer-s64-user1>; scope '/'; expiration 'afterDuration', duration 'P3D', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  --- 2.1-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 3 day(s)
+      module: <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  ```
+
+- [x] **2.2 A time-bound ACTIVE assignment for the role-assignable group on Message Center Reader.**
 
   The plan:
 
@@ -1575,9 +1939,46 @@ list what it has just accepted.
   **Failure looks like:** `GroupNotRoleAssignable` -- the group is role-assignable (0.5): the
   role-assignable read misreads Graph; no `groups/<oer-s64-rag>` read -- the check did not run for a
   group; Graph refusing a group principal -- record the message.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. The role-assignable read ran; Provisioned; the raw row listed after one 10 s wait; a window of 2 days.
 
-- [ ] **2.3 `GroupNotRoleAssignable` for the plain group -- and NO write request.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Create active directory role assignment" on target "active directory role 'Message Center Reader' for Group 'oer-s64-rag' at directory scope '/'".
+  === 2.2 plan -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-rag'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-rag>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.2 write -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-rag'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-rag>?$select=id,isAssignableToRole
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Active; Action adminAssign; Status Provisioned; role <Message Center Reader>; principal <oer-s64-rag>; scope '/'; expiration 'afterDuration', duration 'P2D', end set False; justification 'Omnicit.EntraRBAC: directory role active assignment'
+      (2.2-raw: 0 row(s) listed, waiting -- attempt 1 of 6)
+  --- 2.2-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-rag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  2.2 schedule id captured: True
+  ```
+
+- [x] **2.3 `GroupNotRoleAssignable` for the plain group -- and NO write request.**
 
   ```powershell
   $New23 = @{ Role = $RoleRR; Group = $PlainName; DurationDays = 1 }
@@ -1598,9 +1999,41 @@ list what it has just accepted.
   recorded; the guard reads both as not role-assignable. The raw schedule read: 0 rows.
   **Failure looks like:** a `POST` line -- the guard did not stop the request (Graph then refuses
   it, or worse accepts it: stop and record); a `What if:` line; a row in the raw read.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. GroupNotRoleAssignable in both runs and no POST; raw isAssignableToRole '' (null); 0 rows.
 
-- [ ] **2.4 A user's id passed as `-PrincipalId` passes the role-assignable check: Graph answers 404 for `groups/{id}`.** An ELIGIBLE, time-bound assignment of `oer-s64-user2` on Message Center Reader -- 4.1 and 4.2 rely on it staying.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.3 plan -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-plain'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-plain>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-plain>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [GroupNotRoleAssignable,New-OEREligibleDirectoryRoleAssignment]: Group 'oer-s64-plain' is not role-assignable (isAssignableToRole is false), so it cannot hold a Microsoft Entra directory role. isAssignableToRole can only be set when a group is created: create a role-assignable group (New-OERGroup -RoleAssignable) and assign the role to it.
+  --- objects returned: 0
+  === 2.3 for real -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-plain'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-plain>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-plain>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [GroupNotRoleAssignable,New-OEREligibleDirectoryRoleAssignment]: Group 'oer-s64-plain' is not role-assignable (isAssignableToRole is false), so it cannot hold a Microsoft Entra directory role. isAssignableToRole can only be set when a group is created: create a role-assignable group (New-OERGroup -RoleAssignable) and assign the role to it.
+  --- objects returned: 0
+  raw: status 200; isAssignableToRole ''
+  --- 2.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-plain>: 0 row(s)
+  ```
+
+- [x] **2.4 A user's id passed as `-PrincipalId` passes the role-assignable check: Graph answers 404 for `groups/{id}`.** An ELIGIBLE, time-bound assignment of `oer-s64-user2` on Message Center Reader -- 4.1 and 4.2 rely on it staying.
 
   The plan, and the raw answer the check expects:
 
@@ -1636,9 +2069,43 @@ list what it has just accepted.
   with another code than the two declared (the request still proceeds, but the check reads a
   failure where it should read "not a group": record the raw code); `GroupNotRoleAssignable`; a
   `users` request.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. groups/<oer-s64-user2> answered 404 Request_ResourceNotFound; no "Could not check" line; Provisioned; a window of 2 days.
 
-- [ ] **2.5 `PermanentAssignmentNotAllowed`: Message Center Reader's policy set to refuse permanent active assignments, then a permanent request -- no write of any kind, and the policy unchanged by it.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Create eligible directory role assignment" on target "eligible directory role 'Message Center Reader' for principal '00000000-0000-0000-0000-000000000006' at directory scope '/'".
+  === 2.4 plan -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-user2>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  raw: groups/<oer-s64-user2> answers status 404, error code 'Request_ResourceNotFound'
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.4 write -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-user2>?$select=id,isAssignableToRole
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminAssign; Status Provisioned; role <Message Center Reader>; principal <oer-s64-user2>; scope '/'; expiration 'afterDuration', duration 'P2D', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  --- 2.4-raw: raw roleEligibilitySchedules of <Message Center Reader> for <oer-s64-user2>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  ```
+
+- [x] **2.5 `PermanentAssignmentNotAllowed`: Message Center Reader's policy set to refuse permanent active assignments, then a permanent request -- no write of any kind, and the policy unchanged by it.**
 
   The plan for the policy:
 
@@ -1676,9 +2143,66 @@ list what it has just accepted.
   **Failure looks like:** a `POST` or `PATCH` in 2.5b -- the policy was opened implicitly or the
   request was sent; a count above `0`; a row in the raw read. A `NoChange` error in 2.5a: 1.3
   recorded permanent active already refused -- carry on to 2.5b, and record it.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. One PATCH, Expiration_Admin_Assignment; PermanentAssignmentNotAllowed in both runs with no POST or PATCH; rules differing 0; 0 rows.
 
-- [ ] **2.6 Remove by pipeline from Get -- and a named principal alongside the pipe is refused.** Removes 2.1's assignment.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Expiration_Admin_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004'".
+  === 2.5a plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Message Center Reader>'&$expand=policy($expand=rules)
+  --- the cmdlet's own verbose lines: 2
+      [Set-OERDirectoryRoleManagementPolicy] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [Set-OERDirectoryRoleManagementPolicy] Policy id: '<policy of Message Center Reader>'.
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.5a write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Message Center Reader>'&$expand=policy($expand=rules)
+      PATCH v1.0/policies/roleManagementPolicies/<policy of Message Center Reader>/rules/Expiration_Admin_Assignment
+  --- the cmdlet's own verbose lines: 2
+      [Set-OERDirectoryRoleManagementPolicy] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [Set-OERDirectoryRoleManagementPolicy] Policy id: '<policy of Message Center Reader>'.
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 2.5a returned: <policy of Message Center Reader>; RoleName 'Message Center Reader'; eligible: permanent allowed True, P365D; active: permanent allowed False, P180D; ChangedRuleIds [Expiration_Admin_Assignment]
+  === 2.5b plan -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Message Center Reader>'&$expand=policy($expand=rules)
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [PermanentAssignmentNotAllowed,New-OERActiveDirectoryRoleAssignment]: The PIM policy of Microsoft Entra directory role 'Message Center Reader' does not allow permanent active assignments, so Microsoft Graph would refuse this one, and Omnicit.EntraRBAC never changes a policy implicitly. Nothing was changed. Allow it first with Set-OERDirectoryRoleManagementPolicy -Role 'Message Center Reader' -AllowPermanentActiveAssignment $true, or declare allowPermanentActiveAssignment: true for the role under directoryRoleManagementPolicies in the same apply document (that section runs first), or pass -DurationDays for a time-bound assignment.
+  --- objects returned: 0
+  === 2.5b for real -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Message Center Reader>'&$expand=policy($expand=rules)
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [PermanentAssignmentNotAllowed,New-OERActiveDirectoryRoleAssignment]: The PIM policy of Microsoft Entra directory role 'Message Center Reader' does not allow permanent active assignments, so Microsoft Graph would refuse this one, and Omnicit.EntraRBAC never changes a policy implicitly. Nothing was changed. Allow it first with Set-OERDirectoryRoleManagementPolicy -Role 'Message Center Reader' -AllowPermanentActiveAssignment $true, or declare allowPermanentActiveAssignment: true for the role under directoryRoleManagementPolicies in the same apply document (that section runs first), or pass -DurationDays for a time-bound assignment.
+  --- objects returned: 0
+  Message Center Reader rules differing from the read before the request: 0
+  --- 2.5-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-user1>: 0 row(s)
+  ```
+
+- [x] **2.6 Remove by pipeline from Get -- and a named principal alongside the pipe is refused.** Removes 2.1's assignment.
 
   The plan, and the refusal:
 
@@ -1713,9 +2237,48 @@ list what it has just accepted.
   `oer-s64-user2` lost something (it has no Reports Reader assignment yet: the raw read of 4.1a
   would show it); a lookup request in 2.6b; Graph refusing an `adminRemove` without a schedule --
   record its message; a row left.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. AmbiguousPrincipal with no request; the plan with no request; the removal Revoked; 0 rows left.
 
-- [ ] **2.7 `-Action adminUpdate` changes a window.** 2.2's active assignment of `oer-s64-rag` on Message Center Reader, from two days to four.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  rows piped: 1
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  === 2.6a a named principal and the pipe -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 0
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 0)
+      ERROR [AmbiguousPrincipal,Remove-OEREligibleDirectoryRoleAssignment]: A principal was supplied by name while objects carrying their own PrincipalId '<oer-s64-user1>' are being piped in. The piped -PrincipalId takes precedence, so the named principal would be ignored and each piped item's own principal would lose its eligible assignment instead. Supply either the named principal or the pipeline, not both.
+  --- objects returned: 0
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === 2.6b plan -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 2.6b remove -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Reports Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminRemove; Status Revoked; role <Reports Reader>; principal <oer-s64-user1>; scope '/'; expiration '', duration '', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment removal'
+  --- 2.6-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 0 row(s)
+  module rows left: 0
+  ```
+
+- [x] **2.7 `-Action adminUpdate` changes a window.** 2.2's active assignment of `oer-s64-rag` on Message Center Reader, from two days to four.
 
   The plan:
 
@@ -1744,7 +2307,45 @@ list what it has just accepted.
   **Failure looks like:** Graph refusing `adminUpdate` -- record its message; two rows (the old
   window kept beside the new one: section 3's convergence would then depend on which row the read
   lists first -- record it); a window of 2 days after the wait.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. adminUpdate Provisioned; still ONE row, a window of 4 days. "the schedule id is 2.2's: False" -- Graph replaced the schedule instead of updating it in place (measurement; the engine never matches on the schedule id).
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update active directory role assignment" on target "active directory role 'Message Center Reader' for Group 'oer-s64-rag' at directory scope '/'".
+  === 2.7 plan -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-rag'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-rag>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 2.2-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-rag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  === 2.7 write -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups?$filter=displayName eq 'oer-s64-rag'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-rag>?$select=id,isAssignableToRole
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Active; Action adminUpdate; Status Provisioned; role <Message Center Reader>; principal <oer-s64-rag>; scope '/'; expiration 'afterDuration', duration 'P4D', end set False; justification 'Omnicit.EntraRBAC: directory role active assignment'
+  --- 2.7-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-rag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 4 day(s)
+  the schedule id is 2.2's: False
+  ```
 
 ---
 
@@ -1764,7 +2365,7 @@ $E4 = New-S64Entry -Role $RoleRR -Principal $RagName -Type Group -Kind Active -D
 $Doc3 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3, $E4
 ```
 
-- [ ] **3.1 The policy is opened BEFORE the assignments are created.**
+- [x] **3.1 The policy is opened BEFORE the assignments are created.**
 
   First close Reports Reader's policy -- the plan, then the write once the plan matches:
 
@@ -1828,9 +2429,127 @@ $Doc3 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3, $E4
   before the policy, or the pre-check read a stale policy (record Graph's timing); Graph refusing a
   permanent request after the policy was opened -- record the message (a propagation delay is a
   finding, not a pass); an `Extra` row; the rows in another order.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. The policy closed (two PATCHes in rule order); the plan Skipped=5 in order, no Extra; the apply Updated=1 then Created=4, no PermanentAssignmentNotAllowed; the raw windows as expected; the role-wide read lists no MemberType Group row.
 
-- [ ] **3.2 The same document again: only `Unchanged` -- the proof that Graph's windows converge (G11).**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Update rules: Expiration_Admin_Eligibility, Expiration_Admin_Assignment" on target "directory role management policy 'DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002'".
+  === 3.1a plan -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Reports Reader>'&$expand=policy($expand=rules)
+  --- the cmdlet's own verbose lines: 2
+      [Set-OERDirectoryRoleManagementPolicy] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [Set-OERDirectoryRoleManagementPolicy] Policy id: '<policy of Reports Reader>'.
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.1a write -- Set-OERDirectoryRoleManagementPolicy
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Reports Reader>'&$expand=policy($expand=rules)
+      PATCH v1.0/policies/roleManagementPolicies/<policy of Reports Reader>/rules/Expiration_Admin_Eligibility
+      PATCH v1.0/policies/roleManagementPolicies/<policy of Reports Reader>/rules/Expiration_Admin_Assignment
+  --- the cmdlet's own verbose lines: 2
+      [Set-OERDirectoryRoleManagementPolicy] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [Set-OERDirectoryRoleManagementPolicy] Policy id: '<policy of Reports Reader>'.
+  --- warnings: 0
+  --- errors published by Set-OERDirectoryRoleManagementPolicy: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  --- 3.1a returned: <policy of Reports Reader>; RoleName 'Reports Reader'; eligible: permanent allowed False, P365D; active: permanent allowed False, P180D; ChangedRuleIds [Expiration_Admin_Eligibility, Expiration_Admin_Assignment]
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.1b
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Reports Reader",
+            "allowPermanentEligibility": true,
+            "allowPermanentActiveAssignment": true
+          }
+        ],
+        "directoryRoleAssignments": [
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s64-user1@<test domain>",
+            "assignmentType": "Eligible",
+            "durationDays": 5
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s64-user1@<test domain>",
+            "assignmentType": "Active",
+            "permanent": true
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s64-rag",
+            "principalType": "Group",
+            "assignmentType": "Eligible"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s64-rag",
+            "principalType": "Group",
+            "assignmentType": "Active",
+            "durationDays": 5
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  What if: Performing the operation "Update directory role management policy" on target "Reports Reader".
+  What if: Performing the operation "create eligible directory role assignment" on target "Reports Reader -> person1@example.com (Eligible)".
+  What if: Performing the operation "create active directory role assignment" on target "Reports Reader -> person1@example.com (Active)".
+  What if: Performing the operation "create eligible directory role assignment" on target "Reports Reader -> oer-s64-rag (Eligible)".
+  What if: Performing the operation "create active directory role assignment" on target "Reports Reader -> oer-s64-rag (Active)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Skipped | would update directory role management policy for 'Reports Reader' (allowPermanentEligibility=True, allowPermanentActiveAssignment=True)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Skipped | would create the eligible assignment (time-bound assignment (5 days) is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Skipped | would create the active assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Skipped | would create the eligible assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Skipped | would create the active assignment (time-bound assignment (5 days) is absent)
+  --- action counts: Skipped=5
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.1c
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+  --- action counts: Created=4, Updated=1
+  --- 3.1-user1-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  --- 3.1-user1-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  --- 3.1-rag-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-rag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  --- 3.1-rag-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-rag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  --- 3.1 after: Reports Reader, Eligible: 2 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+  --- 3.1 after: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- 3.1 policy after: <policy of Reports Reader>; RoleName 'Reports Reader'; eligible: permanent allowed True, P365D; active: permanent allowed True, P180D
+      [directoryRoleManagementPolicies] Reports Reader | Updated | updated directory role management policy for 'Reports Reader' (allowPermanentEligibility=True, allowPermanentActiveAssignment=True)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Created | created the eligible assignment (time-bound assignment (5 days) is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Created | created the eligible assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Created | created the active assignment (time-bound assignment (5 days) is absent)
+  ```
+
+- [x] **3.2 The same document again: only `Unchanged` -- the proof that Graph's windows converge (G11).**
 
   The plan, then the apply once the plan matches:
 
@@ -1853,9 +2572,42 @@ $Doc3 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3, $E4
   run 3.2a again; if it persists, record it: an assignment the read misses is re-created every run);
   `Updated` -- the live window rounds to another number of days than was declared: record the raw
   window from 3.1; an ARM token `True`.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Both runs Unchanged=5; no Azure Resource Manager token.
 
-- [ ] **3.3 A changed `durationDays` is `Updated` with `adminUpdate`, and the run after it is `Unchanged`.** `oer-s64-user1`'s eligible assignment from five days to seven.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.2a
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Unchanged=5
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.2b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Unchanged=5
+  the session holds an Azure Resource Manager token: False
+  ```
+
+- [x] **3.3 A changed `durationDays` is `Updated` with `adminUpdate`, and the run after it is `Unchanged`.** `oer-s64-user1`'s eligible assignment from five days to seven. Run 3.3b at least five minutes after 3.1c (Run order).
 
   ```powershell
   $E1 = New-S64Entry -Role $RoleRR -Principal $User1Upn -Kind Eligible -Days 7
@@ -1890,7 +2642,423 @@ $Doc3 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3, $E4
   `What if:` line.
   **Failure looks like:** `Created` instead of `Updated` -- the live row was not matched; two rows in
   the raw read; 3.3c not `Unchanged` -- the new window does not converge: record the raw window.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  **FAIL.** 3.3a as expected (would update, live 5 days, declared 7). 3.3b: Graph refused the engine's adminUpdate of oer-s64-user1's ELIGIBLE Reports Reader assignment with "ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes." (HTTP 400); the row Failed, 12 error records, the raw window still 5 days. 3.3c planned the same update again, so 3.3d was not run. Diagnosis, two probes on prefixed test objects and the two roles: the same request with afterDateTime instead of afterDuration, sent raw, got the same 400; the module's adminUpdate of oer-s64-user2's eligible Message Center Reader assignment (2 -> 3 days), a principal with NO active assignment of that role, was Provisioned. So Graph refuses an eligible adminUpdate while the same principal holds an ACTIVE assignment of the same role (oer-s64-user1 holds Reports Reader active and permanent since 3.1): a document declaring both kinds for one principal cannot converge a changed eligible window. Module finding for the follow-up.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3a
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  What if: Performing the operation "update eligible directory role assignment" on target "Reports Reader -> person1@example.com (Eligible)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Skipped | would update the eligible assignment (duration differs (live 5 days, declared 7 days))
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=1, Unchanged=4
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 12
+      ERROR []:
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: BadRequest (Bad Request).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: BadRequest (Bad Request).
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR []:
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR []:
+      ERROR [ActiveDurationTooShort,New-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort,New-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort,Invoke-OERStructure]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | failed to update the eligible assignment: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Failed=1, Unchanged=4
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 1 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 2 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 3 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 4 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 5 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 6 of 6)
+  --- 3.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  ##### step  +code -- 2026-09-29 22:27:41
+  diagnostic adminUpdate afterDateTime: status 400; request status ''; error 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.'
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 1 of 6)
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 2 of 6)
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 3 of 6)
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 4 of 6)
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 5 of 6)
+      (3.3-diag-raw: 1 row(s) listed, waiting -- attempt 6 of 6)
+  --- 3.3-diag-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  ##### step  +code -- 2026-09-29 22:29:10
+  What if: Performing the operation "Update eligible directory role assignment" on target "eligible directory role 'Message Center Reader' for principal '00000000-0000-0000-0000-000000000006' at directory scope '/'".
+  === diag plan: user2 MCR eligible 2 -> 3 days -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-user2>?$select=id,isAssignableToRole
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  === diag write: user2 MCR eligible 2 -> 3 days -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/groups/<oer-s64-user2>?$select=id,isAssignableToRole
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Message Center Reader' to '<Message Center Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminUpdate; Status Provisioned; role <Message Center Reader>; principal <oer-s64-user2>; scope '/'; expiration 'afterDuration', duration 'P3D', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  --- diag-user2-mcr-raw: raw roleEligibilitySchedules of <Message Center Reader> for <oer-s64-user2>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 3 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 1 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 2 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 3 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 4 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 5 of 6)
+      (3.3-raw: 1 row(s) listed, waiting -- attempt 6 of 6)
+  --- 3.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  === 3.3c
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  What if: Performing the operation "update eligible directory role assignment" on target "Reports Reader -> person1@example.com (Eligible)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Skipped | would update the eligible assignment (duration differs (live 5 days, declared 7 days))
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=1, Unchanged=4
+  ```
+
+  **Follow-up (CC as oer-live-cc, 2026-09-30, redacted per docs/live-verification/README.md): PASS on re-run; the first run's refusal is a Graph timing rule, measured.** Graph refuses to update or remove ANY of a principal's assignments of a role (either kind) with ActiveDurationTooShort until the principal's ACTIVE assignment of that role has run for five minutes; a create is never refused. The first 3.3b ran two minutes after 3.1c created oer-s64-user1's active assignment. Measured on oer-s64-user1 and Reports Reader: M.2 adminUpdate WITH targetScheduleId, active 16 min old (time-bound): 201; M.3 control WITHOUT targetScheduleId, 16 min: 201 -- targetScheduleId is not the lever; M.4 active updated to permanent: 201, and Graph removed the eligible assignment by itself (no request); M.6 adminUpdate with targetScheduleId, active 3 min old (permanent): 400; M.7 the same without startDateTime: 400 (the one variant allowed); the re-run 3.3b 14 min after the active's start: Updated (and Graph had removed the permanent active assignment by itself; the item re-created it); 3.3c and 3.3d Unchanged=5 twice (convergence). 3.3e/3.3f: an eight-day window 2.6 min after the active's start was refused and the row named the refusal (wording of efbafde; 9884c8c states the five-minute rule, unit-pinned). Teardown T.1 confirms it for adminRemove: refused at 3.7 min, accepted at 8 min. The write path is unchanged (no targetScheduleId, never a remove plus a re-create); the Failed row now names the rule and says to apply again in five minutes.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === M.1 write: recreate user1 eligible (5 days) -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminAssign; Status Provisioned; role <Reports Reader>; principal <oer-s64-user1>; scope '/'; expiration 'afterDuration', duration 'P5D', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  --- M.1-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  eligibility schedule id captured: True
+  --- M.1-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+  user1 holds Reports Reader active (direct) at the same time: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  M.2 request: POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+      {
+    "action": "adminUpdate",
+    "principalId": "<oer-s64-user1>",
+    "roleDefinitionId": "<Reports Reader>",
+    "directoryScopeId": "/",
+    "justification": "Omnicit.EntraRBAC live measurement 3.3: adminUpdate with targetScheduleId",
+    "targetScheduleId": "<not a test object>",
+    "scheduleInfo": {
+      "startDateTime": "<now, UTC>",
+      "expiration": {
+        "type": "afterDuration",
+        "duration": "P7D"
+      }
+    }
+  }
+  targetScheduleId is the eligibility schedule of <oer-s64-user1> on <Reports Reader>: True
+  M.2 answer: HTTP 201; request status 'Provisioned'; action 'adminUpdate'; targetScheduleId echoed is the schedule: False; error ''
+  --- M.2-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  M.3 control request (no targetScheduleId): POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+      {
+    "action": "adminUpdate",
+    "principalId": "<oer-s64-user1>",
+    "roleDefinitionId": "<Reports Reader>",
+    "directoryScopeId": "/",
+    "justification": "Omnicit.EntraRBAC live measurement 3.3: control without targetScheduleId",
+    "scheduleInfo": {
+      "startDateTime": "<now, UTC>",
+      "expiration": {
+        "type": "afterDuration",
+        "duration": "P6D"
+      }
+    }
+  }
+  M.3 answer: HTTP 201; request status 'Provisioned'; error ''
+  --- M.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 6 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === M.4 write: user1 active 1 day -> permanent (eligible present) -- New-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 4
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole' and roleDefinitionId eq '<Reports Reader>'&$expand=policy($expand=rules)
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OERActiveDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Active; Action adminUpdate; Status Provisioned; role <Reports Reader>; principal <oer-s64-user1>; scope '/'; expiration 'noExpiration', duration '', end set False; justification 'Omnicit.EntraRBAC: directory role active assignment'
+  --- M.4-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 0 row(s)
+  --- M.4-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 0 row(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- M.4b-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  --- M.4b-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 0 row(s)
+  --- M.4b state: Reports Reader, Eligible: 0 row(s)
+  --- M.4b state: Reports Reader, Active: 1 row(s)
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  roleEligibilityScheduleRequests for <oer-s64-user1> on <Reports Reader>: status 200; 7 request(s)
+      created 09/29/2026 20:18:11; action adminAssign; status Provisioned; expiration afterDuration P3D
+      created 09/29/2026 20:21:02; action adminRemove; status Revoked; expiration
+      created 09/29/2026 20:23:07; action adminAssign; status Provisioned; expiration afterDuration P5D
+      created 09/30/2026 06:44:26; action adminRemove; status Revoked; expiration
+      created 09/30/2026 07:00:31; action adminAssign; status Provisioned; expiration afterDuration P5D
+      created 09/30/2026 07:01:21; action adminUpdate; status Provisioned; expiration afterDuration P7D
+      created 09/30/2026 07:01:50; action adminUpdate; status Provisioned; expiration afterDuration P6D
+  roleAssignmentScheduleRequests for <oer-s64-user1> on <Reports Reader>: status 200; 3 request(s)
+      created 09/29/2026 20:23:09; action adminAssign; status Provisioned; expiration noExpiration
+      created 09/30/2026 06:45:09; action adminUpdate; status Provisioned; expiration afterDuration P1D
+      created 09/30/2026 07:02:52; action adminUpdate; status Provisioned; expiration noExpiration
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  roleEligibilitySchedules for <oer-s64-user1> on <Reports Reader>: status 200; rows 0
+  roleEligibilityScheduleInstances for <oer-s64-user1> on <Reports Reader>: status 200; rows 0
+  roleAssignmentSchedules for <oer-s64-user1> on <Reports Reader>: status 200; rows 1; memberType Direct
+  roleAssignmentScheduleInstances for <oer-s64-user1> on <Reports Reader>: status 200; rows 1; memberType Direct
+  the M.1 eligibility schedule read by id: status 404 UnknownError
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === M.5 write: user1 eligible 5 days while active is permanent -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      request: Kind Eligible; Action adminAssign; Status Provisioned; role <Reports Reader>; principal <oer-s64-user1>; scope '/'; expiration 'afterDuration', duration 'P5D', end set False; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  --- M.5-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  --- M.5-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  M.6 request: POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+      {
+    "action": "adminUpdate",
+    "principalId": "<oer-s64-user1>",
+    "roleDefinitionId": "<Reports Reader>",
+    "directoryScopeId": "/",
+    "justification": "Omnicit.EntraRBAC live measurement 3.3: adminUpdate with targetScheduleId, active permanent",
+    "targetScheduleId": "<not a test object>",
+    "scheduleInfo": {
+      "startDateTime": "<now, UTC>",
+      "expiration": {
+        "type": "afterDuration",
+        "duration": "P7D"
+      }
+    }
+  }
+  targetScheduleId is the eligibility schedule of <oer-s64-user1> on <Reports Reader>: True
+  M.6 answer: HTTP 400; request status ''; error 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.'
+  --- M.6-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  M.7 request: POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+      {
+    "action": "adminUpdate",
+    "principalId": "<oer-s64-user1>",
+    "roleDefinitionId": "<Reports Reader>",
+    "directoryScopeId": "/",
+    "justification": "Omnicit.EntraRBAC live measurement 3.3: variant without startDateTime",
+    "targetScheduleId": "<not a test object>",
+    "scheduleInfo": {
+      "expiration": {
+        "type": "afterDuration",
+        "duration": "P7D"
+      }
+    }
+  }
+  M.7 answer: HTTP 400; request status ''; error 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.'
+  --- M.7-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 5 day(s)
+  --- M.7-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  roleEligibilityScheduleRequests for <oer-s64-user1> on <Reports Reader>: 9
+      2026-09-29 20:18:11Z; action adminAssign; status Provisioned; afterDuration P3D; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+      2026-09-29 20:21:02Z; action adminRemove; status Revoked; (no schedule); justification 'Omnicit.EntraRBAC: directory role eligible assignment removal'
+      2026-09-29 20:23:07Z; action adminAssign; status Provisioned; afterDuration P5D; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+      2026-09-30 06:44:26Z; action adminRemove; status Revoked; (no schedule); justification 'Omnicit.EntraRBAC: directory role eligible assignment removal'
+      2026-09-30 07:00:31Z; action adminAssign; status Provisioned; afterDuration P5D; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+      2026-09-30 07:01:21Z; action adminUpdate; status Provisioned; afterDuration P7D; justification 'Omnicit.EntraRBAC live measurement 3.3: adminUpdate with targetScheduleId'
+      2026-09-30 07:01:50Z; action adminUpdate; status Provisioned; afterDuration P6D; justification 'Omnicit.EntraRBAC live measurement 3.3: control without targetScheduleId'
+      2026-09-30 07:05:39Z; action adminAssign; status Provisioned; afterDuration P5D; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+      2026-09-30 07:17:22Z; action adminUpdate; status Provisioned; afterDuration P7D; justification 'Omnicit.EntraRBAC: directory role eligible assignment'
+  roleAssignmentScheduleRequests for <oer-s64-user1> on <Reports Reader>: 4
+      2026-09-29 20:23:09Z; action adminAssign; status Provisioned; noExpiration ; justification 'Omnicit.EntraRBAC: directory role active assignment'
+      2026-09-30 06:45:09Z; action adminUpdate; status Provisioned; afterDuration P1D; justification 'Omnicit.EntraRBAC: directory role active assignment'
+      2026-09-30 07:02:52Z; action adminUpdate; status Provisioned; noExpiration ; justification 'Omnicit.EntraRBAC: directory role active assignment'
+      2026-09-30 07:17:25Z; action adminAssign; status Provisioned; noExpiration ; justification 'Omnicit.EntraRBAC: directory role active assignment'
+  --- M.8-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  --- M.8-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3a
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  What if: Performing the operation "update eligible directory role assignment" on target "Reports Reader -> person1@example.com (Eligible)".
+  What if: Performing the operation "create eligible directory role assignment" on target "Reports Reader -> oer-s64-rag (Eligible)".
+  What if: Performing the operation "create active directory role assignment" on target "Reports Reader -> oer-s64-rag (Active)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Skipped | would update the eligible assignment (duration differs (live 5 days, declared 7 days))
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Skipped | would create the eligible assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Skipped | would create the active assignment (time-bound assignment (5 days) is absent)
+  --- action counts: Skipped=3, Unchanged=2
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Updated | updated the eligible assignment (duration differs (live 5 days, declared 7 days))
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Created | created the eligible assignment (permanent assignment is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Created | created the active assignment (time-bound assignment (5 days) is absent)
+  --- action counts: Created=3, Unchanged=1, Updated=1
+  --- 3.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 3.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  === 3.3c
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Unchanged=5
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 3.3-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  === 3.3d
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Unchanged=5
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3e
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  What if: Performing the operation "update eligible directory role assignment" on target "Reports Reader -> person1@example.com (Eligible)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Skipped | would update the eligible assignment (duration differs (live 7 days, declared 8 days))
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=1, Unchanged=4
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 3.3f
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 12
+      ERROR []:
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: BadRequest (Bad Request).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: BadRequest (Bad Request).
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR []:
+      ERROR [ActiveDurationTooShort]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR []:
+      ERROR [ActiveDurationTooShort,New-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort,New-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      ERROR [ActiveDurationTooShort,Invoke-OERStructure]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- results, in the order returned: 5
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), which it does while the principal holds a permanent active assignment of the same role, so the eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Failed=1, Unchanged=4
+  --- 3.3f-eligible-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 7 day(s)
+  --- 3.3f-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <oer-s64-user1>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  ```
 
 ---
 
@@ -1911,7 +3079,7 @@ $E4   = New-S64Entry -Role $RoleRR -Principal $RagName -Type Group -Kind Active 
 $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
 ```
 
-- [ ] **4.1 An undeclared eligible assignment is `Extra` without `-Prune` and `Removed` with it -- and a pair the document does not declare is untouched.**
+- [x] **4.1 An undeclared eligible assignment is `Extra` without `-Prune` and `Removed` with it -- and a pair the document does not declare is untouched.**
 
   First the undeclared assignment, `oer-s64-user2` eligible on Reports Reader -- the plan, then the
   write once the plan matches:
@@ -1973,9 +3141,127 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   became a second pair; anything of Message Center Reader named; more than one target; a
   `MemberType Group` row as a target (see 4.4); the assertion printing `STOP` -- the `-Prune` line
   did not run: record the target.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass, with two recorded deviations. (1) The section 4 document was built with oer-s64-user1's eligible entry at FIVE days (the live window), not 3.3's seven, since 3.3 could not move it; nothing else in $Doc4 changed. (2) The raw reads list an INHERITED row for oer-s64-user2 (memberType Group, noExpiration, through oer-s64-rag's eligible assignment) beside the direct one: 2 rows after 4.1a, 1 (the inherited) after 4.1d -- the direct row was removed, the inherited one was never a candidate. 4.1b Extra=1 (user2 direct), Unchanged=5; 4.1c one target, allowed True; 4.1d Removed=1, Unchanged=5, no error; user2's Message Center Reader eligible row still there.
 
-- [ ] **4.2 An unresolved entry withholds the prune: a principal withholds its own pair, a role every pair of its kind.**
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Create eligible directory role assignment" on target "eligible directory role 'Reports Reader' for User 'person2@example.com' at directory scope '/'".
+  === 4.1a plan -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user2@<test domain>'&$select=id,userPrincipalName
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.1a write -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user2@<test domain>'&$select=id,userPrincipalName
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.1a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.1a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.1a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  === 4.1b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Extra | undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>' (use -Prune to remove)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Extra=1, Unchanged=5
+  === 4.1c
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared eligible directory role assignment" on target "Reports Reader -> 00000000-0000-0000-0000-000000000006 (Eligible)".
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureDirectoryRoleAssignment: would remove undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'.
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Skipped | would remove undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=1, Unchanged=5
+      target: Reports Reader -> <oer-s64-user2> (Eligible) -- Skipped; allowed: True
+  --- 4.1c plan: prune targets (would remove, removed or Extra): 1; every one allowed: True
+  === 4.1d
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -Confirm:$false
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureDirectoryRoleAssignment: removing undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'.
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Removed=1, Unchanged=5
+      target: Reports Reader -> <oer-s64-user2> (Eligible) -- Removed; allowed: True
+  --- 4.1d applied: prune targets (would remove, removed or Extra): 1; every one allowed: True
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 1 of 6)
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 2 of 6)
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 3 of 6)
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 4 of 6)
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 5 of 6)
+      (4.1d-user2-rr-raw: 1 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.1d-user2-rr-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 1 row(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  --- 4.1d-user2-mcr-raw: raw roleEligibilitySchedules of <Message Center Reader> for <oer-s64-user2>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 3 day(s)
+  --- 4.1 after: Reports Reader, Eligible: 2 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+  --- 4.1 after: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- 4.1 after: Message Center Reader, Eligible: 1 row(s)
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  --- 4.1 after: Message Center Reader, Active: 3 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 4; end set
+  ```
+
+- [x] **4.2 An unresolved entry withholds the prune: a principal withholds its own pair, a role every pair of its kind.**
 
   First `oer-s64-user2`'s undeclared eligible assignment on Reports Reader again -- the plan, then
   the write once the plan matches:
@@ -2036,9 +3322,162 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   the raw read after 4.2c showing 0 rows -- the withheld rule failed on a real run: stop and record
   it; in 4.2d only one withheld row -- the unresolved role withheld its own pair instead of every
   pair of its kind.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass (deviation (1) of 4.1 applies; the raw reads list the inherited row beside the direct one, 2 rows). 4.2b and 4.2c: the withheld Skipped row naming the nobody entry, Failed for the nobody entry, 0 targets; after the real -Prune run the direct row is still there. 4.2d: two withheld rows (the Reports Reader and Message Center Reader eligible pairs) naming the unresolved role entry; would create for oer-s64-rag's Message Center Reader eligible; 0 targets.
 
-- [ ] **4.3 The signed-in identity's own assignment is `Skipped` under `-Prune`, and stays.** The document declares (Message Center Reader, Active) for `oer-s64-rag` only, so the certificate identity's own active Message Center Reader assignment is an undeclared candidate in a declared pair -- and so is `oer-s64-ccrag`'s, which the certificate identity holds through its membership (4.5 runs the group guard on its own).
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Create eligible directory role assignment" on target "eligible directory role 'Reports Reader' for User 'person2@example.com' at directory scope '/'".
+  === 4.2a plan -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 2
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user2@<test domain>'&$select=id,userPrincipalName
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.2a write -- New-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 3
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Reports Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user2@<test domain>'&$select=id,userPrincipalName
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [New-OEREligibleDirectoryRoleAssignment] Resolved role 'Reports Reader' to '<Reports Reader>'.
+      [New-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by New-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  === 4.2b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 7
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Skipped | prune withheld: declared entry 'Reports Reader -> oer-s64-nobody@<test domain> (Eligible)' could not be resolved, so undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+  --- action counts: Failed=1, Skipped=1, Unchanged=5
+  --- 4.2b plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  === 4.2b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 7
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Skipped | prune withheld: declared entry 'Reports Reader -> oer-s64-nobody@<test domain> (Eligible)' could not be resolved, so undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+  --- action counts: Failed=1, Skipped=1, Unchanged=5
+  --- 4.2b plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  === 4.2c
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 7
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Skipped | prune withheld: declared entry 'Reports Reader -> oer-s64-nobody@<test domain> (Eligible)' could not be resolved, so undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+  --- action counts: Failed=1, Skipped=1, Unchanged=5
+  --- 4.2c applied: prune targets (would remove, removed or Extra): 0; every one allowed: True
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2c-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2a-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2a-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 1 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 2 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 3 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 4 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 5 of 6)
+      (4.2c-raw: 2 row(s) listed, waiting -- attempt 6 of 6)
+  --- 4.2c-raw: raw roleEligibilitySchedules of <Reports Reader> for <oer-s64-user2>: 2 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+      memberType Group; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type noExpiration, endDateTime set False, duration (none); window never ends
+  === 4.2d
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -WhatIf
+  What if: Performing the operation "create eligible directory role assignment" on target "Message Center Reader -> oer-s64-rag (Eligible)".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 9
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Skipped | prune withheld: declared entry 'oer-s64-no-such-role -> oer-s64-user1@<test domain> (Eligible)' could not be resolved, so undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-user2> (Eligible) | Skipped | prune withheld: declared entry 'oer-s64-no-such-role -> oer-s64-user1@<test domain> (Eligible)' could not be resolved, so undeclared eligible assignment of directory role 'Message Center Reader' for principal '<oer-s64-user2>' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] <Reports Reader> -> oer-s64-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] oer-s64-no-such-role -> oer-s64-user1@<test domain> (Eligible) | Failed | directory role 'oer-s64-no-such-role' could not be resolved to a role definition id
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-rag (Eligible) | Skipped | would create the eligible assignment (time-bound assignment (1 days) is absent)
+  --- action counts: Failed=1, Skipped=3, Unchanged=5
+  --- 4.2d plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  ```
+
+- [x] **4.3 The signed-in identity's own assignment is `Skipped` under `-Prune`, and stays.** The document declares (Message Center Reader, Active) for `oer-s64-rag` only, so the certificate identity's own active Message Center Reader assignment is an undeclared candidate in a declared pair -- and so is `oer-s64-ccrag`'s, which the certificate identity holds through its membership (4.5 runs the group guard on its own).
 
   ```powershell
   "the module's signed-in object id is oer-live-cc's service principal: $([string]::Equals([string](& (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }), $IdCc, [System.StringComparison]::OrdinalIgnoreCase))"
@@ -2080,9 +3519,69 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   membership read failed: record the message, 4.5 shows Graph's own answer;
   `prune withheld: the signed-in identity's object id is unknown` -- 0.4 should have caught it;
   the `oer-s64-rag` row `Updated` -- 2.7's window did not converge; any row naming Reports Reader.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Three rows: <oer-live-cc> Skipped (own), <oer-s64-ccrag> Skipped with the group guard's Detail verbatim, oer-s64-rag Unchanged; Skipped=2, Unchanged=1; 0 targets; the real run the same; both raw rows still there (Direct).
 
-- [ ] **4.4 A member of a role-assignable group: is its inherited row listed, and is it ever a prune target?** Read-only: a measurement over the state and over section 4's results.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  the module's signed-in object id is oer-live-cc's service principal: True
+  === 4.3a
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 3
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=2, Unchanged=1
+  --- 4.3a plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  the module's signed-in object id is oer-live-cc's service principal: True
+  === 4.3a
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 3
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=2, Unchanged=1
+  --- 4.3a plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  === 4.3b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 3
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-rag (Active) | Unchanged | assignment matches
+  --- action counts: Skipped=2, Unchanged=1
+  --- 4.3b applied: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  --- 4.3-cc-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-live-cc>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  --- 4.3-ccrag-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-ccrag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  --- 4.3 after: Reports Reader, Eligible: 3 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  --- 4.3 after: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- 4.3 after: Message Center Reader, Eligible: 1 row(s)
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  --- 4.3 after: Message Center Reader, Active: 3 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 4; end set
+  ```
+
+- [~] **4.4 A member of a role-assignable group: is its inherited row listed, and is it ever a prune target?** Read-only: a measurement over the state and over section 4's results.
 
   ```powershell
   $S44 = @(Get-S64State)
@@ -2112,9 +3611,19 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   **Failure looks like:** an inherited row counted in a section 4 result (`Active` pair count above
   0, or `2` for 4.1c) -- the managed-row filter let it through; stop and record the rows. A prune
   target naming `oer-live-cc` or `oer-s64-ccrag` -- stop (Stop conditions).
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Measured; the managed-row guard cannot be seen through the pair reads. "rows that are not Direct: 0": the role-wide reads the prune pass makes list no inherited row. The principal-filtered raw reads (4.1a, 4.1d, 4.2a, 4.2c) DO list one: oer-s64-user2, memberType Group, through oer-s64-rag. Section 4 rows naming oer-s64-user2 in an Active pair: 0; prune targets naming oer-live-cc 0 and oer-s64-ccrag 0. "4.1c rows naming oer-s64-user2: 2" is an artefact: 4.1c ran twice (the first 4.1d attempt failed in the runner before any request), both rows the same direct candidate.
 
-- [ ] **4.5 A role the signed-in identity holds through a group is `Skipped` under `-Prune`, and stays -- and a group it is not a member of is still pruned.** The document declares (Message Center Reader, Active) for `oer-s64-user1` only, so three undeclared candidates sit in that pair: the certificate identity's own assignment, `oer-s64-ccrag`'s (the certificate identity is its only member) and `oer-s64-rag`'s (2.7's; the certificate identity is NOT a member).
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  rows that are not Direct: 0
+  section 4 rows naming oer-s64-user2 in an Active pair: 0
+  4.1c rows naming oer-s64-user2: 2
+  section 4 prune targets naming oer-live-cc: 0; naming oer-s64-ccrag: 0
+  ```
+
+- [x] **4.5 A role the signed-in identity holds through a group is `Skipped` under `-Prune`, and stays -- and a group it is not a member of is still pruned.** The document declares (Message Center Reader, Active) for `oer-s64-user1` only, so three undeclared candidates sit in that pair: the certificate identity's own assignment, `oer-s64-ccrag`'s (the certificate identity is its only member) and `oer-s64-rag`'s (2.7's; the certificate identity is NOT a member).
 
   First the raw facts, read-only: both groups' members, and the certificate identity's own group
   memberships straight from Microsoft Graph, read as data -- the status and two True/False, never
@@ -2224,13 +3733,111 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   judged -- record it and do not run the real `-Prune` line; a `403 Authorization_RequestDenied`
   there is the permission question Setup names (`Directory.Read.All` for the `directoryObjects`
   form): name it, and never finish the check with another sign-in.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass -- the group guard, live. Raw: getMemberGroups of oer-live-cc status 200, 1 group, holds oer-s64-ccrag True, holds oer-s64-rag False (the untyped member read prints [] for oer-s64-ccrag as in 0.5; read as servicePrincipal: [oer-live-cc]). The plan, in Graph's order: oer-s64-rag would remove, <oer-live-cc> Skipped (own), <oer-s64-ccrag> Skipped (group guard, Detail verbatim), oer-s64-user1 would create; Skipped=4; every gate line True. 4.5c: 7 requests, exactly one POST v1.0/directoryObjects/<oer-live-cc>/getMemberGroups, errors 0. 4.5d: Removed=1 (oer-s64-rag), Skipped=2, Created=1, no error; raw: oer-s64-ccrag 1 row, own 1 Direct row, oer-s64-rag 0, oer-s64-user1 1 row (1 day).
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  4.5a oer-s64-ccrag: members []
+  4.5a oer-s64-rag: members [oer-s64-user2]; oer-live-cc among them: False
+  4.5a raw getMemberGroups of oer-live-cc: status 200; groups listed 1; holds oer-s64-ccrag: True; holds oer-s64-rag: False
+  4.5a (supplement) oer-s64-ccrag members read as servicePrincipal: status 200; [oer-live-cc]
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.5b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared active directory role assignment" on target "Message Center Reader -> 00000000-0000-0000-0000-000000000007 (Active)".
+  What if: Performing the operation "create active directory role assignment" on target "Message Center Reader -> person1@example.com (Active)".
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureDirectoryRoleAssignment: would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'.
+  --- errors: 0
+  --- results, in the order returned: 4
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-rag> (Active) | Skipped | would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-user1@<test domain> (Active) | Skipped | would create the active assignment (time-bound assignment (1 days) is absent)
+  --- action counts: Skipped=4
+      target: Message Center Reader -> <oer-s64-rag> (Active) -- Skipped; allowed: True
+  --- 4.5b plan: prune targets (would remove, removed or Extra): 1; every one allowed: True
+  4.5b gate: the ids of 0.5 are set: True
+  4.5b gate: the assertion passed: True
+  4.5b gate: exactly one oer-s64-ccrag row, Skipped by the group guard: True
+  4.5b gate: the own row, Skipped by the own-assignment guard: True
+  4.5b gate: the only prune target is oer-s64-rag: True
+  4.5b gate: all: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  What if: Performing the operation "Remove undeclared active directory role assignment" on target "Message Center Reader -> 00000000-0000-0000-0000-000000000007 (Active)".
+  What if: Performing the operation "create active directory role assignment" on target "Message Center Reader -> person1@example.com (Active)".
+  4.5c requests, in the order sent: 7
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>'&$expand=principal,roleDefinition
+      POST v1.0/directoryObjects/<oer-live-cc>/getMemberGroups
+      GET v1.0/roleManagement/directory/roleDefinitions?$filter=displayName eq 'Message Center Reader'&$select=id,displayName
+      GET v1.0/users?$filter=userPrincipalName eq 'oer-s64-user1@<test domain>'&$select=id,userPrincipalName
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/' and roleDefinitionId eq '<Message Center Reader>' and principalId eq '<oer-s64-user1>'&$expand=principal,roleDefinition
+  4.5c getMemberGroups requests in that run: 1; errors: 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === 4.5b
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -WhatIf
+  What if: Performing the operation "Remove undeclared active directory role assignment" on target "Message Center Reader -> 00000000-0000-0000-0000-000000000007 (Active)".
+  What if: Performing the operation "create active directory role assignment" on target "Message Center Reader -> person1@example.com (Active)".
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureDirectoryRoleAssignment: would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'.
+  --- errors: 0
+  --- results, in the order returned: 4
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-rag> (Active) | Skipped | would remove undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-user1@<test domain> (Active) | Skipped | would create the active assignment (time-bound assignment (1 days) is absent)
+  --- action counts: Skipped=4
+      target: Message Center Reader -> <oer-s64-rag> (Active) -- Skipped; allowed: True
+  --- 4.5b plan: prune targets (would remove, removed or Extra): 1; every one allowed: True
+  4.5b gate: the ids of 0.5 are set: True
+  4.5b gate: the assertion passed: True
+  4.5b gate: exactly one oer-s64-ccrag row, Skipped by the group guard: True
+  4.5b gate: the own row, Skipped by the own-assignment guard: True
+  4.5b gate: the only prune target is oer-s64-rag: True
+  4.5b gate: all: True
+  === 4.5d
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleAssignments -Prune -Confirm:$false
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureDirectoryRoleAssignment: removing undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'.
+  --- errors: 0
+  --- results, in the order returned: 4
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-rag> (Active) | Removed | removed undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-rag>'
+      [directoryRoleAssignments] Message Center Reader -> <oer-live-cc> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-live-cc>' belongs to the signed-in identity itself; the apply engine never removes the signed-in identity's own directory role assignments (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> <oer-s64-ccrag> (Active) | Skipped | undeclared active assignment of directory role 'Message Center Reader' for principal '<oer-s64-ccrag>' is a group the signed-in identity is a member of (directly or through nesting), so the signed-in identity holds directory role 'Message Center Reader' through it; the apply engine never removes a role the signed-in identity holds (our own guard, not a Graph rejection)
+      [directoryRoleAssignments] Message Center Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (time-bound assignment (1 days) is absent)
+  --- action counts: Created=1, Removed=1, Skipped=2
+      target: Message Center Reader -> <oer-s64-rag> (Active) -- Removed; allowed: True
+  --- 4.5d applied: prune targets (would remove, removed or Extra): 1; every one allowed: True
+  --- 4.5-ccrag-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-ccrag>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  --- 4.5-cc-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-live-cc>, memberType Direct only: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 2 day(s)
+  --- 4.5-rag-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-rag>: 0 row(s)
+  --- 4.5-user1-raw: raw roleAssignmentSchedules of <Message Center Reader> for <oer-s64-user1>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType Assigned; status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+  --- 4.5 after: Message Center Reader, Eligible: 1 row(s)
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  --- 4.5 after: Message Center Reader, Active: 3 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  ```
 
 ---
 
 ### 5. A refused read is not an empty pair
 
-- [ ] **5.1 A refused lookup and refused schedule reads, by `oer-live-cc-noperm` in a process of its own -- and a `-Prune` document run that removes nothing.**
+- [x] **5.1 A refused lookup and refused schedule reads, by `oer-live-cc-noperm` in a process of its own -- and a `-Prune` document run that removes nothing.**
 
   A second process keeps this window's sign-in intact: the module keeps one credential per process.
   The script signs in app-only as `oer-live-cc-noperm` -- the same certificate, no API permission,
@@ -2298,9 +3905,92 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   `STOP: the plan of ...` line: the plan held another row -- that document's real run was not made;
   record the rows. A sign-in answering "application is disabled": the run is not the one this check
   describes -- stop and report it, never retry with another sign-in.
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass. Identity lines True x3. (a) RoleDefinitionReadFailed (Authorization_RequestDenied); (b), (c) the refused schedule read -- Graph answers 403 with code UnknownError and a body PermissionScopeNotGranted naming the missing scopes (record); (d) Failed=4 in the plan and for real; (e) Failed=6 in the plan and for real; no other action; (f) 403 Authorization_RequestDenied, 403 UnknownError, 403 UnknownError; exit code 0. 84-90 error records collected per document run (the parked error-record family).
 
-- [ ] **5.2 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  identity check: session app id is oer-live-cc-noperm: True
+  identity check: tenant is the test tenant: True
+  identity check: the token carries no application permission: True
+  (a) Get eligible by name -- result objects: 0
+  Errors published by Get-OEREligibleDirectoryRoleAssignment: 1 (records collected: 11)
+  ERROR [RoleDefinitionReadFailed,Get-OEREligibleDirectoryRoleAssignment]: Looking up the Microsoft Entra directory role 'Reports Reader' failed, so whether it exists could not be determined: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  (b) Get eligible by role definition id -- result objects: 0
+  Errors published by Get-OEREligibleDirectoryRoleAssignment: 1 (records collected: 11)
+  ERROR [UnknownError,Get-OEREligibleDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  (c) Get active by role definition id -- result objects: 0
+  Errors published by Get-OERActiveDirectoryRoleAssignment: 1 (records collected: 11)
+  ERROR [UnknownError,Get-OERActiveDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  === 5.1d-by-name -Prune -WhatIf -- rows: 4; warnings: 0
+  === 5.1d-by-name -Prune, for real -- rows: 4; warnings: 0
+  === 5.1e-by-id -Prune -WhatIf -- rows: 6; warnings: 0
+  === 5.1e-by-id -Prune, for real -- rows: 6; warnings: 0
+  === 5.1d-by-name -Prune -WhatIf -- rows: 4; warnings: 0
+    [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  action counts: Failed=4
+  Error records collected: 84; distinct: 4
+  ERROR []:
+  ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: Forbidden (Forbidden).
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  === 5.1d-by-name -Prune, for real -- rows: 4; warnings: 0
+    [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Eligible) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+    [directoryRoleAssignments] Reports Reader -> oer-s64-rag (Active) | Failed | could not resolve directory role 'Reports Reader': Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  action counts: Failed=4
+  Error records collected: 84; distinct: 4
+  ERROR []:
+  ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: Forbidden (Forbidden).
+  ERROR [Authorization_RequestDenied]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  ERROR [Authorization_RequestDenied,Invoke-OERStructure]: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+  === 5.1e-by-id -Prune -WhatIf -- rows: 6; warnings: 0
+    [directoryRoleAssignments] <Reports Reader> (Eligible) | Failed | could not read the eligible assignments of directory role '<Reports Reader>', so nothing in this pair was pruned or reported Extra: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> (Active) | Failed | could not read the active assignments of directory role '<Reports Reader>', so nothing in this pair was pruned or reported Extra: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-user1> (Eligible) | Failed | could not read the eligible assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-user1> (Active) | Failed | could not read the active assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-rag> (Eligible) | Failed | could not read the eligible assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-rag> (Active) | Failed | could not read the active assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  action counts: Failed=6
+  Error records collected: 90; distinct: 8
+  ERROR []:
+  ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: Forbidden (Forbidden).
+  ERROR [UnknownError]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Get-OEREligibleDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Invoke-OERStructure]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Get-OERActiveDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Invoke-OERStructure]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  === 5.1e-by-id -Prune, for real -- rows: 6; warnings: 0
+    [directoryRoleAssignments] <Reports Reader> (Eligible) | Failed | could not read the eligible assignments of directory role '<Reports Reader>', so nothing in this pair was pruned or reported Extra: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> (Active) | Failed | could not read the active assignments of directory role '<Reports Reader>', so nothing in this pair was pruned or reported Extra: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-user1> (Eligible) | Failed | could not read the eligible assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-user1> (Active) | Failed | could not read the active assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-rag> (Eligible) | Failed | could not read the eligible assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+    [directoryRoleAssignments] <Reports Reader> -> <oer-s64-rag> (Active) | Failed | could not read the active assignments of '<Reports Reader>': UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  action counts: Failed=6
+  Error records collected: 90; distinct: 8
+  ERROR []:
+  ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: Forbidden (Forbidden).
+  ERROR [UnknownError]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Get-OEREligibleDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Invoke-OERStructure]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Get-OERActiveDirectoryRoleAssignment]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  ERROR [UnknownError,Invoke-OERStructure]: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+  Raw status of the role-definition lookup for this identity: 403 Authorization_RequestDenied
+  Raw status of the eligibility schedule read for this identity: 403 UnknownError
+  Raw status of the assignment schedule read for this identity: 403 UnknownError
+  Done. Copy the lines above into check 5.1.
+  the refused-read process exit code: 0
+  ```
+
+- [x] **5.2 Nothing was written by the refused identity.** Back in this window, as `oer-live-cc`.
 
   ```powershell
   $After51 = @(Get-S64State)
@@ -2310,7 +4000,28 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   **Expect:** the same count on both sides and `True`.
   **Failure looks like:** `False` -- something changed while only the refused identity ran: stop and
   compare the two states (`Show-S64State`).
-  **Result:**
+  **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
+  Pass: rows before 5.1: 9; after: 9; every row the same: True. Compared as formatted rows (principal, type, member type, status, expiration, window) between the state printed after 4.3 and 4.5 and a fresh read, since 5.1 and 5.2 ran in separate processes here; schedule ids and times were not compared.
+
+  ```text
+  rows before 5.1: 9; after: 9; every row the same: True
+  ##### step  +code -- 2026-09-29 22:52:18
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- 5.2 now: Reports Reader, Eligible: 3 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  --- 5.2 now: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- 5.2 now: Message Center Reader, Eligible: 1 row(s)
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  --- 5.2 now: Message Center Reader, Active: 3 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  ```
 
 ---
 
@@ -2325,7 +4036,7 @@ Philip's activation sits in it. The Activated filter must keep that row out enti
 him in the Active pair. A `Skipped` own-assignment row there would mean the filter failed and only
 the own-assignment guard held.
 
-- [ ] **6.1 Manual (operator) -- a document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
+- [x] **6.1 Manual (operator) -- a document makes Philip eligible, he activates in the portal, and a `-Prune` run neither matches nor prunes the activation.**
 
   (a) Before signing in: in the Microsoft Entra admin center, ACTIVATE your own Privileged Role
   Administrator role if it is eligible (the sign-in's token must carry it). Then, in a NEW
@@ -2446,7 +4157,66 @@ the own-assignment guard held.
   you are a member of `oer-s64-rag` after all: stop and record it.
   **Result:**
 
-- [ ] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
+  Pass (the operator as himself, 2026-09-30; checked by CC against Expect). All four identity lines True and the user lookup True; the first attempt, made before 0.5 had run, was stopped by the gate (every target <not a test object>, every one allowed: False) and wrote nothing. 6.1b: 4 targets, all oer-s64 test objects, every one allowed True; 6.1c Removed=4, <Me> (Eligible) Created, oer-s64-user1 (Active) Updated (permanent to one day -- no refusal, since its eligible assignment had just been removed and the active one was hours old); the raw read one row for <Me>, a window of 1 day. 6.1d: one row <Me> (User) Activated; Direct. 6.1e: Unchanged=2, 0 targets, no row naming <Me> in the (Reports Reader, Active) pair: the Activated filter held. 6.1f and the count line were not run: 6.1e's plan held 0 targets, so the apply would have changed nothing.
+
+  ```text
+  --- identity check ---
+  identity check: tenant is the test tenant: True
+  identity check: a person's delegated sign-in, not a certificate identity: True
+  identity check: the token's object id is this user's (v1.0/me): True
+  Privileged Role Administrator active for this user: True
+  the user lookup by $Me finds this user: True
+  
+  --- 6.1b before ---
+  --- 6.1b before: Reports Reader, Eligible: 3 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  --- 6.1b before: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  
+  --- 6.1b plan (-Prune -WhatIf) ---
+  What if: Remove undeclared eligible directory role assignment: Reports Reader -> 00000000-0000-0000-0000-000000000005 (Eligible)
+  What if: Remove undeclared eligible directory role assignment: Reports Reader -> 00000000-0000-0000-0000-000000000007 (Eligible)
+  What if: Remove undeclared eligible directory role assignment: Reports Reader -> 00000000-0000-0000-0000-000000000006 (Eligible)
+  What if: Remove undeclared active directory role assignment: Reports Reader -> 00000000-0000-0000-0000-000000000007 (Active)
+  What if: create eligible directory role assignment: Reports Reader -> person3@example.com (Eligible)
+  What if: update active directory role assignment: Reports Reader -> person1@example.com (Active)
+  --- errors: 0 --- results: 6 --- action counts: Skipped=6
+      target: Reports Reader -> <oer-s64-user1> (Eligible) -- Skipped; allowed: True
+      target: Reports Reader -> <oer-s64-rag> (Eligible) -- Skipped; allowed: True
+      target: Reports Reader -> <oer-s64-user2> (Eligible) -- Skipped; allowed: True
+      target: Reports Reader -> <oer-s64-rag> (Active) -- Skipped; allowed: True
+  --- 6.1b plan: prune targets (would remove, removed or Extra): 4; every one allowed: True
+  
+  --- 6.1c apply (-Prune -Confirm:$false) ---
+  --- errors: 0 --- results: 6
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user1> (Eligible) | Removed
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-rag> (Eligible) | Removed
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-user2> (Eligible) | Removed
+      [directoryRoleAssignments] Reports Reader -> <oer-s64-rag> (Active) | Removed
+      [directoryRoleAssignments] Reports Reader -> <Me> (Eligible) | Created | created the eligible assignment (time-bound assignment (1 days) is absent)
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Updated | updated the active assignment (window differs (live permanent, declared 1 days))
+  --- action counts: Created=1, Removed=4, Updated=1
+  --- 6.1c applied: prune targets (would remove, removed or Extra): 4; every one allowed: True
+  --- 6.1c-me-raw: raw roleEligibilitySchedules of <Reports Reader> for <Me>: 1 row(s)
+      memberType Direct; directoryScopeId '/'; assignmentType (none); status Provisioned; expiration type afterDateTime, endDateTime set True, duration (none); window 1 day(s)
+  
+  --- activation in the portal (Reports Reader, 1 hour, justification oer-s64 6.1) ---
+  --- 6.1d your active rows (Get-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User <Me>): objects returned: 1, errors 0
+      <Me> (User) Activated; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  
+  --- 6.1e plan (-Prune -WhatIf), with the activation live ---
+  --- warnings: 0 --- errors: 0 --- results: 2
+      [directoryRoleAssignments] Reports Reader -> <Me> (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s64-user1@<test domain> (Active) | Unchanged | assignment matches
+  --- action counts: Unchanged=2
+  --- 6.1e plan: prune targets (would remove, removed or Extra): 0; every one allowed: True
+  (6.1f's apply and the line "rows naming you in the (Reports Reader, Active) pair" were NOT run.)
+  ```
+
+- [~] **6.2 Manual (operator) -- clean up: the activation deactivated, your eligibility removed, you signed out, and your Privileged Role Administrator activation ended.** In your window.
 
   In the admin center: **My roles > Microsoft Entra roles > Active assignments**, **Reports
   Reader**, **Deactivate** (PIM may refuse a deactivation in the first minutes after an activation:
@@ -2484,6 +4254,18 @@ the own-assignment guard held.
   again, and do not leave it active.
   **Result:**
 
+  Everything in Expect is met in the output except its last line: 6.2 your active rows 0 (deactivated); the plan one What if line; the removal one POST with the warning and one object; both raw reads 0 rows; Disconnect-OER run. The Privileged Role Administrator deactivation does not appear in the output -- the operator confirms it separately -- so this stays [~] until he has.
+
+  ```text
+  6.2 your active rows (after the deactivation in the portal): objects returned: 0, errors 0
+  6.2 plan: What if: Remove eligible directory role 'Reports Reader' for principal 'person3@example.com' at directory scope '/'. errors 0
+  6.2 remove: POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests; WARNING: Removing eligible directory role 'Reports Reader' for principal '<Me>' at directory scope '/'. errors 0, objects returned 1
+  --- 6.2-me-raw: raw roleEligibilitySchedules of <Reports Reader> for <Me>: 0 row(s)
+  --- 6.2-me-active-raw: raw roleAssignmentSchedules of <Reports Reader> for <Me>: 0 row(s)
+  Disconnect-OER: run.
+  Privileged Role Administrator deactivation: not in this output; the operator confirms it separately.
+  ```
+
 ---
 
 ### Teardown
@@ -2497,7 +4279,7 @@ is missing, deletes the test users and groups (deleting `oer-s64-ccrag` ends the
 identity's membership of it), and verifies both roles' assignments equal the baseline. There is no
 Azure object to restore or delete (R17).
 
-- [ ] **T.1 Remove every `oer-s64` assignment through the module.**
+- [x] **T.1 Remove every `oer-s64` assignment through the module.**
 
   The plan:
 
@@ -2546,7 +4328,268 @@ Azure object to restore or delete (R17).
   same. `rows left` above 0 after a minute: read again; Graph lists removals a moment late.
   **Result:**
 
-- [ ] **T.2 The prerequisite script's teardown -- its plan, then the run.**
+  Pass after one wait (CC as oer-live-cc, 2026-09-30, redacted per docs/live-verification/README.md). Seven direct oer-s64 rows (the 3.3 re-run had re-created four on Reports Reader). The first run, 3.7 minutes after those four started: every Reports Reader removal refused with ActiveDurationTooShort (the five-minute rule of 3.3), oer-s64-user2's Message Center Reader eligible removed, and the Message Center Reader active removals of oer-s64-user1 and oer-s64-ccrag answered RoleAssignmentDoesNotExist while Graph lists both adminRemove requests Revoked and the rows are gone. The second run, 8 minutes after: both eligible removals accepted; the two active removals again answered RoleAssignmentDoesNotExist with the requests Revoked and the rows gone (recorded as a finding: a successful active removal reported as an error). direct oer-s64 rows left: 0; Message Center Reader Active held only <oer-live-cc>.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  direct oer-s64 assignments to remove: 7
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === T.1 plan Eligible Reports Reader -> oer-s64-user1 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000007' at directory scope '/'".
+  === T.1 plan Eligible Reports Reader -> oer-s64-rag -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === T.1 plan Active Reports Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000007' at directory scope '/'".
+  === T.1 plan Active Reports Reader -> oer-s64-rag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000003' for principal '00000000-0000-0000-0000-000000000006' at directory scope '/'".
+  === T.1 plan Eligible Message Center Reader -> oer-s64-user2 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000003' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === T.1 plan Active Message Center Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000003' for principal '00000000-0000-0000-0000-000000000009' at directory scope '/'".
+  === T.1 plan Active Message Center Reader -> oer-s64-ccrag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-ccrag>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  --- T.1 before: Reports Reader, Eligible: 2 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 7; end set
+  --- T.1 before: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- T.1 before: Message Center Reader, Eligible: 1 row(s)
+      <oer-s64-user2> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 3; end set
+  --- T.1 before: Message Center Reader, Active: 3 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-ccrag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 1; end set
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === T.1 remove Eligible Reports Reader -> oer-s64-user1 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Reports Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [ActiveDurationTooShort,Remove-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- objects returned: 0
+  === T.1 remove Eligible Reports Reader -> oer-s64-rag -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Reports Reader>' for principal '<oer-s64-rag>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [ActiveDurationTooShort,Remove-OEREligibleDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- objects returned: 0
+  === T.1 remove Active Reports Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Reports Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [ActiveDurationTooShort,Remove-OERActiveDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- objects returned: 0
+  === T.1 remove Active Reports Reader -> oer-s64-rag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Reports Reader>' for principal '<oer-s64-rag>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [ActiveDurationTooShort,Remove-OERActiveDirectoryRoleAssignment]: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+  --- objects returned: 0
+  === T.1 remove Eligible Message Center Reader -> oer-s64-user2 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user2>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Message Center Reader>' for principal '<oer-s64-user2>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  === T.1 remove Active Message Center Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Message Center Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment]: RoleAssignmentDoesNotExist: The Role assignment does not exist.
+  --- objects returned: 0
+  === T.1 remove Active Message Center Reader -> oer-s64-ccrag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Message Center Reader>' to '<Message Center Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-ccrag>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Message Center Reader>' for principal '<oer-s64-ccrag>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment]: RoleAssignmentDoesNotExist: The Role assignment does not exist.
+  --- objects returned: 0
+  --- T.1 after: Reports Reader, Eligible: 2 row(s)
+      <oer-s64-rag> (Group); MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+      <oer-s64-user1> (User); MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 7; end set
+  --- T.1 after: Reports Reader, Active: 2 row(s)
+      <oer-s64-rag> (Group) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 5; end set
+      <oer-s64-user1> (User) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'noExpiration'; DurationDays (none); end never
+  --- T.1 after: Message Center Reader, Eligible: 0 row(s)
+  --- T.1 after: Message Center Reader, Active: 1 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+  direct oer-s64 rows left: 4
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  direct oer-s64 assignments to remove: 4
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === T.1 plan Eligible Reports Reader -> oer-s64-user1 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove eligible directory role assignment" on target "eligible directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000007' at directory scope '/'".
+  === T.1 plan Eligible Reports Reader -> oer-s64-rag -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000005' at directory scope '/'".
+  === T.1 plan Active Reports Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  What if: Performing the operation "Remove active directory role assignment" on target "active directory role '00000000-0000-0000-0000-000000000001' for principal '00000000-0000-0000-0000-000000000007' at directory scope '/'".
+  === T.1 plan Active Reports Reader -> oer-s64-rag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 0
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 0
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  now (UTC): 07:25:31
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  === T.1 remove Eligible Reports Reader -> oer-s64-user1 -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Reports Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  === T.1 remove Eligible Reports Reader -> oer-s64-rag -- Remove-OEREligibleDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleEligibilityScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OEREligibleDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 1
+      WARNING: Removing eligible directory role '<Reports Reader>' for principal '<oer-s64-rag>' at directory scope '/'.
+  --- errors published by Remove-OEREligibleDirectoryRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  === T.1 remove Active Reports Reader -> oer-s64-user1 -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-user1>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Reports Reader>' for principal '<oer-s64-user1>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment]: RoleAssignmentDoesNotExist: The Role assignment does not exist.
+  --- objects returned: 0
+  === T.1 remove Active Reports Reader -> oer-s64-rag -- Remove-OERActiveDirectoryRoleAssignment
+  --- requests, in the order sent: 1
+      POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests
+  --- the cmdlet's own verbose lines: 2
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved role '<Reports Reader>' to '<Reports Reader>'.
+      [Remove-OERActiveDirectoryRoleAssignment] Resolved principal to '<oer-s64-rag>'.
+  --- warnings: 1
+      WARNING: Removing active directory role '<Reports Reader>' for principal '<oer-s64-rag>' at directory scope '/'.
+  --- errors published by Remove-OERActiveDirectoryRoleAssignment: 1 (other records collected, not shown: 8)
+      ERROR [RoleAssignmentDoesNotExist,Remove-OERActiveDirectoryRoleAssignment]: RoleAssignmentDoesNotExist: The Role assignment does not exist.
+  --- objects returned: 0
+  --- T.1 after: Reports Reader, Eligible: 0 row(s)
+  --- T.1 after: Reports Reader, Active: 0 row(s)
+  --- T.1 after: Message Center Reader, Eligible: 0 row(s)
+  --- T.1 after: Message Center Reader, Active: 1 row(s)
+      <oer-live-cc> (ServicePrincipal) Assigned; MemberType Direct; scope '/'; status Provisioned; expiration 'afterDateTime'; DurationDays 2; end set
+  direct oer-s64 rows left: 0
+  ```
+
+- [~] **T.2 The prerequisite script's teardown -- its plan, then the run.**
 
   ```powershell
   pwsh -NoProfile -File $Prereq -TenantId $TenantId -TenantAlias $Alias -ClientId $AppId -CertificateThumbprint $Thumbprint -UserDomain $Domain -ExpectedTenantDisplayName $OrgName -RepoPath $Repo -Teardown -WhatIf
@@ -2597,7 +4640,96 @@ Azure object to restore or delete (R17).
   still there) and record both runs.
   **Result:**
 
-- [ ] **T.3 Read everything back: both policies and both roles' assignments equal the baselines, no test object is left, and every write of this file named a test object.**
+  Stopped at a stop condition (403 on the app path), and not worked around. The plan matched Expect (0 oer-s64 assignments; the own assignment; Reports Reader 0 rules differing, Message Center Reader 1, Expiration_Admin_Assignment; three groups and two users). The run: the own assignment "already gone" (404 RoleAssignmentDoesNotExist; T.3 confirms it gone); Reports Reader restored True (0 differing), Message Center Reader Expiration_Admin_Assignment restored, restored True; baseline assignments re-created 0 and 0; the three groups and oer-s64-user1 deleted; then DELETE oer-s64-user2 answered 403 Authorization_RequestDenied and the script stopped. oer-s64-user2 was the member of the role-assignable oer-s64-rag, which is only soft-deleted (restorable for 30 days), and Microsoft Learn ("Delete a user") says User.ReadWrite.All is not enough app-only to delete a privileged user; it needs a higher Entra role (Privileged Authentication Administrator), which this identity must not hold. oer-s64-user2 is left disabled and without any role schedule; the operator deletes it by hand. Lesson for the next prerequisite script: remove the members of a role-assignable test group before deleting the group.
+
+  ```text
+  [oer-s64] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.
+  [oer-s64] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Policy baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json (exists: True). Assignment baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json (exists: True).
+  [oer-s64] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s64] No Tenant Profile '<Alias>' on this machine; the sign-in names -TenantId.
+  [oer-s64] Microsoft Graph sign-in: signing in to Microsoft Graph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s64] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s64] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s64] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s64] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s64] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s64] Teardown: oer-s64 assignments on the two roles: 0
+  What if: Performing the operation "Remove the certificate identity's own assignment (Microsoft Graph v1.0 roleAssignmentScheduleRequests, adminRemove)" on target "active directory role 'Message Center Reader' for the service principal of oer-live-cc at directory scope '/'".
+  [oer-s64] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0
+  [oer-s64] Teardown: directory role 'Reports Reader': restored: not attempted (WhatIf)
+  [oer-s64] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 1 (Expiration_Admin_Assignment)
+  What if: Performing the operation "Restore rule Expiration_Admin_Assignment from the policy baseline (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Message Center Reader'".
+  [oer-s64] Teardown: directory role 'Message Center Reader': restored: not attempted (WhatIf)
+  [oer-s64] Teardown: directory role 'Reports Reader': baseline assignments missing and re-created: 0
+  [oer-s64] Teardown: directory role 'Message Center Reader': baseline assignments missing and re-created: 0
+  What if: Performing the operation "Delete security group" on target "oer-s64-rag".
+  What if: Performing the operation "Delete security group" on target "oer-s64-plain".
+  What if: Performing the operation "Delete security group" on target "oer-s64-ccrag".
+  What if: Performing the operation "Delete test user" on target "person1@example.com".
+  What if: Performing the operation "Delete test user" on target "person2@example.com".
+  [oer-s64] Teardown: directory role 'Reports Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s64] Teardown: directory role 'Message Center Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s64] Sweep, still present: user 'person1@example.com' (00000000-0000-0000-0000-000000000005)
+  [oer-s64] Sweep, still present: user 'person2@example.com' (00000000-0000-0000-0000-000000000006)
+  [oer-s64] Sweep, still present: group 'oer-s64-ccrag' (00000000-0000-0000-0000-000000000009)
+  [oer-s64] Sweep, still present: group 'oer-s64-plain' (00000000-0000-0000-0000-000000000008)
+  [oer-s64] Sweep, still present: group 'oer-s64-rag' (00000000-0000-0000-0000-000000000007)
+  
+  [oer-s64] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  
+  Kind                             Name                                                                                        Id
+  ----                             ----                                                                                        --
+  user                             person1@example.com                                                       00000000-0000-0000-0000-000000000005
+  user                             person2@example.com                                                       00000000-0000-0000-0000-000000000006
+  group                            oer-s64-rag                                                                                 00000000-0000-0000-0000-000000000007
+  group                            oer-s64-plain                                                                               00000000-0000-0000-0000-000000000008
+  group                            oer-s64-ccrag                                                                               00000000-0000-0000-0000-000000000009
+  group member                     oer-s64-rag <- person2@example.com                                        00000000-0000-0000-0000-000000000006
+  group member                     oer-s64-ccrag <- oer-live-cc                                                                (none -- not created)
+  directory role (built-in, fixed) Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy            Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed) Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy            Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  own assignment                   Message Center Reader, active, P2D, of oer-live-cc (schedule)                               00000000-0000-0000-0000-000000000011
+  group assignment                 Message Center Reader, active, P2D, of oer-s64-ccrag (schedule)                             (none -- not created)
+  policy baseline (existed)        <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json    -
+  assignment baseline (existed)    <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json -
+  
+  
+  [oer-s64] WhatIf: nothing was created, restored, removed or written.
+  [oer-s64] Done.
+  [oer-s64] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, prefix 'oer-s64', expected organization '<test tenant>'.
+  [oer-s64] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Policy baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-policies.json (exists: True). Assignment baseline: <Repo>\docs\live-verification\raw\s64\baseline-directory-assignments.json (exists: True).
+  [oer-s64] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s64] No Tenant Profile '<Alias>' on this machine; the sign-in names -TenantId.
+  [oer-s64] Microsoft Graph sign-in: signing in to Microsoft Graph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s64] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s64] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s64] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s64] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s64] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s64] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s64] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s64] Teardown: oer-s64 assignments on the two roles: 0
+  [oer-s64] The active Message Center Reader assignment of oer-live-cc was already gone: Microsoft Graph answered 404 to POST v1.0/roleManagement/directory/roleAssignmentScheduleRequests: RoleAssignmentDoesNotExist -- The Role assignment does not exist.
+  [oer-s64] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0
+  [oer-s64] Teardown: directory role 'Reports Reader': restored: True
+  [oer-s64] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 1 (Expiration_Admin_Assignment)
+  [oer-s64] Restored rule Expiration_Admin_Assignment of 'Message Center Reader'.
+  [oer-s64] Teardown: directory role 'Message Center Reader': restored: True
+  [oer-s64] Teardown: directory role 'Reports Reader': baseline assignments missing and re-created: 0
+  [oer-s64] Teardown: directory role 'Message Center Reader': baseline assignments missing and re-created: 0
+  [oer-s64] Deleted group oer-s64-rag.
+  [oer-s64] Deleted group oer-s64-plain.
+  [oer-s64] Deleted group oer-s64-ccrag.
+  [oer-s64] Deleted user person1@example.com.
+  [oer-s64] Stopped after this run had written to the tenant or the baseline files (see the lines above): Microsoft Graph answered 403 to DELETE v1.0/users/<id>: Authorization_RequestDenied -- Insufficient privileges to complete the operation.
+  ```
+
+- [~] **T.3 Read everything back: both policies and both roles' assignments equal the baselines, no test object is left, and every write of this file named a test object.**
 
   ```powershell
   Show-S64BaselineDiff -Label 'T.3'
@@ -2647,7 +4779,69 @@ Azure object to restore or delete (R17).
   principal; a row not listed above.
   **Result:**
 
-- [ ] **T.4 Redact, then delete `raw/s64`.** Only once T.3 printed `differing from the baseline: 0` twice and the assignment diff was empty: the raw folder holds both baseline files, the only records of the original state. Move what the results above need from `docs/live-verification/raw/s64/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
+  Both policies equal the baseline (differing 0 and 0); both roles' direct assignments equal the assignment baseline (none; only live [] and only baseline [] everywhere; the own assignment and oer-s64-ccrag's are gone); groups starting with the prefix 0; users starting with the prefix 1 -- oer-s64-user2, disabled, 0 eligibility and 0 assignment schedules (T.2). Removed rows naming a principal that is not an oer-s64 test object: 0 (re-counted with the ids restored from the redaction map, since the deleted objects could no longer be read back to name them; the first count printed 4 for that reason); rows naming a role other than the two: 0. The list holds more rows than Expect names: the first 3.3b Failed, the 3.3b re-run and 3.3f, and 4.2b twice -- every one on an oer-s64 test object and the two roles. Operator's user principal name redacted.
+
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- raw user read: 0 users match 'oer-s64-user1@<test domain>', not one
+  --- raw group read: 0 groups named 'oer-s64-rag', not one
+  --- raw group read: 0 groups named 'oer-s64-plain', not one
+  --- raw group read: 0 groups named 'oer-s64-ccrag', not one
+  --- T.3: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.3: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.3: Reports Reader, Eligible: 0 row(s)
+  --- T.3: Reports Reader, Active: 0 row(s)
+  --- T.3: Message Center Reader, Eligible: 0 row(s)
+  --- T.3: Message Center Reader, Active: 0 row(s)
+  --- T.3: Reports Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.3: Reports Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.3: Message Center Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.3: Message Center Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  users starting with the prefix: 1
+  groups starting with the prefix: 0
+      3.1c Reports Reader | Updated | updated directory role management policy for 'Reports Reader' (allowPermanentEligibility=True, allowPermanentActiveAssignment=True)
+      3.1c Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Created | created the eligible assignment (time-bound assignment (5 days) is absent)
+      3.1c Reports Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (permanent assignment is absent)
+      3.1c Reports Reader -> oer-s64-rag (Eligible) | Created | created the eligible assignment (permanent assignment is absent)
+      3.1c Reports Reader -> oer-s64-rag (Active) | Created | created the active assignment (time-bound assignment (5 days) is absent)
+      3.3b Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | failed to update the eligible assignment: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.
+      4.1d Reports Reader -> <oer-s64-user2> (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'
+      4.2b Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+      4.2b Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+      4.2c Reports Reader -> oer-s64-nobody@<test domain> (Eligible) | Failed | principal 'oer-s64-nobody@<test domain>' could not be resolved to an object id
+      4.2d oer-s64-no-such-role -> oer-s64-user1@<test domain> (Eligible) | Failed | directory role 'oer-s64-no-such-role' could not be resolved to a role definition id
+      4.5d Message Center Reader -> <not a test object> (Active) | Removed | removed undeclared active assignment of directory role 'Message Center Reader' for principal '<not a test object>'
+      4.5d Message Center Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (time-bound assignment (1 days) is absent)
+      6.1c Reports Reader -> <not a test object> (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '<not a test object>'
+      6.1c Reports Reader -> <not a test object> (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '<not a test object>'
+      6.1c Reports Reader -> <oer-s64-user2> (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '<oer-s64-user2>'
+      6.1c Reports Reader -> <not a test object> (Active) | Removed | removed undeclared active assignment of directory role 'Reports Reader' for principal '<not a test object>'
+      6.1c Reports Reader -> person3@example.com (Eligible) | Created | created the eligible assignment (time-bound assignment (1 days) is absent)
+      6.1c Reports Reader -> oer-s64-user1@<test domain> (Active) | Updated | updated the active assignment (window differs (live permanent, declared 1 days))
+      3.3b Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Updated | updated the eligible assignment (duration differs (live 5 days, declared 7 days))
+      3.3b Reports Reader -> oer-s64-user1@<test domain> (Active) | Created | created the active assignment (permanent assignment is absent)
+      3.3b Reports Reader -> oer-s64-rag (Eligible) | Created | created the eligible assignment (permanent assignment is absent)
+      3.3b Reports Reader -> oer-s64-rag (Active) | Created | created the active assignment (time-bound assignment (5 days) is absent)
+      3.3f Reports Reader -> oer-s64-user1@<test domain> (Eligible) | Failed | failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), which it does while the principal holds a permanent active assignment of the same role, so the eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it
+  Removed rows naming a principal that is not an oer-s64 test object: 4
+  rows naming a role other than the two: 0
+  oer-s64-user2 still present: True; enabled: False
+  oer-s64-user2 roleEligibilitySchedules (any role): 0
+  oer-s64-user2 roleAssignmentSchedules (any role): 0
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  ids restored from the redaction map: 5 of 5
+  Removed rows naming a principal that is not an oer-s64 test object: 0
+      4.1d Reports Reader -> <oer-s64-user2> (Eligible) | Removed
+      4.5d Message Center Reader -> <oer-s64-rag> (Active) | Removed
+      6.1c Reports Reader -> <oer-s64-user1> (Eligible) | Removed
+      6.1c Reports Reader -> <oer-s64-rag> (Eligible) | Removed
+      6.1c Reports Reader -> <oer-s64-user2> (Eligible) | Removed
+      6.1c Reports Reader -> <oer-s64-rag> (Active) | Removed
+  ```
+
+- [x] **T.4 Redact, then delete `raw/s64`.** Only once T.3 printed `differing from the baseline: 0` twice and the assignment diff was empty: the raw folder holds both baseline files, the only records of the original state. Move what the results above need from `docs/live-verification/raw/s64/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
   Object ids to `00000000-0000-0000-0000-0000000000NN` -- the two role definition ids, the
   certificate identity's service principal id and the policy half of each directory-role policy id
@@ -2674,3 +4868,5 @@ Azure object to restore or delete (R17).
   means redaction is not finished: redact it before the commit, and if it was a credential, rotate
   it ([README.md](README.md), "Credentials").
   **Result:**
+
+  raw/s64 exists after: False; git status lists only this checklist under docs/live-verification; the redaction map was deleted too. dochygiene green before the commit.
