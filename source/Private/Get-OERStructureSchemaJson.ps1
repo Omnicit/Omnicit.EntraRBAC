@@ -151,7 +151,7 @@ function Get-OERStructureSchemaJson {
         ],
         "properties": {
           "displayName": { "type": "string" },
-          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Remove it once the rename is applied. Not exported by Get-OERInventory." },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph's name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet creates a new group, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory." },
           "template": { "type": "string" },
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },

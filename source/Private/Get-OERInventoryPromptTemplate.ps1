@@ -171,6 +171,15 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     group found under previousDisplayName alone is renamed in place. When both names match
     different groups the entry fails and nothing is changed (two groups are never merged), and when
     neither matches the group is created under displayName.
+  - When a proposal renames a group, every other reference to it in the same document uses the NEW
+    name: administrativeUnits members, catalog resources, access package resource roles,
+    eligibility, owner, member and approver entries, and roleAssignments and
+    directoryRoleAssignments principals.
+  - Microsoft Graph's name lookup can follow a rename with a delay. On the run that renames the
+    group, a reference to the new name can fail (loudly, with any prune it drives withheld) and is
+    safe to re-run once the new name resolves; a re-run while neither name resolves yet would create
+    a new group. Keep previousDisplayName in the proposal, and tell the operator in the rationale to
+    wait until the new name resolves before applying again.
   - IMPORTANT (issue #59): administrativeUnit is create-only and never round-trips, so if you set it,
     you MUST also add this group's displayName to the members[] array of the matching
     administrativeUnits[] entry (same displayName, case-insensitive) in this SAME document. Otherwise

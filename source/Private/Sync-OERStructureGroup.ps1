@@ -25,10 +25,18 @@ function Sync-OERStructureGroup {
     group's object id, which is the way to rename a group whose old name is ambiguous. An object id
     is verified with one read (v1.0/groups/<id>?$select=id): an id that no longer names a group counts
     as not matching, so a stale id never blocks a create or reports a false conflict, and any other
-    failure of that read throws, again with nothing created or renamed. previousDisplayName can stay
-    in the document after the rename -- the next run finds the group under displayName and reports
-    it Unchanged -- but a group created later under the old name then makes the item fail, so remove
-    it once the rename is applied.
+    failure of that read throws, again with nothing created or renamed.
+
+    Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
+    the group, a reference to the NEW name elsewhere in the same document can therefore fail to
+    resolve. It fails loudly -- a Failed row, and a handler that withholds its prune while a declared
+    entry does not resolve withholds it -- and re-running the document once the new name resolves is
+    safe. Keep previousDisplayName in the
+    document and wait until the new name resolves before re-applying: a run after that finds the
+    group under displayName and reports it Unchanged, but an immediate re-run inside the window in
+    which neither name resolves yet would create a new group under displayName. Once the new name
+    resolves, remove previousDisplayName: a group created later under the old name makes the item
+    fail.
 
     Processing order within a single group (the PIM chicken-and-egg ordering):
     1. Create the group when absent, or diff and update mutable properties (the display name when

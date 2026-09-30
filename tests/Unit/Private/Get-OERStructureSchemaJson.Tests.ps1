@@ -962,7 +962,7 @@ Describe 'Get-OERStructureSchemaJson group previousDisplayName' {
             # Not "ignored once displayName matches": a different group under the old name, or an
             # ambiguous old name, fails the entry, so the description must tell the author to remove it.
             $Prev.description |
-                Should -BeExactly 'The group''s current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Remove it once the rename is applied. Not exported by Get-OERInventory.'
+                Should -BeExactly 'The group''s current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph''s name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet creates a new group, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory.'
             $Prev.description | Should -Not -Match 'ignored once displayName matches'
         }
     }

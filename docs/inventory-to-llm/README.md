@@ -185,13 +185,18 @@ Every apply run looks up both names, with three outcomes:
 - **Neither name matches.** The group is created under `displayName`, exactly as without
   `previousDisplayName`.
 
-When both names find the same group, the entry is applied as usual. `previousDisplayName` can stay
-in the document after the rename -- the next run finds the group under `displayName` and reports it
-`Unchanged` -- but remove it once the rename is applied: a group created later under the old name
-would make the entry fail. `Get-OERInventory` never exports `previousDisplayName`, and
-`Test-OERStructure` reports an empty or non-string one as an error and one equal to `displayName`
-(ignoring case) as a warning. Administrative units, catalogs and access packages cannot be renamed
-through the document.
+When both names find the same group, the entry is applied as usual.
+
+**Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in
+the document, and wait until the new name resolves (for example `Get-OERGroup -Group '<new name>'`
+finds the group) before you apply the document again: a run after that finds the group under
+`displayName` and reports it `Unchanged`. Do not re-apply it immediately. Inside the window in which
+neither name resolves yet, the entry would create a NEW group under `displayName`. Once the new name
+resolves, remove `previousDisplayName`: a group created later under the old name would make the entry
+fail. `Get-OERInventory` never exports `previousDisplayName`, and `Test-OERStructure` reports an empty
+or non-string one as an error and one equal to `displayName` (ignoring case) as a warning -- a
+case-only rename is not possible through the document; use `Set-OERGroup -NewDisplayName`.
+Administrative units, catalogs and access packages cannot be renamed through the document.
 
 `previousDisplayName` also accepts the group's object id instead of its old name. That is the way to
 rename a group whose old name is ambiguous, since a name that matches several groups fails the
@@ -200,11 +205,15 @@ deleted group, say) counts as not matching, exactly like an old name nobody carr
 
 Everywhere else in the SAME document, refer to the group by its NEW name: in
 `administrativeUnits[].members`, catalog `resources`, access package `resourceRoles`,
-`roleAssignments` principals, and eligibility, owner, member or approver entries. After the rename
-the old name resolves to nothing, so a reference that still uses it fails or is reported as not
-found. Under `-WhatIf` the rename is only planned, so the new name does not resolve yet either --
-those references are reported the same way as references to a group that the same run would
-create.
+`roleAssignments` and `directoryRoleAssignments` principals, and eligibility, owner, member or
+approver entries. Once Graph's name lookup has caught up with the rename, the old name resolves to
+nothing, so a reference that still uses it fails or is reported as not found. The new name can lag
+too: on the run that renames the group, a reference to the new name can fail to resolve. It fails
+loudly -- a `Failed` row, and a handler that withholds its prune while a declared entry does not
+resolve withholds it -- and re-applying the document once the new name resolves, with
+`previousDisplayName` still in it, is safe. Under `-WhatIf` the rename is only planned, so the new
+name does not resolve yet either -- those references are reported the same way as references to a
+group that the same run would create.
 
 ## Directory roles
 

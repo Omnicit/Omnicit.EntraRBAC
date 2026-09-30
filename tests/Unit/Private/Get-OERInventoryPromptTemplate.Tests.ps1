@@ -285,6 +285,11 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
             $T | Should -Match ([regex]::Escape('{ displayName (or template + tokens object), previousDisplayName (rename only'))
             $T | Should -Match ([regex]::Escape("previousDisplayName (rename only -- the group's current display name or object id when displayName declares a new one"))
             $T | Should -Not -Match 'changing displayName creates a new group'
+            # A rename must carry every other reference to the group with it, directory role
+            # assignments included, and the model must be told the name lookup can lag the rename.
+            $T | Should -Match ([regex]::Escape('When a proposal renames a group, every other reference to it in the same document uses the NEW name: administrativeUnits members, catalog resources, access package resource roles, eligibility, owner, member and approver entries, and roleAssignments and directoryRoleAssignments principals.'))
+            $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a rename with a delay."))
+            $T | Should -Match ([regex]::Escape('a re-run while neither name resolves yet would create a new group. Keep previousDisplayName in the proposal'))
             # The three sections that still cannot be renamed keep saying so.
             $T | Should -Match 'changing displayName creates a new unit'
             $T | Should -Match 'changing displayName creates a new catalog'
