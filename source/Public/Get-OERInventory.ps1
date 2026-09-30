@@ -25,17 +25,19 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. The Groups pimPolicy projection is emitted only for a group that uses PIM
-    for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
+    has at least one owner. The Groups pimPolicy projection is emitted only for a group found to use
+    PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
     every group, including one never used with PIM for Groups, and applying a changed pimPolicy to
-    such a group onboards it to PIM for Groups, which cannot be undone -- so a group that does not use
-    PIM for Groups carries no pimPolicy, and none of its policies is read. When that question itself
-    cannot be answered for a group, its pimPolicy is omitted and reported through the InventoryPartial
-    error below. The projection carries requireApproval and, only while it is true, approvers as
-    object ids (a display name is not guaranteed to resolve) -- approvers are omitted while
-    requireApproval is false, since the apply engine ignores declared approvers in that case and the
-    offline validator would otherwise warn on every exported document.
+    such a group onboards it to PIM for Groups, which cannot be undone -- so a group not found to use
+    PIM for Groups carries no pimPolicy, and none of its policies is read. A group used only through
+    PIM active assignments, with untouched policies, is not found to use it either. When that
+    question cannot be answered for a group -- its policies could not be listed, or no modified
+    policy was found while its PIM eligibility could not be read -- its pimPolicy is omitted and
+    reported through the InventoryPartial error below. The projection carries requireApproval and,
+    only while it is true, approvers as object ids (a display name is not guaranteed to resolve) --
+    approvers are omitted while requireApproval is false, since the apply engine ignores declared
+    approvers in that case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
@@ -497,11 +499,13 @@ function Get-OERInventory {
                 # "Onboarding groups to PIM for Groups"). Test-OERGroupPimInUse owns the rule: the
                 # eligibility this section already read, or one listing of the group's policies for a
                 # modified one (docs/development/rationale.md#pim-in-use-criterion, ruling R2). A group
-                # not in use gets no pimPolicy key and none of the four reads below. A criterion that
-                # could not be read is never guessed in either direction: pimPolicy is omitted AND the
-                # collection is reported unread, with its cause, exactly like a failed policy read.
-                # The null-filter on the count is load-bearing: @($null).Count is 1.
-                $EligCount = if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
+                # the criterion does not find in use gets no pimPolicy key and none of the four reads
+                # below. A criterion that could not be read is never guessed in either direction:
+                # pimPolicy is omitted AND the collection is reported unread, with its cause, exactly
+                # like a failed policy read. The null-filter on the count is load-bearing:
+                # @($null).Count is 1.
+                $EligibilityRead = $G.PSObject.Properties.Name -contains 'PimEligibility'
+                $EligCount = if ($EligibilityRead) {
                     @($G.PimEligibility | Where-Object { $null -ne $_ }).Count
                 } else { 0 }
                 $Usage = $null
@@ -517,7 +521,18 @@ function Get-OERInventory {
                 }
                 $PimInUse = ($null -ne $Usage -and [bool]$Usage.InUse)
                 if ($null -ne $Usage -and -not $PimInUse) {
-                    Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported -- $($Usage.Reason)."
+                    if ($EligibilityRead) {
+                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported -- $($Usage.Reason)."
+                    } else {
+                        # HALF AN ANSWER. The eligibility read failed, so the count above was 0 by
+                        # default, not by measurement: "not in use" was decided on the policies alone
+                        # and is a guess. pimPolicy is omitted and reported unread too. The eligibility
+                        # read's own cause is already on the cause list (it is what omitted
+                        # PimEligibility), so this adds the COLLECTION only, never a second cause. A
+                        # modified policy, by contrast, decides "in use" on its own and never gets here.
+                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported and not decided -- $($Usage.Reason), and its PIM eligibility could not be read."
+                        $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
+                    }
                 }
 
                 # ASK NEXT WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
@@ -531,11 +546,14 @@ function Get-OERInventory {
                 # answering with no listed policy, driving the real wrapper and the real cmdlets with
                 # only the transport stubbed: 384 records for an entirely clean read -- it does not
                 # depend on whether the assignments call answers 200-empty or 400, since
-                # Get-OERPimGroupPolicyId returns $null either way. A group that was never used with
-                # PIM for Groups never gets this far: Graph lists its policies before the group is
-                # onboarded (measured live 2026-09-28), which is exactly why the criterion above runs
-                # first, and a group it reports not in use -- or could not decide -- makes none of
-                # the four calls below and carries no pimPolicy.
+                # Get-OERPimGroupPolicyId returns $null either way. A group the criterion above does
+                # not find to use PIM for Groups (no PIM eligibility and no modified policy) never
+                # gets this far: Graph lists a group's policies before it is onboarded (measured live
+                # 2026-09-28), which is exactly why the criterion runs first, and a group it does not
+                # find in use -- or could not decide -- makes none of the four calls below and
+                # carries no pimPolicy. That finding is the criterion's, not a measured fact about
+                # the tenant: a group used only through PIM ACTIVE assignments, with untouched
+                # policies, is not found in use either (rationale.md#pim-in-use-criterion).
                 #
                 # NOT -ErrorAction Ignore on the reads below. That would silence a genuine 403 or 429
                 # along with the not-listed case and leave the operator with a document quietly

@@ -401,13 +401,65 @@ Describe 'Get-OERInventory' {
                 }
             }
             Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x' } }
-            $null = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue
+            $Err = $null
+            $Result = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err
             Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
                 $GroupId -eq 'g-1' -and $EligibilityCount -eq 0
             }
             Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
                 $GroupId -eq 'g-2' -and $EligibilityCount -eq 0
             }
+            # A "not in use" decided WITHOUT the eligibility half is a guess, not an answer: role_sec_one's
+            # eligibility was never read, so its pimPolicy is reported unread beside its eligibility.
+            # role_sec_two's eligibility WAS read (and held nothing), so its "not in use" stands.
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            @($Partial).Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'groups/role_sec_one/eligibility'
+            $Unread | Should -Contain 'groups/role_sec_one/pimPolicy'
+            $Unread | Should -Not -Contain 'groups/role_sec_two/pimPolicy'
+            @($Result.Groups | ForEach-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' }) | Should -Not -Contain $true
+        }
+
+        It 'names the unread eligibility cause once, not again for the pimPolicy it left undecided' {
+            # The eligibility read's own cause is already on the list; the pimPolicy entry it drags in
+            # adds a COLLECTION, never a second cause.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                Write-Error -Message "Could not read PIM eligibility for group g-1: Too many requests (429). The PimEligibility property is omitted rather than reported as empty." `
+                    -ErrorId 'GroupPimEligibilityReadFailed' -Category ReadError -TargetObject 'g-1' -ErrorAction Continue
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_one'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x' } }
+            $Err = $null
+            $null = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err 2>$null
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            @($Partial).Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_one/eligibility, groups/role_sec_one/pimPolicy'
+            $Causes = ([string]$Partial[0].Exception.Message -split 'Causes: ')[1]
+            $Causes | Should -Not -BeNullOrEmpty -Because 'a missing Causes clause would make the counts below vacuous'
+            @([regex]::Matches($Causes, 'Could not read PIM eligibility')).Count | Should -Be 1
+            $Causes | Should -Not -Match 'Could not determine'
+        }
+
+        It 'exports pimPolicy, and reports nothing about it, when a modified policy decides "in use" without the eligibility' {
+            # A modified policy is conclusive on its own, so an unread eligibility changes nothing here.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_one'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified' }
+            }
+            $Err = $null
+            $Result = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result.Groups[0].PSObject.Properties.Name | Should -Contain 'pimPolicy'
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_one/eligibility'
         }
 
         It 'omits pimPolicy and reports it unread when the criterion itself cannot be read' {
@@ -4028,6 +4080,83 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                     Should -Be 4 -Because 'a policy nobody was allowed to read is OMITTED, exactly as Get-OERGroup omits PimEligibility'
                 @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' -and -not $_.pimPolicy }).Count |
                     Should -Be 0 -Because 'omitted, never present-and-empty -- a failed read is not an empty fact'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+            }
+        }
+    }
+
+    It 'leaves no error record, and exports no pimPolicy, when the PIM-in-use listing answers 404 ResourceNotFound' {
+        InModuleScope $script:moduleName {
+            try {
+                # The criterion declares a 404 ResourceNotFound on its listing as the answer "PIM does
+                # not know this group", so the REAL wrapper must hand it back as a marker with nothing
+                # raised: the caller's -ErrorVariable stays empty and the group is simply not in use.
+                # Three groups: the first is eligible (in use without asking), the other two answer
+                # the listing with 404. Both halves of InvokeMgGraphRequest.cs are modelled, as above.
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    $U = [string]$Uri
+                    $Index = 0
+                    if ($U -match '(\d{8})-0000-0000-0000-000000000000') { $Index = [int]$Matches[1] }
+                    $Onboarded = ($Index -eq 1)
+                    $NotOnboarded = '{"error":{"code":"ResourceTypeNotSupported","message":"Resource type not supported for onboarding"}}'
+                    $NotFound = '{"error":{"code":"ResourceNotFound","message":"The resource could not be found."}}'
+                    if ($U -match 'eligibilityScheduleInstances') {
+                        if ($Onboarded) {
+                            if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                            return @{ value = @(@{ id = "e$Index"; accessId = 'member'; principalId = "p$Index" }) }
+                        }
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotOnboarded) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotOnboarded | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotFound) }
+                        Set-Variable -Name $StatusCodeVariable -Value 404 -Scope 1
+                        return ($NotFound | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicyAssignments') {
+                        if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                        return @{ value = @(
+                                @{ roleDefinitionId = 'member'; policyId = "pol-m-$Index" }
+                                @{ roleDefinitionId = 'owner'; policyId = "pol-o-$Index" })
+                        }
+                    }
+                    if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies/.+/rules') {
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+                        }
+                    }
+                    if ($U -match '/members|/owners|getByIds|/directoryObjects') { return @{ value = @() } }
+                    if ($U -match '^v1\.0/groups') {
+                        return @{ value = @(1..3 | ForEach-Object {
+                                    @{ id = ('{0:d8}-0000-0000-0000-000000000000' -f $PSItem); displayName = "g$PSItem"
+                                        securityEnabled = $true; isAssignableToRole = $false; groupTypes = @()
+                                        description = $null; mailNickname = "g$PSItem"
+                                    }
+                                })
+                        }
+                    }
+                    return @{ value = @() }
+                }
+
+                $Err = $null
+                $Warned = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err `
+                    -WarningAction SilentlyContinue -WarningVariable Warned
+
+                @($Err).Count |
+                    Should -Be 0 -Because 'a 404 on the listing is the declared answer for a group PIM does not know, not a failure'
+                @($Warned).Count | Should -Be 0
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 3
+                @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' } | ForEach-Object { $_.displayName }) |
+                    Should -Be @('g1') -Because 'only the eligible group is in use; the two PIM does not know carry no pimPolicy'
             } finally {
                 Remove-Item 'function:Invoke-MgGraphRequest'
             }

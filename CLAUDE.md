@@ -676,10 +676,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
   eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
   or `lastModifiedBy.displayName`. Graph lists those policies for EVERY group, so a listed policy is
-  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group in use (a criterion it
-  could not read omits `pimPolicy` and reports it unread), and `Sync-OERStructureGroup` warns, never
-  blocks, before a changed policy onboards an existing group. Never re-implement the check inline.
-  The criterion is documented, not yet measured live.
+  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group found in use (a
+  criterion it could not read, or a "not in use" reached while the group's eligibility was unread,
+  omits `pimPolicy` AND reports it unread), and `Sync-OERStructureGroup` warns, never blocks, before
+  a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
+  documented, not yet measured live, and misses a group used only through PIM active assignments.
   `Why: docs/development/rationale.md#pim-in-use-criterion`
 
 ---

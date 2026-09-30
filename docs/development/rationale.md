@@ -2728,9 +2728,21 @@ direction: `pimPolicy` is omitted (an export would claim a use nobody measured) 
 `groups/<name>/pimPolicy` is recorded as unread, with its cause, so the run ends in `InventoryPartial`
 (an omission alone would claim the group does not use PIM for Groups). That cause is a tenth
 read-failure message shape, so the distinct-cause cap rose from nine to ten with it. When the
-group's eligibility read itself failed, the count passed is 0 and the policies alone decide; the
-eligibility gap is already reported unread on its own. `Export-OERInventory`'s RBAC-relevance filter
-is unchanged: a `pimPolicy` key now implies the group uses PIM for Groups.
+group's eligibility read itself failed, the count passed is 0 by default, not by measurement. A
+modified policy still decides "in use" on its own, and that path is unchanged; but a "not in use"
+decided on the policies alone is half an answer, so `pimPolicy` is omitted AND
+`groups/<name>/pimPolicy` is reported unread beside `groups/<name>/eligibility` (fix round 1 of
+Task 6; the first version reported only the eligibility, which left the help's "reported through
+InventoryPartial" promise false for this case). No second cause is recorded for it: the eligibility
+read's own cause is already on the list. `Export-OERInventory`'s RBAC-relevance filter is unchanged:
+a `pimPolicy` key now implies the group was found to use PIM for Groups.
+
+**A known blind spot of R1, named once.** A group used only through PIM ACTIVE assignments (no
+eligibility) whose policies were never modified is not found to use PIM for Groups: R1 does not
+look at assignment schedules. Its `pimPolicy` is then omitted from the export (the safe direction:
+an omitted block leaves the live policy untouched on apply), and an apply that declares one for it
+writes the R3 warning although the group is already onboarded. The documents therefore say "not
+found to use PIM for Groups (no PIM eligibility and no modified policy)", never "does not use".
 
 **R3 (`Sync-OERStructureGroup`).** Before the FIRST changed policy write of an item for a group that
 already existed -- once per item, and before its `ShouldProcess` gate so `-WhatIf` shows it -- the
