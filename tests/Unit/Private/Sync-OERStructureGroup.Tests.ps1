@@ -4151,7 +4151,9 @@ Describe 'Sync-OERStructureGroup' {
             $Out = Invoke-R3Sync -Item $Item
             $Onboard = @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern })
             $Onboard.Count | Should -Be 1
-            $Onboard[0] | Should -BeExactly ("Sync-OERStructureGroup: group 'role_sec_x' does not use PIM for Groups yet " +
+            # "was not found to use", never "does not use": the criterion has a documented blind spot
+            # (a group used only through PIM active assignments), so the warning states its finding.
+            $Onboard[0] | Should -BeExactly ("Sync-OERStructureGroup: group 'role_sec_x' was not found to use PIM for Groups " +
                 '(no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy ' +
                 "onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').")
             Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {

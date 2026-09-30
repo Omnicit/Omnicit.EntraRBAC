@@ -71,7 +71,8 @@ function Sync-OERStructureGroup {
        "Onboarding groups to PIM for Groups"). So before the first CHANGED policy write of an item for
        a group that already existed -- and before its ShouldProcess gate, so -WhatIf shows it too --
        the handler asks Test-OERGroupPimInUse, once per item, whether the group uses PIM for Groups,
-       and writes a warning when it does not, or when that cannot be read. The warning never blocks
+       and writes a warning when the group was not found to use it (a finding of the criterion, which
+       has a documented blind spot, not a fact), or when that cannot be read. The warning never blocks
        and never changes a row: the write still runs. It is not asked for a group created in the
        same run, nor once step 3 of the same item has written an eligibility (which onboarded the
        group already). The eligibility it passes is what the item read, and the item reads PIM
@@ -921,7 +922,7 @@ function Sync-OERStructureGroup {
                 # ever used with PIM for Groups, and this write onboards a group that was not, which
                 # cannot be undone. So before the FIRST changed write of the item -- and before its
                 # ShouldProcess gate, so -WhatIf shows it -- ask Test-OERGroupPimInUse, the single
-                # owner of that rule, and WARN when the group does not use PIM for Groups yet. Never
+                # owner of that rule, and WARN when the group was not found to use PIM for Groups. Never
                 # blocks and never changes a row: the document asked for this policy, and a group
                 # onboarded on purpose is the normal case (ruling R3,
                 # docs/development/rationale.md#pim-in-use-criterion). Not asked for a group this run
@@ -935,7 +936,7 @@ function Sync-OERStructureGroup {
                         try {
                             $Usage = Test-OERGroupPimInUse -GroupId $Gid -EligibilityCount $KnownEligibility
                             if (-not $Usage.InUse) {
-                                Write-Warning "Sync-OERStructureGroup: group '$Name' does not use PIM for Groups yet ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
+                                Write-Warning "Sync-OERStructureGroup: group '$Name' was not found to use PIM for Groups ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
                             }
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem

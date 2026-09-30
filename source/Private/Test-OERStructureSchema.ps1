@@ -107,8 +107,9 @@ function Test-OERStructureSchema {
     self review needs no fallback. A groups[] entry's previousDisplayName (the group's current display
     name or object id, when displayName declares a new one and the apply engine is to rename the
     group) must be a non-empty string (Error); one equal to displayName, ignoring case, is a
-    Warning, since both names then find the same group and there is nothing to rename. An explicit null is not declared, as for
-    every other key, and a template-based group's computed name is not compared. A groups[] entry
+    Warning, since both names then find the same group and a case-only rename is not possible
+    through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
+    as for every other key, and a template-based group's computed name is not compared. A groups[] entry
     declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
     displayName, case-insensitively) exists in the same
     document but does not name the group in its members is a Warning (issue #59): administrativeUnit
@@ -287,7 +288,8 @@ function Test-OERStructureSchema {
 
                 # previousDisplayName renames the group found under it to displayName. An empty or
                 # non-string value names no group at all; one equal to displayName (Graph matches
-                # display names case-insensitively) resolves to the same group, so nothing is renamed.
+                # display names case-insensitively) resolves to the same group, so nothing is renamed
+                # -- which also means a case-only rename cannot be expressed through the document.
                 # A template-based group's real name is computed at apply time and is not compared.
                 if (Test-HasProp -Node $G -Name 'previousDisplayName') {
                     $PrevDN = $G.previousDisplayName
@@ -296,7 +298,7 @@ function Test-OERStructureSchema {
                             -Message "'previousDisplayName' at $GPath must be a non-empty string."
                     } elseif ($HasDN -and ([string]$G.displayName -eq $PrevDN)) {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.previousDisplayName" -Severity 'Warning' `
-                            -Message "'previousDisplayName' at $GPath equals displayName; there is nothing to rename."
+                            -Message "'previousDisplayName' at $GPath equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName."
                     }
                 }
 

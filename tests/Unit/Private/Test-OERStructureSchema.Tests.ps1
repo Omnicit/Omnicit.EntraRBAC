@@ -3377,7 +3377,8 @@ Describe 'Test-OERStructureSchema directory role sections as Get-OERInventory -I
 Describe 'Test-OERStructureSchema group previousDisplayName' {
     # R9: previousDisplayName names a group's current display name when displayName declares a new
     # one. A known key; a non-string or empty value is an Error; one equal to displayName, ignoring
-    # case, is a Warning, since there is nothing to rename.
+    # case, is a Warning, since both names find the same group and a case-only rename cannot be
+    # expressed through the document.
     It 'accepts a non-empty previousDisplayName with no finding at all' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
@@ -3417,7 +3418,9 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
             $Hit.Count | Should -Be 1
             $Hit[0].Severity | Should -BeExactly 'Warning'
             $Hit[0].Item | Should -BeExactly 'role_sec_hr'
-            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] equals displayName; there is nothing to rename."
+            # Not "nothing to rename": a case-only rename is a real change, but Graph matches names
+            # case-insensitively, so the document cannot express it and the cmdlet has to.
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName."
             @($V.Errors).Count | Should -Be 1
             $V.Valid | Should -BeTrue
         }

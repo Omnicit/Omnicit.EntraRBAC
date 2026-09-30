@@ -2762,8 +2762,9 @@ found to use PIM for Groups (no PIM eligibility and no modified policy)", never 
 
 **R3 (`Sync-OERStructureGroup`).** Before the FIRST changed policy write of an item for a group that
 already existed -- once per item, and before its `ShouldProcess` gate so `-WhatIf` shows it -- the
-handler asks the criterion and warns when the group does not use PIM for Groups yet, or when that
-could not be determined. It WARNS and never blocks, and it never changes a row: the document asked
+handler asks the criterion and warns when the group was not found to use PIM for Groups, or when that
+could not be determined -- worded as the criterion's finding, never as "does not use", for the blind
+spot above. It WARNS and never blocks, and it never changes a row: the document asked
 for this policy, and onboarding a group on purpose through its first policy is the normal way a group
 comes under PIM. It does not ask for a group created in the same run (no PIM history to protect), nor
 once step 3 of the same item has SUCCESSFULLY written an eligibility (that request onboarded the group
