@@ -11,6 +11,17 @@ Describe 'Set-OERGroup' {
         Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'gid-1' }
     }
 
+    It 'patches the display name' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = 'gid-1'; displayName = 'new'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+        } -ParameterFilter { $Uri -eq 'v1.0/groups/gid-1' -and ($Method -eq 'GET' -or -not $Method) }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {} -ParameterFilter { $Method -eq 'PATCH' }
+        Set-OERGroup -Id 'gid-1' -NewDisplayName 'new' | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PATCH' -and $Uri -eq 'v1.0/groups/gid-1' -and $Body.displayName -eq 'new'
+        }
+    }
+
     It 'patches the description' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             @{ id = 'gid-1'; displayName = 'role_sec_team'; description = 'new desc'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
@@ -20,6 +31,21 @@ Describe 'Set-OERGroup' {
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -ParameterFilter {
             $Method -eq 'PATCH' -and $Uri -eq 'v1.0/groups/gid-1' -and $Body.description -eq 'new desc'
         }
+    }
+
+    It 'patches both display name and description together' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = 'gid-1'; displayName = 'new'; description = 'new desc'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+        } -ParameterFilter { $Uri -eq 'v1.0/groups/gid-1' -and ($Method -eq 'GET' -or -not $Method) }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {} -ParameterFilter { $Method -eq 'PATCH' }
+        Set-OERGroup -Id 'gid-1' -NewDisplayName 'new' -Description 'new desc' | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PATCH' -and $Uri -eq 'v1.0/groups/gid-1' -and $Body.displayName -eq 'new' -and $Body.description -eq 'new desc'
+        }
+    }
+
+    It 'refuses empty -NewDisplayName' {
+        { Set-OERGroup -Id 'gid-1' -NewDisplayName '' -ErrorAction Stop } | Should -Throw -ErrorId 'ParameterArgumentValidationError,Set-OERGroup'
     }
 
     It 'errors when the group cannot be resolved' {
