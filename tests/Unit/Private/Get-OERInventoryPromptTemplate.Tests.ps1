@@ -41,6 +41,15 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'warns that pimPolicy is exported only for groups found to use PIM for Groups and onboards on write' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match 'pimPolicy is exported only for a group the inventory found to use PIM for Groups'
+            $T | Should -Match ([regex]::Escape('Adding or changing a pimPolicy on a group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone'))
+            $T | Should -Match 'propose that only deliberately, and say so in the rationale'
+        }
+    }
+
     It 'documents the granular assignment policy fields' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
@@ -221,7 +230,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
 Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the prompt claiming fewer.
-    It 'counts and names every section schema.json declares, and marks both directory role sections apply-only' {
+    It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
@@ -232,7 +241,34 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
                 $T | Should -Match "\b$Section\b"
             }
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
-            ($T -replace '\s+', ' ') | Should -Match 'directoryRoleManagementPolicies \(the PIM settings of Microsoft Entra directory roles\) and directoryRoleAssignments \(eligible and active assignments of Microsoft Entra directory roles\) are apply-only for now: Get-OERInventory does not read them'
+            $Collapsed = $T -replace '\s+', ' '
+            $Collapsed | Should -Not -Match 'apply-only for now'
+            $Collapsed | Should -Not -Match 'does not read them'
+            $Collapsed | Should -Match ([regex]::Escape('directoryRoleManagementPolicies (the PIM settings of Microsoft Entra directory roles) and directoryRoleAssignments (eligible and active assignments of Microsoft Entra directory roles) are both captured in inventory.json (policies for roles with at least one eligible or active assignment unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
+        }
+    }
+
+    It 'documents the directoryRoleManagementPolicies[] and directoryRoleAssignments[] output-schema fields' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('directoryRoleManagementPolicies[]: { role (required -- a Microsoft Entra directory role display name or role definition id), and the same fields as roleManagementPolicies without scope }'))
+            $T | Should -Match 'approvers replace only the declared side \(users or groups\); an empty array clears that side'
+            $T | Should -Match 'the policy always exists and is never removed'
+            $T | Should -Match 'it is applied before directoryRoleAssignments'
+            $T | Should -Match ([regex]::Escape('directoryRoleAssignments[]: { role (required), principal (required -- UPN, group display name, or service principal OBJECT ID), principalType (User | Group | ServicePrincipal), assignmentType (required -- Eligible | Active), durationDays (1-3650; omit for a permanent assignment), permanent (bool), justification }'))
+            $T | Should -Match 'matched on role, principal and assignmentType'
+            $T | Should -Match ([regex]::Escape('a permanent assignment needs a policy that allows it (declare it in directoryRoleManagementPolicies)'))
+            $T | Should -Match 'only role-assignable groups can hold a directory role'
+            $T | Should -Match ([regex]::Escape('under -Prune only the (role, assignmentType) pairs the document declares are reconciled'))
+            $T | Should -Match "the signed-in identity's own assignments are never removed"
+            $T | Should -Match 'prefer Eligible over Active for privileged roles'
+        }
+    }
+
+    It 'extends the Entra directory roles common-values line with the two new role fields' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Entra directory roles (directoryRoleManagementPolicies[].role, directoryRoleAssignments[].role, administrativeUnits[].scopedRoles[].role):'))
         }
     }
 }
@@ -247,6 +283,7 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
             $T | Should -Match ([regex]::Escape('displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: the group found under previousDisplayName alone is renamed in place. When both names match different groups the entry fails and nothing is changed (two groups are never merged), and when neither matches the group is created under displayName.'))
             $T | Should -Match ([regex]::Escape('{ displayName (or template + tokens object), previousDisplayName (rename only'))
+            $T | Should -Match ([regex]::Escape("previousDisplayName (rename only -- the group's current display name or object id when displayName declares a new one"))
             $T | Should -Not -Match 'changing displayName creates a new group'
             # The three sections that still cannot be renamed keep saying so.
             $T | Should -Match 'changing displayName creates a new unit'

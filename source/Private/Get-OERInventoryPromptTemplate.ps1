@@ -69,8 +69,9 @@ accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAss
 roleAssignments and roleManagementPolicies. Any other top-level key is rejected.
 directoryRoleManagementPolicies (the PIM settings of Microsoft Entra directory roles) and
 directoryRoleAssignments (eligible and active assignments of Microsoft Entra directory roles) are
-apply-only for now: Get-OERInventory does not read them, so inventory.json carries no current state
-for them and the field reference below does not cover them -- leave them out of your proposals.
+both captured in inventory.json (policies for roles with at least one eligible or active assignment
+unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope --
+activations and assignments inherited through a group are not listed), and may be proposed.
 Four areas fall outside that model, each in a different way, so treat them differently:
 
 - Azure resource GROUPS and individual RESOURCES cannot be created or managed by the document.
@@ -157,8 +158,8 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
 (optional), and the section arrays. Any other top-level key is rejected.
 
 - groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
-  group's current name when displayName declares a new one; NOT captured by inventory),
-  roleAssignable (bool), dynamic (bool),
+  group's current display name or object id when displayName declares a new one; NOT captured by
+  inventory), roleAssignable (bool), dynamic (bool),
   description, mailNickname, administrativeUnit (create-only -- applied when the group is created and
   NOT captured by inventory), membershipRule, membershipRuleProcessingState (On|Paused; dynamic
   groups only), members[] (UPNs / object ids), owners[] (UPNs / object ids -- a group owner can ADD
@@ -198,6 +199,10 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
   - an activationEnablement containing "MultiFactorAuthentication" and a non-empty
     authenticationContextId are mutually exclusive; declare only one. Declaring both is accepted but
     the MFA requirement is cleared on apply.
+  - pimPolicy is exported only for a group the inventory found to use PIM for Groups; a group with
+    no pimPolicy in inventory.json was not found to use it. Adding or changing a pimPolicy on a
+    group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone -- propose that
+    only deliberately, and say so in the rationale.
 - administrativeUnits[]: { displayName (required), description, restricted (bool; immutable once the
   unit is created -- only declare it when creating a new unit), dynamic (bool; freely declare it -- the
   apply engine changes membershipType on an existing unit, but a unit declared dynamic must also declare
@@ -265,6 +270,23 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
   - "reviewers": [] is a declared EMPTY list and means a SELF review, on both the create and the
     update path. It is NOT the same as omitting reviewers, which defaults to the requestor's manager
     and then REQUIRES fallbackReviewers; an explicit null counts as omitted.
+- directoryRoleManagementPolicies[]: { role (required -- a Microsoft Entra directory role display
+  name or role definition id), and the same fields as roleManagementPolicies without scope }
+  - approvers replace only the declared side (users or groups); an empty array clears that side.
+  - the policy always exists and is never removed.
+  - it is applied before directoryRoleAssignments.
+- directoryRoleAssignments[]: { role (required), principal (required -- UPN, group display name, or
+  service principal OBJECT ID), principalType (User | Group | ServicePrincipal), assignmentType
+  (required -- Eligible | Active), durationDays (1-3650; omit for a permanent assignment),
+  permanent (bool), justification }
+  - matched on role, principal and assignmentType.
+  - a permanent assignment needs a policy that allows it (declare it in
+    directoryRoleManagementPolicies).
+  - only role-assignable groups can hold a directory role.
+  - under -Prune only the (role, assignmentType) pairs the document declares are reconciled; an
+    activation, an assignment inherited through a group, and the signed-in identity's own
+    assignments are never removed.
+  - prefer Eligible over Active for privileged roles.
 - roleAssignments[]: { scope (required), role (required), principal (required),
   principalType (User | Group | ServicePrincipal) }
   - Optional per assignment: description, condition (ABAC), conditionVersion ("2.0"). Azure permits
@@ -307,8 +329,9 @@ schema.json. Any valid name works; these are common least-privilege choices:
 - Azure roles (roleAssignments[].role, roleManagementPolicies[].role): Reader, Contributor, Owner,
   User Access Administrator, Role Based Access Control Administrator. Prefer Reader / Contributor;
   reserve Owner and User Access Administrator for PIM-eligible, approval-gated assignments.
-- Entra directory roles (administrativeUnits[].scopedRoles[].role): User Administrator,
-  Helpdesk Administrator, Groups Administrator, Authentication Administrator, License Administrator.
+- Entra directory roles (directoryRoleManagementPolicies[].role, directoryRoleAssignments[].role,
+  administrativeUnits[].scopedRoles[].role): User Administrator, Helpdesk Administrator, Groups
+  Administrator, Authentication Administrator, License Administrator.
 - requestorScope.scope (accessPackages[].assignmentPolicies[].requestorScope): AllMemberUsers,
   AllConfiguredConnectedOrganizationUsers, SpecificDirectoryUsers, NotSpecified. Use NotSpecified
   for administrator-assignment-only. Do NOT write NoSubjects: it is a legacy beta spelling the

@@ -206,6 +206,36 @@ found. Under `-WhatIf` the rename is only planned, so the new name does not reso
 those references are reported the same way as references to a group that the same run would
 create.
 
+## Directory roles
+
+`directoryRoleManagementPolicies[]` and `directoryRoleAssignments[]` cover Microsoft Entra directory
+role PIM, through Microsoft Graph only -- neither one ever acquires an ARM token. Their full field
+lists are in `schema.json`, under the same-named properties; this section covers only what
+`Get-OERInventory` selects and exports into `inventory.json`.
+
+**Policy selection.** `directoryRoleManagementPolicies` exports the policy of every directory role
+that has at least one row in the tenant-scope eligibility or assignment schedules (any member type,
+activations included). Add `-AllDirectoryRolePolicies` to export the policy of every directory role
+instead -- the schedules are then not read for the policy section at all, though they are still read,
+once, when `DirectoryRoleAssignments` is included too. A failed schedule or policy read is reported
+through `InventoryPartial` and never stated as a fact.
+
+**Assignment export.** `directoryRoleAssignments` exports only the rows
+`Select-OERManagedDirectoryRoleAssignment` keeps: direct assignments at tenant scope. An activation of
+an eligible assignment, an assignment a principal holds through a group, and one scoped to an
+administrative unit are never exported -- their absence here is not evidence the tenant has none. A
+user is named by its user principal name and a group by its display name, each falling back to its
+object id when the name cannot be read, or, for a group, when its display name matches that of
+another principal holding the same role and assignment type; a service principal, or a principal of
+unknown type, is named by its object id. `principalType` is carried whenever the type is known. A
+time-bound assignment carries `durationDays` reconstructed from the live schedule window, so a
+re-applied export is `Unchanged`; a permanent one carries neither `durationDays` nor `permanent`.
+
+Both sections are ordinary apply-document sections: propose changes to them like any other. A
+directory role's policy always exists, so there is nothing to create or remove and `-Prune` has no
+effect on `directoryRoleManagementPolicies`; `directoryRoleAssignments` reconciles, and can be
+pruned, only for the `(role, assignmentType)` pairs the document declares.
+
 ## Access package assignment policy schema
 
 `accessPackages[].assignmentPolicies[]` in an apply document supports a rich set of optional fields

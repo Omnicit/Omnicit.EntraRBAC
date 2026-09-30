@@ -83,7 +83,7 @@ Describe 'Get-OERInventoryReadme' {
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
-    It 'counts and names every section schema.json declares, and marks both directory role sections apply-only' {
+    It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
@@ -94,7 +94,10 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
                 $Md | Should -Match "\b$Section\b"
             }
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
-            ($Md -replace '\s+', ' ') | Should -Match '`directoryRoleManagementPolicies` \(the PIM settings of Microsoft Entra directory roles\) and `directoryRoleAssignments` \(eligible and active assignments of Microsoft Entra directory roles\) are apply-only for now: `Get-OERInventory` does not read them'
+            $Collapsed = $Md -replace '\s+', ' '
+            $Collapsed | Should -Not -Match 'apply-only for now'
+            $Collapsed | Should -Not -Match 'does not read them'
+            $Collapsed | Should -Match ([regex]::Escape('`directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra directory roles) and `directoryRoleAssignments` (eligible and active assignments of Microsoft Entra directory roles) are both captured in `inventory.json` (policies for roles with at least one eligible or active assignment unless the export used `-AllDirectoryRolePolicies`; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
         }
     }
 }
