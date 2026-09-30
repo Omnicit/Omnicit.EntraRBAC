@@ -6,9 +6,13 @@ function Get-OERInventoryAzureEligibility {
     .DESCRIPTION
     Single owner of the bounded eligibility read behind Export-OERInventory's azurePimEligibility.json.
     Exactly one paged Get-OEREligibleRoleAssignment read per scope: a management group scope is read
-    with -AtScope (eligibilities at or above it), every other scope without a filter (at, above and
-    below it). The results are deduplicated on the schedule id, so an eligibility seen from several
-    scopes appears once. A scope whose read fails is warned about, left out and listed in
+    with -AtScope (eligibilities at or above it), every other scope without a filter, EXPECTED to
+    return eligibilities at, above and below it -- Microsoft documents no semantics at all for an
+    unfiltered read, so the below-scope half is to be verified live, not assumed
+    (docs/development/rationale.md#inventory-azure-eligibility). The results are deduplicated on the
+    schedule id, so an eligibility seen from several scopes appears once -- for example a management
+    group's own eligibility, read once directly at the management group and again, inherited, from
+    each subscription below it. A scope whose read fails is warned about, left out and listed in
     SkippedScopes -- a failed read is never presented as a scope without eligibility. The projection
     is read-only context, not an apply-document section: scope, role, principal, principalType,
     memberType, status, startDateTime and endDateTime (null for a permanent eligibility).
@@ -18,7 +22,8 @@ function Get-OERInventoryAzureEligibility {
 
     .EXAMPLE
     Get-OERInventoryAzureEligibility -Scope '/subscriptions/11111111-1111-1111-1111-111111111111'
-    Returns the eligibilities at, above and below that subscription.
+    Returns the eligibilities at and above that subscription, and is expected (pending live
+    verification) to also return the ones below it.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]

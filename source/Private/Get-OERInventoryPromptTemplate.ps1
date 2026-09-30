@@ -76,10 +76,11 @@ Four areas fall outside that model, each in a different way, so treat them diffe
 - Azure resource GROUPS and individual RESOURCES cannot be created or managed by the document.
   A role assignment AT a resource-group or resource scope does apply -- scope is passed through as
   a raw ARM string -- but scopeHierarchy.json enumerates management groups and subscriptions only,
-  so you have no verified resource-group names to work from. Never invent a resource-group or
-  resource scope string. If one already appears in inventory.json, you may preserve it verbatim;
-  otherwise place the assignment at a subscription or management group scope, and say in your
-  rationale where a narrower scope would be better once the operator supplies the names.
+  so it alone gives you no verified resource-group names to work from. Never invent a resource-group
+  or resource scope string. If one already appears in inventory.json OR in azurePimEligibility.json
+  (an eligibility there can be scoped below a subscription), you may preserve it verbatim; otherwise
+  place the assignment at a subscription or management group scope, and say in your rationale where
+  a narrower scope would be better once the operator supplies the names.
 - Azure PIM eligible and active role assignments are NOT appliable. roleAssignments[] is PERMANENT
   Azure RBAC only, and roleManagementPolicies[] configures the PIM policy that GOVERNS eligibility --
   neither one grants, captures or removes an eligible or active PIM assignment. The eligible ones are

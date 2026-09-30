@@ -37,24 +37,35 @@ function Export-OERInventory {
 
     Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
     Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent
-    otherwise, exactly like the two role-assignment files it sits beside. One paged
-    Get-OEREligibleRoleAssignment read runs per scope the walk visits: a management group scope is
-    read with -AtScope (eligibilities at or above it); every other scope is read unfiltered, which is
-    MEASURED to also surface eligibilities below that scope -- Microsoft Learn documents only the
-    atScope() and principalId filters for this endpoint, not the unfiltered case, so read that
-    below-scope coverage as observed behaviour rather than a documented guarantee. The results are
-    deduplicated on the eligibility schedule id, so one eligibility visible from several scopes in the
-    walk appears once. The file is read-only context, exactly like scopeHierarchy.json and
-    groupsRoster.json: it is never an apply-document section and no apply cmdlet reads it back. A
-    scope whose eligibility read fails is named in SkippedEligibilityScopes and folds into the same
-    trailing InventoryPartial error as a failed role-assignment scope.
+    otherwise. That is UNLIKE the two role-assignment files it sits beside: roleAssignments.json and
+    roleManagementPolicies.json are always written, as an empty [] when no Azure section was
+    requested, while azurePimEligibility.json is the one bundle file that is sometimes not written at
+    all. One paged Get-OEREligibleRoleAssignment read runs per scope the walk visits: a management
+    group scope is read with -AtScope (eligibilities at or above it); every other scope is read
+    unfiltered, which is EXPECTED to also surface eligibilities below that scope -- Microsoft Learn's
+    listForScope documents four filters (atScope(), principalId eq '{id}', assignedTo('{userId}') and
+    asTarget()) and no unfiltered semantics at all, so the below-scope coverage of an unfiltered read
+    is to be verified live, not assumed from documentation: see the step 5 live-verification
+    checklist, section 4 (docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md).
+    Resolve-OERInventoryScopeTree enumerates management group and subscription scopes only, so a
+    resource-group- or resource-scoped eligibility can reach this file ONLY through that unfiltered
+    subscription read's below-scope behaviour -- if the live check finds it does not go that far,
+    this design does not capture resource-group-scoped eligibility and needs revisiting. The results
+    are deduplicated on the eligibility schedule id, so one eligibility
+    visible from several scopes in the walk appears once -- for example a management-group
+    eligibility, read once directly at the management group and again, inherited, from every
+    subscription below it. The file is read-only context, exactly like scopeHierarchy.json and
+    groupsRoster.json: it is never an apply-document section and no apply cmdlet reads it back. Every
+    per-area file and azurePimEligibility.json alike is always a JSON array on disk, written as [] when
+    it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
+    folds into the same trailing InventoryPartial error as a failed role-assignment scope.
 
     Entra ID coverage is reported the same way. IncompleteReads carries one entry per partial
     report from Get-OERInventory, each naming the affected section/displayName/key triples -- so a
     single run that lost three collections reports one entry listing all three, not three entries.
     Its Count is therefore the number of partial reports, not the number of unread collections; read
     the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
-    IncompleteReads or SkippedScopes is non-empty. Such a collection is NOT written into
+    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. Such a collection is NOT written into
     inventory.json as an empty one: a members or scopedRoles key it names is an explicit null, which
     the apply engine reads as "leave untouched". Do not hand-edit that null to [] -- under
     Invoke-OERStructure -Prune an empty declared collection deletes every live member.
@@ -582,10 +593,17 @@ function Export-OERInventory {
                 # A separate clause, not folded into the roleAssignments/roleManagementPolicies one
                 # above: the eligibility read (R4) runs as its own pass over the same scope list, so a
                 # scope can fail here without having failed the role-assignment walk, or vice versa,
-                # and the operator needs to know which FILE is short.
+                # and the operator needs to know which FILE is short. Same two-arm split as the
+                # roleAssignments/roleManagementPolicies clause above, for the same reason: a failed
+                # scope WALK (no tree at all) reads differently from N of M individual scopes failing
+                # the eligibility read specifically.
+                $EligDetail = if ($ScopesEnumerated -gt 0) {
+                    "$($SkippedEligibilityScopes.Count) Azure scope(s) could not be read for azurePimEligibility.json"
+                } else {
+                    'the Azure scope walk could not be started, so no scope was read for azurePimEligibility.json'
+                }
                 $PartialParts.Add(
-                    "$($SkippedEligibilityScopes.Count) Azure scope(s) could not be read for " +
-                    'azurePimEligibility.json, and their eligible assignments are absent from it. ' +
+                    "$EligDetail, and their eligible assignments are absent from it. " +
                     "Skipped: $($SkippedEligibilityScopes -join ', ')")
             }
             if ($IncompleteReads.Count -gt 0) {

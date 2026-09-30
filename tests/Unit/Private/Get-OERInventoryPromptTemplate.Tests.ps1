@@ -129,6 +129,12 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'resource-group or resource scope does apply'
             $T | Should -Match 'preserve it verbatim'
             $T | Should -Match 'Least privilege'
+            # A resource-group-scoped eligibility can now reach azurePimEligibility.json (see the
+            # R4 below-scope coverage), so a verbatim scope already there is a second legitimate
+            # source, not just inventory.json. \s+ bridges the prose's own line wrap between the
+            # filename and its parenthetical -- the source text wraps at ~100 chars, and a raw
+            # multi-line here-string keeps that newline as a literal character -Match sees.
+            $T | Should -Match 'azurePimEligibility\.json\s+\(an eligibility there can be scoped below a subscription\)'
         }
     }
 

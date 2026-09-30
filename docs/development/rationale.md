@@ -2610,18 +2610,19 @@ measured rather than documented.
 role-assignment-and-eligibility pair.** `Get-OERInventoryAzureEligibility` calls
 `Get-OEREligibleRoleAssignment` exactly once for each scope `Export-OERInventory`'s Azure walk
 visits: a management group scope is read with `-AtScope` (eligibilities at or above it, matching how
-Learn documents the `atScope()` filter); every other scope -- a subscription, a resource group, a
-resource -- is read with no filter at all. The read runs as its own pass AFTER the existing
-role-assignment / policy walk over the same scope list, not interleaved with it, so a throttled
-request against one file is never blamed on the other and a scope that fails one read can still
-succeed the other. Results are deduplicated on `RoleEligibilityScheduleId` (falling back to a
-scope/role/principal composite key on the rare row that carries none), so an eligibility visible from
-several scopes in the walk -- a subscription-scoped one seen again while reading its resource groups,
-for instance -- is written once. A scope whose read fails is named in `SkippedScopes`
-(`Export-OERInventory`'s `SkippedEligibilityScopes`) and folds into the bundle's existing
-`InventoryPartial` error with its own clause naming `azurePimEligibility.json`, exactly as a failed
-role-assignment scope already named `roleAssignments.json` and `roleManagementPolicies.json` --
-never presented as a scope with no eligibility, since that would read as a fact nothing measured.
+Learn documents the `atScope()` filter); every other scope -- every subscription
+`Resolve-OERInventoryScopeTree` enumerates -- is read with no filter at all. The read runs as its own
+pass AFTER the existing role-assignment / policy walk over the same scope list, not interleaved with
+it, so a throttled request against one file is never blamed on the other and a scope that fails one
+read can still succeed the other. Results are deduplicated on `RoleEligibilityScheduleId` (falling
+back to a scope/role/principal composite key on the rare row that carries none), so an eligibility
+visible from several scopes in the walk -- a management group's own eligibility, read once directly
+at the management group and again, inherited, from every subscription below it -- is written once.
+A scope whose read fails is named in `SkippedScopes` (`Export-OERInventory`'s
+`SkippedEligibilityScopes`) and folds into the bundle's existing `InventoryPartial` error with its
+own clause naming `azurePimEligibility.json`, exactly as a failed role-assignment scope already
+named `roleAssignments.json` and `roleManagementPolicies.json` -- never presented as a scope with no
+eligibility, since that would read as a fact nothing measured.
 
 **Why per-scope, not per management group only, and not filtered by `-AsTarget` or a principal:**
 the bundle's job is to tell an LLM (and an operator) who can already activate what at the scopes the
@@ -2633,18 +2634,29 @@ directly-scoped eligibilities visible at all: `-AtScope` on a subscription would
 eligibilities inherited from a management group above it, silently dropping every eligibility
 declared AT that subscription or below it.
 
-**The below-scope coverage of an unfiltered read is a MEASURED claim, not a documented one.**
-Microsoft Learn's `roleEligibilitySchedules` reference names exactly two supported filters --
-`atScope()` and `assignedTo('{principalId}')` (used here as the module's `-User`/`-Group`/
-`-ServicePrincipal` filters) -- and says nothing about what an unfiltered `$filter`-less list
-returns relative to the scope in the URL. `Get-OEREligibleRoleAssignment`'s own help states the
-observed behaviour plainly: "Without a filter, every eligibility that applies at the scope (direct
-and inherited) is returned," which in practice has been read as covering below the scope too (a
-subscription-scoped read surfacing a resource-group-scoped eligibility under it). That reading is
-carried into this helper's own `.DESCRIPTION` and into `Export-OERInventory`'s help the same way:
-worded as what was OBSERVED, not as a contract Microsoft has published, because an undocumented
-service behaviour can change without notice in a way a documented filter cannot. Nothing in this
-change relies on the below-scope case for correctness -- the tenant-wide scope list already walks
-every management group and subscription, so an eligibility missed below one scope by an API change
-would still be caught by the walk visiting that narrower scope directly, only later and via a
-different scope entry, not silently dropped from the bundle altogether.
+**The below-scope coverage of an unfiltered read is an EXPECTED claim awaiting live verification, not
+a measured or documented one.** Microsoft Learn's `roleEligibilitySchedules` `listForScope`
+reference documents FOUR supported filters -- `atScope()`, `principalId eq '{id}'` ("at, above, or
+below the scope for the specified principal"), `assignedTo('{userId}')` (used here as the module's
+`-User`/`-Group`/`-ServicePrincipal` filters) and `asTarget()` -- and none of the four documents what
+an unfiltered, `$filter`-less list returns relative to the scope in the URL. No live check of this
+module's own unfiltered read has been run yet, so this is neither an observed nor a measured fact:
+`Get-OEREligibleRoleAssignment`'s own help description of "every eligibility that applies at the
+scope (direct and inherited)" describes the FILTERED forms it also supports, not a verified claim
+about the unfiltered path, and this helper's own `.DESCRIPTION` and `Export-OERInventory`'s help are
+worded as EXPECTED behaviour pending that verification, not as anything measured -- do not read
+either as stronger than that.
+
+**This is not a low-stakes hedge: `Resolve-OERInventoryScopeTree` enumerates management group and
+subscription scopes only, never a resource group or a resource, so a resource-group- or
+resource-scoped eligibility can reach `azurePimEligibility.json` in exactly ONE way -- through an
+unfiltered subscription read's below-scope coverage.** There is no second path and no independent
+walk that would catch it if the unfiltered read turns out not to reach that far: unlike a
+management-group-level gap (caught anyway, later, when the walk visits the subscription directly, as
+the deduplication case above shows), a resource-group-scoped eligibility has no scope of its own in
+the walk to be caught FROM. The step 5 live-verification checklist, section 4
+(`docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md`, written by a later
+task), is where this gets measured for the first time. If that check finds an unfiltered
+subscription-scoped read does NOT surface a resource-group-scoped eligibility beneath it, this
+design does not capture resource-group-scoped eligibility at all, and R4 needs revisiting -- not a
+silent gap to leave documented away.

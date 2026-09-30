@@ -40,6 +40,27 @@ Describe 'Export-OERInventory (core)' {
         $Inv.Version | Should -Be '1.0'
     }
 
+    It 'writes every per-area JSON file as a JSON array on disk -- one element still an array, empty still []' {
+        # Pins BOTH halves of Write-OERBundleJson's switch from a pipe to -InputObject:
+        #   (a) a ONE-element collection must still serialize as a JSON ARRAY ("[{...}]"), not as
+        #       the bare object a pipe would have unrolled it to (PowerShell unrolls a piped
+        #       single-element array into one object on the pipeline, same as an empty one) --
+        #       groups.json here carries exactly the one RBAC-relevant group this Describe's fixture
+        #       provides.
+        #   (b) an EMPTY collection must still be WRITTEN, as the literal "[]" -- roleAssignments.json
+        #       is written UNCONDITIONALLY (unlike azurePimEligibility.json) and is empty on this
+        #       pure-Entra -Include, so it is the file that proves the empty-array half without an
+        #       Azure section at all.
+        $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
+        $GroupsRaw = (Get-Content (Join-Path $Result.BundlePath 'groups.json') -Raw).TrimStart()
+        $GroupsRaw | Should -Match '^\[' -Because (
+            'a one-element array piped into ConvertTo-Json used to unroll to a bare object; ' +
+            '-InputObject keeps the array wrapper')
+        $RaPath = Join-Path $Result.BundlePath 'roleAssignments.json'
+        Test-Path $RaPath | Should -BeTrue
+        (Get-Content $RaPath -Raw).Trim() | Should -Be '[]'
+    }
+
     It 'keeps only RBAC-relevant groups in inventory.json but all groups in the roster' {
         $Result = Export-OERInventory -OutputPath $TestDrive -Include Groups
         $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
@@ -586,6 +607,12 @@ Describe 'Export-OERInventory (Azure PIM eligibility)' {
         $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         @($Partial).Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'azurePimEligibility\.json'
+        # The eligibility clause gets its own WALK-failed wording here, distinct from the "N Azure
+        # scope(s) could not be read for azurePimEligibility.json" wording a partial (some-scopes-
+        # failed) eligibility read gets -- same two-arm split the roleAssignments/roleManagementPolicies
+        # clause already makes, and for the same reason: no tree at all reads differently from N of M
+        # scopes failing.
+        $Partial[0].Exception.Message | Should -Match 'the Azure scope walk could not be started, so no scope was read for azurePimEligibility\.json'
         Test-Path (Join-Path $Bundle.BundlePath 'azurePimEligibility.json') | Should -BeTrue
         $EmptyElig = @(Get-Content (Join-Path $Bundle.BundlePath 'azurePimEligibility.json') -Raw | ConvertFrom-Json)
         @($EmptyElig).Count | Should -Be 0

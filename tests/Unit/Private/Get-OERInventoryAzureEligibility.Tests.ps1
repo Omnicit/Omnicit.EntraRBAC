@@ -66,7 +66,19 @@ Describe 'Get-OERInventoryAzureEligibility' {
     It 'lists a failing scope in SkippedScopes, warns once, and still reads the other scope' {
         Mock -ModuleName $script:moduleName Get-OEREligibleRoleAssignment {
             param($Scope, $AtScope)
-            if ($Scope -eq '/subscriptions/11111111-1111-1111-1111-111111111111') { throw 'boom (throttled)' }
+            if ($Scope -eq '/subscriptions/11111111-1111-1111-1111-111111111111') {
+                # The real cmdlet reports an ARM failure NON-terminatingly, through
+                # $PSCmdlet.WriteError -- it only becomes terminating because the helper's own
+                # -ErrorAction Stop asks for that. A bare `throw` here would terminate the mocked
+                # call regardless of what the helper passes, which would stay green even if the
+                # helper's -ErrorAction Stop were silently dropped (the call would then return
+                # nothing instead of failing, and be read as "no eligibility" rather than "failed
+                # read" -- see the ErrorAction mutation-proof test below). Mirroring the real
+                # ErrorAction-dependent behaviour is what makes THIS test actually prove that pin.
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'boom (throttled)' -ErrorId 'Throttled' -ErrorAction $Ea
+                return
+            }
             [PSCustomObject]@{
                 RoleEligibilityScheduleId = 'sched-2'
                 Scope                     = $Scope
