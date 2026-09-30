@@ -68,10 +68,17 @@ function Sync-OERStructureGroup {
        via requireApproval/approvers) -- after the time-bound eligibility entries. Microsoft Graph
        lists a group's policies whether or not the group was ever used with PIM for Groups, and the
        first policy update onboards the group, which cannot be undone (Microsoft Graph documentation,
-       "Onboarding groups to PIM for Groups"). A declared approver (a UPN or a group display name) is
-       resolved to an object id before the diff, for each access type in turn; an approver that does
-       not resolve reports Failed
-       for that access type ONLY -- the other access type (member/owner) and every later step still run.
+       "Onboarding groups to PIM for Groups"). So before the first CHANGED policy write of an item for
+       a group that already existed -- and before its ShouldProcess gate, so -WhatIf shows it too --
+       the handler asks Test-OERGroupPimInUse, once per item, whether the group uses PIM for Groups,
+       and writes a warning when it does not, or when that cannot be read. The warning never blocks
+       and never changes a row: the write still runs. It is not asked for a group created in the
+       same run, nor once step 3 of the same item has written an eligibility (which onboarded the
+       group already). The eligibility it passes is what the item read, and the item reads PIM
+       eligibility only when it declares eligibility. A declared approver (a UPN or a group display
+       name) is resolved to an object id before the diff, for each access type in turn; an approver
+       that does not resolve reports Failed for that access type ONLY -- the other access type
+       (member/owner) and every later step still run.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -711,6 +718,13 @@ function Sync-OERStructureGroup {
             return $null
         }
 
+        # Whether step 3 below wrote an eligibility for this group in THIS run. That request onboards
+        # the group to PIM for Groups, so step 4 no longer asks whether the group uses PIM for Groups
+        # before it writes the policy: the onboarding its warning would announce has already happened.
+        # Set only on a SUCCESSFUL write -- a refused request, or one skipped under -WhatIf, onboards
+        # nothing.
+        $EligibilityWrittenThisRun = $false
+
         # Step 3: time-bound eligibility
         foreach ($EEntry in $TimeBoundEntries) {
             $EPrinRef = $EEntry.principal
@@ -750,6 +764,7 @@ function Sync-OERStructureGroup {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                     continue
                 }
+                $EligibilityWrittenThisRun = $true
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "set time-bound $($EChange.AccessType) eligibility for '$EPrinRef' ($($EChange.DurationDays) days): $($EChange.Detail)"
             } else {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would set time-bound $($EChange.AccessType) eligibility for '$EPrinRef': $($EChange.Detail)"
@@ -785,6 +800,11 @@ function Sync-OERStructureGroup {
             # ONE wait budget for the whole group item (at most 30 s of waiting total: 2 + 4 + 8 +
             # 16), shared by the member and owner access types below -- not one budget each.
             $PolicyRetryDelays = [System.Collections.Generic.Queue[int]]::new([int[]]@(2, 4, 8, 16))
+
+            # Whether this item has already asked Test-OERGroupPimInUse. Asked at most ONCE per item,
+            # at the first access type whose diff is Changed: one question and one warning cover both
+            # access types of the same group.
+            $PimUsageAsked = $false
 
             foreach ($AccessType in $DesiredByAccess.Keys) {
                 $Declared = $DesiredByAccess[$AccessType]
@@ -895,6 +915,33 @@ function Sync-OERStructureGroup {
                 if (-not $Change.Changed) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "pimPolicy ($AccessType) already matches"
                     continue
+                }
+
+                # Microsoft Graph lists a group's PIM-for-Groups policies whether or not the group was
+                # ever used with PIM for Groups, and this write onboards a group that was not, which
+                # cannot be undone. So before the FIRST changed write of the item -- and before its
+                # ShouldProcess gate, so -WhatIf shows it -- ask Test-OERGroupPimInUse, the single
+                # owner of that rule, and WARN when the group does not use PIM for Groups yet. Never
+                # blocks and never changes a row: the document asked for this policy, and a group
+                # onboarded on purpose is the normal case (ruling R3,
+                # docs/development/rationale.md#pim-in-use-criterion). Not asked for a group this run
+                # created (it has no PIM history to protect) or once step 3 of this item wrote an
+                # eligibility (that already onboarded it). The eligibility count is what this item
+                # READ, which it did only when eligibility is declared; 0 otherwise.
+                if (-not $PimUsageAsked) {
+                    $PimUsageAsked = $true
+                    if (-not $CreatedThisRun -and -not $EligibilityWrittenThisRun) {
+                        $KnownEligibility = if ($NeedElig) { @($CurrentEligibles | Where-Object { $null -ne $_ }).Count } else { 0 }
+                        try {
+                            $Usage = Test-OERGroupPimInUse -GroupId $Gid -EligibilityCount $KnownEligibility
+                            if (-not $Usage.InUse) {
+                                Write-Warning "Sync-OERStructureGroup: group '$Name' does not use PIM for Groups yet ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
+                            }
+                        } catch {
+                            Remove-OERErrorRecord -Record $PSItem
+                            Write-Warning "Sync-OERStructureGroup: could not determine whether group '$Name' uses PIM for Groups ($($PSItem.Exception.Message)); if it does not, applying its pimPolicy onboards it, which cannot be undone."
+                        }
+                    }
                 }
 
                 if ($Caller.ShouldProcess($Name, "Set PIM policy ($AccessType): $($Change.Changes -join '; ')")) {

@@ -673,6 +673,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in
   identity's object id (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
   re-implement either inline. `Why: docs/development/rationale.md#directory-role-assignments`
+- **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
+  eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
+  or `lastModifiedBy.displayName`. Graph lists those policies for EVERY group, so a listed policy is
+  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group in use (a criterion it
+  could not read omits `pimPolicy` and reports it unread), and `Sync-OERStructureGroup` warns, never
+  blocks, before a changed policy onboards an existing group. Never re-implement the check inline.
+  The criterion is documented, not yet measured live.
+  `Why: docs/development/rationale.md#pim-in-use-criterion`
 
 ---
 
@@ -743,12 +751,14 @@ structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 public-cloud path stays byte-identical to what it has always been; the environment name comes from
 `Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All eight call sites route
-through the private `Get-OERPimGroupsGraphPath`, which owns the version constant. Never hardcode
-`beta/` at a call site -- change the constant in the helper. The eligibility paths and the four
-policy paths migrate as ONE unit. `Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint
-availability in US Government and China clouds is not established -- a standing risk, not a bug --
-recorded at `Why: docs/development/rationale.md#sovereign-clouds`.
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All fifteen call sites, in ten
+source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
+when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the
+constant in the helper. The eligibility paths and the four policy paths migrate as ONE unit.
+`Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint availability in US Government and
+China clouds is not established -- a standing risk, not a bug -- recorded at
+`Why: docs/development/rationale.md#sovereign-clouds`.
 
 **Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
 directory-role policy path is a string literal starting with `v1.0/`, routed through

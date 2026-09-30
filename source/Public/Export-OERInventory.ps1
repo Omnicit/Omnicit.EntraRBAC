@@ -12,8 +12,10 @@ function Export-OERInventory {
     JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The bundle is designed to be handed to any LLM to produce appliable RBAC
     proposals. Only RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with
     eligibility) are kept in full detail in inventory.json. Microsoft Graph lists PIM-for-groups
-    policies for a group that was never used with PIM for Groups as well, so a group whose policy was
-    read carries a pimPolicy block whether or not it was ever onboarded. -AllGroupsDetailed keeps
+    policies for a group that was never used with PIM for Groups as well, so Get-OERInventory exports
+    a pimPolicy block only for a group that uses PIM for Groups -- one with PIM eligibility, or one
+    whose PIM-for-Groups policy has been modified -- and a group whose policies Graph merely lists is
+    not kept in full detail on that account. -AllGroupsDetailed keeps
     every group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and authenticates at entry; an ARM
     token is acquired only when -Include names RoleAssignments or RoleManagementPolicies, the two
     Azure sections.

@@ -44,16 +44,31 @@ Describe 'Get-OERPimGroupsGraphPath' {
                 'Public/Get-OERGroupPimPolicy.ps1'
                 'Private/Enable-OERGroupPermanentEligibility.ps1'
                 'Private/Get-OERGroupPermanentEligibilityState.ps1'
+                'Private/Get-OERListedGroupPimPolicy.ps1'
                 'Private/Get-OERPimGroupPolicyId.ps1'
+                'Private/Test-OERGroupPimInUse.ps1'
             ) | ForEach-Object { Join-Path $script:SourceRoot $_ }
         }
 
         It 'resolves every file it claims to guard' {
             # Without this the sweep below would pass vacuously if the relative path ever broke,
             # which is the failure mode that makes a drift guard worse than no guard at all.
-            $script:PinnedFiles.Count | Should -Be 8
+            $script:PinnedFiles.Count | Should -Be 10
             $Missing = @($script:PinnedFiles | Where-Object { -not (Test-Path -LiteralPath $_) })
             $Missing | Should -BeNullOrEmpty -Because 'the drift guard below only means something if it reads real files'
+        }
+
+        It 'guards every source file that calls the helper' {
+            # The list above is typed by hand, and it fell behind once already: a call site added in
+            # Get-OERListedGroupPimPolicy was never guarded. Every caller must be named here, so a
+            # new one fails this test until it joins the sweeps below.
+            $Callers = @(Get-ChildItem -Path $script:SourceRoot -Filter '*.ps1' -Recurse |
+                    Where-Object { $_.Name -ne 'Get-OERPimGroupsGraphPath.ps1' } |
+                    Where-Object { @(Select-String -LiteralPath $_.FullName -Pattern 'Get-OERPimGroupsGraphPath\s+-Path').Count -gt 0 } |
+                    ForEach-Object { $_.Name } | Sort-Object)
+            $Guarded = @($script:PinnedFiles | ForEach-Object { Split-Path -Leaf $_ } | Sort-Object)
+            $Callers.Count | Should -BeGreaterThan 0 -Because 'a sweep that finds no caller at all proves nothing'
+            $Callers | Should -Be $Guarded
         }
 
         It 'is the single owner of the pin -- no call site hardcodes beta' {

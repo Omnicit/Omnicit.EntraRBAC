@@ -25,10 +25,17 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. The Groups pimPolicy projection carries requireApproval and, only while it
-    is true, approvers as object ids (a display name is not guaranteed to resolve) -- approvers are
-    omitted while requireApproval is false, since the apply engine ignores declared approvers in that
-    case and the offline validator would otherwise warn on every exported document.
+    has at least one owner. The Groups pimPolicy projection is emitted only for a group that uses PIM
+    for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
+    carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
+    every group, including one never used with PIM for Groups, and applying a changed pimPolicy to
+    such a group onboards it to PIM for Groups, which cannot be undone -- so a group that does not use
+    PIM for Groups carries no pimPolicy, and none of its policies is read. When that question itself
+    cannot be answered for a group, its pimPolicy is omitted and reported through the InventoryPartial
+    error below. The projection carries requireApproval and, only while it is true, approvers as
+    object ids (a display name is not guaranteed to resolve) -- approvers are omitted while
+    requireApproval is false, since the apply engine ignores declared approvers in that case and the
+    offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
@@ -245,16 +252,16 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits nine
-        # read-failure message shapes (group members, group owners, group PIM eligibility, group PIM
-        # policy, AU members, AU scoped roles, directory role eligibility schedules, directory role
-        # assignment schedules, directory role policies), so nine admits one of each and a normal
-        # partial run is still reported in full; only a genuinely heterogeneous large-tenant failure
-        # is truncated, and the dropped count is stated rather than silently lost. Nothing is
-        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
-        # this with the shape count when a tenth read-failure message is added, or one shape starts
-        # crowding out another purely by ordering.
-        $UnreadCauseCap = 9
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits ten
+        # read-failure message shapes (group members, group owners, group PIM eligibility, group
+        # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+        # eligibility schedules, directory role assignment schedules, directory role policies), so
+        # ten admits one of each and a normal partial run is still reported in full; only a
+        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
+        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
+        # verbose stream as it is seen. Raise this with the shape count when an eleventh
+        # read-failure message is added, or one shape starts crowding out another purely by ordering.
+        $UnreadCauseCap = 10
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -482,7 +489,38 @@ function Get-OERInventory {
 
                 $MemberPim = $null
                 $OwnerPim  = $null
-                # ASK FIRST WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
+                # ASK FIRST WHETHER THE GROUP USES PIM FOR GROUPS AT ALL. Microsoft Graph lists
+                # PIM-for-Groups policies for every group, including one never used with PIM for
+                # Groups (measured live 2026-09-28), so reading and exporting them used to put a
+                # default pimPolicy on EVERY group -- and a proposal that changes one of those blocks
+                # onboards the group on apply, which cannot be undone (Microsoft Graph documentation,
+                # "Onboarding groups to PIM for Groups"). Test-OERGroupPimInUse owns the rule: the
+                # eligibility this section already read, or one listing of the group's policies for a
+                # modified one (docs/development/rationale.md#pim-in-use-criterion, ruling R2). A group
+                # not in use gets no pimPolicy key and none of the four reads below. A criterion that
+                # could not be read is never guessed in either direction: pimPolicy is omitted AND the
+                # collection is reported unread, with its cause, exactly like a failed policy read.
+                # The null-filter on the count is load-bearing: @($null).Count is 1.
+                $EligCount = if ($G.PSObject.Properties.Name -contains 'PimEligibility') {
+                    @($G.PimEligibility | Where-Object { $null -ne $_ }).Count
+                } else { 0 }
+                $Usage = $null
+                try {
+                    $Usage = Test-OERGroupPimInUse -GroupId $G.Id -EligibilityCount $EligCount
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $CriterionCause = "Could not determine whether group '$($G.Id)' uses PIM for Groups: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CriterionCause"
+                    Add-UnreadCause -Cause $CriterionCause -Target ([string]$G.Id)
+                    $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
+                    $Usage = $null
+                }
+                $PimInUse = ($null -ne $Usage -and [bool]$Usage.InUse)
+                if ($null -ne $Usage -and -not $PimInUse) {
+                    Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported -- $($Usage.Reason)."
+                }
+
+                # ASK NEXT WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
                 # the answer. For a group whose policy Graph does not list (an empty assignments
                 # collection, or 400 ResourceTypeNotSupported) Get-OERGroupPimPolicy correctly
                 # reports a non-terminating PimPolicyNotFound -- which -ErrorAction Stop turns into
@@ -494,9 +532,10 @@ function Get-OERInventory {
                 # only the transport stubbed: 384 records for an entirely clean read -- it does not
                 # depend on whether the assignments call answers 200-empty or 400, since
                 # Get-OERPimGroupPolicyId returns $null either way. A group that was never used with
-                # PIM for Groups is NOT such a group: Graph lists its policies before the group is
-                # onboarded (measured live 2026-09-28), so its policy is read and exported like any
-                # other.
+                # PIM for Groups never gets this far: Graph lists its policies before the group is
+                # onboarded (measured live 2026-09-28), which is exactly why the criterion above runs
+                # first, and a group it reports not in use -- or could not decide -- makes none of
+                # the four calls below and carries no pimPolicy.
                 #
                 # NOT -ErrorAction Ignore on the reads below. That would silence a genuine 403 or 429
                 # along with the not-listed case and leave the operator with a document quietly
@@ -524,12 +563,16 @@ function Get-OERInventory {
                 #
                 # pimPolicy stays OMITTED for that access type either way, never present and empty --
                 # exactly as Get-OERGroup omits PimEligibility on a failed read.
-                $ReadMemberPim = $true
-                $ReadOwnerPim  = $true
-                try { $ReadMemberPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType member) }
-                catch { Remove-OERErrorRecord -Record $PSItem; $ReadMemberPim = $true }
-                try { $ReadOwnerPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType owner) }
-                catch { Remove-OERErrorRecord -Record $PSItem; $ReadOwnerPim = $true }
+                $ReadMemberPim = $false
+                $ReadOwnerPim  = $false
+                if ($PimInUse) {
+                    $ReadMemberPim = $true
+                    $ReadOwnerPim  = $true
+                    try { $ReadMemberPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType member) }
+                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadMemberPim = $true }
+                    try { $ReadOwnerPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType owner) }
+                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadOwnerPim = $true }
+                }
                 foreach ($PimAccessType in @('member', 'owner')) {
                     if ($PimAccessType -eq 'member' -and -not $ReadMemberPim) { continue }
                     if ($PimAccessType -eq 'owner' -and -not $ReadOwnerPim) { continue }

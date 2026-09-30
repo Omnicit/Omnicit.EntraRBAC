@@ -5,6 +5,14 @@ BeforeAll {
 }
 
 Describe 'Sync-OERStructureGroup' {
+    BeforeEach {
+        # Step 4 asks Test-OERGroupPimInUse, once per item, before it writes a CHANGED policy to a
+        # group that already existed. Answered "in use" for every test in this file, so no fixture
+        # written before that question existed reaches the real helper (and through it the real
+        # transport) or gains a warning it does not expect. The Context 'pimPolicy onboarding
+        # warning ...' overrides it.
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
+    }
 
     It 'creates a missing group and reports Created' {
         InModuleScope $script:moduleName {
@@ -4087,6 +4095,183 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke Set-OERGroup -Times 0
                 Should -Invoke New-OERGroup -Times 0
             }
+        }
+    }
+
+    Context 'pimPolicy onboarding warning for an existing group that does not use PIM for Groups (R3)' {
+        # Microsoft Graph lists PIM-for-Groups policies for every group, and the first policy update
+        # onboards the group, which cannot be undone. Before step 4 writes a CHANGED policy to a
+        # group that already existed, the handler asks Test-OERGroupPimInUse -- once per item -- and
+        # warns when the group does not use PIM for Groups yet. It never blocks and never changes a
+        # row (docs/development/rationale.md#pim-in-use-criterion).
+        BeforeAll {
+            # Runs one item through the handler in module scope and hands back its rows and the text
+            # of every warning, so the assertions below can run OUTSIDE InModuleScope against the
+            # -ModuleName mocks of the BeforeEach.
+            function Invoke-R3Sync {
+                param([PSCustomObject]$Item, [switch]$WhatIf)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; WhatIfRun = [bool]$WhatIf } {
+                    param($Item, $WhatIfRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                    }
+                    $W = $null
+                    $R = @(Invoke-SyncGroupViaCaller -Item $Item -WhatIf:$WhatIfRun -ErrorAction SilentlyContinue `
+                            -WarningAction SilentlyContinue -WarningVariable W)
+                    [PSCustomObject]@{ Rows = $R; Warnings = @(@($W) | ForEach-Object { [string]$_ }) }
+                }
+            }
+            $script:OnboardPattern = 'onboards it to PIM for Groups'
+        }
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' }
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+            Mock -ModuleName $script:moduleName Set-OERGroupPimPolicy { [PSCustomObject]@{ Applied = $true; FailedRules = @() } }
+            Mock -ModuleName $script:moduleName Add-OERGroupEligibility { }
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $false; Reason = 'no PIM policy of the group has been modified and no PIM eligibility was counted' }
+            }
+        }
+
+        It 'warns once per item, and still sets the policy, when an existing group does not use PIM for Groups' {
+            # Both access types change, so step 4 reaches its ShouldProcess twice; the question is
+            # asked, and the warning written, once for the item.
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{
+                    member = [PSCustomObject]@{ activationMaxHours = 4 }
+                    owner  = [PSCustomObject]@{ activationMaxHours = 8 } } }
+            $Out = Invoke-R3Sync -Item $Item
+            $Onboard = @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern })
+            $Onboard.Count | Should -Be 1
+            $Onboard[0] | Should -BeExactly ("Sync-OERStructureGroup: group 'role_sec_x' does not use PIM for Groups yet " +
+                '(no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy ' +
+                "onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').")
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-1' -and $EligibilityCount -eq 0
+            }
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 2 -Exactly
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match '^pimPolicy \((member|owner)\) set' }).Count | Should -Be 2
+            @($Out.Rows | Where-Object { $_.Action -in @('Failed', 'Skipped') }).Count | Should -Be 0
+        }
+
+        It 'warns under -WhatIf too, since the question is asked before the ShouldProcess gate' {
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item -WhatIf
+            @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^would set pimPolicy \(member\)' }).Count | Should -Be 1
+        }
+
+        It 'warns for a group renamed through previousDisplayName, which takes the existing-group path' {
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' } -ParameterFilter { $DisplayName -eq 'role_sec_old' }
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_old'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+            }
+            Mock -ModuleName $script:moduleName Set-OERGroup { }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; previousDisplayName = 'role_sec_old'
+                pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        }
+
+        It 'does not warn for a group that uses PIM for Groups' {
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified' }
+            }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            @($Out.Warnings | Where-Object { $_ -match 'PIM for Groups' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        }
+
+        It 'does not ask for a group created in this run' {
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+            Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+            Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { 'pol-member' }
+            Mock -ModuleName $script:moduleName Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
+            Mock -ModuleName $script:moduleName Start-Sleep { }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0
+            @($Out.Warnings | Where-Object { $_ -match 'PIM for Groups' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        }
+
+        It 'does not ask when step 3 of the same item wrote an eligibility this run' {
+            # That request has already onboarded the group, so warning about the policy would name a
+            # consequence that has already happened.
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'
+                eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; durationDays = 30 })
+                pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupEligibility -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0
+            @($Out.Warnings | Where-Object { $_ -match 'PIM for Groups' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+        }
+
+        It 'still asks when the step-3 eligibility write failed' {
+            # Only a SUCCESSFUL request onboards the group; a refused one leaves it as it was.
+            Mock -ModuleName $script:moduleName Add-OERGroupEligibility { throw 'eligibility refused' }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'
+                eligibility = @([PSCustomObject]@{ principal = 'person1@example.com'; durationDays = 30 })
+                pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly
+            @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern }).Count | Should -Be 1
+        }
+
+        It 'passes the eligibility count it read when the document declares eligibility' {
+            # A permanent entry is reconciled in step 5, after the policy, so nothing is written in
+            # step 3 and the question is asked -- with the live eligibility the handler already read.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
+                    GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @()
+                    PimEligibility = @(@{ principalId = 'id-person1@example.com'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = $null }) }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = ($EligibilityCount -gt 0); Reason = 'from the count' }
+            }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'
+                eligibility = @([PSCustomObject]@{ principal = 'person1@example.com' })
+                pimPolicy   = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-1' -and $EligibilityCount -eq 1
+            }
+            @($Out.Warnings | Where-Object { $_ -match 'PIM for Groups' }).Count | Should -Be 0
+        }
+
+        It 'does not ask when the policy already matches' {
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 1 } }
+            $Out = Invoke-R3Sync -Item $Item
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 0
+            @($Out.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -match '^pimPolicy \(member\) already matches' }).Count | Should -Be 1
+        }
+
+        It 'warns that onboarding could not be ruled out when the criterion cannot be read, and still sets the policy' {
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { throw 'Authorization_RequestDenied: Insufficient privileges' }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            $Unknown = @($Out.Warnings | Where-Object { $_ -match 'could not determine' })
+            $Unknown.Count | Should -Be 1
+            $Unknown[0] | Should -BeExactly ("Sync-OERStructureGroup: could not determine whether group 'role_sec_x' uses PIM for Groups " +
+                '(Authorization_RequestDenied: Insufficient privileges); if it does not, applying its pimPolicy onboards it, which cannot be undone.')
+            Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 1 -Exactly
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
         }
     }
 }

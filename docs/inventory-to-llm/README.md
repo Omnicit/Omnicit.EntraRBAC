@@ -143,14 +143,20 @@ this page used to document (`activationEnabledRules`, `activeEnabledRules`,
 `eligibleAlertRecipients`, `activeAlertRecipients`, `activationAlertRecipients`) -- is reported as a
 `Warning` by `Test-OERStructure`, with a "did you mean" hint at the current name for those five.
 
-A group that was never used with PIM for Groups carries a `pimPolicy` too: Microsoft Graph lists its
-policies before the group is onboarded. Applying a `pimPolicy` that changes such a group's policy
-onboards the group to PIM for Groups, and that cannot be undone (Microsoft Graph documentation,
-"Onboarding groups to PIM for Groups"). A `pimPolicy` whose policy Graph does not list yet -- in
-practice a group created moments ago -- is not silently skipped: the apply reports that access type
-`Failed` (`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same
-apply run, the engine first waits up to about 30 seconds for its policies to be listed and
-readable.
+Microsoft Graph lists PIM-for-Groups policies for every group, including one never used with PIM for
+Groups, and applying a `pimPolicy` that changes such a group's policy onboards the group to PIM for
+Groups, which cannot be undone (Microsoft Graph documentation, "Onboarding groups to PIM for
+Groups"). The inventory therefore exports a `pimPolicy` only for a group that uses PIM for Groups:
+one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it carries a
+`lastModifiedDateTime` or a `lastModifiedBy`). A group without a `pimPolicy` in the export therefore
+does not use PIM for Groups, or has no policy the inventory could project; whenever a read behind
+that answer failed, the bundle's `IncompleteReads` names the group's `pimPolicy`. A `pimPolicy` added
+for a group that does not use PIM for Groups onboards it the first time the apply changes its
+policy: for a group that already exists, the apply writes a warning before that change, and still
+makes it. A `pimPolicy` whose policy Graph does not list yet -- in practice a group created moments
+ago -- is not silently skipped: the apply reports that access type `Failed` (`PimPolicyNotFound`),
+and a re-run usually applies it. For a group created by the same apply run, the engine first waits
+up to about 30 seconds for its policies to be listed and readable.
 
 ## Renaming a group
 

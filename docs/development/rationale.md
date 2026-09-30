@@ -393,8 +393,11 @@ empty collection.
 
 ## pim-beta-pin
 
-PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All eight call sites route
-through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All fifteen call sites, in ten
+source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
+constant. (The count read "eight" until Sprint 6 step 5; it had been counting FILES, and had
+already fallen behind by one -- `Get-OERListedGroupPimPolicy` -- before `Test-OERGroupPimInUse`
+added the tenth. The test below now lists every calling file and fails on one it does not name.)
 
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are
@@ -2665,3 +2668,79 @@ task), is where this gets measured for the first time. If that check finds an un
 subscription-scoped read does NOT surface a resource-group-scoped eligibility beneath it, this
 design does not capture resource-group-scoped eligibility at all, and R4 needs revisiting -- not a
 silent gap to leave documented away.
+
+## pim-in-use-criterion
+
+Task 6 of Sprint 6 step 5 made `Test-OERGroupPimInUse` the single owner of one question: does this
+group use PIM for Groups? It records rulings R1-R3 and the one claim in them that is documented
+rather than measured.
+
+**The problem.** Microsoft Graph lists PIM-for-Groups policies for EVERY group, including one never
+used with PIM for Groups (measured live 2026-09-28,
+`docs/live-verification/feat-pim-group-approval-checklist.md`, run 2, check X.1). `Get-OERInventory`
+read and exported them, so every exported group carried a default `pimPolicy` -- and a proposal that
+changes one of those blocks onboards the group to PIM for Groups on apply, which cannot be undone,
+and changes its policy ids (Microsoft Graph documentation, "Onboarding groups to PIM for Groups").
+The export was inviting an irreversible change to groups nobody had chosen to put under PIM.
+
+**R1 (the criterion).** A group uses PIM for Groups when EITHER its PIM eligibility is non-empty
+(the caller passes the count it already read, as `-EligibilityCount`, so no second eligibility read
+is made), OR any of its policies, listed in ONE request through `Get-OERPimGroupsGraphPath` as
+`policies/roleManagementPolicies?$filter=scopeId eq '<id>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy`,
+carries a non-empty `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`. A
+404 `ResourceNotFound` on that listing means PIM does not know the group: not in use. Any other
+failure -- the same code with another status included -- throws, and each caller accounts for it.
+
+**The basis, and exactly how far it reaches.** Microsoft Learn, "List roleManagementPolicies" (v1.0):
+Example 3 lists the two policies of a GROUP (`scopeType` `Group`), both untouched, each reading
+`"lastModifiedDateTime": null, "lastModifiedBy": { "displayName": null, "id": null }`. The MODIFIED
+shape comes from a different example: Example 2's policy has `scopeType` `Directory` and reads
+`"lastModifiedDateTime": "2022-04-20T16:12:29.553Z", "lastModifiedBy": { "displayName": "MOD Administrator", "id": null }`.
+Two things follow. The `id` can be null on a modified policy, which is why any ONE of the three fields
+counts. And Learn shows no modified GROUP policy at all, so "a modified group policy carries a date
+or a name" is an inference from a directory-role example -- documented for one scope type and
+assumed for the other. Nor does Learn say whether an eligibility request that onboards a group
+stamps its policies (the eligibility half of R1 covers that case whatever the answer), or what this
+listing answers for a group PIM does not know: the 404 is MEASURED only on the policy-ASSIGNMENT
+listing of the same family (`Get-OERPimGroupPolicyId`, 2026-09-28), and expected here.
+
+**What an earlier live run already observed, which is not the same as having measured this
+criterion.** The 2026-09-28 run of `docs/live-verification/feat-pim-group-approval-checklist.md`
+printed `lastModifiedDateTime` for group policies in two follow-up reads: both policies of a group
+nothing had ever onboarded read it empty (check 6.1), and on a group that run created and patched,
+the patched owner policy read `2026-09-28 09:46:01` while the unpatched member policy read it empty
+(check 5.2). That is the date half of R1 seen on a GROUP policy. It did not print `lastModifiedBy`,
+did not look at a group onboarded only through an eligibility, and did not run this helper.
+
+**The criterion is NOT counted as proven until it is measured live in the step 5 checklist**
+(`docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md`, written by a later
+task): an untouched group, a group whose policy was changed, and a group onboarded only through an
+eligibility. Cost if it is wrong, in each direction: a used group whose policy never shows a
+modification loses its exported `pimPolicy` (safe -- an omitted block leaves the live policy
+untouched on apply), or an untouched group's policy is still exported (the original risk, which the
+apply-side warning below still catches). The live check detects both.
+
+**R2 (`Get-OERInventory`).** The criterion runs BEFORE the four policy calls (two
+`Get-OERPimGroupPolicyId` pre-checks, two `Get-OERGroupPimPolicy` reads) and a group not in use makes
+none of them and carries no `pimPolicy` key -- one listing instead of four calls, and the reason is
+written to the verbose stream. A criterion that could not be read is never guessed in either
+direction: `pimPolicy` is omitted (an export would claim a use nobody measured) AND
+`groups/<name>/pimPolicy` is recorded as unread, with its cause, so the run ends in `InventoryPartial`
+(an omission alone would claim the group does not use PIM for Groups). That cause is a tenth
+read-failure message shape, so the distinct-cause cap rose from nine to ten with it. When the
+group's eligibility read itself failed, the count passed is 0 and the policies alone decide; the
+eligibility gap is already reported unread on its own. `Export-OERInventory`'s RBAC-relevance filter
+is unchanged: a `pimPolicy` key now implies the group uses PIM for Groups.
+
+**R3 (`Sync-OERStructureGroup`).** Before the FIRST changed policy write of an item for a group that
+already existed -- once per item, and before its `ShouldProcess` gate so `-WhatIf` shows it -- the
+handler asks the criterion and warns when the group does not use PIM for Groups yet, or when that
+could not be determined. It WARNS and never blocks, and it never changes a row: the document asked
+for this policy, and onboarding a group on purpose through its first policy is the normal way a group
+comes under PIM. It does not ask for a group created in the same run (no PIM history to protect), nor
+once step 3 of the same item has SUCCESSFULLY written an eligibility (that request onboarded the group
+already; a refused or `-WhatIf`-skipped one did not). The count it passes is what the item read, and
+the item reads PIM eligibility only when it declares `eligibility` -- deliberately, since requesting
+that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoint fail an item that
+has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
+path and is asked like any other existing group.
