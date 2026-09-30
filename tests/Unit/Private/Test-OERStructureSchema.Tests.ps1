@@ -3440,4 +3440,28 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
             $V.Valid | Should -BeTrue
         }
     }
+
+    # Task 8: the worked example must carry every section the schema understands, so it stays a
+    # complete starting point rather than a document missing the directory-role sections.
+    # Three Split-Path hops from tests\Unit\Private: tests\Unit\Private -> tests\Unit -> tests ->
+    # repo root. A two-hop version resolves to tests\ and was corrected once already on this
+    # branch (Task 1) -- do not repeat that mistake.
+    It 'the worked apply-document example is Valid, has zero Error findings, and declares all nine section keys' {
+        $RepoRoot = $PSScriptRoot | Split-Path | Split-Path | Split-Path
+        $ExamplePath = Join-Path -Path $RepoRoot -ChildPath 'docs/examples/example-structure.json'
+        $Doc = Get-Content -Path $ExamplePath -Raw | ConvertFrom-Json
+
+        foreach ($Section in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages',
+                'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+                'roleAssignments', 'roleManagementPolicies')) {
+            $Doc.PSObject.Properties.Name | Should -Contain $Section
+        }
+
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
 }

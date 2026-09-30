@@ -53,12 +53,46 @@
       "durationInDays": 14
     }
   ],
+  "directoryRoleManagementPolicies": [
+    {
+      "role": "Reports Reader",
+      "activationMaxHours": 2,
+      "requireJustificationOnActivation": true,
+      "allowPermanentActiveAssignment": false,
+      "activeDurationDays": 30
+    }
+  ],
+  "directoryRoleAssignments": [
+    {
+      "role": "Reports Reader",
+      "principal": "person1@example.com",
+      "assignmentType": "Eligible",
+      "durationDays": 180
+    },
+    {
+      "role": "Reports Reader",
+      "principal": "role_sec_identity_administrator",
+      "principalType": "Group",
+      "assignmentType": "Active",
+      "durationDays": 30
+    }
+  ],
   "roleAssignments": [
     {
       "scope": "/subscriptions/00000000-0000-0000-0000-000000000046",
       "role": "Reader",
       "principal": "00000000-0000-0000-0000-000000000047",
       "principalType": "ServicePrincipal"
+    }
+  ],
+  "roleManagementPolicies": [
+    {
+      "scope": "/subscriptions/00000000-0000-0000-0000-000000000000",
+      "role": "Reader",
+      "activationMaxHours": 4,
+      "requireJustificationOnActivation": true,
+      "requireApproval": true,
+      "approvers": { "groups": [ "pim-approvers" ] }
     }
   ]
 }
