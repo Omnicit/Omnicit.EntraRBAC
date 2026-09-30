@@ -937,6 +937,11 @@ function Sync-OERStructureGroup {
                 # created (it has no PIM history to protect) or once step 3 of this item wrote an
                 # eligibility (that already onboarded it). The eligibility count is what this item
                 # READ, which it did only when eligibility is declared; 0 otherwise.
+                # A not-in-use group the criterion also reports as not Manageable (ResourceTypeNotSupported
+                # -- a dynamic or on-premises-synced group) cannot be onboarded at all, so the "onboards
+                # it ... cannot be undone" wording would be self-contradictory; that case gets its own
+                # warning instead. Decided from Test-OERGroupPimInUse's Manageable property, the stable
+                # signal for that case, never by matching the text of Reason.
                 if (-not $PimUsageAsked) {
                     $PimUsageAsked = $true
                     if (-not $CreatedThisRun -and -not $EligibilityWrittenThisRun) {
@@ -944,7 +949,11 @@ function Sync-OERStructureGroup {
                         try {
                             $Usage = Test-OERGroupPimInUse -GroupId $Gid -EligibilityCount $KnownEligibility
                             if (-not $Usage.InUse) {
-                                Write-Warning "Sync-OERStructureGroup: group '$Name' was not found to use PIM for Groups ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
+                                if (-not $Usage.Manageable) {
+                                    Write-Warning "Sync-OERStructureGroup: PIM for Groups cannot manage group '$Name' (ResourceTypeNotSupported), so its pimPolicy cannot be applied."
+                                } else {
+                                    Write-Warning "Sync-OERStructureGroup: group '$Name' was not found to use PIM for Groups ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
+                                }
                             }
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem

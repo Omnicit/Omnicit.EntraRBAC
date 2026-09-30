@@ -36,9 +36,9 @@ three for active ones, and the apply sections `directoryRoleManagementPolicies[]
 forbids is refused instead of opening the policy, as is a group that is not role-assignable.
 `-Prune` touches only the declared role and assignment-type pairs, never an activation, an inherited
 assignment, or a direct assignment of the signed-in identity or its groups. Role names are
-case-insensitive. Graph locks a principal's role assignments for five minutes after an active one
-starts; that row is `Failed`. A removal answered `RoleAssignmentDoesNotExist` is done once a
-re-read finds it gone.
+case-insensitive. Graph refuses changes to a principal's assignments of a role for five minutes
+after an active one starts; that row is `Failed`. A removal answered `RoleAssignmentDoesNotExist` is
+done once a re-read finds it gone.
 
 `Export-OERInventory` includes both directory role sections by default, as
 `directoryRoleManagementPolicies.json` and `directoryRoleAssignments.json`; `Get-OERInventory` reads

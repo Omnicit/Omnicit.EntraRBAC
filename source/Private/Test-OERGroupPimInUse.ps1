@@ -11,12 +11,18 @@ function Test-OERGroupPimInUse {
     lastModifiedBy.id or lastModifiedBy.displayName, read in one request through
     Get-OERPimGroupsGraphPath. An untouched policy reports lastModifiedDateTime null and a
     lastModifiedBy whose id and displayName are null (Microsoft Learn, List roleManagementPolicies).
-    A 404 ResourceNotFound means PIM does not know the group: not in use. A 400
-    ResourceTypeNotSupported means PIM for Groups cannot manage the group at all -- Microsoft Learn
-    names dynamic groups and groups synchronized from on-premises -- and is not in use either, as the
-    sibling PIM-for-Groups reads (Get-OERGroup's eligibility read, Get-OERPimGroupPolicyId) already
-    read it. Any other failure throws. The criterion is documented, not yet measured: see
+    A 404 ResourceNotFound means PIM does not know the group: not in use, but still Manageable --
+    onboarding it is possible and has simply not happened yet. A 400 ResourceTypeNotSupported means
+    PIM for Groups cannot manage the group at all -- Microsoft Learn names dynamic groups and groups
+    synchronized from on-premises -- which this helper reports as neither in use NOR Manageable, as
+    the sibling PIM-for-Groups reads (Get-OERGroup's eligibility read, Get-OERPimGroupPolicyId)
+    already read it. Any other failure throws. The criterion is documented, not yet measured: see
     docs/development/rationale.md#pim-in-use-criterion.
+
+    The returned object's Manageable property is the stable signal for "can this group ever be
+    onboarded to PIM for Groups at all" -- $false only for the ResourceTypeNotSupported case. A
+    caller deciding whether to warn about onboarding should branch on Manageable, never by matching
+    the text of Reason, which is prose for a human and may be reworded.
 
     .PARAMETER GroupId
     The object id of the group whose use of PIM for Groups is decided.
@@ -26,7 +32,7 @@ function Test-OERGroupPimInUse {
 
     .EXAMPLE
     Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111'
-    Returns InUse and the Reason for it.
+    Returns InUse, the Reason for it, and whether the group is Manageable by PIM for Groups at all.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding()]
@@ -37,8 +43,8 @@ function Test-OERGroupPimInUse {
         [int]$EligibilityCount = 0
     )
     $Result = {
-        param([bool]$InUse, [string]$Reason)
-        $O = [PSCustomObject]@{ InUse = $InUse; Reason = $Reason }
+        param([bool]$InUse, [string]$Reason, [bool]$Manageable = $true)
+        $O = [PSCustomObject]@{ InUse = $InUse; Reason = $Reason; Manageable = $Manageable }
         $O.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupPimUsage')
         $O
     }
@@ -60,7 +66,7 @@ function Test-OERGroupPimInUse {
     $Response = Invoke-OERGraphRequest -Uri $Uri -All -ExpectedErrorCode 'ResourceNotFound', 'ResourceTypeNotSupported'
     if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
         if ([string]$Response.ExpectedErrorCode -eq 'ResourceTypeNotSupported') {
-            return (& $Result $false 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)')
+            return (& $Result $false 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)' $false)
         }
         if (($Response.StatusCode -as [int]) -ne 404) {
             throw [System.Management.Automation.ErrorRecord]::new(

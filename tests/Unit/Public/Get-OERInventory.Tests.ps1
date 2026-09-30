@@ -4253,8 +4253,9 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
             try {
                 # The healthy fixture with the criterion's own listing refused for the 96 groups
                 # without eligibility, driven through the REAL Test-OERGroupPimInUse and the REAL
-                # wrapper: the listing declares only a 404 ResourceNotFound as an answer, so a 403
-                # must throw out of the helper and be accounted for, never read as "not in use".
+                # wrapper: the listing declares only a 404 ResourceNotFound and a 400
+                # ResourceTypeNotSupported as answers, so a 403 must throw out of the helper and be
+                # accounted for, never read as "not in use".
                 $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]

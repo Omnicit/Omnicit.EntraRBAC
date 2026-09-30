@@ -17,6 +17,7 @@ Describe 'Test-OERGroupPimInUse' {
             $Usage = Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111' -EligibilityCount 2
             $Usage.InUse | Should -BeTrue
             $Usage.Reason | Should -Be 'the group has PIM eligibility'
+            $Usage.Manageable | Should -BeTrue
             $Usage.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimUsage'
             Should -Invoke Invoke-OERGraphRequest -Times 0
         }
@@ -37,6 +38,7 @@ Describe 'Test-OERGroupPimInUse' {
             $Usage = Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111'
             $Usage.InUse | Should -BeFalse
             $Usage.Reason | Should -Match 'no PIM policy of the group has been modified'
+            $Usage.Manageable | Should -BeTrue
             $Usage.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimUsage'
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
         }
@@ -121,6 +123,10 @@ Describe 'Test-OERGroupPimInUse' {
             $Usage = Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111'
             $Usage.InUse | Should -BeFalse
             $Usage.Reason | Should -BeExactly 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)'
+            $Usage.Manageable | Should -BeFalse -Because (
+                'this is the ONLY case the group can never be onboarded; every other not-in-use answer ' +
+                'leaves onboarding possible'
+            )
             $Usage.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimUsage'
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
         }
@@ -136,6 +142,7 @@ Describe 'Test-OERGroupPimInUse' {
             $Usage = Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111'
             $Usage.InUse | Should -BeFalse
             $Usage.Reason | Should -Match 'ResourceNotFound'
+            $Usage.Manageable | Should -BeTrue -Because 'PIM not knowing the group yet does not mean it can never be onboarded'
         }
     }
 

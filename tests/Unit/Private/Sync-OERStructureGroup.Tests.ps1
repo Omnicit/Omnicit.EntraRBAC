@@ -11,7 +11,7 @@ Describe 'Sync-OERStructureGroup' {
         # written before that question existed reaches the real helper (and through it the real
         # transport) or gains a warning it does not expect. The Context 'pimPolicy onboarding
         # warning ...' overrides it.
-        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
     }
 
     It 'creates a missing group and reports Created' {
@@ -4138,7 +4138,7 @@ Describe 'Sync-OERStructureGroup' {
             Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
             Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
             Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
-                [PSCustomObject]@{ InUse = $false; Reason = 'no PIM policy of the group has been modified and no PIM eligibility was counted' }
+                [PSCustomObject]@{ InUse = $false; Reason = 'no PIM policy of the group has been modified and no PIM eligibility was counted'; Manageable = $true }
             }
         }
 
@@ -4162,6 +4162,26 @@ Describe 'Sync-OERStructureGroup' {
             Should -Invoke -ModuleName $script:moduleName Set-OERGroupPimPolicy -Times 2 -Exactly
             @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match '^pimPolicy \((member|owner)\) set' }).Count | Should -Be 2
             @($Out.Rows | Where-Object { $_.Action -in @('Failed', 'Skipped') }).Count | Should -Be 0
+        }
+
+        It 'warns that PIM for Groups cannot manage the group, not the onboarding warning, when the criterion reports ResourceTypeNotSupported' {
+            # A dynamic or on-premises-synced group can never be onboarded, so the "onboards it ...
+            # cannot be undone" wording would be self-contradictory. Decided from Manageable, not by
+            # matching the text of Reason.
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $false; Reason = 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)'; Manageable = $false }
+            }
+            $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
+            $Out = Invoke-R3Sync -Item $Item
+            $Onboard = @($Out.Warnings | Where-Object { $_ -match $script:OnboardPattern })
+            $Onboard.Count | Should -Be 0
+            $NotManageable = @($Out.Warnings | Where-Object { $_ -match 'cannot manage' })
+            $NotManageable.Count | Should -Be 1
+            $NotManageable[0] | Should -BeExactly (
+                "Sync-OERStructureGroup: PIM for Groups cannot manage group 'role_sec_x' (ResourceTypeNotSupported), " +
+                'so its pimPolicy cannot be applied.'
+            )
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly
         }
 
         It 'warns under -WhatIf too, since the question is asked before the ShouldProcess gate' {
@@ -4190,7 +4210,7 @@ Describe 'Sync-OERStructureGroup' {
 
         It 'does not warn for a group that uses PIM for Groups' {
             Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
-                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified' }
+                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified'; Manageable = $true }
             }
             $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; pimPolicy = [PSCustomObject]@{ activationMaxHours = 4 } }
             $Out = Invoke-R3Sync -Item $Item
@@ -4245,7 +4265,7 @@ Describe 'Sync-OERStructureGroup' {
                     PimEligibility = @(@{ principalId = 'id-person1@example.com'; accessId = 'member'; startDateTime = '2026-01-01T09:00:00Z'; endDateTime = $null }) }
             }
             Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
-                [PSCustomObject]@{ InUse = ($EligibilityCount -gt 0); Reason = 'from the count' }
+                [PSCustomObject]@{ InUse = ($EligibilityCount -gt 0); Reason = 'from the count'; Manageable = $true }
             }
             $Item = [PSCustomObject]@{ displayName = 'role_sec_x'
                 eligibility = @([PSCustomObject]@{ principal = 'person1@example.com' })
