@@ -88,7 +88,10 @@ function New-OEREligibleDirectoryRoleAssignment {
     changes an existing one. The apply engine passes adminUpdate when re-issuing an eligibility whose
     declared window has drifted from the live schedule. Microsoft Graph refuses adminUpdate with
     ActiveDurationTooShort until the principal's active assignment of the same role has run for five
-    minutes (measured live); send the update again after that.
+    minutes (measured live); send the update again after that. When the principal also holds an
+    active assignment of the same role, Microsoft Graph may remove that active assignment by itself
+    when the eligibility is updated (measured live), so an apply document declaring both kinds for
+    one principal and role can need two runs to converge: the second run creates the active one again.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.

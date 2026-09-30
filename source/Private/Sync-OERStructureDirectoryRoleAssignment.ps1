@@ -53,7 +53,8 @@ function Sync-OERStructureDirectoryRoleAssignment {
        the cause and the way out -- apply the document again in five minutes -- and nothing is changed:
        the handler never removes an assignment to re-create it. When one principal holds both kinds of a
        role and one of them is updated, Graph may also remove the other kind by itself (measured both
-       ways); the next run finds it absent and creates it.
+       ways); the next run finds it absent and creates it, so a document that declares both kinds for
+       one principal and role can need two runs to converge.
 
     justification, when declared, is sent as -Justification with a create or an update; it is never
     compared, so a changed justification alone changes nothing. Without it the cmdlets send their own

@@ -65,7 +65,10 @@ function Invoke-OERStructure {
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
     runs its section-wide prune pass once, before that first item is reconciled and whatever that
-    item's own outcome (see -Prune for what the pass may remove).
+    item's own outcome (see -Prune for what the pass may remove). When one principal holds both an
+    eligible and an active assignment of a directory role and the engine updates one of them,
+    Microsoft Graph may remove the other by itself (measured live); the next run creates it again, so
+    a document that declares both kinds for one principal and role can need two runs to converge.
 
     Returns zero or more tagged Omnicit.EntraRBAC.StructureResult records, one per reconcile
     action. A one-line verbose summary of counts per Action is written after all sections.

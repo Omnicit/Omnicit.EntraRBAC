@@ -2541,3 +2541,5 @@ eligible assignment; an eligible update removed the permanent active one); the n
 declared assignment absent and creates it, and `adminAssign` beside the other kind is accepted. And a
 directory-role schedule `adminUpdate` replaces the schedule rather than updating it in place: the
 schedule id changes (check 2.7), which is why the engine matches on role, principal and kind only.
+A document that declares both kinds for one principal and role can therefore need two runs to
+converge, and the help of the New cmdlets, the engine and the schema says so.
