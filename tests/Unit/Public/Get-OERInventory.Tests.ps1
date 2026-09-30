@@ -4163,6 +4163,91 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
         }
     }
 
+    It 'leaves no error record, reports nothing unread, and exports no pimPolicy, when the PIM-in-use listing answers 400 ResourceTypeNotSupported' {
+        InModuleScope $script:moduleName {
+            try {
+                # Microsoft Learn: a dynamic group and a group synchronized from on-premises cannot be
+                # managed in PIM for Groups, and Graph answers 400 ResourceTypeNotSupported for them on
+                # this family of endpoints. The criterion declares that code as the answer "not in use",
+                # exactly as the eligibility read and the policy-id lookup already do, so the REAL
+                # wrapper hands it back as a marker: nothing is raised, nothing is reported unread, and
+                # the export is not InventoryPartial on account of such a group. Three groups: the
+                # first is eligible (in use without asking), the other two answer 400 everywhere.
+                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    $U = [string]$Uri
+                    $Index = 0
+                    if ($U -match '(\d{8})-0000-0000-0000-000000000000') { $Index = [int]$Matches[1] }
+                    $Onboarded = ($Index -eq 1)
+                    $NotSupported = '{"error":{"code":"ResourceTypeNotSupported","message":"Resource type not supported for onboarding"}}'
+                    if ($U -match 'eligibilityScheduleInstances') {
+                        if ($Onboarded) {
+                            if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                            return @{ value = @(@{ id = "e$Index"; accessId = 'member'; principalId = "p$Index" }) }
+                        }
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotSupported) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotSupported | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotSupported) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotSupported | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicyAssignments') {
+                        $script:PolicyLookups.Add($Index)
+                        if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                        return @{ value = @(
+                                @{ roleDefinitionId = 'member'; policyId = "pol-m-$Index" }
+                                @{ roleDefinitionId = 'owner'; policyId = "pol-o-$Index" })
+                        }
+                    }
+                    if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies/.+/rules') {
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+                        }
+                    }
+                    if ($U -match '/members|/owners|getByIds|/directoryObjects') { return @{ value = @() } }
+                    if ($U -match '^v1\.0/groups') {
+                        return @{ value = @(1..3 | ForEach-Object {
+                                    @{ id = ('{0:d8}-0000-0000-0000-000000000000' -f $PSItem); displayName = "g$PSItem"
+                                        securityEnabled = $true; isAssignableToRole = $false; groupTypes = @()
+                                        description = $null; mailNickname = "g$PSItem"
+                                    }
+                                })
+                        }
+                    }
+                    return @{ value = @() }
+                }
+
+                $Err = $null
+                $Warned = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err `
+                    -WarningAction SilentlyContinue -WarningVariable Warned
+
+                @($Err).Count |
+                    Should -Be 0 -Because 'a 400 ResourceTypeNotSupported on the listing is the declared answer for a group PIM for Groups cannot manage, not a failure'
+                @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                    Should -Be 0 -Because 'nothing about such a group is unread'
+                @($Warned).Count | Should -Be 0
+                @($script:PolicyLookups | Sort-Object -Unique) |
+                    Should -Be @(1) -Because 'a group the criterion does not find in use makes no policy call'
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 3
+                @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' } | ForEach-Object { $_.displayName }) |
+                    Should -Be @('g1') -Because 'only the eligible group is in use; the two PIM for Groups cannot manage carry no pimPolicy'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+                Remove-Variable -Name PolicyLookups -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
     It 'reports pimPolicy unread, and reads no policy, when the PIM-in-use listing answers 403' {
         InModuleScope $script:moduleName {
             try {

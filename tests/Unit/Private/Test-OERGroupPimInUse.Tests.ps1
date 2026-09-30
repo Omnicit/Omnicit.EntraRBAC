@@ -101,8 +101,28 @@ Describe 'Test-OERGroupPimInUse' {
                 $Uri -match [regex]::Escape("scopeType eq 'Group'") -and
                 $Uri -match [regex]::Escape('$select=id,lastModifiedDateTime,lastModifiedBy') -and
                 $All -eq $true -and
-                @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                @($ExpectedErrorCode) -contains 'ResourceNotFound' -and
+                @($ExpectedErrorCode) -contains 'ResourceTypeNotSupported'
             }
+        }
+    }
+
+    It 'answers not in use when Graph answers 400 ResourceTypeNotSupported (PIM for Groups cannot manage the group)' {
+        # Microsoft Learn: a dynamic group and a group synchronized from on-premises cannot be managed
+        # in PIM for Groups. The sibling PIM-for-Groups reads (Get-OERGroup's eligibility read,
+        # Get-OERPimGroupPolicyId) already take this code as an answer; the criterion must too, or
+        # every such group turns an export into InventoryPartial.
+        InModuleScope $script:moduleName {
+            Mock Invoke-OERGraphRequest {
+                $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'ResourceTypeNotSupported'; StatusCode = 400; Message = 'Resource type not supported for onboarding'; Uri = 'x' }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+            $Usage = Test-OERGroupPimInUse -GroupId '11111111-1111-1111-1111-111111111111'
+            $Usage.InUse | Should -BeFalse
+            $Usage.Reason | Should -BeExactly 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)'
+            $Usage.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupPimUsage'
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly
         }
     }
 

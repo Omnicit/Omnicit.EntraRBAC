@@ -11,8 +11,12 @@ function Test-OERGroupPimInUse {
     lastModifiedBy.id or lastModifiedBy.displayName, read in one request through
     Get-OERPimGroupsGraphPath. An untouched policy reports lastModifiedDateTime null and a
     lastModifiedBy whose id and displayName are null (Microsoft Learn, List roleManagementPolicies).
-    A 404 ResourceNotFound means PIM does not know the group: not in use. Any other failure throws.
-    The criterion is documented, not yet measured: see docs/development/rationale.md#pim-in-use-criterion.
+    A 404 ResourceNotFound means PIM does not know the group: not in use. A 400
+    ResourceTypeNotSupported means PIM for Groups cannot manage the group at all -- Microsoft Learn
+    names dynamic groups and groups synchronized from on-premises -- and is not in use either, as the
+    sibling PIM-for-Groups reads (Get-OERGroup's eligibility read, Get-OERPimGroupPolicyId) already
+    read it. Any other failure throws. The criterion is documented, not yet measured: see
+    docs/development/rationale.md#pim-in-use-criterion.
 
     .PARAMETER GroupId
     The object id of the group whose use of PIM for Groups is decided.
@@ -48,8 +52,16 @@ function Test-OERGroupPimInUse {
     # declared to the transport so it leaves no record in a caller's -ErrorVariable. The same code
     # with any other status is not that answer and is thrown, as is every other failure: the
     # callers account for a criterion they could not read, and never guess it.
-    $Response = Invoke-OERGraphRequest -Uri $Uri -All -ExpectedErrorCode 'ResourceNotFound'
+    # A 400 ResourceTypeNotSupported is declared the same way and read as "PIM for Groups cannot
+    # manage this group" (Microsoft Learn: a dynamic group, or one synchronized from on-premises),
+    # which is certainly not in use -- the answer Get-OERGroup's eligibility read and
+    # Get-OERPimGroupPolicyId already take from the same family. Left undeclared, every such group
+    # threw here and turned a clean export into InventoryPartial.
+    $Response = Invoke-OERGraphRequest -Uri $Uri -All -ExpectedErrorCode 'ResourceNotFound', 'ResourceTypeNotSupported'
     if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
+        if ([string]$Response.ExpectedErrorCode -eq 'ResourceTypeNotSupported') {
+            return (& $Result $false 'PIM for Groups cannot manage the group (ResourceTypeNotSupported)')
+        }
         if (($Response.StatusCode -as [int]) -ne 404) {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new([string]$Response.Message),

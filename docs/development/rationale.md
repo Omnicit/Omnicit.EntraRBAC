@@ -2688,8 +2688,24 @@ The export was inviting an irreversible change to groups nobody had chosen to pu
 is made), OR any of its policies, listed in ONE request through `Get-OERPimGroupsGraphPath` as
 `policies/roleManagementPolicies?$filter=scopeId eq '<id>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy`,
 carries a non-empty `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`. A
-404 `ResourceNotFound` on that listing means PIM does not know the group: not in use. Any other
-failure -- the same code with another status included -- throws, and each caller accounts for it.
+404 `ResourceNotFound` on that listing means PIM does not know the group: not in use. A 400
+`ResourceTypeNotSupported` means PIM for Groups cannot manage the group at all: not in use either,
+reported with the reason "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". Any
+other failure -- `ResourceNotFound` with another status included -- throws, and each caller accounts
+for it.
+
+**Why `ResourceTypeNotSupported` is an answer (final review of step 5).** Microsoft Learn ("Bring
+groups into Privileged Identity Management", and the PIM for Groups API overview) says dynamic groups
+and groups synchronized from on-premises cannot be managed in PIM for Groups, and this module's
+sibling reads of the same beta family already take 400 `ResourceTypeNotSupported` as an answer:
+`Get-OERGroup`'s eligibility read (no eligibility) and `Get-OERPimGroupPolicyId` (no policy). The
+first version declared only `ResourceNotFound`, so for such a group the criterion threw, every
+`Get-OERInventory` run recorded `groups/<name>/pimPolicy` unread, and a tenant with dynamic or
+synchronized groups could never export anything but `InventoryPartial`. The code is declared at the
+REQUEST, like the others, so it leaves no record in a caller's `-ErrorVariable`, and it is accepted
+whatever the status, exactly as the two sibling reads accept it. What this listing answers for a
+dynamic group is not yet measured: the step 5 checklist creates one (`oer-s65-pim-dynamic`) and
+records the answer.
 
 **The basis, and exactly how far it reaches.** Microsoft Learn, "List roleManagementPolicies" (v1.0):
 Example 3 lists the two policies of a GROUP (`scopeType` `Group`), both untouched, each reading
@@ -2714,8 +2730,8 @@ did not look at a group onboarded only through an eligibility, and did not run t
 
 **The criterion is NOT counted as proven until it is measured live in the step 5 checklist**
 (`docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md`, written by a later
-task): an untouched group, a group whose policy was changed, and a group onboarded only through an
-eligibility. Cost if it is wrong, in each direction: a used group whose policy never shows a
+task): an untouched group, a group whose policy was changed, a group onboarded only through an
+eligibility, and a dynamic group PIM for Groups cannot manage. Cost if it is wrong, in each direction: a used group whose policy never shows a
 modification loses its exported `pimPolicy` (safe -- an omitted block leaves the live policy
 untouched on apply), or an untouched group's policy is still exported (the original risk, which the
 apply-side warning below still catches). The live check detects both.
