@@ -4,10 +4,10 @@ function Set-OERGroup {
     Updates the editable properties of an existing Entra ID group.
 
     .DESCRIPTION
-    Patches an existing Entra ID group identified by -Group. Only the supplied properties
-    are sent: -NewDisplayName, -Description, -MailNickname, -MembershipRule, and -MembershipRuleProcessingState. At least
-    one updatable property must be supplied or a non-terminating NothingToUpdate error is emitted. A
-    group that cannot be resolved produces a non-terminating GroupNotFound error.
+    Patches an existing Entra ID group identified by -Group. Only the supplied properties are sent:
+    -NewDisplayName, -Description, -MailNickname, -MembershipRule, and -MembershipRuleProcessingState.
+    At least one updatable property must be supplied or a non-terminating NothingToUpdate error is
+    emitted. A group that cannot be resolved produces a non-terminating GroupNotFound error.
 
     -MembershipRule and -MembershipRuleProcessingState only apply to a dynamic-membership group (one
     whose groupTypes contains DynamicMembership). A static or role-assignable group cannot be converted
@@ -25,7 +25,9 @@ function Set-OERGroup {
     piped Get-OERGroupMember object binds the group's GroupId instead of a principal's Id.
 
     .PARAMETER NewDisplayName
-    New display name to rename the group to. Distinct from -Group (or its -DisplayName alias), which only locates the existing group. Entra does not enforce unique group display names, so a rename to a name another group already carries is not refused.
+    New display name to rename the group to. Distinct from -Group (or its -DisplayName alias),
+    which only locates the existing group. Entra does not enforce unique group display names, so a
+    rename to a name another group already carries is not refused.
 
     .PARAMETER Description
     New description for the group.

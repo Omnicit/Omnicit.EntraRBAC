@@ -24,36 +24,37 @@ Approvers named by UPN or group name are resolved before comparison, so a re-run
 group's owner settings, a permanent-eligibility opening included, to its member policy: review the
 member policies of groups an apply run onboarded. A refused policy read is `PimPolicyReadFailed`,
 not `PimPolicyNotFound`; a group created in the same run waits up to 30 seconds for its policies.
-Exports carry `pimPolicy` only for a group with PIM eligibility or a modified policy, not a default
-one for every group, and `Invoke-OERStructure` warns before a `pimPolicy` change onboards an
-existing group, which cannot be undone.
+Exports carry `pimPolicy` only for a group with PIM eligibility or a modified policy, so a default
+`inventory.json` details fewer groups; `Invoke-OERStructure` warns before a `pimPolicy` change
+onboards an existing group, which cannot be undone.
 
-`Get-` and `Set-OERDirectoryRoleManagementPolicy` manage a directory role's PIM settings with no
-Azure token; approvers are set per side, so `-ApproverUser` keeps the group approvers and an empty
-list clears a side. Roles are assigned with `New-`, `Get-` and
-`Remove-OEREligibleDirectoryRoleAssignment` and the same three for active ones, and the apply
-sections `directoryRoleManagementPolicies[]` and `directoryRoleAssignments[]` run before the Azure
-sections. A permanent assignment the role's policy forbids is refused instead of opening the policy,
-as is a group that is not role-assignable. `-Prune` touches only the declared role and
-assignment-type pairs, never an activation, an inherited assignment, or a direct assignment of the
-signed-in identity or its groups. Role names are case-insensitive. Graph refuses changes to a
-principal's assignments of a role for five minutes after an active one starts; that row is `Failed`.
-A removal answered `RoleAssignmentDoesNotExist` is done once a re-read finds it gone.
+`Get-` and `Set-OERDirectoryRoleManagementPolicy` manage a directory role's PIM settings; approvers
+are set per side, so `-ApproverUser` keeps the group approvers and an empty list clears a side.
+Roles are assigned with `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment` and the same
+three for active ones, and the apply sections `directoryRoleManagementPolicies[]` and
+`directoryRoleAssignments[]` run before the Azure sections. A permanent assignment the role's policy
+forbids is refused instead of opening the policy, as is a group that is not role-assignable.
+`-Prune` touches only the declared role and assignment-type pairs, never an activation, an inherited
+assignment, or a direct assignment of the signed-in identity or its groups. Role names are
+case-insensitive. Graph locks a principal's role assignments for five minutes after an active one
+starts; that row is `Failed`. A removal answered `RoleAssignmentDoesNotExist` is done once a
+re-read finds it gone.
 
 `Export-OERInventory` includes both directory role sections by default, as
 `directoryRoleManagementPolicies.json` and `directoryRoleAssignments.json`; `Get-OERInventory` reads
 them with `-Include`. Policies are exported for roles with an assignment, or for every role with
-`-AllDirectoryRolePolicies`. Only direct, tenant-scope assignments are exported, never activations
-or group-inherited ones. Applied back to the same tenant, both are `Unchanged`; a failed read is
-`InventoryPartial`, never an empty section. With an Azure section included,
+`-AllDirectoryRolePolicies`. Only direct, tenant-scope assignments are exported, never activations.
+Both are designed to re-apply to the same tenant as `Unchanged`; a failed read is reported as
+`InventoryPartial`, not passed off as an empty section. With an Azure section included,
 `azurePimEligibility.json` lists the walked scopes' Azure PIM eligible assignments as read-only
 context; unread scopes are named in `SkippedEligibilityScopes`. Every per-area file is now a JSON
 array, `[]` when empty.
 
 Groups can be renamed with `Set-OERGroup -NewDisplayName`, or with `previousDisplayName` (the
 current name or object id) beside the new `displayName`; if both names match different groups, the
-entry fails with `GroupRenameConflict` and nothing is merged. `Set-OERGroup` on a role-assignable
-group needs `RoleManagement.ReadWrite.Directory`.
+entry fails with `GroupRenameConflict` and nothing is merged. Re-apply only once the new name
+resolves: a lagging lookup can create a new group. `Set-OERGroup` on a role-assignable group needs
+`RoleManagement.ReadWrite.Directory`.
 
 ## [1.0.1] - 2026-09-23
 

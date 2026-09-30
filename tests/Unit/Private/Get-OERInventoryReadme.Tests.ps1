@@ -9,11 +9,17 @@ Describe 'Get-OERInventoryReadme' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Md | Should -BeOfType ([string])
-            foreach ($File in @('inventory.json', 'groups.json', 'groupsRoster.json',
-                    'scopeHierarchy.json', 'azurePimEligibility.json', 'roleAssignments.json',
-                    'roleManagementPolicies.json', 'schema.json', 'rbac-architect-prompt.md')) {
+            # Every file Export-OERInventory writes, the two directory role area files included.
+            foreach ($File in @('inventory.json', 'groups.json', 'administrativeUnits.json',
+                    'catalogs.json', 'accessPackages.json', 'accessReviews.json',
+                    'directoryRoleManagementPolicies.json', 'directoryRoleAssignments.json',
+                    'groupsRoster.json', 'scopeHierarchy.json', 'azurePimEligibility.json',
+                    'roleAssignments.json', 'roleManagementPolicies.json', 'schema.json',
+                    'rbac-architect-prompt.md')) {
                 $Md | Should -Match ([regex]::Escape($File))
             }
+            # No cross-reference to a heading the README does not have.
+            ($Md -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape('"Azure PIM eligibility" under Coverage limits'))
             $Md | Should -Match 'Test-OERStructure'
             $Md | Should -Match 'Invoke-OERStructure'
         }

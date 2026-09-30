@@ -28,8 +28,9 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   subject to the coverage limits below (for example, only access-package-scoped access reviews
   are captured).
 - `groups.json`, `administrativeUnits.json`, `catalogs.json`, `accessPackages.json`,
-  `accessReviews.json`, `roleAssignments.json`, `roleManagementPolicies.json` -- the same data
-  split per area, so you can feed an LLM one area at a time without hitting its context limit.
+  `accessReviews.json`, `directoryRoleManagementPolicies.json`, `directoryRoleAssignments.json`,
+  `roleAssignments.json`, `roleManagementPolicies.json` -- the same data split per area, so you can
+  feed an LLM one area at a time without hitting its context limit.
 - `groupsRoster.json` -- a lightweight roster of EVERY group in the tenant, of every group type
   (names + flags), read unfiltered. Read-only context, not an apply document. It is deliberately
   wider than `inventory.json`: see "Which groups are covered" below.
@@ -37,8 +38,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
   apply document.
 - `azurePimEligibility.json` -- the Azure PIM eligible role assignments at the scopes in
   `scopeHierarchy.json`, written only when an Azure section (`RoleAssignments` or
-  `RoleManagementPolicies`) is included. Read-only context, not an apply document -- see "Azure PIM
-  eligibility" under Coverage limits below.
+  `RoleManagementPolicies`) is included. Read-only context, not an apply document -- see the
+  eligible Azure PIM assignments under Coverage limits below.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (for example with Test-Json).
 - `rbac-architect-prompt.md` -- the predefined prompt. Open it, optionally edit the
