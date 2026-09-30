@@ -17,9 +17,10 @@ recorded before the first write and put back by the teardown: the tenant-wide PI
 Reader (the prerequisite script sets its activation maximum to three hours, after recording both
 roles' policies in a baseline file), the direct assignments of the two roles (the script records
 them first and compares with them last), and the Reader role management policy of `oer-s65-rg`
-(nothing in this file changes it, but it is recorded right after the resource group is created and
-restored BEFORE the resource group is deleted -- an Azure role management policy outlives its
-resource group, so a leftover change would reach the next resource group of that name). Two
+(nothing in this file changes it, but it is recorded right after the resource group is created --
+only once it has passed a residue check, so an earlier run's leftover is never recorded as the
+original state -- and restored BEFORE the resource group is deleted: an Azure role management policy
+outlives its resource group, so a leftover change would reach the next resource group of that name). Two
 groups, `oer-s65-pim-policy` and `oer-s65-pim-elig`, are onboarded to PIM for Groups by the script on purpose, which cannot be undone
 for them; the teardown deletes both. Section 6 is the one place a person's account appears:
 Philip's own, in his own window, run by him.
@@ -289,23 +290,26 @@ New-Item -ItemType Directory -Path $Raw -Force | Out-Null
 ```
 
 **Create the test objects and record the baselines.** The script runs in its own process, so this
-window keeps its own sign-in. It signs in twice, both times app-only as the certificate identity,
+window keeps its own sign-in. It signs in three times, always app-only as the certificate identity,
 and BEFORE each sign-in it runs `Disconnect-OER` and then `Disconnect-MgGraph` (`Connect-OER`
 leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
-otherwise try to read as an MSAL cache -- step 3's lesson): first `Connect-MgGraph -ClientId
--TenantId -CertificateThumbprint` for everything in Microsoft Graph, independent of the module's own
-read and write code, then `Connect-OER -Certificate -IncludeARM` for Azure, whose requests go through
-the module's own transport `Invoke-OERArmRequest` (nothing else in the script holds an Azure token).
-After EVERY sign-in it checks the identity and prints it as True/False only --
+otherwise try to read as an MSAL cache -- step 3's lesson): first an Azure PRE-FLIGHT sign-in,
+`Connect-OER -Certificate -IncludeARM`, which only reads -- so the Azure identity check, the
+subscription identification and every Azure refusal come before the run writes anything; then
+`Connect-MgGraph -ClientId -TenantId -CertificateThumbprint` for everything in Microsoft Graph,
+independent of the module's own read and write code; then `Connect-OER -Certificate -IncludeARM`
+again for the Azure writes, whose requests go through the module's own transport
+`Invoke-OERArmRequest` (nothing else in the script holds an Azure token). After EVERY sign-in it
+checks the identity and prints it as True/False only --
 `identity check: session app id is oer-live-cc: True` and
-`identity check: tenant is the test tenant: True`, and after the Azure sign-in also that the session
-holds an Azure Resource Manager token for the test tenant -- and a `False` stops it. Before its
-first write it identifies the tenant positively: the organization's display name must equal
+`identity check: tenant is the test tenant: True`, and after an Azure sign-in also that the session
+holds an Azure Resource Manager token for the test tenant -- and a `False` stops it. After every
+sign-in it identifies the tenant positively: the organization's display name must equal
 `-ExpectedTenantDisplayName` EXACTLY, `-UserDomain` must be one of its verified domains, and
-`-TenantId` must be the organization's id; after the Azure sign-in the subscription must belong to
-that tenant and be Enabled. With `-Unattended` -- a run with no operator at the keyboard -- it says
-that the confirmation question is not asked, since the identity checks and the identifications
-passed. It is idempotent: a second run creates nothing that exists and only fills in what is
+`-TenantId` must be the organization's id; after an Azure sign-in the subscription must belong to
+that tenant and be Enabled. With `-Unattended` -- a run with no operator at the keyboard -- it says,
+after the first sign-in, that the confirmation question is not asked, since the identity checks and
+the identifications passed. It is idempotent: a second run creates nothing that exists and only fills in what is
 missing. It ends with a summary of names and REAL object ids -- redact those before pasting (check
 0.3). Read the `-WhatIf` plan first: every target must carry the prefix `oer-s65`, apart from the
 four files under `raw/s65/` and the Reports Reader policy change.
@@ -348,8 +352,9 @@ are the defaults. The helpers read them in exactly these shapes:
   roles each with `displayName`, `roleDefinitionId`, `eligible` and `active`: every DIRECT schedule at
   `/` as `roleEligibilitySchedules` and `roleAssignmentSchedules` return it (active: `assignmentType`
   `Assigned` only); an empty list is `[]`, never `null`.
-- **The resource group Reader policy baseline** -- right after the resource group is created, before
-  anything else is written in Azure -- is one object with `scope` (the resource group's ARM scope),
+- **The resource group Reader policy baseline** -- right after the resource group is created and its
+  Reader policy has passed the residue check (below), before anything else is written in Azure; a
+  policy with residue is never recorded -- is one object with `scope` (the resource group's ARM scope),
   `roleName` (`Reader`), `roleDefinitionId` (the full ARM id), `policyId` (under
   `<scope>/providers/Microsoft.Authorization/roleManagementPolicies/`) and `rules`: every rule exactly
   as `GET <policyId>?api-version=2020-10-01` returns it under `properties.rules`.
@@ -357,16 +362,26 @@ are the defaults. The helpers read them in exactly these shapes:
   role in the script (the groups under their setup names, so the teardown finds a group section 5
   renamed), the resource group, and the Azure eligibility.
 
-It refuses to run while either directory role holds a direct assignment of a principal it did not
-create; while a group under one of its seven names has the wrong shape (`oer-s65-rag` must be a
-role-assignable security group whose only member is `oer-s65-user2`, every other one a security
-group that is NOT role-assignable); and while a resource group `oer-s65-rg` exists without its
-purpose tag. Right after it records the resource group's Reader policy, it checks that policy for
-residue of an earlier run (step 2's finding: an Azure role management policy outlives its resource
-group) and stops when approval is required or an approver is named. If any run stops after its
-first write, it restores both directory policies from the policy baseline, and the resource group's
-Reader policy from its baseline, before it exits, and prints what it restored; it deletes nothing
-then -- that is the teardown's job.
+It refuses to run -- before its first write, and so writing nothing -- while either directory role
+holds a direct assignment of a principal it did not create; while a group under one of its seven
+names has the wrong shape (`oer-s65-rag` must be a role-assignable security group whose only member
+is `oer-s65-user2`, every other one a security group that is NOT role-assignable); and, from the Azure
+pre-flight, when the subscription is not the test tenant's or not Enabled, when a resource group
+`oer-s65-rg` exists without its purpose tag, and when an existing `oer-s65-rg` without a baseline has a
+Reader policy with residue. **The residue check comes BEFORE the resource group's baseline is
+written** (step 2's finding: an Azure role management policy outlives its resource group, so a new
+`oer-s65-rg` can inherit an earlier run's approval): approval required, or any approver named, stops
+the run with NO baseline for that policy, so the residue is never recorded as the original state and
+nothing ever puts it back. The residue of a resource group this run creates can only be read once it
+exists, after the directory writes; a stop there is a stop after a write. If any run stops after its
+first write, it puts back what the baselines record before it exits, and prints each step: the
+resource group's Reader policy from its baseline (when there is one and the Azure session is up), then
+both directory policies from the policy baseline -- signing in to Microsoft Graph again first, with its
+identity check, when the failure left no verified Graph session. It deletes nothing then -- that is the
+teardown's job. The teardown deletes `oer-s65-rg` only once its Reader policy is back at its baseline,
+or -- when there is no baseline, as after a residue stop -- reads clean (approval off, no approver); a
+policy without a baseline is only read, never written, and one that does not read clean is left, with
+the resource group, for a human.
 
 **What the script prints, and the checks read.** 0.2, 0.3 and T.1 compare its output with these
 lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
@@ -378,19 +393,26 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Omnicit.EntraRBAC <version> loaded from <path>.` and
   `No Tenant Profile '<alias>' on this machine; the sign-ins name -TenantId.` (or
   `Tenant Profile '<alias>' names the same tenant as -TenantId, in the commercial cloud: True`).
-- Each sign-in announces itself -- `Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (...)`
-  and `Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (...)`
-  -- and is followed by two lines ending exactly
+- Each sign-in announces itself -- setup: `Azure Resource Manager pre-flight sign-in: ...`, then
+  `Microsoft Graph sign-in: ...`, then `Azure Resource Manager sign-in: ...`; teardown:
+  `Azure Resource Manager sign-in: ...`, then `Microsoft Graph sign-in: ...` -- the Graph one ending
+  `Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (...)`
+  and each Azure one `Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (...)`.
+  Each is followed by two lines ending exactly
   `identity check: session app id is oer-live-cc: <True|False>` and
   `identity check: tenant is the test tenant: <True|False>`, each preceded by the sign-in's own label
-  (`[oer-s65] Microsoft Graph sign-in identity check: ...`); after the Azure sign-in a third,
-  `Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: <True|False>`.
+  (`[oer-s65] Microsoft Graph sign-in identity check: ...`); after an Azure sign-in a third,
+  `<label> identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: <True|False>`.
   Then, after each sign-in, `Identified the test tenant: organization '<organization>', tenant id <tenant id>, verified domain <domain>.`;
-  after the first one only, with `-Unattended`,
-  `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`;
-  after the Azure one, `Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.`
+  after an Azure one, `Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.`;
+  and after the FIRST sign-in only, with `-Unattended`,
+  `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
+  Setup's pre-flight then prints `Azure role 'Reader': one built-in role definition at the test subscription: True.`
+  and `Azure pre-flight: resource group oer-s65-rg does not exist yet; this run creates it after the directory objects.`
+  (on a later run `Azure pre-flight: resource group oer-s65-rg exists and carries this script's tag.`).
   A refusal is one line starting `Refusing to run: ` (`Refusing the teardown: `), and the script then
-  writes nothing; a stop after a write is a line starting `Stopped after this run had written ...`.
+  has written nothing; a stop after a write is a line starting `Stopped after this run had written ...`,
+  preceded by the restore lines (`Restore: ...`).
 - Setup, the directory side, in this order:
   `Directory role '<role>': one built-in role definition and one tenant-wide policy assignment: True (<n> rules).`
   (twice); on a first run `No directory baseline files yet; this run captures both before its first write.`,
@@ -408,11 +430,11 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   four `Requested the <eligible|active> '<role>' assignment of <name> (<window>): <status>.`; and
   `Wrote the state file (Microsoft Graph): <path>`. A retry after a 404 prints a line containing
   `likely replication delay`. On a later run `... exists.` replaces each create.
-- Setup, the Azure side: `Azure role 'Reader': one built-in role definition at the test subscription: True.`,
+- Setup, the Azure side, after its own sign-in: `Azure role 'Reader': one built-in role definition at the test subscription: True.`,
   `Created resource group oer-s65-rg in location 'swedencentral'.`,
   `The 'Reader' policy listed at oer-s65-rg is the resource group's own: True`,
-  `Wrote the resource group Reader policy baseline (<n> rules): <path>`,
-  `Resource group Reader policy residue check: approval required False, approvers 0; clean: True`,
+  `Resource group Reader policy residue check: approval required False, approvers 0; clean: True`
+  BEFORE `Wrote the resource group Reader policy baseline (<n> rules): <path>`,
   `Requested the eligible Azure role 'Reader' for <upn of oer-s65-user1> at resource group oer-s65-rg (time-bound P30D): <status>.`
   and `Wrote the state file (Azure): <path>`. Under `-WhatIf` the residue check prints
   `Resource group Reader policy residue check: not run (WhatIf: the resource group does not exist yet).`
@@ -423,7 +445,13 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Teardown: the Reader policy of oer-s65-rg: rules differing from its baseline: <n>` (with
   `Restored <n> rule(s) of the Reader policy of oer-s65-rg.` when `<n>` is not 0),
   `Teardown: the Reader policy of oer-s65-rg: restored: <True|False|not attempted (WhatIf)>` and
-  `Deleted resource group oer-s65-rg.` Then the Graph side, after its own sign-in:
+  `Deleted resource group oer-s65-rg.` -- or, when there is no baseline for that policy (a setup run
+  that stopped on residue writes none),
+  `Teardown: the Reader policy of oer-s65-rg: no baseline to restore it from (a setup run that stopped on residue writes none); it is read, never written.`,
+  `Teardown: the Reader policy of oer-s65-rg: approval required <True|False>, approvers <n>; clean: <True|False>`
+  and, only when clean, `Deleted resource group oer-s65-rg.`; when not clean,
+  `Teardown: resource group oer-s65-rg is NOT deleted: ... Both are left for a human: ...` and the
+  rest goes on. Then the Graph side, after its own sign-in:
   `Teardown: oer-s65 assignments on the two roles: <n>`, before a removal a line
   `waiting <n> s: Microsoft Graph refuses to change or remove a principal's assignments of a role until its active assignment has run for five minutes`
   when an active assignment of that principal and role is younger than five minutes, one
@@ -437,11 +465,16 @@ lines; `<...>` is a value, and every line starts `[oer-s65] ` (shown once here):
   `Removed <upn of oer-s65-user2> from oer-s65-rag.` BEFORE `Deleted group oer-s65-rag.`, then the
   other six `Deleted group <current name>.` (the renamed one as
   `Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).`, anything the prefix sweep
-  found besides as `... (found by the prefix sweep).`); `Deleted user <upn>.` (twice); per role
+  found besides as `... (found by the prefix sweep).`, and a group whose current name lacks the prefix
+  as `Teardown: left in place: group '<name>' ... does not carry the prefix 'oer-s65'; it is never touched.`);
+  `Deleted user <upn>.` (twice); per role
   `Teardown: directory role '<role>': direct assignments equal the assignment baseline: <True|False|not checked (WhatIf)>`;
   and `Sweep: no user or group starting with 'oer-s65' is left.` (or one
-  `Sweep, still present: <user|group> '<name>' (<id>)` line each). Under `-WhatIf` every write is a
-  PowerShell `What if:` line instead.
+  `Sweep, still present: <user|group> '<name>' (<id>)` line each -- with a REAL id: redact it). A
+  refused user deletion, or a resource group left for a human, ends the run with one
+  `Stopped after this run had written ...: everything else is done, but: ...` line naming it. Under
+  `-WhatIf` every write is a PowerShell `What if:` line instead, and since nothing is deleted, the
+  sweep lists every test object still there.
 - Last: a summary headed `Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:`
   -- a table of `Kind`, `Name`, `Id` with the kinds `user` (2), `group` (7), `group member`,
   `directory role (built-in, fixed)` and `directory role policy` (2 each), `directory policy change`,
@@ -980,11 +1013,14 @@ SDK has expired: sign in again.
   `[oer-s65] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.`,
   the `Directory roles (fixed): ... Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' ...` line,
   and `Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: False; directory assignments exists: False; resource group Reader policy exists: False; state file exists: False.`
-  on a first run. Both sign-ins, each announced with `Disconnect-OER and Disconnect-MgGraph first`,
-  each followed by both identity lines ending `True` (the Azure one also by
+  on a first run. Three sign-ins, in this order -- the Azure pre-flight, Microsoft Graph, Azure --
+  each announced with `Disconnect-OER and Disconnect-MgGraph first`, each followed by both identity
+  lines ending `True` (each Azure one also by
   `... holds an Azure Resource Manager token for the test tenant, from the certificate: True`), each
-  followed by `Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.`;
-  `Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.`; no
+  followed by `Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.`,
+  each Azure one by `Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.`;
+  the pre-flight by `Azure pre-flight: resource group oer-s65-rg does not exist yet; ...` -- and NO
+  `What if:` line before the Microsoft Graph sign-in: the pre-flight only reads. No
   `Unattended run: ...` line and no question (`-WhatIf`). The two permanence lines, as the tenant's
   policies allow. Every `What if:` target is one of: the four files under
   `<Repo>\docs\live-verification\raw\s65\` (the two directory baselines, the resource group
@@ -1008,12 +1044,15 @@ SDK has expired: sign in again.
   summary, with `(none -- not created)` as the id of everything it would create,
   `[oer-s65] WhatIf: nothing was created, restored, removed or written.` and `[oer-s65] Done.`
   **Failure looks like:** a target without the prefix other than those named above; a role other
-  than the three; a refusal line -- `Refusing to run: ...` from the tenant identification (check
+  than the three; a `What if:` line before the Microsoft Graph sign-in -- the pre-flight wrote, or
+  would write: stop; a refusal line -- `Refusing to run: ...` from the tenant identification (check
   `$OrgName` exactly, case-sensitive, `$Domain` and `$TenantId`; never weaken the check), from the
-  subscription (`$SubId` is not the test subscription), a group under one of the seven names with the
-  wrong shape (delete it by hand), a direct assignment of either role to a principal the script did
-  not create (someone holds the role: stop), or a resource group `oer-s65-rg` the script did not
-  create. Record it and stop.
+  subscription (`$SubId` is not the test subscription, or it is not Enabled), a resource group
+  `oer-s65-rg` the script did not create, an existing `oer-s65-rg` whose Reader policy has residue and
+  no baseline (reset it by hand), a group under one of the seven names with the wrong shape (delete it
+  by hand), or a direct assignment of either role to a principal the script did not create (someone
+  holds the role: stop). Every one of these comes before the run's first write, in the real run as
+  well. Record it and stop.
   **Result:**
 
 - [ ] **0.3 The prerequisite script ran, every test object exists, and the four files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
@@ -1038,10 +1077,12 @@ SDK has expired: sign in again.
   ```
 
   **Expect:** the run's output: the same opening lines as 0.2 with `exists: False` four times,
-  both sign-ins with both identity lines `True`, the ARM token line `True`, both identifications and
-  `Identified the test subscription: ... True; state 'Enabled'.`, ONE
+  the three sign-ins in 0.2's order with both identity lines `True`, the ARM token line `True` after
+  each Azure one, the identifications and `Identified the test subscription: ... True; state 'Enabled'.`
+  twice, ONE
   `Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.`
-  (after the first sign-in only); `Wrote the policy baseline (<n> + <m> rules): ...` and
+  (after the first sign-in, the pre-flight, only), the pre-flight's two lines;
+  `Wrote the policy baseline (<n> + <m> rules): ...` and
   `Wrote the assignment baseline (Reports Reader: eligible 0, active 0; Message Center Reader: eligible 0, active 0): ...`;
   the users and groups created, `Added ... to oer-s65-rag.`, both `PIM for Groups: ...; this onboarded the group.`
   lines, `Directory role 'Reports Reader': set Expiration_EndUser_Assignment maximumDuration PT3H (activation maximum 3 hours; it was <before>).`
@@ -1050,8 +1091,8 @@ SDK has expired: sign in again.
   status such as `Provisioned`; `Wrote the state file (Microsoft Graph): ...`; then
   `Created resource group oer-s65-rg in location 'swedencentral'.`,
   `The 'Reader' policy listed at oer-s65-rg is the resource group's own: True`,
-  `Wrote the resource group Reader policy baseline (<n> rules): ...`,
   `Resource group Reader policy residue check: approval required False, approvers 0; clean: True`,
+  then -- only after that check -- `Wrote the resource group Reader policy baseline (<n> rules): ...`,
   `Requested the eligible Azure role 'Reader' for oer-s65-user1@<test domain> at resource group oer-s65-rg (time-bound P30D): <status>.`
   and `Wrote the state file (Azure): ...`; the summary with an id for everything; `[oer-s65] Done.`
   A `likely replication delay` line or two are normal. The block: all four files `exists True`; both
@@ -1059,10 +1100,16 @@ SDK has expired: sign in again.
   `resource group baseline: scope is oer-s65-rg True; role Reader; <n> rules; the policy lies under the resource group True`;
   `state file: prefix oer-s65; written after Azure; users 2; groups 7 (rag, pimuntouched, pimpolicy, pimelig, rename, conflicta, conflictb); resource group recorded as existing True; Azure eligibility recorded True`
   (the seven keys in any order).
-  **Failure looks like:** a `Stopped ...` line -- read the restore lines above it (the script puts
-  both directory policies and the resource group's Reader policy back before it exits) and record
-  both; the residue line with `clean: False` -- an earlier run's approval is still on the resource
-  group's Reader policy: stop; the operator resets it by hand, then runs the teardown;
+  **Failure looks like:** a `Stopped ...` line -- read the `Restore: ...` lines above it (the script
+  puts the resource group's Reader policy back from its baseline, when there is one, and both
+  directory policies from the policy baseline, signing in to Microsoft Graph again first when it has
+  to) and record them; the residue line with `clean: False` -- an earlier run's approval is still on
+  the resource group's Reader policy (an Azure role management policy outlives its resource group):
+  the script stopped BEFORE it wrote a baseline for that policy, so the residue was never recorded as
+  the original state and nothing will put it back. Stop; the operator resets that policy by hand
+  (approval off, no approver), then either runs the prerequisite script again -- it records the now
+  clean policy and carries on -- or runs the teardown, which deletes the resource group only once
+  the policy reads clean;
   `The 'Reader' policy listed at oer-s65-rg is the resource group's own: False` -- Azure listed a
   policy of a wider scope there: the script stops, since it never records or restores a policy
   beyond the resource group; record it; a `403` or
@@ -1177,8 +1224,13 @@ active group assignment, so it is not run live ("What this file does not check")
           $global:Error.Clear()
       }
   }
-  $R0 = & $M { param($Id) Test-OERGroupPimInUse -GroupId $Id } $IdPimElig
-  "oer-s65-pim-elig on its policies alone (eligibility count 0; data, not pass/fail): InUse $($R0.InUse); Reason: $($R0.Reason)"
+  try {
+      $R0 = & $M { param($Id) Test-OERGroupPimInUse -GroupId $Id } $IdPimElig
+      "oer-s65-pim-elig on its policies alone (eligibility count 0; data, not pass/fail): InUse $($R0.InUse); Reason: $($R0.Reason)"
+  } catch {
+      'oer-s65-pim-elig on its policies alone: the criterion THREW: {0}' -f (Format-S65Text $PSItem.Exception.Message)
+      $global:Error.Clear()
+  }
   ```
 
   **Expect:**
@@ -1237,17 +1289,19 @@ active group assignment, so it is not run live ("What this file does not check")
   $P14U = Get-S65RawGroupPim -GroupId $IdPimUntouched -Label '1.4-untouched-after'
   ```
 
-  **Expect:** 1.4a: `Valid = True`; ONE warning,
+  **Expect:** in the order printed -- `Invoke-S65Check` shows PowerShell's own `What if:` line while
+  the call runs and the warnings it captured only after the call -- 1.4a: `Valid = True`; the line
+  `What if: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s65-pim-untouched"`;
+  then `--- warnings, in the order written: 1` and the ONE warning,
   `WARNING: Sync-OERStructureGroup: group 'oer-s65-pim-untouched' does not use PIM for Groups yet (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').`
-  -- the reason says "no PIM eligibility was counted" because a `pimPolicy`-only entry makes the
+  -- the handler writes it BEFORE its `ShouldProcess` gate, which is why `-WhatIf` shows it at all.
+  The reason says "no PIM eligibility was counted" because a `pimPolicy`-only entry makes the
   handler read no eligibility (it reads PIM eligibility only when the entry declares `eligibility`),
   so the count it passes is 0 by construction; with 1.1's 404 the reason reads
-  `(PIM for Groups does not know the group (404 ResourceNotFound))` instead -- then the
-  `What if: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s65-pim-untouched"`
-  line; no error; two rows,
+  `(PIM for Groups does not know the group (404 ResourceNotFound))` instead. No error; two rows,
   `[groups] oer-s65-pim-untouched | Unchanged | group properties match` and
   `[groups] oer-s65-pim-untouched | Skipped | would set pimPolicy (member): activationMaxHours=2`.
-  1.4b: `Valid = True`; NO warning; the `What if:` line for `oer-s65-pim-policy`; the rows
+  1.4b: `Valid = True`; the `What if:` line for `oer-s65-pim-policy`; `--- warnings, in the order written: 0`; the rows
   `Unchanged | group properties match` and `Skipped | would set pimPolicy (member): activationMaxHours=2`.
   Afterwards `1.4-untouched-after` reads exactly as 1.1 did: `any policy modified: False` and no
   eligibility -- the plan wrote nothing.
@@ -1826,7 +1880,8 @@ continues with the Teardown afterwards**, once Philip has done both boxes.
 Back in the Claude window, after section 6. Sign in again first (`Connect-S65 -Arm`: a fresh
 token, the identity lines once more, and the Azure session T.2 needs). The prerequisite script's
 teardown does the work, in the order Setup describes: the Azure eligibility removed, the resource
-group's Reader policy restored from its baseline and read again, the resource group deleted; then
+group's Reader policy restored from its baseline and read again (or, with no baseline, only read),
+the resource group deleted once that policy is restored or reads clean; then
 every `oer-s65` directory assignment removed (five-minute rule), both directory policies restored
 from the policy baseline rule by rule, missing baseline assignments re-created, the PIM-for-Groups
 eligibility removed, `oer-s65-rag`'s member removed BEFORE the group is deleted, the groups deleted
@@ -1872,17 +1927,25 @@ assignment baseline, and the sweep.
   other six groups -- `Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).` among
   them -- and nothing `(found by the prefix sweep)`; the two users; per role
   `... direct assignments equal the assignment baseline: not checked (WhatIf)` in the plan and
-  `... True` in the run; `[oer-s65] Sweep: no user or group starting with 'oer-s65' is left.` (Graph's
-  list can lag a moment behind the deletes -- a `Sweep, still present: ...` line then is not a
-  failure, T.2 reads again); the summary; `WhatIf: nothing was created, restored, removed or written.`
-  in the plan; `[oer-s65] Done.` Nothing else is a target: no directory role other than the two, no
-  Azure role other than Reader, nothing outside `oer-s65-rg` in Azure. Paste both outputs redacted per
-  the rules at the top.
+  `... True` in the run; the sweep -- in the PLAN, which deletes nothing, one
+  `[oer-s65] Sweep, still present: <user|group> '<name>' (<id>)` line for each of the two users and
+  seven groups (`oer-s65-rename-direct` among them), each with its REAL id: redact every one; in the
+  RUN `[oer-s65] Sweep: no user or group starting with 'oer-s65' is left.` (Graph's list can lag a
+  moment behind the deletes -- a `Sweep, still present: ...` line in the run is then not a failure,
+  T.2 reads again); the summary; `WhatIf: nothing was created, restored, removed or written.` in the
+  plan; `[oer-s65] Done.` Nothing else is a target: no directory role other than the two, no Azure
+  role other than Reader, nothing outside `oer-s65-rg` in Azure. Paste both outputs redacted per the
+  rules at the top.
   **Failure looks like:** a target outside that list -- stop, do not run the real teardown; a
-  `Refusing the teardown: ` line (a missing baseline, a resource in `oer-s65-rg`, an eligibility there
-  of another principal) -- nothing was changed: record it and look before running again; the resource
-  group policy `restored: False` or a refused rule -- the script stops BEFORE it deletes the resource
-  group: record Azure's message and look at the policy; a directory rule restore refused or
+  `Refusing the teardown: ` line (a missing directory baseline, an untagged `oer-s65-rg`, a resource
+  in it, an eligibility there of another principal) -- nothing was changed: record it and look before
+  running again; `no baseline to restore it from` for the resource group's Reader policy -- setup
+  stopped on residue (0.3): the policy is only read, and the resource group is deleted only when it
+  reads `clean: True`; with `clean: False` the line `resource group oer-s65-rg is NOT deleted ... left
+  for a human` and a final `Stopped ...: everything else is done, but: ...` line -- the operator resets
+  the policy by hand, runs the teardown again, and records both runs; the resource group policy
+  `restored: False` or a refused rule -- the script stops BEFORE it deletes the resource group: record
+  Azure's message and look at the policy; a directory rule restore refused or
   `restored: False` -- the script stops before it deletes anything; a user deletion refused (the line
   `Teardown: user ... was NOT deleted: ...` and a final stop line) -- step 4 measured that app-only
   cannot delete a user Entra still treats as privileged: the operator deletes it by hand, and records
@@ -1897,12 +1960,14 @@ assignment baseline, and the sweep.
   Show-S65AssignmentBaselineDiff -Label 'T.2'
   $Rg = Invoke-S65ArmRead -Path "$RgScope`?api-version=2021-04-01"
   "resource group oer-s65-rg exists: $($Rg.Ok); answer: $(if ($Rg.Ok) { 'the resource group' } else { $Rg.Error })"
-  $BR = Get-Content -LiteralPath $RgBaselinePath -Raw | ConvertFrom-Json -AsHashtable
-  $Pol = Invoke-S65ArmRead -Path "$([string]$BR['policyId'])?api-version=2020-10-01"
-  if ($Pol.Ok) {
-      $PolRules = @(ConvertTo-Json -InputObject @($Pol.Body.properties.rules) -Depth 50 | ConvertFrom-Json -AsHashtable)
-      "the Reader policy of the deleted resource group, read by its baseline id (data): still readable; rules differing from its baseline: $(@(Get-S65RuleDiff -Live $PolRules -Baseline @($BR['rules'])).Count)"
-  } else { "the Reader policy of the deleted resource group, read by its baseline id (data): $($Pol.Error)" }
+  if (Test-Path -LiteralPath $RgBaselinePath) {
+      $BR = Get-Content -LiteralPath $RgBaselinePath -Raw | ConvertFrom-Json -AsHashtable
+      $Pol = Invoke-S65ArmRead -Path "$([string]$BR['policyId'])?api-version=2020-10-01"
+      if ($Pol.Ok) {
+          $PolRules = @(ConvertTo-Json -InputObject @($Pol.Body.properties.rules) -Depth 50 | ConvertFrom-Json -AsHashtable)
+          "the Reader policy of the deleted resource group, read by its baseline id (data): still readable; rules differing from its baseline: $(@(Get-S65RuleDiff -Live $PolRules -Baseline @($BR['rules'])).Count)"
+      } else { "the Reader policy of the deleted resource group, read by its baseline id (data): $($Pol.Error)" }
+  } else { 'no resource group Reader policy baseline: setup stopped on residue (0.3), and the teardown only read that policy' }
   $F = [uri]::EscapeDataString("startswith(userPrincipalName,'$Prefix')")
   "users starting with the prefix: $(@((Get-S65RawAll -Uri "v1.0/users?`$filter=$F&`$select=id").Rows).Count)"
   $F = [uri]::EscapeDataString("startswith(displayName,'$Prefix')")
@@ -1919,7 +1984,8 @@ assignment baseline, and the sweep.
   for both roles and both kinds; `resource group oer-s65-rg exists: False; answer: ResourceGroupNotFound: ...`;
   the deleted resource group's Reader policy read by its baseline id -- record the answer (a
   `not found` answer, or still readable with `rules differing from its baseline: 0`; step 3 found
-  that such a policy outlives its resource group, which is why the teardown restores it first);
+  that such a policy outlives its resource group, which is why the teardown restores it first) -- or,
+  after a residue stop, `no resource group Reader policy baseline: ...`;
   `users starting with the prefix: 0` and `groups starting with the prefix: 0` (deleted users sit in
   Deleted items for 30 days, which is Entra ID's design); the listed rows, and no others:
   `5.1b [groups] oer-s65-rename-new | Updated | renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)`,
