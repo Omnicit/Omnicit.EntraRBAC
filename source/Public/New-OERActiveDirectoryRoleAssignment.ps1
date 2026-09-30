@@ -85,7 +85,9 @@ function New-OERActiveDirectoryRoleAssignment {
     .PARAMETER Action
     The Microsoft Graph admin operation: adminAssign (default) creates a new active assignment;
     adminUpdate changes an existing one. The apply engine passes adminUpdate when re-issuing an
-    assignment whose declared window has drifted from the live schedule.
+    assignment whose declared window has drifted from the live schedule. Microsoft Graph refuses
+    adminUpdate with ActiveDurationTooShort until the principal's active assignment of the role has
+    run for five minutes (measured live); send the update again after that.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.

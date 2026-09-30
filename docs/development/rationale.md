@@ -2507,31 +2507,37 @@ recurs here because every one of the six new cmdlets, and the new
 `Sync-OERStructureDirectoryRoleAssignment` handler, catches Graph and lookup failures internally
 before reporting its own outcome.
 
-**An eligible window cannot change beside a permanent active assignment -- a Graph limit, measured
-live, and reported rather than worked around.** The step 4 live run (check 3.3) found Microsoft Graph
-refusing the engine's `adminUpdate` of an ELIGIBLE window (five days to seven) with HTTP 400
-`ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.` The
-follow-up measured, on test objects, which condition triggers it:
+**A principal's assignments of a role cannot change for five minutes after its active assignment of
+that role starts -- a Graph limit, measured live, and reported rather than worked around.** The step
+4 live run (check 3.3) found Microsoft Graph refusing the engine's `adminUpdate` of an eligible window
+with HTTP 400 `ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5
+minutes.` The follow-up measured it on test objects. Every refusal came while the principal's ACTIVE
+assignment of the role was younger than five minutes, and every success while it was older, or while
+there was none:
 
-- eligible five days beside a TIME-BOUND active assignment (one day): `adminUpdate` succeeds, both
-  with `targetScheduleId` set to the eligibility schedule's id and without it (the control) --
-  `targetScheduleId` is not the difference;
-- eligible five days beside a PERMANENT active assignment (the state check 3.3 had): `adminUpdate`
-  answers `ActiveDurationTooShort` with `targetScheduleId`, and again with `targetScheduleId` and
-  no `startDateTime` in `scheduleInfo`;
-- an ACTIVE window changes (`adminUpdate`, permanent to one day) while the principal holds no
-  eligible assignment of the role (check 6.1c);
-- updating an active assignment to PERMANENT while an eligible assignment of the same role exists
-  succeeds -- and Graph then removes the eligible assignment by itself, with no request for it.
+- an eligible `adminUpdate` 2, 3 and 4.5 minutes after the active assignment started: refused, with
+  `targetScheduleId` set to the eligibility schedule's id, without it, and without `startDateTime`;
+- the same update 14 and 16 minutes after it started: accepted, with and without `targetScheduleId`,
+  beside a time-bound active assignment and beside a permanent one -- so neither `targetScheduleId`
+  nor a permanent active assignment is the lever;
+- `adminRemove` of either kind, 3.7 minutes after the active assignment started: refused the same
+  way; 8 minutes after: accepted;
+- a principal with no active assignment of the role: every update accepted;
+- `adminAssign` is never refused this way.
 
-The write path is therefore unchanged, and the engine never answers the refusal by removing the
-eligible assignment and creating it again: a failure between those two requests leaves the principal
-with no eligibility at all, the same class of harm as a prune that deletes on a failed lookup. The
-handler instead recognizes the refusal (an eligible `adminUpdate` failing with
-`ActiveDurationTooShort`) and reports the row Failed with the cause and the way out: declare the
-active assignment time-bound, or change the eligible window by hand with
-`Remove-OEREligibleDirectoryRoleAssignment` and `New-OEREligibleDirectoryRoleAssignment`, knowingly.
-When Graph removes an eligible assignment because the active one became permanent, the next run
-finds the declared eligible assignment absent and creates it (`adminAssign` beside a permanent
-active assignment succeeds, measured). The run that makes the active assignment permanent cannot see
-that removal: it reads the eligible row before the active update is sent.
+The write path is therefore unchanged: `targetScheduleId` is not sent, and the engine never answers a
+refusal by removing an assignment and creating it again, since a failure between those two requests
+would leave the principal with no eligibility at all -- the same class of harm as a prune that
+deletes on a failed lookup. The handler recognizes the refusal by its error id or message, on an
+update of either kind and on a prune removal, and reports the row Failed with the cause and the way
+out: apply the document again in five minutes. It matters in one situation above all: a document
+that creates a principal's active assignment and, within five minutes, changes or prunes another of
+that principal's assignments of the same role -- as check 3.3 did two minutes after 3.1.
+
+Two more Graph behaviours were measured on the way, both outside the module's control. When one
+principal holds an eligible and a permanent active assignment of the same role, an `adminUpdate` of
+either kind removed the other kind, with no request for it (an active update to permanent removed the
+eligible assignment; an eligible update removed the permanent active one); the next run finds the
+declared assignment absent and creates it, and `adminAssign` beside the other kind is accepted. And a
+directory-role schedule `adminUpdate` replaces the schedule rather than updating it in place: the
+schedule id changes (check 2.7), which is why the engine matches on role, principal and kind only.

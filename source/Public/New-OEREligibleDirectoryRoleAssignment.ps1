@@ -87,9 +87,8 @@ function New-OEREligibleDirectoryRoleAssignment {
     The Microsoft Graph admin operation: adminAssign (default) creates a new eligibility; adminUpdate
     changes an existing one. The apply engine passes adminUpdate when re-issuing an eligibility whose
     declared window has drifted from the live schedule. Microsoft Graph refuses adminUpdate with
-    ActiveDurationTooShort while the principal holds a permanent active assignment of the same role
-    (measured live); make that active assignment time-bound first, or remove the eligibility and
-    create it again yourself.
+    ActiveDurationTooShort until the principal's active assignment of the same role has run for five
+    minutes (measured live); send the update again after that.
 
     .PARAMETER TenantId
     Optional tenant id or domain forwarded to Initialize-OERAuth.

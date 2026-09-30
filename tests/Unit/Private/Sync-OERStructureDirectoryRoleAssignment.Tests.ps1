@@ -315,50 +315,50 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment' {
         }
     }
 
-    It 'names the cause and the way out when Graph refuses an eligible window update with ActiveDurationTooShort (<Case>)' -TestCases @(
-        @{ Case = 'only the error id carries the code'; ErrorId = 'ActiveDurationTooShort'; Message = 'The Active duration is too short. Miniumum Required is 5 minutes.' }
-        @{ Case = 'only the message carries the code'; ErrorId = 'GraphRequestFailed'; Message = 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' }
+    It 'names the cause and the way out when Graph refuses a <Kind> window update with ActiveDurationTooShort (<Case>)' -TestCases @(
+        @{ Kind = 'Eligible'; Case = 'only the error id carries the code'; ErrorId = 'ActiveDurationTooShort'; Message = 'The Active duration is too short. Miniumum Required is 5 minutes.' }
+        @{ Kind = 'Eligible'; Case = 'only the message carries the code'; ErrorId = 'GraphRequestFailed'; Message = 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' }
+        @{ Kind = 'Active'; Case = 'only the error id carries the code'; ErrorId = 'ActiveDurationTooShort'; Message = 'The Active duration is too short. Miniumum Required is 5 minutes.' }
     ) {
-        # Measured live (step 4, check 3.3): Graph refuses an adminUpdate of an ELIGIBLE window while the
-        # principal holds a PERMANENT active assignment of the same role. The row must say so, and the
-        # handler must leave the eligible assignment alone: no removal, no second request.
-        InModuleScope $script:moduleName -Parameters @{ ErrorId = $ErrorId; Message = $Message } {
-            param($ErrorId, $Message)
-            Mock Get-OEREligibleDirectoryRoleAssignment { New-DraLiveRow }
-            Mock New-OEREligibleDirectoryRoleAssignment -MockWith ([scriptblock]::Create("Write-Error -Message '$Message' -ErrorId '$ErrorId' -Category InvalidOperation"))
-            Mock Remove-OEREligibleDirectoryRoleAssignment {}
-            $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 7 }' | ConvertFrom-Json
-            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
-            @($Records).Action | Should -Be @('Failed')
-            $Records[0].Detail | Should -BeExactly ('failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), ' +
-                'which it does while the principal holds a permanent active assignment of the same role, so the ' +
-                'eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or ' +
-                'change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then ' +
-                'New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it')
-            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter { $Action -eq 'adminUpdate' }
-            Should -Invoke New-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
-            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 0
-        }
-    }
-
-    It 'keeps the plain Detail for ActiveDurationTooShort on <Case>' -TestCases @(
-        @{ Case = 'an eligible create'; Kind = 'Eligible'; Live = $false; NewName = 'New-OEREligibleDirectoryRoleAssignment'; Verb = 'create' }
-        @{ Case = 'an active update'; Kind = 'Active'; Live = $true; NewName = 'New-OERActiveDirectoryRoleAssignment'; Verb = 'update' }
-    ) {
-        # The special wording belongs to the one measured case only: an eligible adminUpdate.
-        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Live = $Live; NewName = $NewName; Verb = $Verb } {
-            param($Kind, $Live, $NewName, $Verb)
-            if ($Live) {
-                Mock Get-OERActiveDirectoryRoleAssignment { New-DraLiveRow -Kind Active }
-            }
-            Mock $NewName { Write-Error -Message 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' -ErrorId 'ActiveDurationTooShort' -Category InvalidOperation }
+        # Measured live (step 4, check 3.3 and its follow-up): Graph refuses to update or remove a
+        # principal's assignments of a role until the principal's active assignment of that role has run
+        # for five minutes. The row must say so, and the handler must leave the assignment alone: no
+        # removal, no second request.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; ErrorId = $ErrorId; Message = $Message } {
+            param($Kind, $ErrorId, $Message)
+            $GetName = "Get-OER$($Kind)DirectoryRoleAssignment"
+            $NewName = "New-OER$($Kind)DirectoryRoleAssignment"
+            $RemoveName = "Remove-OER$($Kind)DirectoryRoleAssignment"
+            Mock $GetName -MockWith ([scriptblock]::Create("New-DraLiveRow -Kind $Kind"))
+            Mock $NewName -MockWith ([scriptblock]::Create("Write-Error -Message '$Message' -ErrorId '$ErrorId' -Category InvalidOperation"))
+            Mock $RemoveName {}
             $Item = "{ `"role`": `"Reports Reader`", `"principal`": `"person1@example.com`", `"assignmentType`": `"$Kind`", `"durationDays`": 7 }" | ConvertFrom-Json
             $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
             @($Records).Action | Should -Be @('Failed')
-            $Records[0].Detail | Should -BeExactly "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes."
+            $Records[0].Detail | Should -BeExactly ("failed to update the $($Kind.ToLowerInvariant()) assignment: Microsoft Graph does not change or remove a principal's " +
+                "assignments of a role until the principal's active assignment of that role has run for five minutes " +
+                '(ActiveDurationTooShort), so nothing was changed; apply the document again in five minutes (the apply ' +
+                'engine never removes an assignment to re-create it)')
+            Should -Invoke $NewName -Times 1 -Exactly -ParameterFilter { $Action -eq 'adminUpdate' }
+            Should -Invoke $NewName -Times 1 -Exactly
+            Should -Invoke $RemoveName -Times 0
         }
     }
 
+    It 'keeps the plain Detail for ActiveDurationTooShort on a <Kind> create' -TestCases @(
+        @{ Kind = 'Eligible' }
+        @{ Kind = 'Active' }
+    ) {
+        # A create is never refused this way (measured); the special wording is for updates and removals.
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind } {
+            param($Kind)
+            Mock "New-OER$($Kind)DirectoryRoleAssignment" { Write-Error -Message 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' -ErrorId 'ActiveDurationTooShort' -Category InvalidOperation }
+            $Item = "{ `"role`": `"Reports Reader`", `"principal`": `"person1@example.com`", `"assignmentType`": `"$Kind`", `"durationDays`": 7 }" | ConvertFrom-Json
+            $Records = @(Invoke-SyncDraViaCaller -Item $Item -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -BeExactly "failed to create the $($Kind.ToLowerInvariant()) assignment: ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes."
+        }
+    }
     It 'sends a declared justification as -Justification' {
         InModuleScope $script:moduleName {
             $Item = '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30, "justification": "Quarterly reporting" }' | ConvertFrom-Json
@@ -625,6 +625,31 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment section-wide prune pass' {
             $CallerErrors = @(Select-DraCallerError $DraErrors)
             @($CallerErrors).Count | Should -Be 1
             "$($CallerErrors[0])" | Should -Match 'RoleAssignmentDoesNotExist'
+        }
+    }
+
+    It 'names the cause and the way out when Graph refuses a prune removal with ActiveDurationTooShort' {
+        # Measured live (teardown T.1): an adminRemove within five minutes of the principal's active
+        # assignment starting is refused with ActiveDurationTooShort. The row says so; the assignment stays.
+        InModuleScope $script:moduleName {
+            Mock Remove-OEREligibleDirectoryRoleAssignment {
+                if ($PrincipalId -eq 'bbbbbbbb-0000-0000-0000-000000000002') {
+                    Write-Error -Message 'ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5 minutes.' -ErrorId 'ActiveDurationTooShort' -Category InvalidOperation
+                }
+            }
+            $script:DraLiveEligible = @(
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[1]
+                New-DraPassRow -Role $script:RR -Principal $script:DraP[2]
+            )
+            $Section = @(New-DraSection 'Reports Reader|person1@example.com|Eligible')
+            $Records = @(Invoke-SyncDraSection -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            @($Records).Action | Should -Be @('Failed', 'Unchanged')
+            $Records[0].Detail | Should -BeExactly ("failed to remove undeclared eligible assignment of directory role 'Reports Reader' for principal '$($script:DraP[2])': " +
+                "Microsoft Graph does not change or remove a principal's assignments of a role until the principal's " +
+                'active assignment of that role has run for five minutes (ActiveDurationTooShort), so nothing was ' +
+                'changed; apply the document again in five minutes')
+            Should -Invoke Remove-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
         }
     }
 

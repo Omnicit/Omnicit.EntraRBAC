@@ -46,9 +46,9 @@ assignment. It also leaves a group's assignment alone when the signed-in identit
 that group. Directory role names now match in any letter case. An ambiguous service principal
 display name is refused with the candidate ids instead of taking the first match, as
 `AmbiguousApplicationName` or `AmbiguousPrincipalName`; an ambiguous group principal name now also
-reports `AmbiguousPrincipalName`, not `PrincipalNotFound`. Microsoft Graph refuses to change an
-eligible window while the same principal holds the role permanently active; that row reports Failed
-with the cause and the way out.
+reports `AmbiguousPrincipalName`, not `PrincipalNotFound`. Graph refuses to change or remove a
+principal's assignments of a role until its active assignment has run for five minutes; that row
+reports Failed with this cause.
 
 ## [1.0.1] - 2026-09-23
 

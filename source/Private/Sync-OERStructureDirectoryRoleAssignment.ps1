@@ -46,14 +46,14 @@ function Sync-OERStructureDirectoryRoleAssignment {
        with -Action adminAssign and reports Created; a changed window or permanence is re-issued with
        -Action adminUpdate and reports Updated, so a live assignment is never removed to be re-created.
        A matching window reports Unchanged.
-       Known Microsoft Graph limit: Graph refuses an adminUpdate of an ELIGIBLE window with
-       ActiveDurationTooShort while the same principal holds a PERMANENT active assignment of the same
-       role (measured live; the same update goes through beside a time-bound active assignment, and an
-       active window changes while no eligible assignment exists). That row reports Failed with a Detail
-       naming the cause and the way out -- declare the active assignment time-bound, or change the
-       eligible window by hand -- and the eligible assignment is left as it is: the handler never removes
-       an assignment to re-create it. Graph also removes an eligible assignment by itself when the same
-       principal's active assignment of the role is updated to permanent; the next run re-creates it.
+       Known Microsoft Graph limit (measured live): Graph refuses to update or remove any of a
+       principal's assignments of a role, eligible or active, with ActiveDurationTooShort until that
+       principal's active assignment of the role has run for five minutes; a create is not refused. An
+       update refused that way, and a prune removal refused that way, report Failed with a Detail naming
+       the cause and the way out -- apply the document again in five minutes -- and nothing is changed:
+       the handler never removes an assignment to re-create it. When one principal holds both kinds of a
+       role and one of them is updated, Graph may also remove the other kind by itself (measured both
+       ways); the next run finds it absent and creates it.
 
     justification, when declared, is sent as -Justification with a create or an update; it is never
     compared, so a changed justification alone changes nothing. Without it the cmdlets send their own
@@ -200,6 +200,18 @@ function Sync-OERStructureDirectoryRoleAssignment {
 
     process {
         $Section = 'directoryRoleAssignments'
+        # Measured live: Microsoft Graph refuses to update or remove a principal's assignments of a role
+        # (either kind) with ActiveDurationTooShort until that principal's active assignment of the role
+        # has run for five minutes. The refusal is recognized by its error id or message, and the Failed
+        # row says so; the write path never works around it with a remove plus a re-create.
+        $TooYoungNote = 'Microsoft Graph does not change or remove a principal''s assignments of a role until the ' +
+            'principal''s active assignment of that role has run for five minutes (ActiveDurationTooShort), so ' +
+            'nothing was changed; apply the document again in five minutes'
+        $IsTooYoung = {
+            param([System.Management.Automation.ErrorRecord]$Record)
+            ([string]$Record.FullyQualifiedErrorId).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal) -or
+            ([string]$Record.Exception.Message).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal)
+        }
         $Kind = Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value ([string]$Item.assignmentType)
         # An out-of-enum assignmentType keeps its written value in the label, as the engine's
         # handler-error label does, so the Failed row below still names what the document says.
@@ -332,8 +344,10 @@ function Sync-OERStructureDirectoryRoleAssignment {
                             } catch {
                                 Remove-OERErrorRecord -Record $PSItem
                                 $Caller.WriteError($PSItem)
+                                $RemoveDetail = if (& $IsTooYoung $PSItem) { "failed to remove $CandLabel`: $TooYoungNote" }
+                                                else { "failed to remove $CandLabel`: $($PSItem.Exception.Message)" }
                                 ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Failed' `
-                                    -Detail "failed to remove $CandLabel`: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                                    -Detail $RemoveDetail -ErrorRecord $PSItem
                             }
                         } else {
                             ConvertTo-OERStructureResult -Section $Section -Item $CandItem -Action 'Skipped' -Detail "would remove $CandLabel"
@@ -435,19 +449,11 @@ function Sync-OERStructureDirectoryRoleAssignment {
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)
-            $FailDetail = "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: $($PSItem.Exception.Message)"
-            # Measured live: Graph refuses an adminUpdate of an ELIGIBLE window with ActiveDurationTooShort
-            # while the principal holds a PERMANENT active assignment of the same role (targetScheduleId and
-            # an omitted startDateTime change nothing); beside a time-bound active assignment it succeeds.
-            # The write path stays as it is -- never a remove plus a re-create -- and the row names the way out.
-            $DurationTooShort = ([string]$PSItem.FullyQualifiedErrorId).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal) -or
-                ([string]$PSItem.Exception.Message).StartsWith('ActiveDurationTooShort', [System.StringComparison]::Ordinal)
-            if ($Kind -eq 'Eligible' -and $Action -eq 'adminUpdate' -and $DurationTooShort) {
-                $FailDetail = 'failed to update the eligible assignment: Microsoft Graph refused the new window (ActiveDurationTooShort), ' +
-                    'which it does while the principal holds a permanent active assignment of the same role, so the ' +
-                    'eligible assignment is unchanged. Declare the active assignment time-bound (durationDays), or ' +
-                    'change the eligible window by hand (Remove-OEREligibleDirectoryRoleAssignment, then ' +
-                    'New-OEREligibleDirectoryRoleAssignment); the apply engine never removes an assignment to re-create it'
+            # A create is never refused this way (measured); an update of either kind is.
+            $FailDetail = if ($Action -eq 'adminUpdate' -and (& $IsTooYoung $PSItem)) {
+                "failed to update the $($Kind.ToLowerInvariant()) assignment: $TooYoungNote (the apply engine never removes an assignment to re-create it)"
+            } else {
+                "failed to $Verb the $($Kind.ToLowerInvariant()) assignment: $($PSItem.Exception.Message)"
             }
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' -Detail $FailDetail -ErrorRecord $PSItem
         }

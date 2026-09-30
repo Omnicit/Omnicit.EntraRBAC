@@ -32,6 +32,9 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     requests the broader RoleManagement.ReadWrite.Directory, which covers both. A delegated caller
     additionally needs the Privileged Role Administrator role.
 
+    Microsoft Graph refuses the removal with ActiveDurationTooShort until the principal's active
+    assignment of the role has run for five minutes (measured live); remove it again after that.
+
     .PARAMETER Role
     The directory role: display name (matched without regard to letter case) or role definition id.
     Pipeline by property name (RoleDefinitionId). A name matching more than one role definition is
