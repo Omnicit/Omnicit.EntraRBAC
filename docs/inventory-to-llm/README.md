@@ -204,16 +204,26 @@ entry. The apply engine checks that the id still names a group: an id that no lo
 deleted group, say) counts as not matching, exactly like an old name nobody carries any more.
 
 Everywhere else in the SAME document, refer to the group by its NEW name: in
-`administrativeUnits[].members`, catalog `resources`, access package `resourceRoles`,
-`roleAssignments` and `directoryRoleAssignments` principals, and eligibility, owner, member or
-approver entries. Once Graph's name lookup has caught up with the rename, the old name resolves to
-nothing, so a reference that still uses it fails or is reported as not found. The new name can lag
-too: on the run that renames the group, a reference to the new name can fail to resolve. It fails
-loudly -- a `Failed` row, and a handler that withholds its prune while a declared entry does not
-resolve withholds it -- and re-applying the document once the new name resolves, with
-`previousDisplayName` still in it, is safe. Under `-WhatIf` the rename is only planned, so the new
-name does not resolve yet either -- those references are reported the same way as references to a
-group that the same run would create.
+`administrativeUnits[].members`, `roleAssignments` and `directoryRoleAssignments` principals, and
+eligibility, owner, member or approver entries. Once Graph's name lookup has caught up with the
+rename, the old name resolves to nothing, so a reference that still uses it fails or is reported as
+not found. The new name can lag too: on the run that renames the group, a reference to the new name
+can fail to resolve. It fails loudly -- a `Failed` row, and a handler that withholds its prune while
+a declared entry does not resolve withholds it -- and re-applying the document once the new name
+resolves, with `previousDisplayName` still in it, is safe. Under `-WhatIf` the rename is only
+planned, so the new name does not resolve yet either -- those references are reported the same way
+as references to a group that the same run would create.
+
+**Catalog `resources` and access package `resourceRoles` are the exception -- keep them on the OLD
+name.** Both are matched against the display name Microsoft Entra Entitlement Management recorded
+for the resource when it was added to the catalog, and that recorded name is refreshed only when the
+resource is explicitly refreshed, not automatically when the underlying group is renamed (Microsoft
+Learn, `accessPackageResource: refresh`). A `resources` or `resourceRoles` entry naming the group's
+new name too early can therefore fail to match the catalog's still-old-named record; under `-Prune`,
+the old-named live resource then reads as undeclared and is a removal candidate. This is unmeasured,
+not a proven defect -- review a renaming proposal with `-WhatIf` first, and hold off on `-Prune` for
+its catalog and access package sections until you have confirmed (or refreshed) what name the
+catalog currently carries for the resource.
 
 ## Directory roles
 

@@ -172,9 +172,13 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     different groups the entry fails and nothing is changed (two groups are never merged), and when
     neither matches the group is created under displayName.
   - When a proposal renames a group, every other reference to it in the same document uses the NEW
-    name: administrativeUnits members, catalog resources, access package resource roles,
-    eligibility, owner, member and approver entries, and roleAssignments and
-    directoryRoleAssignments principals.
+    name: administrativeUnits members, eligibility, owner, member and approver entries, and
+    roleAssignments and directoryRoleAssignments principals. Catalog resources[] and access package
+    resourceRoles[] are the EXCEPTION -- they are matched by the display name the catalog recorded
+    for the resource, which Microsoft Graph refreshes only when the resource is explicitly
+    refreshed, not on the group's own rename. Leave those two naming the OLD name until the catalog
+    resource has been refreshed; review the proposal with -WhatIf before applying it with -Prune, so
+    a resource still carrying the old recorded name is not read as undeclared and removed.
   - Microsoft Graph's name lookup can follow a rename with a delay. On the run that renames the
     group, a reference to the new name can fail (loudly, with any prune it drives withheld) and is
     safe to re-run once the new name resolves; a re-run while neither name resolves yet would create
