@@ -2641,11 +2641,16 @@ below the scope for the specified principal"), `assignedTo('{userId}')` (used he
 `-User`/`-Group`/`-ServicePrincipal` filters) and `asTarget()` -- and none of the four documents what
 an unfiltered, `$filter`-less list returns relative to the scope in the URL. No live check of this
 module's own unfiltered read has been run yet, so this is neither an observed nor a measured fact:
-`Get-OEREligibleRoleAssignment`'s own help description of "every eligibility that applies at the
-scope (direct and inherited)" describes the FILTERED forms it also supports, not a verified claim
-about the unfiltered path, and this helper's own `.DESCRIPTION` and `Export-OERInventory`'s help are
-worded as EXPECTED behaviour pending that verification, not as anything measured -- do not read
-either as stronger than that.
+`Get-OEREligibleRoleAssignment`'s own help attributes the phrase "every eligibility that applies at
+the scope (direct and inherited)" to the UNFILTERED read itself -- "Without a filter, every
+eligibility that applies at the scope (direct and inherited) is returned" -- with the filtered forms
+(a principal filter, `-AtScope`, `-AsTarget`) each getting their own sentence after it. "Applies at
+the scope (direct and inherited)" names eligibilities AT the scope and INHERITED from a scope ABOVE
+it; it says nothing about a scope BELOW it, and establishes no below-scope coverage either way. That
+is exactly the gap Microsoft documents for no unfiltered read at all, and this helper's own
+`.DESCRIPTION` and `Export-OERInventory`'s help are worded as EXPECTED behaviour pending the step 5
+live-verification checklist, section 4 -- not as anything measured -- do not read either as stronger
+than that.
 
 **This is not a low-stakes hedge: `Resolve-OERInventoryScopeTree` enumerates management group and
 subscription scopes only, never a resource group or a resource, so a resource-group- or
