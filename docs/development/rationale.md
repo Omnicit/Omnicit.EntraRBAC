@@ -2773,3 +2773,32 @@ the item reads PIM eligibility only when it declares `eligibility` -- deliberate
 that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoint fail an item that
 has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
 path and is asked like any other existing group.
+
+## group-rename
+
+Sprint 6 step 5 made a group renameable through the apply document: `previousDisplayName` names the
+group's current display name or object id beside the new `displayName`. Both names are resolved on
+every run, before anything is read or written, and the outcome is decided by which of them match.
+
+**Why "neither name matches" fails instead of creating (decision before the step 5 live run,
+2026-09-30).** The first version created the group under `displayName` when neither name resolved,
+exactly as an entry without `previousDisplayName` does. Its own documentation then had to tell the
+operator not to re-apply too soon: Microsoft Graph's display-name lookup can follow a rename with a
+delay, and inside the window in which neither name resolves yet, a re-run created a SECOND group
+beside the renamed one -- a duplicate that nothing reports, which other sections' references could
+then bind to. A document that declares a rename names a group that already exists, so no reading of
+that document asks for a create. The entry now fails with `GroupRenameNotFound` (category
+`ObjectNotFound`, target the new name) and one Failed row, nothing is created, read or written, and
+the same holds under `-WhatIf`, since the decision is made before any `ShouldProcess` gate. An object
+id in `previousDisplayName` that no longer names a group (checked with one read,
+`v1.0/groups/<id>?$select=id`) counts as not matching, so with `displayName` not matching either, it
+fails the same way.
+
+**Cost, accepted.** A document written to create a group AND carrying a `previousDisplayName` -- one
+copied from a rename, say -- no longer creates it; the error says to remove `previousDisplayName`.
+And a re-run inside the lookup window is a Failed row to re-run later, instead of a silent duplicate.
+An entry without `previousDisplayName` is unchanged: a `displayName` nobody carries is created.
+
+**Both names on different groups** stays `GroupRenameConflict` (category `ResourceExists`): the
+document never merges two groups. A name matching several groups throws `AmbiguousName`, as an
+ambiguous `displayName` does, and the object id is the way around an ambiguous old name.

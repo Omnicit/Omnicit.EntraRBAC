@@ -51,10 +51,10 @@ context; unread scopes are named in `SkippedEligibilityScopes`. Every per-area f
 array, `[]` when empty.
 
 Groups can be renamed with `Set-OERGroup -NewDisplayName`, or with `previousDisplayName` (the
-current name or object id) beside the new `displayName`; if both names match different groups, the
-entry fails with `GroupRenameConflict` and nothing is merged. Re-apply only once the new name
-resolves: a lagging lookup can create a new group. `Set-OERGroup` on a role-assignable group needs
-`RoleManagement.ReadWrite.Directory`.
+current name or object id) beside the new `displayName`. If both names match different groups the
+entry fails with `GroupRenameConflict`, and if neither matches, as right after a rename while
+Graph's name lookup lags, with `GroupRenameNotFound`; nothing is merged or created. `Set-OERGroup`
+on a role-assignable group needs `RoleManagement.ReadWrite.Directory`.
 
 ## [1.0.1] - 2026-09-23
 

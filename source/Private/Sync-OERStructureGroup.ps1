@@ -19,24 +19,27 @@ function Sync-OERStructureGroup {
       other changed property), reported as one Updated row "renamed group '<previous>' to '<new>'".
       When that update fails, the Failed row is the last one: no child of the group is reconciled.
     - Both resolve to the SAME group, or only displayName resolves: the item is applied normally.
-    - Neither resolves: the group is created under displayName.
+    - Neither resolves: the item emits exactly one Failed row and a non-terminating
+      GroupRenameNotFound error (category ObjectNotFound, target the new name), and nothing is
+      created, read or written for it. A document that declares a rename names a group that already
+      exists; a group is created only by an entry WITHOUT previousDisplayName.
     A previousDisplayName matching several groups throws AmbiguousName, as an ambiguous displayName
     does, and the item fails with nothing created or renamed. previousDisplayName also accepts the
     group's object id, which is the way to rename a group whose old name is ambiguous. An object id
     is verified with one read (v1.0/groups/<id>?$select=id): an id that no longer names a group counts
-    as not matching, so a stale id never blocks a create or reports a false conflict, and any other
-    failure of that read throws, again with nothing created or renamed.
+    as not matching, so a stale id never reports a false conflict (with displayName resolving, the
+    item is applied normally; with it not resolving, the item fails as above), and any other failure
+    of that read throws, again with nothing created or renamed.
 
     Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
     the group, a reference to the NEW name elsewhere in the same document can therefore fail to
     resolve. It fails loudly -- a Failed row, and a handler that withholds its prune while a declared
     entry does not resolve withholds it -- and re-running the document once the new name resolves is
-    safe. Keep previousDisplayName in the
-    document and wait until the new name resolves before re-applying: a run after that finds the
-    group under displayName and reports it Unchanged, but an immediate re-run inside the window in
-    which neither name resolves yet would create a new group under displayName. Once the new name
-    resolves, remove previousDisplayName: a group created later under the old name makes the item
-    fail.
+    safe. Keep previousDisplayName in the document until the new name resolves: a run after that
+    finds the group under displayName and reports it Unchanged, and a re-run inside the window in
+    which neither name resolves yet fails with GroupRenameNotFound instead of creating a second
+    group. Once the new name resolves, remove previousDisplayName: a group created later under the
+    old name makes the item fail.
 
     Processing order within a single group (the PIM chicken-and-egg ordering):
     1. Create the group when absent, or diff and update mutable properties (the display name when
@@ -148,7 +151,9 @@ function Sync-OERStructureGroup {
     emits Skipped records instead of calling child cmdlets. When the group itself does not exist and
     its creation is skipped under -WhatIf, no child read or write calls are made. A rename under
     -WhatIf is reported Skipped ("would rename group '<previous>' to '<new>'"), and the group found
-    under its previous name is still read, so its children are planned against it.
+    under its previous name is still read, so its children are planned against it. A rename that
+    neither name resolves, and a rename conflict, are Failed under -WhatIf too: both are decided
+    before any ShouldProcess gate.
 
     .PARAMETER Item
     One element from the groups[] array in the structure document, as a PSCustomObject produced by
@@ -251,6 +256,23 @@ function Sync-OERStructureGroup {
                 $Caller.WriteError($ErrRec)
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
                     -Detail "both '$Name' and its previousDisplayName '$PrevName' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName" `
+                    -ErrorRecord $ErrRec
+                return
+            }
+            # NEITHER name resolves: a document that declares a rename names a group that already
+            # exists, so this is never a create. Right after a rename, Graph's name lookup can find
+            # the group under neither name for a while, and creating it then would leave a duplicate
+            # beside the renamed one. One Failed row, nothing read or written.
+            if (-not $Gid -and -not $PrevGid) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Neither '$Name' nor its previousDisplayName '$PrevName' matches a group, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new group, remove previousDisplayName."),
+                    'GroupRenameNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $Name
+                )
+                $Caller.WriteError($ErrRec)
+                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                    -Detail "neither '$Name' nor its previousDisplayName '$PrevName' matches a group, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new group, remove previousDisplayName" `
                     -ErrorRecord $ErrRec
                 return
             }

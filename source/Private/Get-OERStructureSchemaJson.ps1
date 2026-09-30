@@ -68,7 +68,7 @@ function Get-OERStructureSchemaJson {
     display name or object id when displayName declares a new one. The groups description states
     what the apply engine does with it: the group found only under previousDisplayName is renamed, an
     entry whose two names match different groups fails without merging them, and an entry neither
-    name matches is created. Get-OERInventory never exports it.
+    name matches fails and creates nothing. Get-OERInventory never exports it.
     Exactly three keys are typed [ "array", "null" ] rather than "array": groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles. For those three an omitted
     key still reconciles and still PRUNES, so an explicit null is the only way a document can say
@@ -142,7 +142,7 @@ function Get-OERStructureSchemaJson {
     "tenantAlias": { "type": "string" },
     "groups": {
       "type": "array",
-      "description": "Entra ID groups. displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: when only previousDisplayName matches a live group, that group is renamed; when both names match different groups, the entry fails and the groups are never merged; when neither matches, the group is created.",
+      "description": "Entra ID groups. displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: when only previousDisplayName matches a live group, that group is renamed; when both names match different groups, the entry fails and the groups are never merged; when neither matches, the entry fails and nothing is created, since a rename names an existing group (declare a new group without previousDisplayName).",
       "items": {
         "type": "object",
         "oneOf": [
@@ -151,7 +151,7 @@ function Get-OERStructureSchemaJson {
         ],
         "properties": {
           "displayName": { "type": "string" },
-          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph's name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet creates a new group, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory." },
+          "previousDisplayName": { "type": "string", "minLength": 1, "description": "The group's current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph's name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet fails the entry and creates nothing, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory." },
           "template": { "type": "string" },
           "tokens": { "type": "object" },
           "roleAssignable": { "type": "boolean" },

@@ -281,7 +281,7 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
         InModuleScope $script:moduleName {
             # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
             $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $T | Should -Match ([regex]::Escape('displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: the group found under previousDisplayName alone is renamed in place. When both names match different groups the entry fails and nothing is changed (two groups are never merged), and when neither matches the group is created under displayName.'))
+            $T | Should -Match ([regex]::Escape('displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: the group found under previousDisplayName alone is renamed in place. When both names match different groups the entry fails and nothing is changed (two groups are never merged), and when neither matches the entry fails and nothing is created: a rename names an existing group. A NEW group is declared without previousDisplayName.'))
             $T | Should -Match ([regex]::Escape('{ displayName (or template + tokens object), previousDisplayName (rename only'))
             $T | Should -Match ([regex]::Escape("previousDisplayName (rename only -- the group's current display name or object id when displayName declares a new one"))
             $T | Should -Not -Match 'changing displayName creates a new group'
@@ -294,7 +294,7 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
             $T | Should -Match ([regex]::Escape('Catalog resources[] and access package resourceRoles[] are the EXCEPTION -- they are matched by the display name the catalog recorded for the resource, which Microsoft Graph refreshes only when the resource is explicitly refreshed, not on the group''s own rename.'))
             $T | Should -Match ([regex]::Escape('review the proposal with -WhatIf before applying it with -Prune'))
             $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a rename with a delay."))
-            $T | Should -Match ([regex]::Escape('a re-run while neither name resolves yet would create a new group. Keep previousDisplayName in the proposal'))
+            $T | Should -Match ([regex]::Escape('a re-run while neither name resolves yet fails the entry and creates nothing. Keep previousDisplayName in the proposal'))
             # The three sections that still cannot be renamed keep saying so.
             $T | Should -Match 'changing displayName creates a new unit'
             $T | Should -Match 'changing displayName creates a new catalog'

@@ -3548,8 +3548,8 @@ Describe 'Sync-OERStructureGroup' {
 
     # R9: previousDisplayName is resolved on every run next to displayName. Both names on DIFFERENT
     # groups is one Failed row and nothing else; only the previous name is a rename folded into the
-    # one property PATCH; the same group under both names is the normal path; neither is a create
-    # under the new name.
+    # one property PATCH; the same group under both names is the normal path; neither is one Failed
+    # row (GroupRenameNotFound) and never a create.
     Context 'previousDisplayName' {
 
         It 'renames the group found only under its previous name through Set-OERGroup -NewDisplayName and reports one Updated row' {
@@ -3768,7 +3768,7 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'treats an object id that names no group as not matching: displayName absent, so the group is created under the new name' {
+        It 'fails with GroupRenameNotFound, creating nothing, when an object id names no group and displayName is absent' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncGroupViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
@@ -3791,14 +3791,18 @@ Describe 'Sync-OERStructureGroup' {
                 $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "members": null }' | ConvertFrom-Json
                 $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-                Should -Invoke New-OERGroup -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
-                Should -Invoke New-OERGroup -Exactly -Times 1
+                # The id WAS checked -- one existence read -- and found to name no group.
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1 -ParameterFilter { $Uri -eq 'v1.0/groups/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb?$select=id' }
+                Should -Invoke Invoke-OERGraphRequest -Exactly -Times 1
+                @($r).Count | Should -Be 1
+                $r[0].Item | Should -BeExactly 'role_sec_hr_emea'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'role_sec_hr_emea' nor its previousDisplayName 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' matches a group, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new group, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GroupRenameNotFound'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupRenameNotFound*' }).Count | Should -Be 1
+                Should -Invoke New-OERGroup -Times 0
                 Should -Invoke Get-OERGroup -Times 0
                 Should -Invoke Set-OERGroup -Times 0
-                @($r).Count | Should -Be 1
-                $r[0].Action | Should -BeExactly 'Created'
-                $r[0].Detail | Should -BeExactly 'created group role_sec_hr_emea (g-new)'
-                @($Err).Count | Should -Be 0
             }
         }
 
@@ -3924,7 +3928,10 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'creates the group under the NEW name when neither name resolves' {
+        # A document that declares a rename names a group that already exists. Right after a rename
+        # Graph's lookup can find the group under neither name, so "neither resolves" is never a
+        # create: one Failed row and a GroupRenameNotFound error, nothing read or written.
+        It 'fails the item with one row and a GroupRenameNotFound error, creating, reading and writing nothing, when neither name resolves' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncGroupViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
@@ -3936,17 +3943,99 @@ Describe 'Sync-OERStructureGroup' {
                 Mock Resolve-OERGroupId { $null }
                 Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
                 Mock Set-OERGroup { }
-                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null }' | ConvertFrom-Json
-                $r = @(Invoke-SyncGroupViaCaller -Item $Item)
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-new'; Description = $null; Members = @(); Owners = @(); PimEligibility = @() } }
+                Mock Add-OERGroupMember { }
+                Mock Add-OERGroupEligibility { }
+                Mock Get-OERGroupPimPolicy { $null }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                # Every collection is declared, so a missing guard has something to create and write.
+                $Item = [PSCustomObject]@{
+                    displayName         = 'role_sec_hr_emea'
+                    previousDisplayName = 'role_sec_hr'
+                    members             = @('person9@example.com')
+                    owners              = @('person16@example.com')
+                    eligibility         = @([PSCustomObject]@{ principal = 'person9@example.com'; durationDays = 30 })
+                    pimPolicy           = [PSCustomObject]@{ activationMaxHours = 4 }
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-                # The previous name was consulted, and found nothing.
+                # Both names were consulted, and found nothing.
+                Should -Invoke Resolve-OERGroupId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
                 Should -Invoke Resolve-OERGroupId -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr' }
+                # Positive identity first: the ONLY row the item emits.
+                @($r).Count | Should -Be 1
+                $r[0].Section | Should -BeExactly 'groups'
+                $r[0].Item | Should -BeExactly 'role_sec_hr_emea'
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -BeExactly "neither 'role_sec_hr_emea' nor its previousDisplayName 'role_sec_hr' matches a group, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new group, remove previousDisplayName"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GroupRenameNotFound'
+
+                Should -Invoke New-OERGroup -Times 0
+                Should -Invoke Get-OERGroup -Times 0
+                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke Resolve-OERStructurePrincipal -Times 0
+                Should -Invoke Add-OERGroupMember -Times 0
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                Should -Invoke Get-OERGroupPimPolicy -Times 0
+                Should -Invoke Set-OERGroupPimPolicy -Times 0
+
+                # Published through $Caller.WriteError: the caller's -ErrorVariable holds exactly it.
+                @($Err).Count | Should -Be 1
+                $NotFound = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupRenameNotFound*' })
+                $NotFound.Count | Should -Be 1
+                $NotFound[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $NotFound[0].TargetObject | Should -BeExactly 'role_sec_hr_emea'
+                $NotFound[0].Exception.Message | Should -BeExactly "Neither 'role_sec_hr_emea' nor its previousDisplayName 'role_sec_hr' matches a group, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new group, remove previousDisplayName."
+            }
+        }
+
+        It 'fails with GroupRenameNotFound under -WhatIf too, never planning a create, when neither name resolves' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": ["person9@example.com"] }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^GroupRenameNotFound'
+                @($r | Where-Object { [string]$_.Detail -like 'would create*' }).Count | Should -Be 0
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupRenameNotFound*' }).Count | Should -Be 1
+                Should -Invoke New-OERGroup -Times 0
+            }
+        }
+
+        It 'still creates the group when no previousDisplayName is declared and displayName does not resolve' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-new'; DisplayName = 'role_sec_hr_emea' } }
+                Mock Set-OERGroup { }
+                # An explicit null previousDisplayName is undeclared, like every other key.
+                $Item = '{ "displayName": "role_sec_hr_emea", "previousDisplayName": null, "members": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+
                 Should -Invoke New-OERGroup -Exactly -Times 1 -ParameterFilter { $DisplayName -eq 'role_sec_hr_emea' }
                 Should -Invoke New-OERGroup -Exactly -Times 1
-                Should -Invoke Set-OERGroup -Times 0
+                Should -Invoke Resolve-OERGroupId -Exactly -Times 1
                 @($r).Count | Should -Be 1
                 $r[0].Action | Should -BeExactly 'Created'
                 $r[0].Detail | Should -BeExactly 'created group role_sec_hr_emea (g-new)'
+                @($Err).Count | Should -Be 0
             }
         }
 

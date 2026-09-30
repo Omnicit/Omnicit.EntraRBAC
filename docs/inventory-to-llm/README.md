@@ -182,16 +182,17 @@ Every apply run looks up both names, with three outcomes:
 - **Both names match, and they are different groups.** The entry fails and nothing is changed for
   it -- the document never merges two groups. Rename or delete one of them, or remove
   `previousDisplayName`.
-- **Neither name matches.** The group is created under `displayName`, exactly as without
-  `previousDisplayName`.
+- **Neither name matches.** The entry fails with `GroupRenameNotFound` and nothing is created: a
+  document that declares a rename names a group that already exists. To create a new group, declare
+  it without `previousDisplayName`.
 
 When both names find the same group, the entry is applied as usual.
 
 **Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in
 the document, and wait until the new name resolves (for example `Get-OERGroup -Group '<new name>'`
 finds the group) before you apply the document again: a run after that finds the group under
-`displayName` and reports it `Unchanged`. Do not re-apply it immediately. Inside the window in which
-neither name resolves yet, the entry would create a NEW group under `displayName`. Once the new name
+`displayName` and reports it `Unchanged`. A run inside the window in which neither name resolves yet
+fails the entry with `GroupRenameNotFound` and creates nothing; wait and re-run. Once the new name
 resolves, remove `previousDisplayName`: a group created later under the old name would make the entry
 fail. `Get-OERInventory` never exports `previousDisplayName`, and `Test-OERStructure` reports an empty
 or non-string one as an error and one equal to `displayName` (ignoring case) as a warning -- a
@@ -201,7 +202,8 @@ Administrative units, catalogs and access packages cannot be renamed through the
 `previousDisplayName` also accepts the group's object id instead of its old name. That is the way to
 rename a group whose old name is ambiguous, since a name that matches several groups fails the
 entry. The apply engine checks that the id still names a group: an id that no longer exists (a
-deleted group, say) counts as not matching, exactly like an old name nobody carries any more.
+deleted group, say) counts as not matching, exactly like an old name nobody carries any more -- so
+with `displayName` not matching either, the entry fails as above.
 
 Everywhere else in the SAME document, refer to the group by its NEW name: in
 `administrativeUnits[].members`, `roleAssignments` and `directoryRoleAssignments` principals, and
