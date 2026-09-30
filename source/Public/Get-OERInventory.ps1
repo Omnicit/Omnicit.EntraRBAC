@@ -84,10 +84,16 @@ function Get-OERInventory {
     and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
     name and a group by its display name, each falling back to the object id when no name can be
     read; a service principal, or a principal of unknown type, is named by its object id, and
-    principalType is carried whenever the type is known. A time-bound assignment carries
-    durationDays reconstructed from the schedule window the same way the apply engine measures it, so
-    a re-applied export is Unchanged; a permanent one carries neither durationDays nor permanent. Two
-    live schedules for one role, principal and kind export only the first, with a warning.
+    principalType is carried whenever the type is known. Entra does not keep group display names
+    unique, so a group whose display name matches, without regard to letter case, that of another
+    principal holding the same role and assignment type is named by its object id instead (still with
+    principalType Group): two entries with the same role, principal and assignmentType would be
+    refused by the validator. A time-bound assignment carries durationDays reconstructed from the
+    schedule window the same way the apply engine measures it, so a re-applied export is Unchanged; a
+    permanent one carries neither durationDays nor permanent. Two live schedules for one role,
+    principal and kind export only the first this read returns, with a warning: Invoke-OERStructure
+    compares against the first schedule Microsoft Graph returns for that role and principal, which is
+    not guaranteed to be the same one, so such an entry may report a change when applied.
     DirectoryRoleManagementPolicies exports the policy of every directory role that has at least one
     row in the tenant-scope eligibility or assignment schedules -- any member type, activations
     included -- or, with -AllDirectoryRolePolicies, of every directory role; a directory policy
@@ -1205,11 +1211,14 @@ function Get-OERInventory {
                 foreach ($DirectoryRow in @(Select-OERManagedDirectoryRoleAssignment -Assignment $DirectoryRows[$DirectoryKind] -Kind $DirectoryKind)) {
                     # Two schedules for one role, principal and kind (a future-dated second one, for
                     # example) would be two entries the validator refuses as a duplicate. Keep the
-                    # first -- the one the handler compares against -- and say so.
+                    # first this read returned and say so. The handler compares against the first
+                    # schedule ITS filtered read returns, and Microsoft Graph does not promise the two
+                    # reads the same order, so the warning says the entry may then report a change.
                     if (-not $DirectorySeen.Add("$($DirectoryRow.RoleDefinitionId)|$($DirectoryRow.PrincipalId)")) {
                         $DuplicateRole = if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
                         Write-Warning ("Get-OERInventory: directory role '$DuplicateRole' has more than one $($DirectoryKind.ToLowerInvariant()) " +
-                            "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first, which is the one Invoke-OERStructure compares against.")
+                            "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first. Invoke-OERStructure compares against " +
+                            'the first schedule Microsoft Graph returns for that role and principal, so if the two differ it may report a change for this entry.')
                         continue
                     }
                     $DirectoryKept.Add([PSCustomObject]@{ Kind = $DirectoryKind; Row = $DirectoryRow })
@@ -1229,22 +1238,54 @@ function Get-OERInventory {
                 foreach ($K in $ResolvedDirectory.Keys) { $PrincipalNameCache[$K] = $ResolvedDirectory[$K] }
             }
 
-            $DirectoryEntries = [System.Collections.Generic.List[object]]::new()
-            foreach ($Kept in $DirectoryKept) {
-                $DirectoryRow = $Kept.Row
+            # A user by its UPN and a group by its display name, each falling back to the object id
+            # when no name was read; a service principal, or a principal of unknown type, by its
+            # object id, which the apply engine resolves verbatim.
+            $DirectoryPrincipals = [string[]]::new($DirectoryKept.Count)
+            for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                $DirectoryRow = $DirectoryKept[$Index].Row
                 $DirectoryPrincipalId = [string]$DirectoryRow.PrincipalId
-                $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
-                # A user by its UPN and a group by its display name, each falling back to the object
-                # id when no name was read; a service principal, or a principal of unknown type, by
-                # its object id, which the apply engine resolves verbatim.
-                $DirectoryPrincipal = if ($DirectoryPrincipalType -in @('User', 'Group') -and $PrincipalNameCache.ContainsKey($DirectoryPrincipalId)) {
+                $DirectoryPrincipals[$Index] = if ([string]$DirectoryRow.PrincipalType -in @('User', 'Group') -and $PrincipalNameCache.ContainsKey($DirectoryPrincipalId)) {
                     [string]$PrincipalNameCache[$DirectoryPrincipalId]
                 } else {
                     $DirectoryPrincipalId
                 }
+            }
+            # Entra does not keep group display names unique, so two groups holding one role and kind
+            # can carry the same name -- or a group can carry another principal's name -- and export
+            # two identical (role, principal, assignmentType) entries, which the validator refuses as
+            # a duplicate and so invalidates the whole document. Every GROUP row whose name collides,
+            # without regard to letter case, with another row of the same role definition id and kind
+            # is named by its object id instead; principalType stays Group. Repeated until nothing
+            # changes, since a group's id can in turn equal another group's display name. Each pass
+            # moves at least one group to its id, so it ends; only groups ever move.
+            do {
+                $DirectoryNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                    $CollisionKey = "$($DirectoryKept[$Index].Row.RoleDefinitionId)|$($DirectoryKept[$Index].Kind)|$($DirectoryPrincipals[$Index])"
+                    $DirectoryNameCount[$CollisionKey] = 1 + $(if ($DirectoryNameCount.ContainsKey($CollisionKey)) { $DirectoryNameCount[$CollisionKey] } else { 0 })
+                }
+                $DirectoryRenamed = $false
+                for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                    $DirectoryRow = $DirectoryKept[$Index].Row
+                    if ([string]$DirectoryRow.PrincipalType -ne 'Group') { continue }
+                    if ($DirectoryPrincipals[$Index] -eq [string]$DirectoryRow.PrincipalId) { continue }
+                    $CollisionKey = "$($DirectoryRow.RoleDefinitionId)|$($DirectoryKept[$Index].Kind)|$($DirectoryPrincipals[$Index])"
+                    if ($DirectoryNameCount[$CollisionKey] -gt 1) {
+                        $DirectoryPrincipals[$Index] = [string]$DirectoryRow.PrincipalId
+                        $DirectoryRenamed = $true
+                    }
+                }
+            } while ($DirectoryRenamed)
+
+            $DirectoryEntries = [System.Collections.Generic.List[object]]::new()
+            for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                $Kept = $DirectoryKept[$Index]
+                $DirectoryRow = $Kept.Row
+                $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
                 $Proj = [ordered]@{
                     role      = $(if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
-                    principal = $DirectoryPrincipal
+                    principal = $DirectoryPrincipals[$Index]
                 }
                 if ($DirectoryPrincipalType) { $Proj.principalType = $DirectoryPrincipalType }
                 $Proj.assignmentType = $Kept.Kind
@@ -1351,7 +1392,7 @@ function Get-OERInventory {
                 foreach ($Rmp in $Policies) {
                     # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the
                     # directoryRoleManagementPolicies section; without -Directory it is the Azure
-                    # entry, scope first, unchanged from when it was built inline here.
+                    # roleManagementPolicies entry, scope first.
                     $RmpEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $Rmp
                     if ($IncludeId) { $RmpEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue $Rmp.PolicyId }
                     $RoleManagementPolicies.Add($RmpEntry)

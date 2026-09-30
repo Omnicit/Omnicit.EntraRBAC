@@ -11,7 +11,7 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
     object, which Get-OERRoleManagementPolicy and Get-OERDirectoryRoleManagementPolicy both return.
 
     Without -Directory the entry starts with scope, role, allowPermanentEligibility and
-    activationMaxHours, emitted even when null so an existing document keeps its shape. With
+    activationMaxHours, emitted even when null so every such entry carries the same leading keys. With
     -Directory there is no scope key, and allowPermanentEligibility and activationMaxHours are
     emitted only when the live policy carries a value. role is the role name, or the role definition
     id when there is no name. Every other field is emitted the same way on both sides: the eligible
@@ -22,7 +22,7 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
 
     Approvers are emitted as object ids (users and groups), since an id resolves verbatim on apply
     and a display name may not. Without -Directory they are emitted whenever the live policy lists
-    any, exactly as before this helper existed. With -Directory they are emitted only while approval
+    any, whatever requireApproval says. With -Directory they are emitted only while approval
     is required: the apply engine ignores declared approvers when requireApproval is false, and the
     offline validator would otherwise warn on every exported document holding a stale approver.
 
@@ -62,8 +62,8 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
         if ($null -ne $Policy.AllowPermanentEligibility) { $Proj.allowPermanentEligibility = $Policy.AllowPermanentEligibility }
         if ($null -ne $Policy.ActivationMaxHours) { $Proj.activationMaxHours = $Policy.ActivationMaxHours }
     } else {
-        # scope/role/allowPermanentEligibility/activationMaxHours keep their original
-        # unconditional emission so an existing document keeps its shape.
+        # scope/role/allowPermanentEligibility/activationMaxHours are emitted unconditionally, null
+        # included, so every roleManagementPolicies entry carries the same leading keys.
         $Proj = [ordered]@{
             scope                     = $Policy.Scope
             role                      = $Role
@@ -96,7 +96,7 @@ function ConvertTo-OERInventoryRoleManagementPolicy {
     # Approvers project as object IDS: they resolve verbatim through the apply engine's declared
     # approver resolution, whereas an approver description is a display name a lookup cannot
     # resolve. The directory entry carries them only while approval is required (see .DESCRIPTION);
-    # the Azure entry keeps its original, ungated emission.
+    # the Azure entry carries them whenever the live policy lists any.
     if (-not $Directory -or $Policy.RequireApproval -eq $true) {
         $ApproverUser  = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
         $ApproverGroup = @(@($Policy.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })

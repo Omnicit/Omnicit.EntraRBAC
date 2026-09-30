@@ -3253,10 +3253,52 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include DirectoryRoleAssignments -WarningAction SilentlyContinue -WarningVariable DirWarn
             $Entries = @($Inv.directoryRoleAssignments)
             $Entries.Count | Should -Be 1
-            $Entries[0].durationDays | Should -Be 30 -Because 'the first schedule is the one Invoke-OERStructure compares against'
+            $Entries[0].durationDays | Should -Be 30 -Because 'the first schedule the tenant-wide read returned is the one exported'
             @($DirWarn).Count | Should -Be 1
             [string]@($DirWarn)[0].Message | Should -BeExactly ("Get-OERInventory: directory role 'Fixture Role A' has more than one eligible schedule for principal " +
-                "'$($script:DirUser1)'; exporting the first, which is the one Invoke-OERStructure compares against.")
+                "'$($script:DirUser1)'; exporting the first. Invoke-OERStructure compares against the first schedule Microsoft Graph " +
+                'returns for that role and principal, so if the two differ it may report a change for this entry.')
+        }
+
+        It 'names two same-named groups holding one role and kind by their object ids, so the section stays valid' {
+            # Entra does not keep group display names unique. Two groups both named 'Fixture Group'
+            # would otherwise export two identical (role, principal, assignmentType) entries, which the
+            # validator refuses as a duplicate -- invalidating the whole document. A third group whose
+            # name equals a user's UPN in the same role and kind collides the same way. The user, and a
+            # same-named group holding a DIFFERENT role, keep their names.
+            $DirGroup2 = 'bbbbbbbb-0000-0000-0000-000000000002'
+            $DirGroup3 = 'bbbbbbbb-0000-0000-0000-000000000003'
+            $DirGroup4 = 'bbbbbbbb-0000-0000-0000-000000000004'
+            $script:DirNames[$DirGroup2] = 'fixture group'
+            $script:DirNames[$DirGroup3] = 'person1@example.com'
+            $script:DirNames[$DirGroup4] = 'Fixture Group'
+            try {
+                $script:DirEligible = @(
+                    New-DirRow -ScheduleId 's-1' -PrincipalId $script:DirGroup1 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-2' -PrincipalId $DirGroup2 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-3' -PrincipalId $DirGroup3 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-4' -PrincipalId $script:DirUser1
+                    New-DirRow -ScheduleId 's-5' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $DirGroup4 -PrincipalType 'Group'
+                )
+                $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+                @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                    "Fixture Role A|$($script:DirGroup1)|Group"
+                    "Fixture Role A|$DirGroup2|Group"
+                    "Fixture Role A|$DirGroup3|Group"
+                    'Fixture Role A|person1@example.com|User'
+                    'Fixture Role B|Fixture Group|Group'
+                )
+                $Doc = [PSCustomObject]@{ version = '1.0'; directoryRoleAssignments = @($Inv.directoryRoleAssignments) }
+                $Validation = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                    param($Doc)
+                    Test-OERStructureSchema -Document $Doc
+                }
+                @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' } | ForEach-Object { "$($_.Path): $($_.Message)" }) |
+                    Should -BeNullOrEmpty
+                $Validation.Valid | Should -BeTrue
+            } finally {
+                foreach ($One in $DirGroup2, $DirGroup3, $DirGroup4) { $script:DirNames.Remove($One) }
+            }
         }
 
         It 'sorts the entries by role, then Eligible before Active, then principal' {
@@ -3339,6 +3381,30 @@ Describe 'Get-OERInventory' {
             $Unread | Should -Contain 'directoryRoleManagementPolicies/role selection'
             $Unread | Should -Not -Contain 'directoryRoleAssignments/Active'
             $Partial[0].Exception.Message | Should -Match 'fixture refusal of the eligibility schedules'
+        }
+
+        It 'on a failed active read exports no active entry, still exports the eligible ones, and reports both gaps' {
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the assignment schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(
+                New-DirRow -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleAssignments)
+            @($Entries | Where-Object { $_.assignmentType -eq 'Active' }).Count | Should -Be 0
+            $Entries.Count | Should -Be 1
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Eligible'
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role B')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'directoryRoleAssignments/Active'
+            $Unread | Should -Contain 'directoryRoleManagementPolicies/role selection'
+            $Unread | Should -Not -Contain 'directoryRoleAssignments/Eligible'
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the assignment schedules'
         }
 
         It 'on a failed schedule read with only the policy section included reports the role selection, not the assignments' {
