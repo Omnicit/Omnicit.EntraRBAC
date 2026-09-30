@@ -3058,3 +3058,293 @@ Describe 'Test-OERStructureSchema directoryRoleManagementPolicies' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema directoryRoleAssignments' {
+    # directoryRoleAssignments[] items (eligible and active assignments of Microsoft Entra directory
+    # roles at tenant scope) require role, principal and assignmentType; durationDays and permanent
+    # decide the window and may not contradict each other; and two entries for the same role,
+    # principal and assignmentType are refused, since they would re-issue the window on every run.
+    BeforeAll {
+        function New-DraDoc {
+            param([string[]]$ItemJson)
+            ('{ "version": "1.0", "directoryRoleAssignments": [ ' + ($ItemJson -join ', ') + ' ] }') | ConvertFrom-Json
+        }
+    }
+
+    It 'accepts a time-bound Eligible entry, a permanent Active entry and a Group principal without a finding' {
+        $Doc = New-DraDoc @(
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30, "justification": "Quarterly reporting" }'
+            '{ "role": "Message Center Reader", "principal": "person1@example.com", "assignmentType": "Active", "permanent": true }'
+            '{ "role": "Reports Reader", "principal": "Reporting Readers", "principalType": "Group", "assignmentType": "Eligible", "permanent": false, "durationDays": 90, "id": "x" }'
+        )
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'requires <Key>' -TestCases @(
+        @{ Key = 'role'; Json = '{ "principal": "person1@example.com", "assignmentType": "Eligible" }' }
+        @{ Key = 'principal'; Json = '{ "role": "Reports Reader", "assignmentType": "Eligible" }' }
+        @{ Key = 'assignmentType'; Json = '{ "role": "Reports Reader", "principal": "person1@example.com" }' }
+    ) {
+        $Doc = New-DraDoc $Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc; Key = $Key } {
+            param($Doc, $Key)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq "directoryRoleAssignments[0].$Key" })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'directoryRoleAssignments'
+            $Hit[0].Message | Should -BeExactly "'$Key' is required at directoryRoleAssignments[0]."
+        }
+    }
+
+    It 'labels a finding with the role, or with the path when role is missing' {
+        $Doc = New-DraDoc @(
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 0 }'
+            '{ "principal": "person1@example.com", "assignmentType": "Eligible" }'
+        )
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            # Indexed, not member-enumerated: an array's own Item indexer would shadow the property.
+            $DaysHit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].durationDays' })
+            $DaysHit.Count | Should -Be 1
+            $DaysHit[0].Item | Should -BeExactly 'Reports Reader'
+            $RoleHit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[1].role' })
+            $RoleHit.Count | Should -Be 1
+            $RoleHit[0].Item | Should -BeExactly 'directoryRoleAssignments[1]'
+        }
+    }
+
+    It 'rejects an assignmentType outside the enum, listing Eligible and Active' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Pending" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].assignmentType' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'assignmentType' at directoryRoleAssignments[0] must be one of: Eligible, Active. Got: 'Pending'."
+        }
+    }
+
+    It 'accepts a lower-cased assignmentType, warning with the canonical spelling' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "eligible" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].assignmentType' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -Match "canonical spelling is 'Eligible'"
+        }
+    }
+
+    It 'rejects a principalType outside the enum' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "principalType": "Robot", "assignmentType": "Eligible" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principalType' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -BeExactly "'principalType' at directoryRoleAssignments[0] must be one of: User, Group, ServicePrincipal. Got: 'Robot'."
+        }
+    }
+
+    It 'accepts a lower-cased principalType, warning with the canonical spelling' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "principalType": "user", "assignmentType": "Eligible" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principalType' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -Match "canonical spelling is 'User'"
+        }
+    }
+
+    It 'warns when a ServicePrincipal is named by display name (principalType <PrincipalType>), since an ambiguous name fails at apply time' -TestCases @(
+        @{ PrincipalType = 'ServicePrincipal' }
+        @{ PrincipalType = 'serviceprincipal' }
+    ) {
+        $Doc = New-DraDoc ('{ "role": "Reports Reader", "principal": "oer-test-app", "principalType": "' + $PrincipalType + '", "assignmentType": "Eligible" }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].principal' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Section | Should -BeExactly 'directoryRoleAssignments'
+            $Hit[0].Item | Should -BeExactly 'Reports Reader'
+            $Hit[0].Message | Should -BeExactly ("'principal' at directoryRoleAssignments[0] names a service principal by display name ('oer-test-app'): " +
+                'service principal display names are not unique, and an ambiguous name is refused at apply time (the entry fails); ' +
+                'name a service principal by its object id.')
+        }
+    }
+
+    It 'does not warn about a ServicePrincipal named by object id' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "aaaaaaaa-0000-0000-0000-000000000003", "principalType": "ServicePrincipal", "assignmentType": "Eligible" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'does not give the service principal warning to a <PrincipalType> named by name, or to an entry without principalType' -TestCases @(
+        @{ PrincipalType = 'User'; Principal = 'person1@example.com' }
+        @{ PrincipalType = 'Group'; Principal = 'Reporting Readers' }
+        @{ PrincipalType = $null; Principal = 'oer-test-app' }
+    ) {
+        $TypeJson = if ($PrincipalType) { '"principalType": "' + $PrincipalType + '", ' } else { '' }
+        $Doc = New-DraDoc ('{ "role": "Reports Reader", "principal": "' + $Principal + '", ' + $TypeJson + '"assignmentType": "Eligible" }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'rejects durationDays <Value>' -TestCases @(
+        @{ Value = '0' }
+        @{ Value = '3651' }
+        @{ Value = '"x"' }
+    ) {
+        $Doc = New-DraDoc ('{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": ' + $Value + ' }')
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].durationDays' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'durationDays' at directoryRoleAssignments[0] must be an integer between 1 and 3650."
+        }
+    }
+
+    It 'rejects a non-boolean permanent' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "permanent": "yes" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].permanent' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'permanent' at directoryRoleAssignments[0] must be a boolean."
+        }
+    }
+
+    It 'rejects a non-string justification' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "justification": 5 }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].justification' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Message | Should -BeExactly "'justification' at directoryRoleAssignments[0] must be a string."
+        }
+    }
+
+    It 'rejects durationDays together with permanent true as mutually exclusive' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30, "permanent": true }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Message -match 'mutually exclusive' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Path | Should -BeExactly 'directoryRoleAssignments[0]'
+            $Hit[0].Item | Should -BeExactly 'Reports Reader'
+        }
+    }
+
+    It 'rejects permanent false without durationDays, since the window it asks for is undeclared' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "permanent": false }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].durationDays' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Message | Should -Match "'permanent' is false"
+        }
+    }
+
+    It 'accepts permanent false together with durationDays' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "permanent": false, "durationDays": 30 }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'refuses a second entry for the same role, principal and assignmentType, compared without regard to letter case' {
+        $Doc = New-DraDoc @(
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30 }'
+            '{ "role": "reports reader", "principal": "PERSON1@example.com", "assignmentType": "eligible", "durationDays": 60 }'
+        )
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            $Hit = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'directoryRoleAssignments[1]'
+            $Hit[0].Message | Should -Match ([regex]::Escape('directoryRoleAssignments[0]'))
+        }
+    }
+
+    It 'accepts the same role and principal once as Eligible and once as Active' {
+        $Doc = New-DraDoc @(
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "durationDays": 30 }'
+            '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Active", "durationDays": 30 }'
+        )
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'warns about an unknown key such as scope, and says nothing about the id key' {
+        $Doc = New-DraDoc '{ "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible", "scope": "/", "id": "x" }'
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeTrue
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].scope' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Message | Should -BeExactly "Unknown key 'scope' at directoryRoleAssignments[0] is not applied by Invoke-OERStructure and will be ignored."
+            @($V.Errors | Where-Object { $_.Path -eq 'directoryRoleAssignments[0].id' }).Count | Should -Be 0
+        }
+    }
+
+    It 'requires the section to be an array' {
+        $Doc = '{ "version": "1.0", "directoryRoleAssignments": { "role": "Reports Reader", "principal": "person1@example.com", "assignmentType": "Eligible" } }' | ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $V.Valid | Should -BeFalse
+            @($V.Errors).Message | Should -Contain "Section 'directoryRoleAssignments' must be an array."
+        }
+    }
+}

@@ -8,7 +8,8 @@ function Get-OERStructureSchemaJson {
     LLM (or any consumer) can validate a proposed apply document without access to the module. The
     schema mirrors the offline validator Test-OERStructureSchema exactly: the required top-level
     version key, the closed set of top-level keys, the per-section required fields, the enforced enums
-    (catalog resource type, access review recurrence, role assignment principal type, eligibility accessType member/owner,
+    (catalog resource type, access review recurrence, role assignment principal type, directory role
+    assignment assignmentType Eligible/Active and principal type, eligibility accessType member/owner,
     membershipRuleProcessingState On/Paused (shared by administrative units and groups), activeEnablement
     and activationEnablement restricted to Justification/MultiFactorAuthentication/Ticketing) and the
     numeric ranges (eligibility durationDays 1-3650, pimPolicy/policy activationMaxHours 1-24, approval
@@ -29,9 +30,10 @@ function Get-OERStructureSchemaJson {
     to object ids before the policy is compared, and requireApproval false takes precedence over a
     declared approvers block. Section item
     objects stay open (additionalProperties is not restricted); only the root object forbids unknown
-    keys at the draft-07 level. Unknown keys in the roleAssignments, roleManagementPolicies and
-    directoryRoleManagementPolicies sections (a scope key in the directory section included),
-    in a groups[] item, and in a groups[] pimPolicy block (root, or a nested member/owner block) stay
+    keys at the draft-07 level. Unknown keys in the roleAssignments, roleManagementPolicies,
+    directoryRoleManagementPolicies and directoryRoleAssignments sections (a scope key in either
+    directory section included), in a groups[] item, and in a groups[] pimPolicy block (root, or a
+    nested member/owner block) stay
     schema-valid but are reported as a Warning by Test-OERStructureSchema, so a field the apply engine
     cannot honour is visible rather than silent; a pimPolicy key matching one of the five field names the
     inventory README used to document before they were renamed gets a did-you-mean hint pointing at its
@@ -49,7 +51,15 @@ function Get-OERStructureSchemaJson {
     scope: a directory role policy always lives at tenant scope, so role is the only required key.
     Their approvers follow the Microsoft Graph semantics -- only the declared side (users or groups)
     is replaced and the other is kept -- and the same MFA/authentication-context exclusion is
-    enforced offline. accessReviews items declare the full set of
+    enforced offline. directoryRoleAssignments items declare an eligible or active assignment of a
+    Microsoft Entra directory role at tenant scope: role, principal and assignmentType (Eligible/Active)
+    are required and together are the match key, principalType is the same User/Group/ServicePrincipal
+    hint as in roleAssignments, durationDays (1-3650) makes the assignment time-bound, and an entry with
+    neither durationDays nor permanent true is permanent. justification is sent with a create or an
+    update and is never compared. The offline validator also refuses what draft-07 cannot express:
+    durationDays together with permanent true, permanent false without durationDays, and two entries
+    naming the same role, principal and assignmentType, which would re-issue the window on every run.
+    accessReviews items declare the full set of
     fields the apply handler consumes -- reviewers and fallbackReviewers, both descriptions, the
     instance duration, the recurrence start/end/occurrences range, the five review settings booleans and
     defaultDecision (None/Approve/Deny/Recommendation) -- so a captured or hand-authored review is
@@ -477,6 +487,23 @@ function Get-OERStructureSchemaJson {
           },
           "requireMfaOnActiveAssignment": { "type": "boolean" },
           "requireJustificationOnActiveAssignment": { "type": "boolean" }
+        }
+      }
+    },
+    "directoryRoleAssignments": {
+      "type": "array",
+      "description": "Eligible and active assignments of Microsoft Entra directory roles at tenant scope. An entry is matched on role, principal and assignmentType. durationDays makes it time-bound; without durationDays, or with permanent true, it is permanent, and a permanent assignment needs a policy that allows it (declare that under directoryRoleManagementPolicies, which runs first). A changed durationDays is re-issued, never removed and re-created. When one principal holds both an eligible and an active assignment of a role and one of them is updated, Microsoft Graph may remove the other by itself, so a document that declares both kinds for one principal and role can need two runs to converge. With -Prune, only the pairs of role and assignmentType the document declares are reconciled: a role it does not name is never touched, an activation is never counted or removed, only direct assignments are matched (a member's assignment inherited through a group is managed through the group), the signed-in identity's own direct assignments are never removed, an entry whose principal cannot be resolved withholds the prune of its own pair, and one whose role cannot be resolved withholds the prune of every pair of its assignmentType. A role-assignable group's own direct assignment is a prune candidate: when the document declares a pair without that group, -Prune removes the group's assignment and with it the role of every member who holds it through the group, unless the signed-in identity is a member of that group (directly or through nesting), in which case it is left in place and reported Skipped; when the signed-in identity's group memberships cannot be read, every group (or unknown-type) candidate is withheld. Name a service principal by its object id: service principal display names are not unique, and an ambiguous name is refused at apply time (the entry fails). Applied through Microsoft Graph only.",
+      "items": {
+        "type": "object",
+        "required": [ "role", "principal", "assignmentType" ],
+        "properties": {
+          "role": { "type": "string" },
+          "principal": { "type": "string" },
+          "principalType": { "type": "string", "enum": [ "User", "Group", "ServicePrincipal" ] },
+          "assignmentType": { "type": "string", "enum": [ "Eligible", "Active" ] },
+          "durationDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+          "permanent": { "type": "boolean" },
+          "justification": { "type": "string" }
         }
       }
     }

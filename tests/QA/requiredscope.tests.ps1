@@ -271,6 +271,12 @@ BeforeAll {
         roleManagementPolicyAssignments, Update unifiedRoleManagementPolicyRule, List
         roleDefinitions).
 
+        The roleEligibilitySchedule* and roleAssignmentSchedule* rules below were also confirmed
+        against Microsoft Learn (List roleEligibilitySchedules, Create
+        roleAssignmentScheduleRequests, List roleAssignmentSchedules): the least privileged
+        permission is RoleEligibilitySchedule.* / RoleAssignmentSchedule.* respectively, with the
+        higher RoleManagement.*.Directory as the broader alternative.
+
         Every pattern below was confirmed against a published Microsoft Learn permissions table.
         =====================================================================================
     #>
@@ -338,6 +344,18 @@ BeforeAll {
             Write    = '^RoleManagement\.ReadWrite\.Directory$'
         }
         @{
+            Endpoint = 'roleManagement/directory/roleEligibilitySchedules*, roleEligibilityScheduleRequests'
+            Match    = 'v1.0/roleManagement/directory/roleEligibilitySchedule'
+            Read     = '^(RoleEligibilitySchedule|RoleManagement)\.(Read|ReadWrite)\.Directory$'
+            Write    = '^(RoleEligibilitySchedule|RoleManagement)\.ReadWrite\.Directory$'
+        }
+        @{
+            Endpoint = 'roleManagement/directory/roleAssignmentSchedules*, roleAssignmentScheduleRequests'
+            Match    = 'v1.0/roleManagement/directory/roleAssignmentSchedule'
+            Read     = '^(RoleAssignmentSchedule|RoleManagement)\.(Read|ReadWrite)\.Directory$'
+            Write    = '^(RoleAssignmentSchedule|RoleManagement)\.ReadWrite\.Directory$'
+        }
+        @{
             Endpoint = 'groups'
             Match    = 'v1.0/groups'
             Read     = '^(Group\.(Read|ReadWrite)\.All|Directory\.Read(Write)?\.All)$'
@@ -357,13 +375,16 @@ BeforeAll {
         }
         @{
             <#
-                getByIds is a READ expressed as a POST, so the write pattern deliberately equals
-                the read one: Microsoft Learn asks for Directory.Read.All on both
-                GET /directoryObjects/{id} and POST /directoryObjects/getByIds. Deriving the
-                permission from the HTTP verb alone would demand Directory.ReadWrite.All here,
+                getByIds and getMemberGroups are READS expressed as a POST, so the write pattern
+                deliberately equals the read one: Microsoft Learn asks for Directory.Read.All on
+                GET /directoryObjects/{id}, on POST /directoryObjects/getByIds, and on
+                POST /directoryObjects/{id}/getMemberGroups (directoryObject: getMemberGroups, the
+                "Group memberships for a directory object" table -- the directoryRoleAssignments
+                prune pass reads the signed-in identity's group memberships through it). Deriving
+                the permission from the HTTP verb alone would demand Directory.ReadWrite.All here,
                 which is a real privilege escalation in the consent list this table produces.
             #>
-            Endpoint = 'directoryObjects, directoryObjects/getByIds'
+            Endpoint = 'directoryObjects, directoryObjects/getByIds, directoryObjects/{id}/getMemberGroups'
             Match    = 'v1.0/directoryObjects'
             Read     = '^Directory\.Read(Write)?\.All$'
             Write    = '^Directory\.Read(Write)?\.All$'

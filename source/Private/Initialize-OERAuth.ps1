@@ -975,6 +975,11 @@ function Initialize-OERAuth {
                 # field is evidence, not a key: where the request named a domain the guard above cannot
                 # compare, and this is then the only record of which tenant actually answered.
                 TokenTenantId    = $GrantedTenant
+                # The signed-in identity's own object id, from the Graph token's oid claim -- the
+                # user on a delegated sign-in, the service principal on an app-only one. Read by
+                # Get-OERSignedInObjectId so the directory-role prune never removes the caller's own
+                # assignments. The token itself is never stored.
+                SignedInObjectId = Get-OERTokenObjectId -Token $SecureToken
                 # SEC: carry the cached ARM token into the rebuilt state ONLY when the tenant and auth
                 # identity are unchanged. Otherwise drop it, so the next -IncludeARM call re-acquires for
                 # the tenant actually being targeted instead of inheriting the previous customer's token.

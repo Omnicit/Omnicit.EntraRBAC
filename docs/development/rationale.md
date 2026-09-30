@@ -2361,3 +2361,239 @@ under `source/` after the close-out then REPLACES the sentence, since its openin
 true the moment the module changes; a note added after the sentence would publish both. The gate
 side of all this -- the body floor, the two close-out checks, and why the built notes are now
 compared whole instead of by a 400-character tail -- is under [#changelog-budget](#changelog-budget).
+
+## directory-role-assignments
+
+Sprint 6 step 4 added six cmdlets -- `New-`, `Get-` and `Remove-OEREligibleDirectoryRoleAssignment`,
+and the same three for active assignments -- and the apply section `directoryRoleAssignments[]`.
+This anchor records why the harder decisions sit where they do.
+
+**Role name matching is case-insensitive, but the exact-case path stays a single request.**
+`Resolve-OERDirectoryRoleDefinitionId` issues an exact-case `displayName eq '...'` OData filter
+first. Step 3's live check 1.2b measured Microsoft Graph's `roleDefinitions` filter as
+case-SENSITIVE: a role named `Reports Reader` in the tenant returned nothing for a filter typed
+`reports reader`. Only when the exact-case request finds nothing does the whole role definition list
+get paged (`-All`) and matched `OrdinalIgnoreCase`; a unique case-insensitive match returns its id,
+more than one throws `AmbiguousName` listing every candidate id, and no match returns `$null`. A
+name typed in its exact case still costs one request and never reaches the paged list at all, so the
+common case (a name typed as the portal shows it) pays nothing extra for this; only a name typed in
+another letter case pays for the second, paged request. Cost if a tenant carried two role
+definitions differing only in case: a name typed in the exact case of one of them would silently pick
+that one, without ever reaching the case-insensitive step that would otherwise refuse the ambiguity.
+
+**Both kinds of assignment are read from their SCHEDULE, never an activation instance.**
+`Get-OEREligibleDirectoryRoleAssignment` reads `roleEligibilitySchedules` and
+`Get-OERActiveDirectoryRoleAssignment` reads `roleAssignmentSchedules` -- the objects that carry the
+window of the request that created them, which is what idempotence
+(`Resolve-OERDirectoryRoleAssignmentChange`) compares the declared window against. Three fields
+decide whether a schedule can stand for a declared entry, and the private
+`Select-OERManagedDirectoryRoleAssignment` is the single place all three are read: `directoryScopeId`
+must be `/` (tenant scope -- an administrative-unit-scoped one belongs to
+`administrativeUnits[].scopedRoles`, not here); `memberType` must be `Direct` (one a principal holds
+through a group is managed through that group, never here); and for an Active read,
+`assignmentType` must be `Assigned` -- an `Activated` schedule is the activation of an eligible
+assignment, created by the principal and ended by PIM, and is never a declared Active assignment,
+never counted as one, and never pruned. The Get cmdlets themselves still return every row at `/`,
+activations included, so an operator asking to see them still can; only the apply engine's filter
+narrows. Reading schedules rather than instances also picks the safer failure direction: an
+assignment whose schedule a read somehow missed would be silently re-created every run (visible as
+`Created` every run, never a silent delete), not silently removed.
+
+**A group must be role-assignable before either New cmdlet ever writes.** `isAssignableToRole` can
+only be set when a group is created, and Microsoft Graph only reports the mismatch after the
+eligibility or active-assignment request is submitted. The role-assignable check therefore runs
+first, as its own private read-only helper (so the required-scope gate attributes it as a read, not
+a write), whenever the resolved principal is a group or of unknown type -- a raw `-PrincipalId`
+might name a group, so the check has to run for it too. `isAssignableToRole` false is
+`GroupNotRoleAssignable` before any write; a read that fails for any other reason is written to
+Verbose and the request proceeds, letting Microsoft Graph enforce it as before this check existed.
+
+**A permanent request is pre-checked against the role's own PIM policy, and a refusal changes
+nothing.** Unlike the ARM eligible-role-assignment cmdlet, which auto-opens the equivalent Azure
+policy when a permanent request would otherwise be refused, the Graph directory-role path never
+changes a policy implicitly. `Test-OERDirectoryRolePermanentAllowed` reads
+`AllowPermanentEligibility`/`AllowPermanentActiveAssignment` from the role's policy
+(`Get-OERDirectoryRolePolicyAssignment` plus the shared `ConvertTo-OERRoleManagementPolicy`) before
+`ShouldProcess`, the same place the ARM pre-check runs. `$false` is `PermanentAssignmentNotAllowed`
+and no request is submitted at all; the message points at `-AllowPermanentEligibility` /
+`-AllowPermanentActiveAssignment` on `Set-OERDirectoryRoleManagementPolicy`, and at declaring
+`allowPermanentEligibility` / `allowPermanentActiveAssignment` under `directoryRoleManagementPolicies`
+in the same document (that section runs first in the apply order). An unreadable answer -- no policy
+assignment found, or the policy carries no expiration rule for that kind -- is not a refusal: it is
+written to Verbose and the request proceeds, letting Microsoft Graph enforce the policy as it always
+did.
+
+**The prune pass is keyed on RESOLVED role ids, runs once per section, and withholds before it
+removes anything.** Like `roleAssignments`, the pass runs in the handler invocation for the
+section's FIRST item, before that item's own reconcile -- but unlike `roleAssignments`, it runs
+whatever that first item's own outcome, since a role or principal that fails to resolve for item one
+says nothing about whether item two's pair should be pruned. It is keyed on resolved role
+definition ids, not on the text the document wrote, so one role written by display name in one entry
+and by id in another is one pair, and neither entry's live assignment is ever reported `Extra`. Only
+the `(role, assignmentType)` pairs the document actually declares are read -- a role the document
+does not name is never touched, and a role declared only for `Eligible` never has its `Active`
+assignments read, nor the reverse. `ConvertTo-OERPruneWithheldResult` is called FIRST for every
+undeclared candidate: an entry whose PRINCIPAL cannot be resolved withholds only its own pair, since
+only that one candidate might be its live counterpart; an entry whose ROLE cannot be resolved
+withholds every pair of its declared `assignmentType`, since without a role id there is no way to
+know which pair it belongs to. A pair whose live READ fails is its own `Failed` row, and nothing in
+that pair is removed or reported `Extra` -- a failed read is not proof the pair is empty, and
+treating it as one would let a transient Graph failure silently strip privilege the document still
+declares.
+
+**The signed-in identity's object id comes from the token, never `/me`.** `Initialize-OERAuth`
+stores `SignedInObjectId` in `$script:_OERAuthState` whenever it builds a new state from a fresh
+Graph token, read by the private `Get-OERTokenObjectId` from the token's `oid` claim -- present on a
+delegated user's token and an app-only service principal's token alike, so the same read serves both
+without a conditional `/me` call an app-only sign-in does not have. `Get-OERSignedInObjectId` is the
+only reader, and treats a missing key (a state built before this key existed) or a non-GUID value the
+same as unresolved. When it cannot be determined, EVERY prune candidate in the section is withheld,
+not only the ones that might turn out to be the caller's own: the alternative -- pruning everything
+except a candidate that happens to match no known id -- would prune the operator's own assignment on
+exactly the session that carries no `oid` claim at all. `Get-OERTokenObjectId` takes the token as a
+`[securestring]`, the same one `Initialize-OERAuth` hands to `Connect-MgGraph`, and never as a
+`[string]`: PowerShell module logging (Event 4103, `LogPipelineExecutionDetails` or the "Turn on
+Module Logging" policy) records every bound parameter value, so a string parameter would log the live
+Graph token on every sign-in on such a machine. The plaintext exists only inside the helper, through
+a .NET call that is not a parameter binding.
+
+**A group the signed-in identity is a member of is never pruned, and an unreadable membership
+withholds.** The own-assignment guard protects only the signed-in identity's DIRECT assignments --
+the ones `Select-OERManagedDirectoryRoleAssignment` would otherwise let the prune pass consider. A
+role-assignable group's own direct assignment is a candidate too, and removing it ends the role for
+every member who holds it through the group, the operator included when the operator is one of
+them. The first version of this anchor accepted that and recorded it as a known gap, on the grounds
+that closing it needed group-membership expansion the guard did not do; the review of PR #12
+reversed that, since the gap is exactly the self-lockout the own-assignment guard exists to prevent.
+A second guard now runs right after the own-assignment one. For a candidate whose `PrincipalType` is
+neither `User` nor `ServicePrincipal` -- a `Group`, or a type the converter did not recognize, which
+might be one -- the pass reads the signed-in identity's transitive group memberships through the
+private `Get-OERMemberGroupId`, one `POST v1.0/directoryObjects/{oid}/getMemberGroups` with
+`securityEnabledOnly` false (a role-assignable group is always security-enabled, so `true` would
+return it as well; `false` is kept because it can only return more groups, never miss one),
+and a candidate whose id is in that set is reported `Skipped`, with or without `-Prune`. That call
+names the object by the token's `oid`, so the same request serves a delegated user and an app-only
+service principal: `/me` does not exist app-only, and `/users/{id}` or `/servicePrincipals/{id}`
+would need the object's type first. Microsoft Learn (directoryObject: getMemberGroups, "Group
+memberships for a directory object") asks for `Directory.Read.All`, which `Invoke-OERStructure`
+already requires outright, so the consent list does not grow. The read is lazy and happens at most
+once per pass: a run whose candidates are all users or service principals never makes it, and the
+answer -- or the failure -- stands for every later candidate in every pair, so a large section does
+not pay one request per group. A read that fails is written once, and every `Group` or
+unknown-type candidate in the pass is withheld (`Skipped`, "prune withheld: the signed-in identity's
+group memberships could not be read"): a failed read is not an empty membership, and treating it as
+one would remove exactly the assignment this guard exists to keep. User and service principal
+candidates carry on to the prune, since neither can be such a group. Cost if the permission assumed
+here is wrong for some tenant: withheld `Skipped` rows on every group candidate, never a wrong
+removal. The group guard reads ACTIVE group memberships only (`getMemberGroups`). An identity that
+is only eligible for membership through PIM for Groups is not a member until it activates, so a
+group it could activate into is an ordinary prune candidate -- decide knowingly before running
+`-Prune` in a tenant that uses PIM for Groups on role-assignable groups.
+
+**Testing note: a mocked throw is not gone once the code under test catches it.** Several of the new
+suites assert against `-ErrorVariable` around a call whose OWN internal try/catch is expected to
+swallow a mocked failure and report it a different way (a `Failed` structure result, or a re-thrown
+`ErrorRecord` carrying the cmdlet's own error id). Pester still leaves the mock's thrown record in
+the caller's `-ErrorVariable` -- measured, several copies, one per mock call boundary the pipeline
+crosses -- even when the code under test caught it and never let it reach the caller as an unhandled
+error. An assertion that only checks `-ErrorVariable` is non-empty, or matches the bare mocked
+message, therefore passes whether or not the code under test's own catch block ran at all. The new
+suites instead count only the records whose `FullyQualifiedErrorId` ends `,<CmdletName>` -- the
+qualifier PowerShell attaches to an error the NAMED cmdlet itself writes, which the mock's own inner
+record never carries -- for example
+`@($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1`.
+This is the same family of trap `#bearer-scrub-tests` already documents for a re-thrown record; it
+recurs here because every one of the six new cmdlets, and the new
+`Sync-OERStructureDirectoryRoleAssignment` handler, catches Graph and lookup failures internally
+before reporting its own outcome.
+
+**A principal's assignments of a role cannot change for five minutes after its active assignment of
+that role starts -- a Graph limit, measured live, and reported rather than worked around.** The step
+4 live run (check 3.3) found Microsoft Graph refusing the engine's `adminUpdate` of an eligible window
+with HTTP 400 `ActiveDurationTooShort: The Active duration is too short. Miniumum Required is 5
+minutes.` The follow-up measured it on test objects. Every refusal came while the principal's ACTIVE
+assignment of the role was younger than five minutes, and every success while it was older, or while
+there was none:
+
+- an eligible `adminUpdate` 2, 3 and 4.5 minutes after the active assignment started: refused, with
+  `targetScheduleId` set to the eligibility schedule's id, without it, and without `startDateTime`;
+- the same update 14 and 16 minutes after it started: accepted, with and without `targetScheduleId`,
+  beside a time-bound active assignment and beside a permanent one -- so neither `targetScheduleId`
+  nor a permanent active assignment is the lever;
+- `adminRemove` of either kind, 3.7 minutes after the active assignment started: refused the same
+  way; 8 minutes after: accepted;
+- a principal with no active assignment of the role: every update accepted;
+- `adminAssign` is never refused this way.
+
+The write path is therefore unchanged: `targetScheduleId` is not sent, and the engine never answers a
+refusal by removing an assignment and creating it again, since a failure between those two requests
+would leave the principal with no eligibility at all -- the same class of harm as a prune that
+deletes on a failed lookup. The handler recognizes the refusal by its error id or message, on an
+update of either kind and on a prune removal, and reports the row Failed with the cause and the way
+out: apply the document again in five minutes. It matters in one situation above all: a document
+that creates a principal's active assignment and, within five minutes, changes or prunes another of
+that principal's assignments of the same role -- as check 3.3 did two minutes after 3.1.
+
+Two more Graph behaviours were measured on the way, both outside the module's control. When one
+principal holds an eligible and a permanent active assignment of the same role, an `adminUpdate` of
+either kind removed the other kind, with no request for it (an active update to permanent removed the
+eligible assignment; an eligible update removed the permanent active one); the next run finds the
+declared assignment absent and creates it, and `adminAssign` beside the other kind is accepted. And a
+directory-role schedule `adminUpdate` replaces the schedule rather than updating it in place: the
+schedule id changes (check 2.7), which is why the engine matches on role, principal and kind only.
+A document that declares both kinds for one principal and role can therefore need two runs to
+converge, and the help of the New cmdlets, the engine and the schema says so.
+
+**A removal answered `RoleAssignmentDoesNotExist` is read back, and counts as done only when the read
+proves the assignment gone.** The step 4 teardown removed four active assignments with
+`Remove-OERActiveDirectoryRoleAssignment`, and all four answered `RoleAssignmentDoesNotExist: The Role
+assignment does not exist.`, while Graph lists each `adminRemove` request as Revoked and the
+assignments were gone. The prerequisite script's own raw removal of the certificate identity's active
+assignment answered the same, as a 404. What the evidence shows:
+
+- the wrapper logged ONE POST per call, and the prerequisite script, which calls the SDK directly
+  without the wrapper, got the same answer -- so the wrapper's own retries are not the cause;
+- Graph holds ONE `adminRemove` request per principal, and a refused request leaves none (the
+  `ActiveDurationTooShort` refusals left no request either), so a rejected second send would leave no
+  trace;
+- the removals ran back to back, and the Revoked requests' creation times put each active removal at
+  about 33 to 44 seconds against about one second for an eligible one -- each active request was
+  created some half a minute after its call began, not at its start;
+- the Microsoft Graph SDK below the wrapper (2.41.0, request context `MaxRetry` 3, `RetryDelay` 3)
+  resends a request, a POST included, when it is answered 503 or 504, three seconds later, and hands
+  back only the last answer; measured offline with its own retry handler over a stubbed transport,
+  and not for 500 or 502.
+
+A slow first answer that the SDK resends, whose second answer finds the assignment already removed,
+fits all of that; so does Graph answering the one slow request with `RoleAssignmentDoesNotExist`
+itself. Nothing in the module's streams can tell the two apart, since the SDK's intermediate answers
+never reach them, so the transport is left as it is: changing the retry of every POST on an
+unproven cause would trade a known behaviour for a guess. `Set-MgRequestContext -MaxRetry 0` in the
+live session, before one active removal, would settle it: a 503 or 504 then surfaces instead of
+`RoleAssignmentDoesNotExist`.
+
+The fix holds whichever it is. On `RoleAssignmentDoesNotExist` the Remove cmdlet reads the
+principal's schedules of the role again, at every scope (`Test-OERDirectoryRoleAssignmentGone`), and
+only a read that succeeds and keeps no direct, tenant-scope schedule -- for Active an Assigned one,
+through `Select-OERManagedDirectoryRoleAssignment` -- makes the removal a success, with a verbose line
+and no request object. A read that fails, or finds the assignment still in place, leaves the original
+error exactly as before: a failed read is never an absent assignment. The prune pass removes through
+the same cmdlets, so its row is Removed or Failed by the same rule. One consequence is deliberate: a
+removal of an assignment that never existed now also ends without an error, since the state the
+caller asked for holds; the verbose line says what was found.
+
+**A removal counted as done still warns when the principal keeps the role another way.** The
+direct assignment the caller named is gone, so the removal succeeds -- but a principal that still
+holds the role as an activation, through a group, or at a narrower directory scope has not lost it,
+and a verbose line alone would hide that. The re-read's filter names only the role and the principal,
+no directory scope, so the same single request also returns those rows: widening it costs no
+request, only the few extra rows in the answer. `Select-OERManagedDirectoryRoleAssignment -Excluded`
+names why each such row is not the one the removal stood for (Scope, Group, Activation) from the same
+three guard lines that decide the kept side, so the two sides cannot drift, and the Remove cmdlet
+writes a warning naming how the principal still holds the role, with no id beyond those its own
+"Removing ..." warning already shows. The prune pass captures that warning with `-WarningVariable`
+and adds the same words to its Removed Detail, so it makes no second read either. Not verified live:
+Learn documents `$filter` on `roleDefinitionId` and `principalId` without `directoryScopeId`, and a
+refusal would fail the read and keep the original error; and step 4 measured that Graph lists no
+inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
+at all.

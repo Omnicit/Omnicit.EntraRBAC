@@ -148,6 +148,12 @@ function Get-OERRoleAssignment {
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 $PrincipalTarget = @($User, $Group, $ServicePrincipal) | Where-Object { $_ } | Select-Object -First 1
+                if (Test-OERAmbiguousNameError -Record $PSItem) {
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                        -ErrorId 'AmbiguousPrincipalName' -Category InvalidArgument -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet
+                    return
+                }
                 Write-CmdletError `
                     -Message ([System.Exception]::new($PSItem.Exception.Message)) `
                     -ErrorId 'PrincipalNotFound' -Category ObjectNotFound -TargetObject $PrincipalTarget -Cmdlet $PSCmdlet

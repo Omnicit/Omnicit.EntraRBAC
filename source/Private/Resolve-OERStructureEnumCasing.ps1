@@ -21,7 +21,8 @@ function Resolve-OERStructureEnumCasing {
     .PARAMETER EnumName
     The enum to resolve against. One of accessType, enablement, membershipRuleProcessingState,
     catalogResourceType, approverInfoVisibility, accessReviewRecurrence, accessReviewDefaultDecision,
-    principalType. An unknown name is a caller error and fails parameter binding.
+    principalType, directoryRoleAssignmentType. An unknown name is a caller error and fails parameter
+    binding.
 
     .PARAMETER Value
     The document value to resolve. May be any casing, empty, or null; a value that is not a member of
@@ -44,7 +45,8 @@ function Resolve-OERStructureEnumCasing {
     param(
         [Parameter(Mandatory, Position = 0)]
         [ValidateSet('accessType', 'enablement', 'membershipRuleProcessingState', 'catalogResourceType',
-            'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType')]
+            'approverInfoVisibility', 'accessReviewRecurrence', 'accessReviewDefaultDecision', 'principalType',
+            'directoryRoleAssignmentType')]
         [string]$EnumName,
 
         [Parameter(ParameterSetName = 'Resolve', Position = 1)]
@@ -65,6 +67,7 @@ function Resolve-OERStructureEnumCasing {
         accessReviewRecurrence        = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')
         accessReviewDefaultDecision   = @('None', 'Approve', 'Deny', 'Recommendation')
         principalType                 = @('User', 'Group', 'ServicePrincipal')
+        directoryRoleAssignmentType   = @('Eligible', 'Active')
     }
     $Canonical = @($CanonicalSet[$EnumName])
     if ($List) {

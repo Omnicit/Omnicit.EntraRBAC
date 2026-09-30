@@ -338,3 +338,25 @@ Describe 'Read-OERStructureDocument directoryRoleManagementPolicies' {
         }
     }
 }
+
+Describe 'Read-OERStructureDocument directoryRoleAssignments' {
+    # assignmentType decides which cmdlet pair the handler calls and appears in every row label, and
+    # principalType is forwarded to the principal resolver, so both are canonicalized before apply.
+    It 'canonicalizes assignmentType and principalType' {
+        InModuleScope $script:moduleName {
+            $Doc = Read-OERStructureDocument -Json '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "Reporting Readers", "principalType": "group", "assignmentType": "active" } ] }'
+            $Doc.directoryRoleAssignments[0].assignmentType | Should -BeExactly 'Active'
+            $Doc.directoryRoleAssignments[0].principalType | Should -BeExactly 'Group'
+        }
+    }
+
+    It 'leaves both untouched under -SkipEnumNormalization, and leaves an out-of-enum value for the validator' {
+        InModuleScope $script:moduleName {
+            $Json = '{ "version": "1.0", "directoryRoleAssignments": [ { "role": "Reports Reader", "principal": "p", "principalType": "group", "assignmentType": "active" }, { "role": "Reports Reader", "principal": "p", "assignmentType": "Pending" } ] }'
+            $Raw = Read-OERStructureDocument -Json $Json -SkipEnumNormalization
+            $Raw.directoryRoleAssignments[0].assignmentType | Should -BeExactly 'active'
+            $Raw.directoryRoleAssignments[0].principalType | Should -BeExactly 'group'
+            (Read-OERStructureDocument -Json $Json).directoryRoleAssignments[1].assignmentType | Should -BeExactly 'Pending'
+        }
+    }
+}

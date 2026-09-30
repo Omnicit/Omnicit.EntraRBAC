@@ -90,6 +90,60 @@ Describe 'Resolve-OERPrincipalOrId' {
                 $Result.Message | Should -BeLike '*ghost@contoso.com*'
             }
         }
+
+        It 'returns an AmbiguousPrincipalName failure, not PrincipalNotFound, when Resolve-OERPrincipal refuses an ambiguous name' {
+            # Resolve-OERPrincipal propagates the resolver's AmbiguousName ErrorRecord unchanged.
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Service principal display name 'Dup App' matches 2 service principals (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222)."),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup App')
+            }
+            InModuleScope Omnicit.EntraRBAC {
+                $Result = Resolve-OERPrincipalOrId -ServicePrincipal 'Dup App'
+                $Result.ErrorId | Should -BeExactly 'AmbiguousPrincipalName'
+                $Result.Category | Should -BeExactly 'InvalidArgument'
+                $Result.PrincipalId | Should -BeNullOrEmpty -Because 'an ambiguous name must never resolve to one of its candidates'
+                $Result.PrincipalType | Should -BeNullOrEmpty
+                $Result.TargetObject | Should -BeExactly 'Dup App'
+                $Result.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+                $Result.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            }
+        }
+
+        It 'reports AmbiguousPrincipalName for an ambiguous -Group name as well' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Group display name 'Dup Group' matches 2 groups (33333333-3333-3333-3333-333333333333, 44444444-4444-4444-4444-444444444444)."),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup Group')
+            }
+            InModuleScope Omnicit.EntraRBAC {
+                $Result = Resolve-OERPrincipalOrId -Group 'Dup Group'
+                $Result.ErrorId | Should -BeExactly 'AmbiguousPrincipalName'
+                $Result.Category | Should -BeExactly 'InvalidArgument'
+                $Result.PrincipalId | Should -BeNullOrEmpty
+                $Result.TargetObject | Should -BeExactly 'Dup Group'
+            }
+        }
+
+        It 'resolves an ambiguous -ServicePrincipal display name end to end to AmbiguousPrincipalName, through the real resolvers' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
+                @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup App' },
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup App' }) }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { throw 'unexpected Graph request' }
+            InModuleScope Omnicit.EntraRBAC {
+                $Result = Resolve-OERPrincipalOrId -ServicePrincipal 'Dup App'
+                $Result.ErrorId | Should -BeExactly 'AmbiguousPrincipalName'
+                $Result.Category | Should -BeExactly 'InvalidArgument'
+                $Result.PrincipalId | Should -BeNullOrEmpty
+                $Result.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+                $Result.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+        }
     }
 
     Context 'argument validation' {

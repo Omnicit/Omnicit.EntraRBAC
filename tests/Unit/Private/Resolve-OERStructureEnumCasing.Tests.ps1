@@ -22,6 +22,17 @@ Describe 'Resolve-OERStructureEnumCasing' {
             Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -Value 'onetime' | Should -Be 'OneTime'
             Resolve-OERStructureEnumCasing -EnumName 'accessReviewDefaultDecision' -Value 'recommendation' | Should -Be 'Recommendation'
             Resolve-OERStructureEnumCasing -EnumName 'approverInfoVisibility' -Value 'notvisible' | Should -Be 'NotVisible'
+            Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'eligible' | Should -BeExactly 'Eligible'
+            Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'ACTIVE' | Should -BeExactly 'Active'
+        }
+    }
+
+    It 'does not resolve an Activated or Assigned schedule type as a directory role assignment type' {
+        # The document names the KIND of assignment (Eligible or Active); the schedule's own
+        # Activated/Assigned type is a different vocabulary and must not slip into this enum.
+        InModuleScope $script:moduleName {
+            $null -eq (Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'Activated') | Should -Be $true
+            $null -eq (Resolve-OERStructureEnumCasing -EnumName 'directoryRoleAssignmentType' -Value 'Assigned') | Should -Be $true
         }
     }
 
@@ -51,6 +62,7 @@ Describe 'Resolve-OERStructureEnumCasing' {
                 accessReviewRecurrence        = @('OneTime', 'Weekly', 'Monthly', 'Quarterly', 'Annually')
                 accessReviewDefaultDecision   = @('None', 'Approve', 'Deny', 'Recommendation')
                 principalType                 = @('User', 'Group', 'ServicePrincipal')
+                directoryRoleAssignmentType   = @('Eligible', 'Active')
             }
             foreach ($Name in $Expected.Keys) {
                 $Actual = @(Resolve-OERStructureEnumCasing -EnumName $Name -List)

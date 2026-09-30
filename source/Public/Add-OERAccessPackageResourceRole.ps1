@@ -45,7 +45,8 @@ function Add-OERAccessPackageResourceRole {
     .PARAMETER Application
     The display name or service principal object id of an enterprise application resource, resolved to
     its origin id via Resolve-OERApplicationId. Mutually exclusive with -ResourceOriginId and -Group;
-    supply exactly one of the three.
+    supply exactly one of the three. A display name matching more than one service principal is refused
+    with AmbiguousApplicationName naming the candidates.
 
     .EXAMPLE
     Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'CAT-IT-Core' -ResourceOriginId 'grp-guid' -Role 'Member'
@@ -188,10 +189,21 @@ function Add-OERAccessPackageResourceRole {
             # nothing and misleadingly reporting ApplicationNotFound. Test-OERGuid is the module's
             # single GUID predicate; this makes -Application's help claim ("display name or object
             # id") symmetric with -Group's, which is already true.
-            $EffectiveOriginId = try {
-                if (Test-OERGuid -Value $Application) { Resolve-OERApplicationId -Id $Application }
+            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            $EffectiveOriginId = $null
+            try {
+                $EffectiveOriginId = if (Test-OERGuid -Value $Application) { Resolve-OERApplicationId -Id $Application }
                 else { Resolve-OERApplicationId -DisplayName $Application }
-            } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                if (Test-OERAmbiguousNameError -Record $PSItem) {
+                    Write-CmdletError `
+                        -Message ([System.Exception]::new($PSItem.Exception.Message)) `
+                        -ErrorId 'AmbiguousApplicationName' -Category InvalidArgument `
+                        -TargetObject $Application -Cmdlet $PSCmdlet
+                    return
+                }
+            }
             if (-not $EffectiveOriginId) {
                 Write-CmdletError `
                     -Message ([System.Exception]::new("Application '$Application' not found.")) `

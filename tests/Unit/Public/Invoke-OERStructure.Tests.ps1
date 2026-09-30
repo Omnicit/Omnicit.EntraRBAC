@@ -509,6 +509,119 @@ Describe 'Invoke-OERStructure directoryRoleManagementPolicies section' {
     }
 }
 
+Describe 'Invoke-OERStructure directoryRoleAssignments section' {
+    # The directory role assignment section is Graph-only: it is dispatched right after the directory
+    # role policies (so a policy that must allow a permanent assignment is applied first) and before
+    # the two Azure sections, and it never asks Initialize-OERAuth for an ARM token.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        InModuleScope $script:moduleName {
+            $script:Order = [System.Collections.Generic.List[string]]::new()
+            Mock Sync-OERStructureGroup { $script:Order.Add('groups') }
+            Mock Sync-OERStructureAdministrativeUnit { $script:Order.Add('administrativeUnits') }
+            Mock Sync-OERStructureCatalog { $script:Order.Add('catalogs') }
+            Mock Sync-OERStructureAccessPackage { $script:Order.Add('accessPackages') }
+            Mock Sync-OERStructureAccessReview { $script:Order.Add('accessReviews') }
+            Mock Sync-OERStructureDirectoryRoleManagementPolicy { $script:Order.Add('directoryRoleManagementPolicies') }
+            Mock Sync-OERStructureDirectoryRoleAssignment { $script:Order.Add('directoryRoleAssignments') }
+            Mock Sync-OERStructureRoleAssignment { $script:Order.Add('roleAssignments') }
+            Mock Sync-OERStructureRoleManagementPolicy { $script:Order.Add('roleManagementPolicies') }
+        }
+    }
+
+    It 'dispatches all nine sections in dependency order, the assignments right after the directory role policies' {
+        # Keys deliberately written out of order: the engine's order, not the document's, decides.
+        $Json = '{ "version":"1.0", ' +
+            '"roleManagementPolicies":[{"scope":"sub:Prod","role":"Reader"}], ' +
+            '"directoryRoleAssignments":[{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"Eligible","durationDays":30}], ' +
+            '"roleAssignments":[{"scope":"sub:Prod","role":"Reader","principal":"a"}], ' +
+            '"directoryRoleManagementPolicies":[{"role":"Reports Reader"}], ' +
+            '"accessReviews":[{"displayName":"r","accessPackage":"ap","assignmentPolicy":"pol"}], ' +
+            '"accessPackages":[{"displayName":"ap","catalog":"c","resourceRoles":null}], ' +
+            '"catalogs":[{"displayName":"c","resources":null}], ' +
+            '"administrativeUnits":[{"displayName":"au","members":null,"scopedRoles":null}], ' +
+            '"groups":[{"displayName":"g","members":null}] }'
+        Invoke-OERStructure -Json $Json -IncludeARM -Confirm:$false | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:Order) | Should -Be @('groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessReviews',
+                'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies')
+        }
+    }
+
+    It 'does not request an ARM token for a document holding only the directory role assignment section' {
+        Invoke-OERStructure -Json '{ "version":"1.0", "directoryRoleAssignments":[{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"Eligible"}] }' -Confirm:$false | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        InModuleScope $script:moduleName {
+            Should -Invoke Sync-OERStructureDirectoryRoleAssignment -Times 1 -Exactly
+        }
+    }
+
+    It 'accepts DirectoryRoleAssignments in -Include, right after DirectoryRoleManagementPolicies, and includes it by default' {
+        $Param = (Get-Command -Module $script:moduleName -Name Invoke-OERStructure).Parameters['Include']
+        $ValidSet = @(@($Param.Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }).ValidValues)
+        $ValidSet | Should -Contain 'DirectoryRoleAssignments'
+        [array]::IndexOf($ValidSet, 'DirectoryRoleAssignments') | Should -Be ([array]::IndexOf($ValidSet, 'DirectoryRoleManagementPolicies') + 1)
+
+        $Json = '{ "version":"1.0", "groups":[{"displayName":"g","members":null}], ' +
+            '"directoryRoleAssignments":[{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"Eligible"}] }'
+        Invoke-OERStructure -Json $Json -Include DirectoryRoleAssignments -Confirm:$false | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:Order) | Should -Be @('directoryRoleAssignments')
+            $script:Order.Clear()
+        }
+        Invoke-OERStructure -Json $Json -Confirm:$false | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:Order) | Should -Be @('groups', 'directoryRoleAssignments')
+            Should -Invoke Sync-OERStructureDirectoryRoleAssignment -Times 2 -Exactly
+        }
+    }
+
+    It 'labels a handler failure with role, principal and the canonical assignmentType, as the handler labels its own rows' {
+        InModuleScope $script:moduleName {
+            Mock Sync-OERStructureDirectoryRoleAssignment { throw [System.Exception]::new('handler blew up') }
+        }
+        # Lower-cased on purpose: the engine reads the document through Read-OERStructureDocument,
+        # which canonicalizes it, so the label carries the same spelling the handler would.
+        $Json = '{ "version":"1.0", "directoryRoleAssignments":[{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"eligible"}] }'
+        $Records = @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue)
+        $Failed = @($Records | Where-Object { $_.Action -eq 'Failed' })
+        @($Failed).Count | Should -Be 1
+        $Failed[0].Section | Should -BeExactly 'directoryRoleAssignments'
+        $Failed[0].Item | Should -BeExactly 'Reports Reader -> person1@example.com (Eligible)'
+        $Failed[0].Detail | Should -Match 'handler blew up'
+    }
+
+    It 'passes -ReconcileSection on the first directoryRoleAssignments item only, and the whole section to every item' {
+        # The section-wide prune pass must run exactly once per run, and every invocation must see
+        # every declared entry so the pass keys the whole section, not just the first item.
+        InModuleScope $script:moduleName {
+            $script:DraCalls = [System.Collections.Generic.List[object]]::new()
+            Mock Sync-OERStructureDirectoryRoleAssignment {
+                $script:DraCalls.Add([PSCustomObject]@{
+                        Principal = [string]$Item.principal
+                        Reconcile = [bool]$ReconcileSection
+                        Declared  = @($DeclaredInSection | ForEach-Object { [string]$_.principal })
+                        Prune     = [bool]$Prune
+                    })
+            }
+        }
+        $Json = '{ "version":"1.0", "directoryRoleAssignments":[' +
+            '{"role":"Reports Reader","principal":"person1@example.com","assignmentType":"Eligible"}, ' +
+            '{"role":"Message Center Reader","principal":"person2@example.com","assignmentType":"Active"} ] }'
+        Invoke-OERStructure -Json $Json -Prune -Confirm:$false -WarningAction SilentlyContinue | Out-Null
+        InModuleScope $script:moduleName {
+            @($script:DraCalls.Principal) | Should -Be @('person1@example.com', 'person2@example.com')
+            @($script:DraCalls.Reconcile) | Should -Be @($true, $false)
+            foreach ($Call in $script:DraCalls) {
+                @($Call.Declared) | Should -Be @('person1@example.com', 'person2@example.com')
+                $Call.Prune | Should -BeTrue
+            }
+        }
+    }
+}
+
 Describe 'Invoke-OERStructure help pointer to the worked example' {
     # The help points at docs/examples/example-structure.json as showing every section the engine
     # understands. Each schema section the example lacks must be named there as missing, and a

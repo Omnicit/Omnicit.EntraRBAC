@@ -18,6 +18,13 @@ function Resolve-OERPrincipalOrId {
     friendly parameters, the id still wins (no error), but the helper writes a warning naming the
     ignored friendly parameter(s) so a mistaken combination is never silent.
 
+    A friendly reference that Resolve-OERPrincipal cannot resolve returns ErrorId PrincipalNotFound
+    (Category ObjectNotFound). A group or service principal display name that matches more than one
+    object is refused by the underlying resolver with an AmbiguousName error; that returns ErrorId
+    AmbiguousPrincipalName (Category InvalidArgument) instead, with the resolver's message listing the
+    candidate ids, so an ambiguity is never reported as a missing principal and never acts on one of
+    the candidates.
+
     .PARAMETER PrincipalId
     The raw principal object id supplied by the caller. Must be a canonical hyphenated GUID; any
     other value produces the invalid-id failure. Takes precedence over the friendly parameters, so
@@ -39,7 +46,8 @@ function Resolve-OERPrincipalOrId {
 
     .PARAMETER ServicePrincipal
     A friendly service principal reference (display name or service principal object id) resolved
-    via Resolve-OERPrincipal. Mutually exclusive with -User and -Group.
+    via Resolve-OERPrincipal. Mutually exclusive with -User and -Group. A display name shared by more
+    than one service principal returns the AmbiguousPrincipalName failure.
 
     .PARAMETER IdParameterName
     The name of the caller's raw id parameter as it appears in error messages, without the leading
@@ -130,8 +138,15 @@ function Resolve-OERPrincipalOrId {
         $Principal = Resolve-OERPrincipal @PrincipalParams
     } catch {
         Remove-OERErrorRecord -Record $PSItem
-        $Result.ErrorId = 'PrincipalNotFound'
-        $Result.Category = 'ObjectNotFound'
+        # An ambiguous display name is not a missing principal: the name matched several objects, and
+        # the resolver's message lists their ids so the operator can re-run with one of them.
+        if (Test-OERAmbiguousNameError -Record $PSItem) {
+            $Result.ErrorId = 'AmbiguousPrincipalName'
+            $Result.Category = 'InvalidArgument'
+        } else {
+            $Result.ErrorId = 'PrincipalNotFound'
+            $Result.Category = 'ObjectNotFound'
+        }
         $Result.TargetObject = @($PrincipalParams.Values)[0]
         $Result.Message = $PSItem.Exception.Message
         return $Result

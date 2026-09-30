@@ -11,10 +11,10 @@ function ConvertTo-OERInventory {
     Get-OERStructureSchemaJson declares, so the inventory.json an Export-OERInventory bundle writes
     validates against the schema.json written beside it. PowerShell member lookup is case-insensitive,
     so a consumer reading $Inventory.Groups is unaffected. Each section defaults to an empty array so
-    the object always serializes every section it carries. The schema also accepts a
-    directoryRoleManagementPolicies section, which is apply-only for now: the inventory does not
-    read it and this object carries no such key. This private helper is the single owner of the
-    inventory output shape.
+    the object always serializes every section it carries. The schema also accepts the
+    directoryRoleManagementPolicies and directoryRoleAssignments sections, which are apply-only for now:
+    the inventory does not read them and this object carries no such keys. This private helper is the
+    single owner of the inventory output shape.
 
     .PARAMETER Groups
     The projected group entries (schema shape) to place in the Groups section.

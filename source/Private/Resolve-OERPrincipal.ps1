@@ -11,7 +11,10 @@ function Resolve-OERPrincipal {
     id and returned without a Graph call -- never as the appId). The returned object carries
     PrincipalId and PrincipalType (User/Group/ServicePrincipal); PrincipalType is always sent in
     role assignment bodies to avoid replication-delay failures. Throws on not-found or invalid
-    parameter combinations -- the public cmdlets catch and route the message.
+    parameter combinations -- the public cmdlets catch and route the message. A group or service
+    principal display name that matches more than one object is never resolved to one of them: the
+    underlying resolver's AmbiguousName ErrorRecord, which lists the candidate ids, propagates
+    unchanged, so a caller can tell it apart with Test-OERAmbiguousNameError.
 
     .PARAMETER User
     A user principal name or user object id (GUID).

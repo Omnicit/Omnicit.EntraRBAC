@@ -2,6 +2,20 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+
+    # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
+    # file -- for the Get-OERTokenObjectId (oid claim / SignedInObjectId) tests below. The signature
+    # segment is deliberately not a real signature; nothing here checks one.
+    function New-TestToken {
+        param([hashtable]$Claims)
+        $Encode = {
+            param([string]$Json)
+            [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Json)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+        }
+        $Header = & $Encode (@{ alg = 'none'; typ = 'JWT' } | ConvertTo-Json -Compress)
+        $Payload = & $Encode ($Claims | ConvertTo-Json -Compress)
+        "$Header.$Payload.NOT-A-REAL-TOKEN"
+    }
 }
 
 Describe 'Initialize-OERAuth' {
@@ -252,6 +266,66 @@ Describe 'Initialize-OERAuth' {
             Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'ClientCertificate' -ClientId 'cid' -CertificatePath 'C:\c\app.pfx'
         }
         $script:CapturedKeys | Should -Contain 'ClientCertificatePath'
+    }
+
+    # -- New test: SignedInObjectId recorded from an app-only token's oid claim (R11) ---------------
+    It 'records SignedInObjectId from the oid claim of an app-only (certificate) token' {
+        $AppOnlyToken = New-TestToken -Claims @{
+            oid   = 'aaaaaaaa-0000-0000-0000-000000000002'
+            roles = @('RoleManagement.ReadWrite.Directory')
+            idtyp = 'app'
+            appid = '11111111-1111-1111-1111-111111111111'
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            [pscustomobject]@{ Token = $AppOnlyToken; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = 'contoso' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        InModuleScope $script:moduleName -Parameters @{ AppOnlyToken = $AppOnlyToken } {
+            param($AppOnlyToken)
+            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'ClientCertificate' -ClientId 'cid' -CertificatePath 'C:\c\app.pfx'
+            $script:_OERAuthState.SignedInObjectId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000002'
+        }
+    }
+
+    # -- New test: the oid reader receives the Graph token as a SecureString (module logging) ---------
+    # PowerShell module logging (Event 4103) records every bound parameter value, so the token must
+    # never be bound to a [string] parameter. AzAuth hands the token back as plain text (the mocked
+    # Get-AzToken below keeps that shape); Initialize-OERAuth must pass the SecureString it already
+    # builds for Connect-MgGraph, and that SecureString must carry exactly the acquired token.
+    It 'passes the Graph token to Get-OERTokenObjectId as a SecureString, never as plain text' {
+        $AppOnlyToken = New-TestToken -Claims @{
+            oid   = 'aaaaaaaa-0000-0000-0000-000000000002'
+            idtyp = 'app'
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = $AppOnlyToken; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = 'contoso' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        Mock -ModuleName $script:moduleName Get-OERTokenObjectId { 'aaaaaaaa-0000-0000-0000-000000000009' }
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'ClientCertificate' -ClientId 'cid' -CertificatePath 'C:\c\app.pfx'
+            $script:_OERAuthState.SignedInObjectId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000009'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERTokenObjectId -Times 1 -Exactly -ParameterFilter {
+            $Token -is [securestring] -and
+            [System.Net.NetworkCredential]::new('', $Token).Password -ceq $AppOnlyToken
+        }
+    }
+
+    # -- New test: SignedInObjectId is $null for a non-JWT mocked token (the fixtures every other -----
+    # -- test in this file uses), so this key never regresses an existing test's expectations. --------
+    It 'records SignedInObjectId as $null for a non-JWT mocked token' {
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = 'contoso' }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId 'contoso' -AuthMethod 'ClientCertificate' -ClientId 'cid' -CertificatePath 'C:\c\app.pfx'
+            $script:_OERAuthState.SignedInObjectId | Should -BeNullOrEmpty
+        }
     }
 
     # -- New test: missing cert/path is terminating ------------------------------------------------

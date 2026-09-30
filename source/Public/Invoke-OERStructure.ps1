@@ -8,13 +8,14 @@ function Invoke-OERStructure {
     -Path or -Json, validates it offline with Test-OERStructureSchema (aborting before any write
     if invalid), authenticates, then iterates every declared section in dependency order --
     Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews,
-    DirectoryRoleManagementPolicies, RoleAssignments, RoleManagementPolicies -- and calls the matching
-    Sync-OERStructure* handler for each item.
+    DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
+    -- and calls the matching Sync-OERStructure* handler for each item.
 
     Dependency order: Groups must exist before AUs can reference them as members; Catalogs before
-    AccessPackages; all Entra sections, the PIM settings of Microsoft Entra directory roles included,
-    before the Azure sections that may reference Entra objects. The engine always follows this order
-    regardless of the key order in the JSON document.
+    AccessPackages; the PIM settings of Microsoft Entra directory roles before the directory role
+    assignments, so a policy that must allow a permanent assignment is applied first; all Entra sections,
+    both directory role sections included, before the Azure sections that may reference Entra objects.
+    The engine always follows this order regardless of the key order in the JSON document.
 
     Administrative unit pre-pass: a group can also be created INTO an administrative unit
     (New-OERGroup -AdministrativeUnit), which is the reverse dependency from the one above. Before
@@ -52,22 +53,31 @@ function Invoke-OERStructure {
     selected (via -Include) or -IncludeARM is explicitly set, Initialize-OERAuth is called with
     -IncludeARM so the ARM token is acquired up front. For a pure Entra document that does not
     include those sections and does not pass -IncludeARM, no ARM token is requested.
-    DirectoryRoleManagementPolicies is NOT an ARM section: the PIM settings of a Microsoft Entra
-    directory role are applied through Microsoft Graph only, so a document holding that section
-    never requests an ARM token on its account.
+    DirectoryRoleManagementPolicies and DirectoryRoleAssignments are NOT ARM sections: the PIM settings
+    and the eligible and active assignments of a Microsoft Entra directory role are applied through
+    Microsoft Graph only, so a document holding either section never requests an ARM token on its
+    account.
 
     RoleAssignments scope grouping: the engine groups declared role assignment items by their
     scope string and passes -ReconcileScope on the first item of each unique scope. This signals
     the handler to run its prune pass for that scope after processing the item.
 
+    DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
+    each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
+    runs its section-wide prune pass once, before that first item is reconciled and whatever that
+    item's own outcome (see -Prune for what the pass may remove). When one principal holds both an
+    eligible and an active assignment of a directory role and the engine updates one of them,
+    Microsoft Graph may remove the other by itself (measured live); the next run creates it again, so
+    a document that declares both kinds for one principal and role can need two runs to converge.
+
     Returns zero or more tagged Omnicit.EntraRBAC.StructureResult records, one per reconcile
     action. A one-line verbose summary of counts per Action is written after all sections.
 
     A worked apply document showing every section this engine understands, except
-    roleManagementPolicies and directoryRoleManagementPolicies, which are not in the example yet, is
-    kept in the repository at docs/examples/example-structure.json, and the full export to apply
-    walkthrough is documented in the repository at docs/inventory-to-llm/README.md. Neither ships
-    inside the installed module, so clone or browse the repository to read them.
+    roleManagementPolicies, directoryRoleManagementPolicies and directoryRoleAssignments, which are not in
+    the example yet, is kept in the repository at docs/examples/example-structure.json, and the full
+    export to apply walkthrough is documented in the repository at docs/inventory-to-llm/README.md.
+    Neither ships inside the installed module, so clone or browse the repository to read them.
 
     .PARAMETER Path
     Path to a JSON structure document file. Mutually exclusive with -Json and -InputObject.
@@ -96,6 +106,22 @@ function Invoke-OERStructure {
     Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
     remove the unresolved entry to reconcile the collection.
 
+    directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
+    for the pairs the document declares: a directory role the document does not name, or names only
+    for the other assignmentType, is never read or touched. An activation of an eligible assignment,
+    a member's assignment inherited through a group and one scoped to an administrative unit are never
+    counted and never removed, and neither is any direct assignment of the signed-in identity itself
+    (reported Skipped); while that identity's object id cannot be determined, nothing in the section
+    is removed. A role-assignable group's own direct assignment is a candidate: when the document
+    declares a pair without that group, -Prune removes the group's assignment and with it the role of
+    every member who holds it through the group -- unless the signed-in identity is a member of that
+    group, directly or through nesting, in which case the assignment is left in place and reported
+    Skipped. When the signed-in identity's group memberships cannot be read, every group (or
+    unknown-type) candidate is withheld the same way. There the unit of the rule above is the pair:
+    an entry whose principal cannot be resolved withholds the prune of its own pair, and an entry
+    whose role cannot be resolved withholds every pair of its assignmentType. A pair whose live read
+    fails is reported Failed, and nothing in it is removed or reported Extra.
+
     Five collections are reconciled even when their key is omitted, against an empty declared set,
     so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,
     administrativeUnits[].scopedRoles, catalogs[].resources and accessPackages[].resourceRoles. When
@@ -111,7 +137,7 @@ function Invoke-OERStructure {
     findings.
 
     .PARAMETER Include
-    Restricts the sections the engine dispatches. Defaults to all eight sections. Pass a subset
+    Restricts the sections the engine dispatches. Defaults to all nine sections. Pass a subset
     to limit the apply run (for example -Include Groups,Catalogs to skip Azure sections).
 
     .PARAMETER TenantId
@@ -156,8 +182,8 @@ function Invoke-OERStructure {
         [Alias('Inventory', 'Document')]
         [object]$InputObject,
         [switch]$Prune,
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'RoleAssignments', 'RoleManagementPolicies')]
-        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'RoleAssignments', 'RoleManagementPolicies'),
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
+        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies'),
         [string]$TenantId,
         [switch]$IncludeARM
     )
@@ -192,8 +218,9 @@ function Invoke-OERStructure {
         # -- 4. Decide ARM ---------------------------------------------------------------
         # ARM is needed only when an Azure section is BOTH selected via -Include AND actually
         # declared in the document (so a pure-Entra document on the default -Include does not force
-        # an ARM token), or when -IncludeARM is explicit. directoryRoleManagementPolicies is
-        # deliberately absent from both tests: directory-role PIM settings are Graph-only.
+        # an ARM token), or when -IncludeARM is explicit. directoryRoleManagementPolicies and
+        # directoryRoleAssignments are deliberately absent from both tests: directory-role PIM
+        # settings and directory role assignments are Graph-only.
         $AzureInInclude = ($Include -contains 'RoleAssignments') -or ($Include -contains 'RoleManagementPolicies')
         $AzureInDoc     = ($Document.PSObject.Properties.Name -contains 'roleAssignments') -or
                           ($Document.PSObject.Properties.Name -contains 'roleManagementPolicies')
@@ -210,9 +237,11 @@ function Invoke-OERStructure {
 
         # Section map: Include name -> document key -> handler name. This list IS the hardcoded
         # dependency order: groups -> administrativeUnits -> catalogs -> accessPackages ->
-        # accessReviews -> directoryRoleManagementPolicies -> roleAssignments ->
-        # roleManagementPolicies. The directory-role policies are the last Entra (Graph) section, so
-        # they run after everything their approvers may name and before the Azure sections.
+        # accessReviews -> directoryRoleManagementPolicies -> directoryRoleAssignments ->
+        # roleAssignments -> roleManagementPolicies. The directory-role policies run after everything
+        # their approvers may name, and before the directory role assignments, so a policy that must
+        # allow a permanent assignment is in place first. The directory role assignments are the last
+        # Entra (Graph) section, before the Azure sections.
         $SectionOrder = @(
             [PSCustomObject]@{ IncludeName = 'Groups';                          DocKey = 'groups';                          Handler = 'Sync-OERStructureGroup' }
             [PSCustomObject]@{ IncludeName = 'AdministrativeUnits';             DocKey = 'administrativeUnits';             Handler = 'Sync-OERStructureAdministrativeUnit' }
@@ -220,6 +249,7 @@ function Invoke-OERStructure {
             [PSCustomObject]@{ IncludeName = 'AccessPackages';                  DocKey = 'accessPackages';                  Handler = 'Sync-OERStructureAccessPackage' }
             [PSCustomObject]@{ IncludeName = 'AccessReviews';                   DocKey = 'accessReviews';                   Handler = 'Sync-OERStructureAccessReview' }
             [PSCustomObject]@{ IncludeName = 'DirectoryRoleManagementPolicies'; DocKey = 'directoryRoleManagementPolicies'; Handler = 'Sync-OERStructureDirectoryRoleManagementPolicy' }
+            [PSCustomObject]@{ IncludeName = 'DirectoryRoleAssignments';        DocKey = 'directoryRoleAssignments';        Handler = 'Sync-OERStructureDirectoryRoleAssignment' }
             [PSCustomObject]@{ IncludeName = 'RoleAssignments';                 DocKey = 'roleAssignments';                 Handler = 'Sync-OERStructureRoleAssignment' }
             [PSCustomObject]@{ IncludeName = 'RoleManagementPolicies';          DocKey = 'roleManagementPolicies';          Handler = 'Sync-OERStructureRoleManagementPolicy' }
         )
@@ -227,6 +257,8 @@ function Invoke-OERStructure {
         # Per-scope tracking for the RoleAssignments section, so the scope-wide reconcile/prune pass
         # runs once per declared scope (on the first item of that scope).
         $SeenRaScopes = @{}
+        # The DirectoryRoleAssignments prune pass is section-wide: it runs once, on the first item.
+        $DraReconciled = $false
 
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so
@@ -280,12 +312,19 @@ function Invoke-OERStructure {
 
             foreach ($It in $Items) {
                 # RoleAssignments take two extra params so prune is scoped per declared scope.
+                # DirectoryRoleAssignments take the whole section, and the prune pass runs on the
+                # first item only, whatever that item's own outcome.
                 $ExtraParams = @{}
                 if ($Section.IncludeName -eq 'RoleAssignments') {
                     $ScopeKey = [string]$It.scope
                     $ExtraParams.DeclaredAtScope = @($Items | Where-Object { [string]$_.scope -eq $ScopeKey })
                     $ExtraParams.ReconcileScope  = -not $SeenRaScopes.ContainsKey($ScopeKey)
                     $SeenRaScopes[$ScopeKey] = $true
+                }
+                if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {
+                    $ExtraParams.DeclaredInSection = $Items
+                    $ExtraParams.ReconcileSection  = -not $DraReconciled
+                    $DraReconciled = $true
                 }
                 try {
                     $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams
@@ -301,7 +340,9 @@ function Invoke-OERStructure {
                     # Sync-OERStructureRoleManagementPolicy compose for their own rows. A
                     # directoryRoleManagementPolicies entry carries only role, so the same branch
                     # labels it by role alone, as Sync-OERStructureDirectoryRoleManagementPolicy
-                    # labels its own rows. The literal
+                    # labels its own rows. A directoryRoleAssignments entry carries role, principal and
+                    # assignmentType, and gets '<role> -> <principal> (<assignmentType>)', the label
+                    # Sync-OERStructureDirectoryRoleAssignment writes on its own rows. The literal
                     # stays as the last resort, since -Item is a mandatory non-empty string and a
                     # document entry carrying neither field must not turn this catch into a binding
                     # failure that loses the original error.
@@ -314,6 +355,8 @@ function Invoke-OERStructure {
                             $ItemScope = [string]$It.scope
                             if ($ItemPrincipal) { $ItemLabel = "$ItemLabel -> $ItemPrincipal" }
                             if ($ItemScope) { $ItemLabel = "$ItemLabel @ $ItemScope" }
+                            $ItemKind = [string]$It.assignmentType
+                            if ($ItemKind) { $ItemLabel = "$ItemLabel ($ItemKind)" }
                         }
                     }
                     if ([string]::IsNullOrWhiteSpace($ItemLabel)) { $ItemLabel = '(item)' }

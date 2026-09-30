@@ -55,12 +55,13 @@ anyway, read the inventory yourself and supply the filter you want:
 
 ## Coverage limits
 
-The apply document has eight sections only: groups, administrativeUnits, catalogs, accessPackages,
-accessReviews, directoryRoleManagementPolicies, roleAssignments and roleManagementPolicies.
-`directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra directory roles) is
-apply-only for now: `Get-OERInventory` does not read it, so this bundle carries none of it. Four
-areas fall outside that model, each differently -- do not read this bundle as a complete picture of
-the tenant:
+The apply document has nine sections only: groups, administrativeUnits, catalogs, accessPackages,
+accessReviews, directoryRoleManagementPolicies, directoryRoleAssignments, roleAssignments and
+roleManagementPolicies. `directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra
+directory roles) and `directoryRoleAssignments` (eligible and active assignments of Microsoft Entra
+directory roles) are apply-only for now: `Get-OERInventory` does not read them, so this bundle
+carries none of them. Four areas fall outside that model, each differently -- do not read this
+bundle as a complete picture of the tenant:
 
 - Azure resource groups and individual Azure resources are not created or managed by the document.
   A role assignment at a resource-group or resource scope does apply, but `scopeHierarchy.json`

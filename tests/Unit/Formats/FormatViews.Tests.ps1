@@ -166,6 +166,84 @@ Describe 'Omnicit.EntraRBAC.TenantConfiguration format view' {
     }
 }
 
+Describe 'Omnicit.EntraRBAC.EligibleDirectoryRoleAssignment and ActiveDirectoryRoleAssignment format views' {
+    It 'renders EligibleDirectoryRoleAssignment with RoleName, PrincipalDisplayName, PrincipalType, MemberType, DurationDays, EndDateTime, Status' {
+        $Rendered = InModuleScope $script:moduleName {
+            $Raw = @{
+                id               = 'sched1'
+                roleDefinitionId = 'rd1'
+                roleDefinition   = @{ displayName = 'Reports Reader' }
+                principalId      = 'p1'
+                principal        = @{ displayName = 'Anna'; '@odata.type' = '#microsoft.graph.user' }
+                directoryScopeId = '/'
+                memberType       = 'Direct'
+                status           = 'Provisioned'
+                scheduleInfo     = @{
+                    startDateTime = '2026-01-01T00:00:00Z'
+                    expiration    = @{ type = 'AfterDateTime'; endDateTime = '2026-02-01T00:00:00Z' }
+                }
+                createdDateTime  = '2026-01-01T00:00:00Z'
+            }
+            ConvertTo-OERDirectoryRoleAssignment -InputObject $Raw -Kind Eligible | Format-Table | Out-String -Width 200
+        }
+
+        $Rendered | Should -Match 'RoleName\s+PrincipalDisplayName\s+PrincipalType\s+MemberType\s+DurationDays\s+EndDateTime\s+Status'
+        $Rendered | Should -Match 'Reports Reader\s+Anna\s+User\s+Direct\s+31\s+2026-02-01T00:00:00Z\s+Provisioned'
+        $Rendered | Should -Not -Match 'ScheduleId' -Because 'the view declares exactly seven columns; a ScheduleId header means the default formatter ran instead of the registered view'
+    }
+
+    It 'renders ActiveDirectoryRoleAssignment with AssignmentType inserted after MemberType' {
+        $Rendered = InModuleScope $script:moduleName {
+            $Raw = @{
+                id               = 'sched2'
+                roleDefinitionId = 'rd1'
+                roleDefinition   = @{ displayName = 'Reports Reader' }
+                principalId      = 'p1'
+                principal        = @{ displayName = 'Anna'; '@odata.type' = '#microsoft.graph.user' }
+                directoryScopeId = '/'
+                memberType       = 'Direct'
+                assignmentType   = 'Assigned'
+                status           = 'Provisioned'
+                scheduleInfo     = @{
+                    startDateTime = '2026-01-01T00:00:00Z'
+                    expiration    = @{ type = 'AfterDateTime'; endDateTime = '2026-02-01T00:00:00Z' }
+                }
+                createdDateTime  = '2026-01-01T00:00:00Z'
+            }
+            ConvertTo-OERDirectoryRoleAssignment -InputObject $Raw -Kind Active | Format-Table | Out-String -Width 200
+        }
+
+        $Rendered | Should -Match 'RoleName\s+PrincipalDisplayName\s+PrincipalType\s+MemberType\s+AssignmentType\s+DurationDays\s+EndDateTime\s+Status'
+        $Rendered | Should -Match 'Reports Reader\s+Anna\s+User\s+Direct\s+Assigned\s+31\s+2026-02-01T00:00:00Z\s+Provisioned'
+    }
+}
+
+Describe 'Omnicit.EntraRBAC.DirectoryRoleScheduleRequest format view' {
+    It 'renders Kind, Action, Status, RoleDefinitionId, PrincipalId, ExpirationType, CreatedDateTime' {
+        $Rendered = InModuleScope $script:moduleName {
+            $Raw = @{
+                id               = 'req1'
+                action           = 'adminAssign'
+                status           = 'Provisioned'
+                roleDefinitionId = 'rd1'
+                principalId      = 'p1'
+                directoryScopeId = '/'
+                justification    = 'test'
+                scheduleInfo     = @{
+                    startDateTime = '2026-01-01T00:00:00Z'
+                    expiration    = @{ type = 'AfterDateTime'; endDateTime = '2026-02-01T00:00:00Z' }
+                }
+                createdDateTime  = '2026-01-01T00:00:00Z'
+            }
+            ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Raw -Kind Eligible | Format-Table | Out-String -Width 200
+        }
+
+        $Rendered | Should -Match 'Kind\s+Action\s+Status\s+RoleDefinitionId\s+PrincipalId\s+ExpirationType\s+CreatedDateTime'
+        $Rendered | Should -Match 'Eligible\s+adminAssign\s+Provisioned\s+rd1\s+p1\s+AfterDateTime\s+2026-01-01T00:00:00Z'
+        $Rendered | Should -Not -Match 'ScheduleRequestId' -Because 'the view declares exactly seven columns; a ScheduleRequestId header means the default formatter ran instead of the registered view'
+    }
+}
+
 Describe 'Omnicit.EntraRBAC.Inventory format view' {
     It 'renders Version and the section counts from the lowercase root keys' {
         $Inv = InModuleScope Omnicit.EntraRBAC {

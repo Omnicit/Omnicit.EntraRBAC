@@ -24,10 +24,10 @@ function Test-OERStructure {
     unit declared "dynamic": true is not reported.
 
     A worked apply document showing every section the engine understands, except
-    roleManagementPolicies and directoryRoleManagementPolicies, which are not in the example yet, is
-    kept in the repository at docs/examples/example-structure.json, and the full export to apply
-    walkthrough is documented in the repository at docs/inventory-to-llm/README.md. Neither ships
-    inside the installed module, so clone or browse the repository to read them.
+    roleManagementPolicies, directoryRoleManagementPolicies and directoryRoleAssignments, which are not in
+    the example yet, is kept in the repository at docs/examples/example-structure.json, and the full
+    export to apply walkthrough is documented in the repository at docs/inventory-to-llm/README.md.
+    Neither ships inside the installed module, so clone or browse the repository to read them.
 
     .PARAMETER Path
     Path to a JSON structure document file to validate.
