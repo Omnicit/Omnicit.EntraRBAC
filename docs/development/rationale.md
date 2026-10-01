@@ -2802,3 +2802,21 @@ An entry without `previousDisplayName` is unchanged: a `displayName` nobody carr
 **Both names on different groups** stays `GroupRenameConflict` (category `ResourceExists`): the
 document never merges two groups. A name matching several groups throws `AmbiguousName`, as an
 ambiguous `displayName` does, and the object id is the way around an ambiguous old name.
+
+**Catalog resources follow a rename (step 5 live run, check 5.5, 2026-09-30).** A catalog keeps the
+display name a resource had when it was added: after the group `oer-s65-catres-old` was renamed,
+the catalog still recorded the resource under its old name. The catalogs handler matched Group and
+Application resources on that recorded name, so a document naming the group by its NEW name -- what
+every other section is told to do after a rename -- planned `would remove undeclared resource` for
+the renamed group's own resource under `-Prune`, the P0 family (an access package then loses its
+resource). A Group or Application resource is now identified by the object id its declared name
+resolves to (`Resolve-OERGroupId`, or `Resolve-OERApplicationId` for an application's service
+principal; an object id is taken as it is), compared with the live originId; a SharePoint site keeps
+its name/url keys. A name that resolves to nothing, or to several, fails its entry and withholds that
+catalog's prune (the step 1 rule); a lookup that FAILS throws, so a failed read is never read as an
+absent resource. `Get-OERInventory` writes the CURRENT name, looked up by originId with the id as
+the fallback, in both the catalogs and the access packages sections, and the access package handler
+resolves a name to the group first when that group is a resource of the catalog -- otherwise a name
+the catalog still records for ANOTHER resource could bind the role to the wrong group and read the
+right binding as undeclared. The earlier documentation that told a proposal to keep the old recorded
+name in those two sections is withdrawn.

@@ -287,12 +287,12 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
             $T | Should -Not -Match 'changing displayName creates a new group'
             # A rename must carry every other reference to the group with it, directory role
             # assignments included, and the model must be told the name lookup can lag the rename.
-            $T | Should -Match ([regex]::Escape('When a proposal renames a group, every other reference to it in the same document uses the NEW name: administrativeUnits members, eligibility, owner, member and approver entries, and roleAssignments and directoryRoleAssignments principals.'))
-            # Catalog resources[] and access package resourceRoles[] are the documented EXCEPTION --
-            # they are matched by the name the catalog recorded, which a group rename does not itself
-            # refresh, so the model must be told to keep the old name there and review with -WhatIf.
-            $T | Should -Match ([regex]::Escape('Catalog resources[] and access package resourceRoles[] are the EXCEPTION -- they are matched by the display name the catalog recorded for the resource, which Microsoft Graph refreshes only when the resource is explicitly refreshed, not on the group''s own rename.'))
-            $T | Should -Match ([regex]::Escape('review the proposal with -WhatIf before applying it with -Prune'))
+            $T | Should -Match ([regex]::Escape('When a proposal renames a group, every other reference to it in the same document uses the NEW name: administrativeUnits members, catalog resources[] and access package resourceRoles[], eligibility, owner, member and approver entries, and roleAssignments and directoryRoleAssignments principals.'))
+            # Measured live 2026-09-30: a catalog keeps the name it recorded for a resource after the
+            # group's rename, so a Group or Application resource is matched by object id, and the model
+            # is told the inventory writes the CURRENT name -- no "keep the old name" exception.
+            $T | Should -Match ([regex]::Escape('A Group or Application catalog resource (and a resourceRole on one) is identified by the object id its name resolves to, never by the name the catalog recorded when the resource was added'))
+            $T | Should -Not -Match 'EXCEPTION -- they are matched by the display name the catalog recorded'
             $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a rename with a delay."))
             $T | Should -Match ([regex]::Escape('a re-run while neither name resolves yet fails the entry and creates nothing. Keep previousDisplayName in the proposal'))
             # The three sections that still cannot be renamed keep saying so.

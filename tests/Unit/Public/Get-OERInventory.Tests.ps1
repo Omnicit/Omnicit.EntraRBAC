@@ -819,6 +819,54 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    # A catalog keeps the display name a resource had when it was added, also after the group or
+    # application is renamed (measured live 2026-09-30); the apply engine identifies a Group or
+    # Application resource by the object id its name resolves to. So both sections write the group's
+    # or application's CURRENT name, looked up by originId, with the id as the fallback.
+    Context 'Catalog and access package resources are exported under their current name' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-Core'; Description = 'd' } }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                @(
+                    [PSCustomObject]@{ Id = 'res-g'; DisplayName = 'grp-old'; OriginId = '11111111-aaaa-1111-1111-000000000001'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+                    [PSCustomObject]@{ Id = 'res-a'; DisplayName = 'App Old'; OriginId = '11111111-aaaa-1111-1111-000000000002'; OriginSystem = 'AadApplication'; ResourceType = 'Application' }
+                    [PSCustomObject]@{ Id = 'res-s'; DisplayName = 'Finance'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline' }
+                )
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                @{ '11111111-aaaa-1111-1111-000000000001' = 'grp-new'; '11111111-aaaa-1111-1111-000000000002' = 'App New' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-1'; Description = 'd' } }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = '11111111-aaaa-1111-1111-000000000001' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        }
+
+        It 'writes a renamed group''s and application''s CURRENT name in resources[], and a site''s name as it stands' {
+            $Res = @((Get-OERInventory -Include Catalogs).Catalogs[0].resources)
+            ($Res | Where-Object type -eq 'Group').name | Should -BeExactly 'grp-new'
+            ($Res | Where-Object type -eq 'Application').name | Should -BeExactly 'App New'
+            ($Res | Where-Object type -eq 'SharePointSite').name | Should -BeExactly 'Finance'
+            # Only the group and the application are looked up, by their originIds, in one call.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Exactly -Times 1 -ParameterFilter {
+                $PreferDisplayName -and @($Id).Count -eq 2 -and @($Id) -contains '11111111-aaaa-1111-1111-000000000001' -and @($Id) -contains '11111111-aaaa-1111-1111-000000000002'
+            }
+        }
+
+        It 'writes the object id when the lookup returns the id itself (a deleted or unreadable object)' {
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = $I }; $M }
+            $Res = @((Get-OERInventory -Include Catalogs).Catalogs[0].resources)
+            ($Res | Where-Object type -eq 'Group').name | Should -BeExactly '11111111-aaaa-1111-1111-000000000001'
+        }
+
+        It 'names the access package resource role by the same current name, with one lookup shared by both sections' {
+            $Result = Get-OERInventory -Include Catalogs, AccessPackages
+            $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly 'grp-new'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Exactly -Times 1
+        }
+    }
+
     Context 'AccessPackages section' {
         BeforeEach {
             Mock -ModuleName $script:moduleName Get-OERCatalog {
@@ -832,6 +880,8 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERCatalogResource {
                 [PSCustomObject]@{ OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
             }
+            # The group's current name, looked up by originId, equals the recorded one here.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
                 [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x' }
             }

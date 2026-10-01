@@ -173,13 +173,12 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     neither matches the entry fails and nothing is created: a rename names an existing group. A NEW
     group is declared without previousDisplayName.
   - When a proposal renames a group, every other reference to it in the same document uses the NEW
-    name: administrativeUnits members, eligibility, owner, member and approver entries, and
-    roleAssignments and directoryRoleAssignments principals. Catalog resources[] and access package
-    resourceRoles[] are the EXCEPTION -- they are matched by the display name the catalog recorded
-    for the resource, which Microsoft Graph refreshes only when the resource is explicitly
-    refreshed, not on the group's own rename. Leave those two naming the OLD name until the catalog
-    resource has been refreshed; review the proposal with -WhatIf before applying it with -Prune, so
-    a resource still carrying the old recorded name is not read as undeclared and removed.
+    name: administrativeUnits members, catalog resources[] and access package resourceRoles[],
+    eligibility, owner, member and approver entries, and roleAssignments and
+    directoryRoleAssignments principals. A Group or Application catalog resource (and a
+    resourceRole on one) is identified by the object id its name resolves to, never by the name the
+    catalog recorded when the resource was added -- which Microsoft Graph keeps after a rename --
+    and the inventory writes the CURRENT name.
   - Microsoft Graph's name lookup can follow a rename with a delay. On the run that renames the
     group, a reference to the new name can fail (loudly, with any prune it drives withheld) and is
     safe to re-run once the new name resolves; a re-run while neither name resolves yet fails the
@@ -232,7 +231,8 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     change membershipRule instead. scopedRoles[] are unaffected and apply on either kind of unit.
 - catalogs[]: { displayName (required), description, externallyVisible (bool -- whether the
   catalog's access packages are requestable by connected-organization users outside the
-  directory), resources[] { name (required),
+  directory), resources[] { name (required -- for a Group or Application its current name or object
+  id, matched by the object id it resolves to),
   type (Group | Application | SharePointSite), url (SharePoint site URL -- STRONGLY RECOMMENDED for a
   SharePointSite resource; the site is onboarded by URL. If url is omitted the apply falls back to
   name, which only works when name is itself a site URL) } }

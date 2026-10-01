@@ -18,12 +18,25 @@ function Sync-OERStructureCatalog {
     1. Create the catalog when absent, or diff and update the mutable description and externallyVisible
        properties when it already exists.
     2. Reconcile declared resources (add missing by type/name; emit Extra or prune undeclared with
-       -Prune). Resources are matched by DisplayName, and additionally by OriginId for a SharePoint
-       Online site so a site declared by url round-trips.
+       -Prune). A Group or Application resource is matched by OBJECT ID: its declared name (or object
+       id) is resolved to the group's, or the enterprise application's service principal's, object
+       id, and compared with the live resource's originId. The display name a catalog records for a
+       resource is never compared: Graph keeps the name the resource had when it was added, also
+       after the group or application is renamed (measured live 2026-09-30), so a match on it would
+       read a renamed group's resource as undeclared and, under -Prune, remove it. A SharePoint Online
+       site is matched by its display name, and by OriginId so a site declared by url round-trips.
 
-    When -Prune is set, current resources whose DisplayName is not in the declared resources set are
-    removed (with Write-Warning) after a ShouldProcess gate. Without -Prune those extras are reported
-    as Extra (informational) and left alone.
+    When -Prune is set, undeclared current resources are removed (with Write-Warning) after a
+    ShouldProcess gate. Without -Prune those extras are reported as Extra (informational) and left
+    alone.
+
+    Withheld prune: a declared Group or Application whose name resolves to no object -- or to several
+    (AmbiguousGroupName / AmbiguousApplicationName, with the candidate ids) -- reports Failed with its
+    own error, and while any declared resource is unresolved every undeclared live resource is
+    reported Skipped with a Detail starting "prune withheld:", with or without -Prune; nothing is
+    removed or reported Extra (ConvertTo-OERPruneWithheldResult owns the rule and the text). A lookup
+    that FAILS, rather than finding nothing, is never read as "not there": it throws, and the engine
+    reports the item Failed before any prune runs.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the catalog itself does not exist and
@@ -42,6 +55,8 @@ function Sync-OERStructureCatalog {
     Without this switch, extra resources are only reported as Extra and never deleted. An omitted
     resources key still reconciles this way; an explicit "resources": null does not reconcile at
     all -- null, not an omitted key, is how a catalog is declared without touching its resources.
+    While a declared Group or Application resource cannot be resolved, nothing is removed or
+    reported Extra: every undeclared resource is reported Skipped ("prune withheld:").
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
@@ -157,11 +172,20 @@ function Sync-OERStructureCatalog {
         }
 
         # -- Step 2: resources --------------------------------------------------------------
-        # A resource is identified by its declared name, EXCEPT a SharePoint Online site, which is
-        # onboarded by URL (Graph stores that URL as the resource originId; the display name is only
-        # the site title). Track BOTH keys so an existing site matches on its originId and is never
-        # re-added or pruned as undeclared.
+        # A Group or Application resource is identified by its OBJECT ID: the declared name is
+        # resolved (a group through Resolve-OERGroupId, an application's service principal through
+        # Resolve-OERApplicationId; an object id is taken as it is) and matched against the live
+        # resource's originId -- never against the display name the catalog recorded when the
+        # resource was added, which Graph does not refresh when the group or application is renamed
+        # (measured live 2026-09-30). A SharePoint Online site keeps its name/url keys: it is onboarded
+        # by URL, which Graph stores as the originId, and the display name is only the site title.
         $DeclaredResourceKey = [System.Collections.Generic.List[string]]::new()
+        # Lower-cased object ids of the declared Group and Application resources.
+        $DeclaredOriginId = [System.Collections.Generic.List[string]]::new()
+        # Declared Group/Application resources whose name resolved to no object: they cannot protect
+        # their live resource, so while this list is non-empty the Extra/prune pass below withholds
+        # every candidate (ConvertTo-OERPruneWithheldResult owns the rule and the text).
+        $ResourceUnresolved = [System.Collections.Generic.List[string]]::new()
         # An omitted 'resources' key has always meant "no add-list, but the prune/Extra loop below
         # still runs against whatever it finds" -- that is intentional, existing, tested behavior
         # (an absent collection is not an instruction to leave live state alone; only an EXPLICIT
@@ -179,59 +203,106 @@ function Sync-OERStructureCatalog {
                 # already a URL (the pre-url hand-authored form, kept working for back-compat).
                 $ResIdentifier = if ($ResType -eq 'SharePointSite' -and $ResUrl) { $ResUrl } else { $ResName }
 
-                $DeclaredResourceKey.Add([string]$ResName)
-                if ($ResUrl) { $DeclaredResourceKey.Add($ResUrl) }
-
-                $AlreadyPresent = $CurrentResources | Where-Object {
-                    $_.DisplayName -eq $ResName -or
-                    ($ResIdentifier -and [string]$_.OriginId -eq $ResIdentifier)
+                # Map the declared type to the right Add-OERCatalogResource parameter. An
+                # unrecognized type is a Failed item (the schema validator normally rejects bad
+                # types upstream, but the handler must not silently mis-add as a Group).
+                if ($ResType -notin @('Group', 'Application', 'SharePointSite')) {
+                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' -Detail "unrecognized resource type '$ResType' for resource '$ResName'; expected Group, Application, or SharePointSite"
+                    continue
                 }
-                if ($AlreadyPresent) {
-                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Unchanged' -Detail "resource '$ResName' already present"
-                } else {
-                    # Map the declared type to the right Add-OERCatalogResource parameter. An
-                    # unrecognized type is a Failed item (the schema validator normally rejects bad
-                    # types upstream, but the handler must not silently mis-add as a Group).
-                    $AddParams = @{ Catalog = $CatId; Confirm = $false }
-                    $KnownType = $true
-                    switch ($ResType) {
-                        'Group'          { $AddParams.Group          = $ResName }
-                        'Application'    { $AddParams.Application     = $ResName }
-                        'SharePointSite' { $AddParams.SharePointSite  = $ResIdentifier }
-                        default          { $KnownType = $false }
+
+                $AddParams = @{ Catalog = $CatId; Confirm = $false }
+                if ($ResType -eq 'SharePointSite') {
+                    $DeclaredResourceKey.Add([string]$ResName)
+                    if ($ResUrl) { $DeclaredResourceKey.Add($ResUrl) }
+                    $AlreadyPresent = $CurrentResources | Where-Object {
+                        $_.DisplayName -eq $ResName -or
+                        ($ResIdentifier -and [string]$_.OriginId -eq $ResIdentifier)
                     }
-                    if (-not $KnownType) {
-                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' -Detail "unrecognized resource type '$ResType' for resource '$ResName'; expected Group, Application, or SharePointSite"
+                    $AddParams.SharePointSite = $ResIdentifier
+                } else {
+                    # Resolve the declared name to the object id. Not found is reported here and
+                    # withholds the prune; an ambiguous name is refused with its candidates, the same
+                    # way. Any other failure of the lookup throws: a read that failed is never taken
+                    # as "not there", and the engine reports the item Failed before any prune runs.
+                    $ResolvedId = $null
+                    try {
+                        $ResolvedId = if (Test-OERGuid -Value ([string]$ResName)) {
+                            [string]$ResName
+                        } elseif ($ResType -eq 'Group') {
+                            Resolve-OERGroupId -DisplayName $ResName
+                        } else {
+                            Resolve-OERApplicationId -DisplayName $ResName
+                        }
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        if (-not (Test-OERAmbiguousNameError -Record $PSItem)) { throw }
+                        $AmbiguousId = if ($ResType -eq 'Group') { 'AmbiguousGroupName' } else { 'AmbiguousApplicationName' }
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($PSItem.Exception.Message), $AmbiguousId,
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument, $ResName)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' `
+                            -Detail "$ResType resource '$ResName' is ambiguous: $($PSItem.Exception.Message)" -ErrorRecord $ErrRec
+                        $ResourceUnresolved.Add([string]$ResName)
                         continue
                     }
-                    if ($Caller.ShouldProcess($Name, "Add $ResType resource '$ResName'")) {
-                        try {
-                            Add-OERCatalogResource @AddParams -ErrorAction Stop | Out-Null
-                            ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Updated' -Detail "added $ResType resource '$ResName'"
-                        } catch {
-                            Remove-OERErrorRecord -Record $PSItem
-                            $Caller.WriteError($PSItem)
-                            ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' -Detail "failed to add resource '$ResName': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
-                            continue
-                        }
-                    } else {
-                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Skipped' -Detail "would add $ResType resource '$ResName'"
+                    if (-not $ResolvedId) {
+                        $NotFoundId = if ($ResType -eq 'Group') { 'GroupNotFound' } else { 'ApplicationNotFound' }
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("$ResType '$ResName' not found: no $(if ($ResType -eq 'Group') { 'group' } else { 'enterprise application' }) carries that name, so the catalog resource it names cannot be identified."),
+                            $NotFoundId, [System.Management.Automation.ErrorCategory]::ObjectNotFound, $ResName)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' `
+                            -Detail "$ResType resource '$ResName' could not be resolved to an object id; nothing was added for it" -ErrorRecord $ErrRec
+                        $ResourceUnresolved.Add([string]$ResName)
+                        continue
                     }
+                    $ResolvedId = ([string]$ResolvedId).ToLowerInvariant()
+                    $DeclaredOriginId.Add($ResolvedId)
+                    $AlreadyPresent = $CurrentResources | Where-Object { ([string]$_.OriginId).ToLowerInvariant() -eq $ResolvedId }
+                    if ($ResType -eq 'Group') { $AddParams.GroupId = $ResolvedId } else { $AddParams.ApplicationId = $ResolvedId }
+                }
+
+                if ($AlreadyPresent) {
+                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Unchanged' -Detail "resource '$ResName' already present"
+                } elseif ($Caller.ShouldProcess($Name, "Add $ResType resource '$ResName'")) {
+                    try {
+                        Add-OERCatalogResource @AddParams -ErrorAction Stop | Out-Null
+                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Updated' -Detail "added $ResType resource '$ResName'"
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $Caller.WriteError($PSItem)
+                        ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Failed' -Detail "failed to add resource '$ResName': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        continue
+                    }
+                } else {
+                    ConvertTo-OERStructureResult -Section 'catalogs' -Item $Name -Action 'Skipped' -Detail "would add $ResType resource '$ResName'"
                 }
             }
         }
 
-        # Extra/prune undeclared current resources. A resource counts as declared when EITHER its
-        # display name or its originId (the SharePoint site URL) appears in the declared key set.
+        # Extra/prune undeclared current resources. A Group or Application resource (originSystem
+        # AadGroup / AadApplication) counts as declared when its originId is one of the declared
+        # resources' object ids; any other resource -- a SharePoint site -- when its display name or
+        # its originId (the site URL) is among the declared names and urls. While a declared Group or
+        # Application could not be resolved, nothing is removed or reported Extra: every undeclared
+        # resource is reported Skipped with a Detail starting "prune withheld:".
         # Skipped ONLY when 'resources' is explicitly null -- an omitted key still reconciles
         # against an empty declared set (existing behavior), but an explicit null is a distinct
         # "leave resources alone" signal and must not report every live resource as Extra or,
         # worse under -Prune, remove them all.
         if (-not $ResourcesDeclaredNull) {
             foreach ($CurRes in $CurrentResources) {
-                $IsDeclared = ($DeclaredResourceKey -contains $CurRes.DisplayName) -or
-                              ($CurRes.OriginId -and ($DeclaredResourceKey -contains [string]$CurRes.OriginId))
+                $IsDeclared = if ([string]$CurRes.OriginSystem -in @('AadGroup', 'AadApplication')) {
+                    $CurRes.OriginId -and ($DeclaredOriginId -contains ([string]$CurRes.OriginId).ToLowerInvariant())
+                } else {
+                    ($DeclaredResourceKey -contains $CurRes.DisplayName) -or
+                    ($CurRes.OriginId -and ($DeclaredResourceKey -contains [string]$CurRes.OriginId))
+                }
                 if (-not $IsDeclared) {
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'catalogs' -Item $Name -Unresolved $ResourceUnresolved -Candidate "undeclared resource '$($CurRes.DisplayName)'"
+                    if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                         Write-Warning "Sync-OERStructureCatalog: $PruneVerb undeclared resource '$($CurRes.DisplayName)' from catalog '$Name'."

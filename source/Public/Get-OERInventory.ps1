@@ -51,7 +51,12 @@ function Get-OERInventory {
     which Invoke-OERStructure -Prune acts on by deleting every live member. A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
-    users does not silently re-create as internal-only.
+    users does not silently re-create as internal-only. A Group or Application catalog resource, and
+    an access package resourceRoles entry on one, is written under the group's or application's
+    CURRENT display name, looked up by the resource's originId (its object id when the lookup returns
+    nothing) -- never under the name the catalog recorded when the resource was added, which Graph
+    keeps after a rename. Invoke-OERStructure identifies such a resource by the object id its name
+    resolves to.
     Only access-package-scoped, single-stage review definitions are captured: a group, application,
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
@@ -725,6 +730,23 @@ function Get-OERInventory {
         # returns only a [string] id and cannot substitute here. Resolve once so the default -Include
         # (which contains both sections) does not issue the catalog list/read call twice.
         $ResolvedCatalogList = $null
+        # The CURRENT display name of each Group and Application resource of a catalog, keyed by
+        # originId: a catalog keeps the name a resource had when it was added, also after the group or
+        # application is renamed (measured live 2026-09-30), and the apply engine identifies a Group or
+        # Application resource by the object id its declared name resolves to. One getByIds call per
+        # catalog through Resolve-OERPrincipalName, shared by both sections; an object the directory
+        # does not return (deleted, unreadable, or a failed call) falls back to its id, which the apply
+        # engine takes as the object id itself.
+        $CatalogResourceNames = @{}
+        $GetCatalogResourceNames = {
+            param([string]$ForCatalogId, [object[]]$Resources)
+            if (-not $CatalogResourceNames.ContainsKey($ForCatalogId)) {
+                $Ids = @($Resources | Where-Object { [string]$_.OriginSystem -in @('AadGroup', 'AadApplication') -and $_.OriginId } |
+                        ForEach-Object { [string]$_.OriginId })
+                $CatalogResourceNames[$ForCatalogId] = if ($Ids.Count -gt 0) { Resolve-OERPrincipalName -Id $Ids -PreferDisplayName } else { @{} }
+            }
+            $CatalogResourceNames[$ForCatalogId]
+        }
         if ($Include -contains 'Catalogs' -or $Include -contains 'AccessPackages') {
             $ResolvedCatalogList = if ($Catalog) {
                 if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog) } else { @(Get-OERCatalog -DisplayName $Catalog) }
@@ -742,7 +764,9 @@ function Get-OERInventory {
                     externallyVisible = [bool]$Cat.ExternallyVisible
                 }
                 if ($IncludeId) { $Proj.id = $Cat.Id }
-                $Proj.resources = @(foreach ($R in @(Get-OERCatalogResource -Catalog $Cat.Id)) {
+                $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id)
+                $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
+                $Proj.resources = @(foreach ($R in $CatRes) {
                     # Map the resource type to the schema enum from the stable originSystem (the raw
                     # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
                     # schema/apply do not accept). Falls back to the raw value for unknown systems.
@@ -756,8 +780,15 @@ function Get-OERInventory {
                     # resource originId -- the display name is only the site title and cannot be fed
                     # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
                     # 'url' field so the apply engine has the real identifier while the human-readable
-                    # name is preserved. Group and application resources keep the name as identifier.
-                    $ResProj = [ordered]@{ type = $ResType; name = $R.DisplayName }
+                    # name is preserved. A Group or Application resource is written under the group's
+                    # or application's CURRENT name (looked up by originId, the id when it cannot be),
+                    # never the name the catalog recorded when it was added.
+                    $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
+                        $CurrentNames[[string]$R.OriginId]
+                    } else {
+                        $R.DisplayName
+                    }
+                    $ResProj = [ordered]@{ type = $ResType; name = $ResName }
                     if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
                         $ResProj.url = [string]$R.OriginId
                     }
@@ -781,9 +812,18 @@ function Get-OERInventory {
                 # the binding's resource against Get-OERCatalogResource display names, so project that
                 # same name here (joined on OriginId) instead of the scope label, or the binding will
                 # not round-trip.
+                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
+                # section names it, so a binding resolves to the same object id on apply.
                 $ApCatResMap = @{}
-                foreach ($Cr in @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)) {
-                    if ($Cr.OriginId) { $ApCatResMap[[string]$Cr.OriginId] = [string]$Cr.DisplayName }
+                $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)
+                $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
+                foreach ($Cr in $ApCatRes) {
+                    if (-not $Cr.OriginId) { continue }
+                    $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
+                        [string]$ApCurrentNames[[string]$Cr.OriginId]
+                    } else {
+                        [string]$Cr.DisplayName
+                    }
                 }
                 foreach ($Ap in @(Get-OERAccessPackage -Catalog $ApCat.Id)) {
                     $Proj = [ordered]@{

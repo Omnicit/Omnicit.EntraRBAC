@@ -33,10 +33,14 @@ function Sync-OERStructureAccessPackage {
 
     2. Reconcile declared resourceRoles (add missing bindings; emit Extra or prune undeclared
        bindings with -Prune, or report them Skipped while a declared resource cannot be resolved --
-       see "Withheld prune" below). Each binding is identified by the resource display name
-       (resolved to an OriginId via Get-OERCatalogResource, falling back to Resolve-OERGroupId) and
-       the role display name. Existing bindings are read via a raw Graph call against
-       resourceRoleScopes.
+       see "Withheld prune" below). Each binding is identified by the resource's OriginId and the
+       role display name. The declared resource name resolves to an OriginId in this order: the
+       group Resolve-OERGroupId finds under that name (or object id) when that group is a resource of
+       the catalog -- so a renamed group is found under its CURRENT name, and never confused with
+       another resource the catalog recorded under that name; else the catalog resource recorded
+       under that display name (Get-OERCatalogResource; applications, SharePoint sites, and a group
+       under the name the catalog recorded); else the group's id. Existing bindings are read via a raw
+       Graph call against resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
 
@@ -79,7 +83,8 @@ function Sync-OERStructureAccessPackage {
     entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
     the text). The unresolved entry keeps its own Failed record (the record is lost only when the
     handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
-    finding nothing, is not caught by this handler: it ends the item where it is thrown, neither the
+    finding nothing, is not caught by this handler (a name matching several groups only once the
+    catalog's recorded names cannot decide either): it ends the item where it is thrown, neither the
     resource role prune nor the assignment policy step runs, and the engine reports the item as one
     Failed ("handler error") record, discarding every record the handler had already emitted for it
     (a Created package or an added binding stands with no row).
@@ -398,16 +403,40 @@ function Sync-OERStructureAccessPackage {
                 $RoleName = $RrEntry.role
 
                 # Resolve resource name to OriginId:
-                # 1. Search catalog resources by display name.
-                # 2. Fall back to Resolve-OERGroupId for AadGroup resources.
+                # 1. The group the name (or object id) resolves to, when that group is a resource of
+                #    the catalog. A catalog keeps the display name a resource had when it was added,
+                #    also after the group is renamed, so the group's CURRENT name must win over a name
+                #    the catalog recorded for another resource -- or the binding would be matched to
+                #    the wrong resource and the right one read as undeclared.
+                # 2. The catalog resource recorded under that display name (an application, a
+                #    SharePoint site, or a group under the name the catalog recorded).
+                # 3. The group's id even when it is not in the catalog (adding the binding then fails).
+                # A name matching several groups is set aside while step 2 can still decide; it is
+                # thrown when step 2 cannot. Any other failure of the lookup throws at once.
                 $OriginId = $null
-                $MatchedCatRes = $CatResources | Where-Object { $_.DisplayName -eq $ResName } | Select-Object -First 1
-                if ($MatchedCatRes) {
-                    $OriginId = $MatchedCatRes.OriginId
+                $GroupOriginId = $null
+                $GroupLookupError = $null
+                try {
+                    $GroupOriginId = Resolve-OERGroupId -DisplayName $ResName
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    if (-not (Test-OERAmbiguousNameError -Record $PSItem)) { throw }
+                    $GroupLookupError = $PSItem
+                }
+                if ($GroupOriginId -and @($CatResources | Where-Object { [string]$_.OriginId -eq [string]$GroupOriginId }).Count -gt 0) {
+                    $OriginId = $GroupOriginId
                 }
 
                 if (-not $OriginId) {
-                    $OriginId = Resolve-OERGroupId -DisplayName $ResName
+                    $MatchedCatRes = $CatResources | Where-Object { $_.DisplayName -eq $ResName } | Select-Object -First 1
+                    if ($MatchedCatRes) {
+                        $OriginId = $MatchedCatRes.OriginId
+                    }
+                }
+
+                if (-not $OriginId) {
+                    if ($GroupLookupError) { throw $GroupLookupError }
+                    $OriginId = $GroupOriginId
                 }
 
                 if (-not $OriginId) {
