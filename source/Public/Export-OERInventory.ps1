@@ -39,9 +39,10 @@ function Export-OERInventory {
     LISTED is skipped the same way: a refused or failed management-group listing is named in
     SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
     subscription listing as '<subscriptions: the listing failed>'), never read as "no management
-    groups". The management groups are listed with the service's cache bypassed, but a management
-    group created moments ago can still be missing until Azure has updated its hierarchy: wait for
-    it to appear in Get-OERManagementGroup before relying on an export that should include it.
+    groups". A management group created in the last few minutes can be missing from the
+    management-group list, and an export run in that window does not walk it -- nor name it as
+    skipped -- because it cannot know it exists. Wait until Get-OERManagementGroup lists it before
+    relying on an export that should include it.
 
     Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
     Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent

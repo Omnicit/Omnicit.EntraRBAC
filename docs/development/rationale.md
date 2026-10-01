@@ -2690,11 +2690,20 @@ gaps showed in the scope walk itself, before any eligibility read:
   groups while six existed: the new one was absent from `scopeHierarchy.json` (the tenant root group
   was there), so its eligibility never reached `azurePimEligibility.json` although the per-scope read
   had nothing to do with it. The Management Groups API documents `Cache-Control: no-cache` as the
-  way to bypass its caches; `Get-OERManagementGroup` now sends it on the list and on the `-Name` read,
-  through a private `-Header` parameter of `Invoke-OERArmRequest` (sent on every page and retry,
-  never allowed to replace the bearer). Whether the header alone closes the gap is measured by the
-  operator's re-run, check 6.1R, which lists with and without it; a management group created moments
-  ago can still be missing until Azure has updated its hierarchy, and the help says so.
+  way to bypass its caches, so `Get-OERManagementGroup` was made to send it -- and the operator's
+  re-run, check 6.1R, measured it to change nothing: a few seconds and again about a minute after a
+  new management group was created, the list lacked it with the header and without it alike, while a
+  read by `-Name` found it at once. The header was removed again, with the private `-Header`
+  parameter of `Invoke-OERArmRequest` that only it used. **This is a documented limitation, not a
+  fixed gap:** a management group created in the last few minutes can be missing from the list, and
+  an export in that window neither walks it nor names it as skipped, since nothing tells it the
+  group exists; the help of `Get-OERManagementGroup` and `Export-OERInventory` says so. Not done, and
+  why: enumerating the tree from the root with `$expand=children&$recurse=true`, or the root's
+  `descendants`, might see a new group sooner -- unmeasured -- but needs read at the tenant root
+  group, which an operator who sees only part of the tree does not hold. Parked until measured,
+  together with how long the list lags.
+- The management-group level of the eligibility read itself is NOT in doubt: the same 6.1 export
+  holds an eligible assignment read at an existing management group's scope.
 
 ## pim-in-use-criterion
 
