@@ -784,6 +784,48 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             $false
         }
 
+        # Emptiness guard. Zero files means the enumeration broke, not that the prose is clean.
+        $Prose.Count |
+            Should -BeGreaterThan 0 -Because 'this check must read at least one tracked Markdown file; zero files means the enumeration failed and the check ran on nothing'
+
+        # Narrowing guards. A scope pattern that loses the root files, or the checklists this check
+        # was written for, still enumerates files and still passes on them.
+        $InScope = @($Prose | ForEach-Object { $_.RelativePath })
+
+        $InScope | Should -Contain 'README.md' -Because 'README.md must be in scope; if it is not, the check stopped reaching the root files'
+
+        $InScope | Should -Contain 'CHANGELOG.md' -Because 'CHANGELOG.md must be in scope; its [Unreleased] section is published as the Gallery ReleaseNotes'
+
+        @($InScope | Where-Object { $_ -like 'docs/live-verification/*' }).Count |
+            Should -BeGreaterThan 0 -Because 'the live-verification checklists must stay in this scope; zero means the scan narrowed away from the folder the check was written for'
+
+        # Reach guard. The files in scope hold thousands of code spans between them, so a scan that
+        # removed none reached no prose at all -- every line taken for a fenced block, or the
+        # code-span pass never run -- and a check that sees no prose passes on nothing.
+        $CodeSpanTotal = 0
+        foreach ($Entry in $Prose) {
+            $CodeSpanTotal += $Entry.CodeSpanCount
+        }
+
+        $CodeSpanTotal |
+            Should -BeGreaterThan 0 -Because 'the scan must have removed at least one code span; zero means it reached no prose at all and the check ran on nothing'
+
+        # Known answer. A tag pattern edited into one that never matches leaves every guard above
+        # green and this check green on every file, so a fixed sample proves the scan still finds
+        # what it is for: the bare tag on line 1 is the ONE hit, while the code span, the escaped
+        # form and the fenced block are all skipped.
+        $Sample = ConvertTo-DocHygieneMarkdownProse -Line @(
+            'A bare <hidden> tag, a `<coded>` one and an escaped \<shown> one.'
+            ''
+            '```text'
+            'A <fenced> one.'
+            '```'
+        )
+        $SampleHits = @(Get-DocHygieneMatchLocation -File @([PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample.Lines }) -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
+
+        ($SampleHits -join ', ') |
+            Should -Be 'sample:1' -Because 'the known-answer sample must yield exactly its one bare tag; anything else means the scan stopped finding tags, or stopped skipping code'
+
         $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
 
         @($Hits).Count |
