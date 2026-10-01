@@ -56,13 +56,6 @@ function Invoke-OERArmRequest {
     Follow nextLink/@nextLink paging on GET list responses and return a single object whose value
     property contains all aggregated items.
 
-    .PARAMETER Header
-    Optional extra request headers, sent on every request of the call -- each page of an -All walk
-    and a retry included -- for example @{ 'Cache-Control' = 'no-cache' }, which
-    Get-OERManagementGroup sends so the Management Groups API answers past its cache. An
-    'Authorization' key is ignored: the bearer header is always the wrapper's own. Header values are
-    never written to any stream.
-
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value
     Lists all subscriptions across pages.
@@ -80,17 +73,11 @@ function Invoke-OERArmRequest {
 
         [hashtable]$Body,
 
-        [switch]$All,
-
-        [hashtable]$Header
+        [switch]$All
     )
 
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
     $ProgressPreference = 'SilentlyContinue'
-
-    # The caller's extra headers, read by Invoke-ArmCall below for every request of this call (each
-    # page and retry included).
-    $ExtraHeaders = if ($Header) { $Header } else { @{} }
 
     # ARM host: from the cached resource url (so sovereign clouds work once that is configurable),
     # defaulting to public-cloud ARM.
@@ -107,17 +94,10 @@ function Invoke-OERArmRequest {
 
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
-        # The caller's extra headers ($ExtraHeaders, from the enclosing call), never an Authorization one.
-        $RequestHeaders = @{}
-        foreach ($HeaderName in @($ExtraHeaders.Keys)) {
-            if ([string]$HeaderName -eq 'Authorization') { continue }
-            $RequestHeaders[[string]$HeaderName] = [string]$ExtraHeaders[$HeaderName]
-        }
-        $RequestHeaders['Authorization'] = "Bearer $Plain"
         $InvokeParams = @{
             Method             = $CallMethod
             Uri                = "$BaseUrl$CallPath"
-            Headers            = $RequestHeaders
+            Headers            = @{ Authorization = "Bearer $Plain" }
             SkipHttpErrorCheck = $true
             ErrorAction        = 'Stop'
             Verbose            = $false
