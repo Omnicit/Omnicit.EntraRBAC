@@ -1052,7 +1052,7 @@ SDK has expired: sign in again.
 
 ### 0. Preparation
 
-- [ ] **0.1 The session runs THIS branch's build.**
+- [x] **0.1 The session runs THIS branch's build.**
 
   ```powershell
   git -C $Repo fetch origin
@@ -1100,9 +1100,111 @@ SDK has expired: sign in again.
   **Failure looks like:** `CommandNotFound` for any function, a `False`, a missing section in the
   `-Include` line or a different scope row -- a build without this branch's change is loaded.
   Rebuild, fix `PSModulePath`, re-import; nothing below means anything until this passes.
-  **Result:**
+  **Result:** PASS (CC as oer-live-cc, 2026-09-30, branch at baf5c64). Identity check: session app id is oer-live-cc True, tenant is the test tenant True. All required subjects listed, including the three new ones; the five private functions resolve; -Include lists nine values with both directory sections; switches True/True/True; the four scope rows exactly as expected.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  docs: measure catalog references after a rename and run section 6 on a dedicated management group
+  docs: tighten the 1.1.0 release note to leave room for live fixes
+  fix: fail a rename that neither name resolves instead of creating a group
+  docs: keep catalog resource references on the recorded name after a rename
+  fix: state the five-minute rule per role and skip the onboarding warning for a group PIM cannot manage
+  docs: measure the rename window and a dynamic group in the step 5 checklist
+  docs: tighten the bundle README, help and release notes
+  docs: state the rename lookup delay and the references a rename must update
+  fix: word the onboarding and case-only rename warnings as what they know
+  fix: treat a group PIM for Groups cannot manage as not using it
+  docs: say the worked example shows every apply section
+  docs: correct the resource-group residue recovery in the step 5 checklist
+  docs: scope the ambiguous-name note in the release notes
+  docs: live-verification checklist for the directory role export and group rename
+  docs: release notes for the directory role export and group rename
+  docs: show every apply section in the worked example
+  docs: describe the exported directory role sections in the bundle prompt and README
+  fix: report pimPolicy unread when the eligibility half of the criterion was not read
+  feat: export pimPolicy only for groups that use PIM for Groups
+  fix: verify a previousDisplayName given as an object id
+  feat: rename a group through the apply document with previousDisplayName
+  feat: rename a group with Set-OERGroup -NewDisplayName
+  docs: attribute the eligibility help phrase to the unfiltered read
+  fix: pin the bundle JSON shape and state the eligibility coverage honestly
+  feat: add Azure PIM eligibility to the inventory bundle as read-only context
+  feat: export the directory role sections in the inventory bundle
+  fix: name a colliding group principal by its id in the directory role export
+  feat: export directory role policies and assignments from the inventory
+  Omnicit.EntraRBAC 1.1.0 from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0
+  Name                                       CommandType
+  ----                                       -----------
+  Test-OERGroupPimInUse                         Function
+  Get-OERInventoryAzureEligibility              Function
+  ConvertTo-OERInventoryRoleManagementPolicy    Function
+  Select-OERManagedDirectoryRoleAssignment      Function
+  Sync-OERStructureGroup                        Function
+  Get-OERInventory -Include accepts: Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
+  switches: Get-OERInventory -AllDirectoryRolePolicies True; Export-OERInventory -AllDirectoryRolePolicies True; Set-OERGroup -NewDisplayName True
+  Get-OERInventory [GraphAndArm]: AccessReview.Read.All, AdministrativeUnit.Read.All, Directory.Read.All, EntitlementManagement.Read.All, PrivilegedEligibilitySchedule.Read.AzureADGroup, RoleManagement.Read.Directory, RoleManagementPolicy.Read.AzureADGroup
+  Export-OERInventory [GraphAndArm]: AccessReview.Read.All, AdministrativeUnit.Read.All, Directory.Read.All, EntitlementManagement.Read.All, PrivilegedEligibilitySchedule.Read.AzureADGroup, RoleManagement.Read.Directory, RoleManagementPolicy.Read.AzureADGroup
+  Set-OERGroup [Graph]: Group.ReadWrite.All, RoleManagement.ReadWrite.Directory
+  Invoke-OERStructure [GraphAndArm]: AccessReview.ReadWrite.All, AdministrativeUnit.ReadWrite.All, AuthenticationContext.Read.All, Directory.Read.All, EntitlementManagement.ReadWrite.All, Group.ReadWrite.All, PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup, RoleManagement.ReadWrite.Directory, RoleManagementPolicy.ReadWrite.AzureADGroup
+  ```
 
-- [ ] **0.2 The prerequisite script's plan names only `oer-s65` targets, the four files and the Reports Reader policy change.** Paste the `-WhatIf` run's output from Setup, redacted per the rules at the top.
+  **Re-run:** (CC as oer-live-cc, 2026-10-01, the clone fast-forwarded and rebuilt at fd8bc11, the PR head with the four fixes.) Identity check: session app id is oer-live-cc True, tenant is the test tenant True. PASS: the log lists the new subjects; the same functions, -Include values, switches and scope rows as before.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  fix: name an unlisted scope level apart from the scopes that could not be read
+  docs: re-run the management group check as 6.1R and fix its root check
+  docs: release notes for the catalog match and the management group walk
+  fix: list management groups past the service cache
+  fix: report a management group listing that fails as a skipped level
+  fix: match catalog resources by object id and export their current names
+  docs: measure catalog references after a rename and run section 6 on a dedicated management group
+  docs: tighten the 1.1.0 release note to leave room for live fixes
+  fix: fail a rename that neither name resolves instead of creating a group
+  docs: keep catalog resource references on the recorded name after a rename
+  fix: state the five-minute rule per role and skip the onboarding warning for a group PIM cannot manage
+  docs: measure the rename window and a dynamic group in the step 5 checklist
+  docs: tighten the bundle README, help and release notes
+  docs: state the rename lookup delay and the references a rename must update
+  fix: word the onboarding and case-only rename warnings as what they know
+  fix: treat a group PIM for Groups cannot manage as not using it
+  docs: say the worked example shows every apply section
+  docs: correct the resource-group residue recovery in the step 5 checklist
+  docs: scope the ambiguous-name note in the release notes
+  docs: live-verification checklist for the directory role export and group rename
+  docs: release notes for the directory role export and group rename
+  docs: show every apply section in the worked example
+  docs: describe the exported directory role sections in the bundle prompt and README
+  fix: report pimPolicy unread when the eligibility half of the criterion was not read
+  feat: export pimPolicy only for groups that use PIM for Groups
+  fix: verify a previousDisplayName given as an object id
+  feat: rename a group through the apply document with previousDisplayName
+  feat: rename a group with Set-OERGroup -NewDisplayName
+  docs: attribute the eligibility help phrase to the unfiltered read
+  fix: pin the bundle JSON shape and state the eligibility coverage honestly
+  feat: add Azure PIM eligibility to the inventory bundle as read-only context
+  feat: export the directory role sections in the inventory bundle
+  fix: name a colliding group principal by its id in the directory role export
+  feat: export directory role policies and assignments from the inventory
+  Omnicit.EntraRBAC 1.1.0 from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0
+  Name                                       CommandType
+  ----                                       -----------
+  Test-OERGroupPimInUse                         Function
+  Get-OERInventoryAzureEligibility              Function
+  ConvertTo-OERInventoryRoleManagementPolicy    Function
+  Select-OERManagedDirectoryRoleAssignment      Function
+  Sync-OERStructureGroup                        Function
+  Get-OERInventory -Include accepts: Groups, AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments, RoleManagementPolicies
+  switches: Get-OERInventory -AllDirectoryRolePolicies True; Export-OERInventory -AllDirectoryRolePolicies True; Set-OERGroup -NewDisplayName True
+  Get-OERInventory [GraphAndArm]: AccessReview.Read.All, AdministrativeUnit.Read.All, Directory.Read.All, EntitlementManagement.Read.All, PrivilegedEligibilitySchedule.Read.AzureADGroup, RoleManagement.Read.Directory, RoleManagementPolicy.Read.AzureADGroup
+  Export-OERInventory [GraphAndArm]: AccessReview.Read.All, AdministrativeUnit.Read.All, Directory.Read.All, EntitlementManagement.Read.All, PrivilegedEligibilitySchedule.Read.AzureADGroup, RoleManagement.Read.Directory, RoleManagementPolicy.Read.AzureADGroup
+  Set-OERGroup [Graph]: Group.ReadWrite.All, RoleManagement.ReadWrite.Directory
+  Invoke-OERStructure [GraphAndArm]: AccessReview.ReadWrite.All, AdministrativeUnit.ReadWrite.All, AuthenticationContext.Read.All, Directory.Read.All, EntitlementManagement.ReadWrite.All, Group.ReadWrite.All, PrivilegedEligibilitySchedule.ReadWrite.AzureADGroup, RoleManagement.ReadWrite.Directory, RoleManagementPolicy.ReadWrite.AzureADGroup
+  ```
+
+  **Re-run:** (CC, 2026-10-01, rebuilt at eef9fd7 -- "fix: read the ARM request headers through a variable the analyzer sees", behaviour unchanged.) Identity check True, True; 0.1 as above.
+
+- [x] **0.2 The prerequisite script's plan names only `oer-s65` targets, the four files and the Reports Reader policy change.** Paste the `-WhatIf` run's output from Setup, redacted per the rules at the top.
 
   **Expect:** the lines Setup lists under "What the script prints": first
   `[oer-s65] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.`,
@@ -1156,9 +1258,107 @@ SDK has expired: sign in again.
   by hand), or a direct assignment of either role to a principal the script did not create (someone
   holds the role: stop). Every one of these comes before the run's first write, in the real run as
   well. Record it and stop.
-  **Result:**
+  **Result:** PASS. Three sign-ins (pre-flight, Graph, Azure), every identity line True, tenant and subscription identified; the pre-flight wrote nothing (the only earlier What if lines are the module import's Update TypeData under -WhatIf -- session type data, the parked step 3 finding, not a tenant write). Every target carries oer-s65, or is one of the four raw/s65 files or the Reports Reader policy change. Both roles allow permanence: oer-s65-rag eligible permanent, oer-s65-user1 active permanent. Prereq fixed before this run (vault only): $GroupSpec rows were flattened (unary comma added), and a stop now prints its stack.
+  ```text
+  [oer-s65] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: False; directory assignments exists: False; resource group Reader policy exists: False; state file exists: False.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager pre-flight sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Azure pre-flight: resource group oer-s65-rg does not exist yet; this run creates it after the directory objects.
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] No directory baseline files yet; this run captures both before its first write.
+  What if: Performing the operation "Write the policy baseline: the raw Microsoft Graph v1.0 rules of both directory-role policies, which -Teardown restores" on target "<Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json".
+  What if: Performing the operation "Write the assignment baseline: the direct eligible and active assignments of both directory roles, which -Teardown verifies and restores" on target "<Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "oer-s65-user1@<test domain>".
+  What if: Performing the operation "Create a DISABLED test user with a random, unprinted password" on target "oer-s65-user2@<test domain>".
+  What if: Performing the operation "Create a ROLE-ASSIGNABLE security group (isAssignableToRole true, which can be set only when a group is created)" on target "oer-s65-rag".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-pim-untouched".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-pim-policy".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-pim-elig".
+  What if: Performing the operation "Create a DYNAMIC security group that is NOT role-assignable (membershipRule (user.department -eq "oer-s65-none"), which matches no user; processing On) -- a group PIM for Groups cannot manage" on target "oer-s65-pim-dynamic".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-rename-old".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-conflict-a".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-conflict-b".
+  What if: Performing the operation "Create a security group that is NOT role-assignable" on target "oer-s65-catres-old".
+  What if: Performing the operation "Add member 'oer-s65-user2@<test domain>'" on target "oer-s65-rag".
+  What if: Performing the operation "Create an entitlement management catalog (userManaged, not externally visible; Microsoft Graph v1.0 POST catalogs)" on target "oer-s65-catalog".
+  What if: Performing the operation "Add the group to the catalog as a resource (Microsoft Graph v1.0 resourceRequests, adminAdd, originSystem AadGroup)" on target "group oer-s65-catres-old as a resource of catalog oer-s65-catalog".
+  What if: Performing the operation "Create a hidden access package in catalog oer-s65-catalog, with no assignment policy (Microsoft Graph v1.0 POST accessPackages)" on target "oer-s65-ap".
+  What if: Performing the operation "Bind the resource role to the access package (Microsoft Graph v1.0 POST accessPackages/<id>/resourceRoleScopes)" on target "role Member of group oer-s65-catres-old in access package oer-s65-ap".
+  What if: Performing the operation "Change the PIM-for-Groups MEMBER policy once: rule Expiration_EndUser_Assignment, maximumDuration PT4H (Microsoft Graph beta PATCH) -- this onboards the group to PIM for Groups, which cannot be undone" on target "oer-s65-pim-policy".
+  What if: Performing the operation "Request a time-bound (P5D) PIM-for-Groups MEMBER eligibility (Microsoft Graph beta eligibilityScheduleRequests, adminAssign) -- this onboards the group to PIM for Groups, which cannot be undone" on target "member eligibility of oer-s65-user1@<test domain> in oer-s65-pim-elig".
+  What if: Performing the operation "Set rule Expiration_EndUser_Assignment maximumDuration PT3H (Microsoft Graph v1.0 PATCH; -Teardown restores the rule from the policy baseline)" on target "PIM policy of directory role 'Reports Reader'".
+  [oer-s65] Directory role 'Reports Reader': permanent eligibility allowed by its policy: True; so the eligible assignment of oer-s65-rag is permanent.
+  [oer-s65] Directory role 'Message Center Reader': permanent active assignment allowed by its policy: True; so the active assignment of oer-s65-user1@<test domain> is permanent.
+  What if: Performing the operation "Request an ELIGIBLE, time-bound P5D assignment (Microsoft Graph v1.0 roleEligibilityScheduleRequests, adminAssign)" on target "eligible directory role 'Reports Reader' for oer-s65-user1@<test domain> at directory scope '/'".
+  What if: Performing the operation "Request an ELIGIBLE, permanent assignment (Microsoft Graph v1.0 roleEligibilityScheduleRequests, adminAssign)" on target "eligible directory role 'Reports Reader' for oer-s65-rag at directory scope '/'".
+  What if: Performing the operation "Request an ACTIVE, time-bound P2D assignment (Microsoft Graph v1.0 roleAssignmentScheduleRequests, adminAssign)" on target "active directory role 'Message Center Reader' for oer-s65-rag at directory scope '/'".
+  What if: Performing the operation "Request an ACTIVE, permanent assignment (Microsoft Graph v1.0 roleAssignmentScheduleRequests, adminAssign)" on target "active directory role 'Message Center Reader' for oer-s65-user1@<test domain> at directory scope '/'".
+  What if: Performing the operation "Write the state file: the object ids of the test objects (Microsoft Graph), which -Teardown uses to find a renamed group" on target "<Repo>\docs\live-verification\raw\s65\prereq-state.json".
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  What if: Performing the operation "Create the resource group (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s65)')" on target "resource group oer-s65-rg in the test subscription".
+  What if: Performing the operation "Write the resource group Reader policy baseline: the raw Azure Resource Manager rules of the Reader policy of oer-s65-rg, which -Teardown restores before it deletes the resource group" on target "<Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json".
+  [oer-s65] Resource group Reader policy residue check: not run (WhatIf: the resource group does not exist yet).
+  What if: Performing the operation "Request an ELIGIBLE, time-bound (P30D) assignment (Azure Resource Manager roleEligibilityScheduleRequests, AdminAssign)" on target "eligible Azure role 'Reader' for oer-s65-user1@<test domain> at resource group oer-s65-rg".
+  What if: Performing the operation "Write the state file: the object ids of the test objects (Azure), which -Teardown uses to find a renamed group" on target "<Repo>\docs\live-verification\raw\s65\prereq-state.json".
+  [oer-s65] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                                           Name                                                                                        Id
+  ----                                           ----                                                                                        --
+  user                                           oer-s65-user1@<test domain>                                                       (none -- not created)
+  user                                           oer-s65-user2@<test domain>                                                       (none -- not created)
+  group                                          oer-s65-rag                                                                                 (none -- not created)
+  group                                          oer-s65-pim-untouched                                                                       (none -- not created)
+  group                                          oer-s65-pim-policy                                                                          (none -- not created)
+  group                                          oer-s65-pim-elig                                                                            (none -- not created)
+  group                                          oer-s65-pim-dynamic                                                                         (none -- not created)
+  group                                          oer-s65-rename-old                                                                          (none -- not created)
+  group                                          oer-s65-conflict-a                                                                          (none -- not created)
+  group                                          oer-s65-conflict-b                                                                          (none -- not created)
+  group                                          oer-s65-catres-old                                                                          (none -- not created)
+  group member                                   oer-s65-rag <- oer-s65-user2@<test domain>                                        (none -- not created)
+  directory role (built-in, fixed)               Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy                          Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)               Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy                          Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  directory policy change                        Reports Reader activation maximum PT3H (not set (WhatIf))                                   -
+  PIM for Groups member policy                   oer-s65-pim-policy (Expiration_EndUser_Assignment PT4H)                                     (none -- not created)
+  PIM for Groups eligibility                     oer-s65-pim-elig <- oer-s65-user1@<test domain> (member, P5D)                     (none -- not created)
+  resource group                                 oer-s65-rg                                                                                  (none -- not created)
+  Azure role (built-in, fixed)                   Reader                                                                                      /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000005
+  resource group Reader policy                   oer-s65-rg                                                                                  (none -- not created)
+  catalog                                        oer-s65-catalog                                                                             (none -- not created)
+  catalog resource (group)                       oer-s65-catres-old in oer-s65-catalog                                                       (none -- not created)
+  access package                                 oer-s65-ap (hidden, no policy)                                                              (none -- not created)
+  access package resource role                   Member of oer-s65-catres-old in oer-s65-ap                                                  (none -- not created)
+  Azure eligibility (schedule)                   Reader at oer-s65-rg <- oer-s65-user1@<test domain> (P30D)                        (none -- not created)
+  policy baseline (not written (WhatIf))         <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json    -
+  assignment baseline (not written (WhatIf))     <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json -
+  resource group baseline (not written (WhatIf)) <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json      -
+  state file (not written (WhatIf))              <Repo>\docs\live-verification\raw\s65\prereq-state.json                   -
+  [oer-s65] WhatIf: nothing was created, restored, removed or written.
+  [oer-s65] Done.
+  ```
 
-- [ ] **0.3 The prerequisite script ran, every test object exists, and the four files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
+- [x] **0.3 The prerequisite script ran, every test object exists, and the four files are written.** Paste its output and summary, redacted per the rules at the top, then run the read-only block below.
 
   ```powershell
   foreach ($P in $BaselinePath, $AssignmentBaselinePath, $RgBaselinePath, $StatePath) {
@@ -1228,9 +1428,126 @@ SDK has expired: sign in again.
   beyond the resource group; record it; a `403` or
   `Authorization_RequestDenied` anywhere -- name the permission (Setup); an assignment baseline that
   is not empty -- someone held a role before this run (the script should have refused: record it).
-  **Result:**
+  **Result:** PASS. One Unattended line; both baselines written BEFORE the first write (17 + 17 rules; assignments eligible 0, active 0 twice); every object created; two retries after a 404 / ResourceNotFoundInOriginSystem on objects created seconds earlier (replication delay); the catalog resource request state delivered; Reports Reader activation maximum was PT1H, now PT3H; both roles allow permanence (oer-s65-rag eligible permanent, oer-s65-user1 active permanent); every assignment Provisioned; resource group residue clean: True before its baseline; Azure eligibility Provisioned. The block: four files True, state file with 9 groups and the four check 5.5 ids.
+  ```text
+  [oer-s65] Mode: CREATE or complete. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: False; directory assignments exists: False; resource group Reader policy exists: False; state file exists: False.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager pre-flight sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager pre-flight sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Azure pre-flight: resource group oer-s65-rg does not exist yet; this run creates it after the directory objects.
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] No directory baseline files yet; this run captures both before its first write.
+  [oer-s65] Wrote the policy baseline (17 + 17 rules): <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json
+  [oer-s65] Wrote the assignment baseline (Reports Reader: eligible 0, active 0; Message Center Reader: eligible 0, active 0): <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json
+  [oer-s65] Created user oer-s65-user1@<test domain> (disabled).
+  [oer-s65] Created user oer-s65-user2@<test domain> (disabled).
+  [oer-s65] Created group oer-s65-rag (role-assignable).
+  [oer-s65] Created group oer-s65-pim-untouched.
+  [oer-s65] Created group oer-s65-pim-policy.
+  [oer-s65] Created group oer-s65-pim-elig.
+  [oer-s65] Created group oer-s65-pim-dynamic (dynamic).
+  [oer-s65] Created group oer-s65-rename-old.
+  [oer-s65] Created group oer-s65-conflict-a.
+  [oer-s65] Created group oer-s65-conflict-b.
+  [oer-s65] Created group oer-s65-catres-old.
+  [oer-s65] Adding oer-s65-user2@<test domain> to oer-s65-rag failed (attempt 1 of 6, likely replication delay): Microsoft Graph answered 404 to POST v1.0/groups/<id>/members/$ref: Request_ResourceNotFound -- Resource '<id>' does not exist or one of its queried reference-property objects are not present. -- retrying in 5 s.
+  [oer-s65] Added oer-s65-user2@<test domain> to oer-s65-rag.
+  [oer-s65] Created catalog oer-s65-catalog.
+  [oer-s65] Adding oer-s65-catres-old to oer-s65-catalog failed (attempt 1 of 6, likely replication delay): Microsoft Graph answered 400 to POST v1.0/identityGovernance/entitlementManagement/resourceRequests: ResourceNotFoundInOriginSystem -- "Resource '<id>' does not exist or one of its queried reference-property objects are not present.","details" -- retrying in 5 s.
+  [oer-s65] Added group oer-s65-catres-old to catalog oer-s65-catalog as a resource: delivered.
+  [oer-s65] Created access package oer-s65-ap in catalog oer-s65-catalog.
+  [oer-s65] Bound the role Member of group oer-s65-catres-old to access package oer-s65-ap.
+  [oer-s65] PIM for Groups: changed the member policy of oer-s65-pim-policy (Expiration_EndUser_Assignment maximumDuration PT4H); this onboarded the group.
+  [oer-s65] PIM for Groups: requested a time-bound (P5D) member eligibility of oer-s65-user1@<test domain> in oer-s65-pim-elig: Provisioned; this onboarded the group.
+  [oer-s65] Directory role 'Reports Reader': set Expiration_EndUser_Assignment maximumDuration PT3H (activation maximum 3 hours; it was PT1H).
+  [oer-s65] Directory role 'Reports Reader': permanent eligibility allowed by its policy: True; so the eligible assignment of oer-s65-rag is permanent.
+  [oer-s65] Directory role 'Message Center Reader': permanent active assignment allowed by its policy: True; so the active assignment of oer-s65-user1@<test domain> is permanent.
+  [oer-s65] Requested the eligible 'Reports Reader' assignment of oer-s65-user1@<test domain> (time-bound P5D): Provisioned.
+  [oer-s65] Requested the eligible 'Reports Reader' assignment of oer-s65-rag (permanent): Provisioned.
+  [oer-s65] Requested the active 'Message Center Reader' assignment of oer-s65-rag (time-bound P2D): Provisioned.
+  [oer-s65] Requested the active 'Message Center Reader' assignment of oer-s65-user1@<test domain> (permanent): Provisioned.
+  [oer-s65] Wrote the state file (Microsoft Graph): <Repo>\docs\live-verification\raw\s65\prereq-state.json
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Created resource group oer-s65-rg in location 'swedencentral'.
+  [oer-s65] The 'Reader' policy listed at oer-s65-rg is the resource group's own: True
+  [oer-s65] Resource group Reader policy residue check: approval required False, approvers 0; clean: True
+  [oer-s65] Wrote the resource group Reader policy baseline (17 rules): <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json
+  [oer-s65] Requested the eligible Azure role 'Reader' for oer-s65-user1@<test domain> at resource group oer-s65-rg (time-bound P30D): Provisioned.
+  [oer-s65] Wrote the state file (Azure): <Repo>\docs\live-verification\raw\s65\prereq-state.json
+  [oer-s65] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                                          Name                                                                                           Id
+  ----                                          ----                                                                                           --
+  user                                          oer-s65-user1@<test domain>                                                          00000000-0000-0000-0000-000000000006
+  user                                          oer-s65-user2@<test domain>                                                          00000000-0000-0000-0000-000000000007
+  group                                         oer-s65-rag                                                                                    00000000-0000-0000-0000-000000000008
+  group                                         oer-s65-pim-untouched                                                                          00000000-0000-0000-0000-000000000009
+  group                                         oer-s65-pim-policy                                                                             00000000-0000-0000-0000-000000000010
+  group                                         oer-s65-pim-elig                                                                               00000000-0000-0000-0000-000000000011
+  group                                         oer-s65-pim-dynamic                                                                            00000000-0000-0000-0000-000000000012
+  group                                         oer-s65-rename-old                                                                             00000000-0000-0000-0000-000000000013
+  group                                         oer-s65-conflict-a                                                                             00000000-0000-0000-0000-000000000014
+  group                                         oer-s65-conflict-b                                                                             00000000-0000-0000-0000-000000000015
+  group                                         oer-s65-catres-old                                                                             00000000-0000-0000-0000-000000000016
+  group member                                  oer-s65-rag <- oer-s65-user2@<test domain>                                           00000000-0000-0000-0000-000000000007
+  directory role (built-in, fixed)              Reports Reader                                                                                 00000000-0000-0000-0000-000000000001
+  directory role policy                         Reports Reader                                                                                 DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed)              Message Center Reader                                                                          00000000-0000-0000-0000-000000000003
+  directory role policy                         Message Center Reader                                                                          DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  directory policy change                       Reports Reader activation maximum PT3H (set by this run)                                       -
+  directory assignment (schedule)               eligible 'Reports Reader' assignment of oer-s65-user1@<test domain> (time-bound P5D) 00000000-0000-0000-0000-000000000017
+  directory assignment (schedule)               eligible 'Reports Reader' assignment of oer-s65-rag (permanent)                                00000000-0000-0000-0000-000000000018
+  directory assignment (schedule)               active 'Message Center Reader' assignment of oer-s65-rag (time-bound P2D)                      00000000-0000-0000-0000-000000000019
+  directory assignment (schedule)               active 'Message Center Reader' assignment of oer-s65-user1@<test domain> (permanent) 00000000-0000-0000-0000-000000000020
+  PIM for Groups member policy                  oer-s65-pim-policy (Expiration_EndUser_Assignment PT4H)                                        Group_00000000-0000-0000-0000-000000000010_00000000-0000-0000-0000-000000000021
+  PIM for Groups eligibility                    oer-s65-pim-elig <- oer-s65-user1@<test domain> (member, P5D)                        00000000-0000-0000-0000-000000000011_member_00000000-0000-0000-0000-000000000022
+  resource group                                oer-s65-rg                                                                                     /subscriptions/<SubId>/resourceGroups/oer-s65-rg
+  Azure role (built-in, fixed)                  Reader                                                                                         /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000005
+  resource group Reader policy                  oer-s65-rg                                                                                     /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000005
+  catalog                                       oer-s65-catalog                                                                                00000000-0000-0000-0000-000000000023
+  catalog resource (group)                      oer-s65-catres-old in oer-s65-catalog                                                          00000000-0000-0000-0000-000000000024
+  access package                                oer-s65-ap (hidden, no policy)                                                                 00000000-0000-0000-0000-000000000025
+  access package resource role                  Member of oer-s65-catres-old in oer-s65-ap                                                     00000000-0000-0000-0000-000000000026_00000000-0000-0000-0000-000000000027
+  Azure eligibility (schedule)                  Reader at oer-s65-rg <- oer-s65-user1@<test domain> (P30D)                           /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleEligibilitySchedules/00000000-0000-0000-0000-000000000028
+  policy baseline (written by this run)         <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json       -
+  assignment baseline (written by this run)     <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json    -
+  resource group baseline (written by this run) <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json         -
+  state file (written by this run)              <Repo>\docs\live-verification\raw\s65\prereq-state.json                      -
+  [oer-s65] Done.
+  --- the read-only block:
+  baseline-directory-policies.json: exists True; written 2026-09-30T21:27:00
+  baseline-directory-assignments.json: exists True; written 2026-09-30T21:27:00
+  baseline-rg-reader-policy.json: exists True; written 2026-09-30T21:27:40
+  prereq-state.json: exists True; written 2026-09-30T21:27:46
+  policy baseline: Reports Reader: 17 rules; policyId recorded True
+  policy baseline: Message Center Reader: 17 rules; policyId recorded True
+  assignment baseline: Reports Reader: eligible 0, active 0
+  assignment baseline: Message Center Reader: eligible 0, active 0
+  resource group baseline: scope is oer-s65-rg True; role Reader; 17 rules; the policy lies under the resource group True
+  state file: prefix oer-s65; written after Azure; users 2; groups 9 (rag, pimuntouched, pimpolicy, pimelig, pimdynamic, rename, conflicta, conflictb, catres); resource group recorded as existing True; Azure eligibility recorded True
+  state file, check 5.5: catalog recorded True; catalog resource recorded True; access package recorded True; resource role binding recorded True
+  ```
 
-- [ ] **0.4 The identity check, and no Azure Resource Manager token yet.** Read-only. Paste the two identity lines the sign-in block printed, then run:
+- [x] **0.4 The identity check, and no Azure Resource Manager token yet.** Read-only. Paste the two identity lines the sign-in block printed, then run:
 
   ```powershell
   $S65SignedIn = & (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }
@@ -1244,9 +1561,15 @@ SDK has expired: sign in again.
   `-IncludeARM`; nothing before 2.3 needs Azure.
   **Failure looks like:** a `False` identity line -- stop. An ARM token `True`: the sign-in block was
   changed; sign in again as given.
-  **Result:**
+  **Result:** PASS. Both identity lines True; the signed-in object id is oer-live-cc's service principal: True; no Azure Resource Manager token: False.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  the module's signed-in object id is oer-live-cc's service principal: True
+  the session holds an Azure Resource Manager token: False
+  ```
 
-- [ ] **0.5 Record the object ids every later check compares against, and the objects' shape.** Read-only. The ids come from the state file and are each read back from Microsoft Graph by id, so this block gives the same answer before and after section 5 renames a group.
+- [x] **0.5 Record the object ids every later check compares against, and the objects' shape.** Read-only. The ids come from the state file and are each read back from Microsoft Graph by id, so this block gives the same answer before and after section 5 renames a group.
 
   ```powershell
   $ST = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable
@@ -1289,7 +1612,25 @@ SDK has expired: sign in again.
   **Failure looks like:** a status other than 200, an enabled user, a group of the wrong shape or with
   a member it should not have, or a count off -- the prerequisite run did not finish: read its output
   again. A 403 is a missing permission (Stop conditions).
-  **Result:**
+  **Result:** PASS. Both users 200 and disabled; oer-s65-rag role-assignable with oer-s65-user2 only; the eight other groups under their setup names, isAssignableToRole null (prints ''), no members; the dynamic group dynamic with its rule, processing On; catalog not externally visible; access package hidden, in the catalog; ids read 16 of 16, all different; policy ids True True, different.
+  ```text
+  <oer-s65-user1>: status 200; user principal name as expected True; enabled False
+  <oer-s65-user2>: status 200; user principal name as expected True; enabled False
+  --- 0.5-oer-s65-rag: group <oer-s65-rag>: displayName 'oer-s65-rag'; description 'Omnicit.EntraRBAC live verification: role-assignable; its only member is oer-s65-user2.'; isAssignableToRole 'True'; securityEnabled True; members [oer-s65-user2]
+  --- 0.5-oer-s65-pim-untouched: group <oer-s65-pim-untouched>: displayName 'oer-s65-pim-untouched'; description 'Omnicit.EntraRBAC live verification: nothing PIM is ever done to this group (check 1, not in use).'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-pim-policy: group <oer-s65-pim-policy>: displayName 'oer-s65-pim-policy'; description 'Omnicit.EntraRBAC live verification: its PIM-for-Groups member policy is changed once (check 1, in use by a modified policy).'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-pim-elig: group <oer-s65-pim-elig>: displayName 'oer-s65-pim-elig'; description 'Omnicit.EntraRBAC live verification: one time-bound PIM-for-Groups member eligibility (check 1, in use by eligibility).'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-pim-dynamic: group <oer-s65-pim-dynamic>: displayName 'oer-s65-pim-dynamic'; description 'Omnicit.EntraRBAC live verification: a dynamic group PIM for Groups cannot manage; its rule matches no user (check 1.5).'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-rename-group: group <oer-s65-rename-group>: displayName 'oer-s65-rename-old'; description 'Omnicit.EntraRBAC live verification: renamed by check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-conflict-a: group <oer-s65-conflict-a>: displayName 'oer-s65-conflict-a'; description 'Omnicit.EntraRBAC live verification: the previous name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-conflict-b: group <oer-s65-conflict-b>: displayName 'oer-s65-conflict-b'; description 'Omnicit.EntraRBAC live verification: the new name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  --- 0.5-oer-s65-catres-group: group <oer-s65-catres-group>: displayName 'oer-s65-catres-old'; description 'Omnicit.EntraRBAC live verification: a resource of catalog oer-s65-catalog with its Member role in access package oer-s65-ap; renamed by check 5.5.'; isAssignableToRole ''; securityEnabled True; members []
+  0.5 <oer-s65-catalog>: status 200; displayName 'oer-s65-catalog'; externally visible False
+  0.5 <oer-s65-ap>: status 200; displayName 'oer-s65-ap'; hidden True; in catalog <oer-s65-catalog>
+  0.5 oer-s65-pim-dynamic: status 200; dynamic True; rule as set True; processing On
+  ids read: 16 of 16; all different: True
+  policy ids read: True True; different: True
+  ```
 
 ---
 
@@ -1310,7 +1651,7 @@ not measure:** a group used only through PIM ACTIVE assignments, with untouched 
 "not in use" by design (the documented blind spot); the certificate identity can no longer create an
 active group assignment, so it is not run live ("What this file does not check").
 
-- [ ] **1.1 The independent read: Graph's own policy fields and eligibility, per group.** Read-only, outside the module.
+- [x] **1.1 The independent read: Graph's own policy fields and eligibility, per group.** Read-only, outside the module.
 
   ```powershell
   $P11U = Get-S65RawGroupPim -GroupId $IdPimUntouched -Label '1.1-untouched'
@@ -1334,9 +1675,23 @@ active group assignment, so it is not run live ("What this file does not check")
   shows no modification, so the criterion's policy half does not work on groups: record it, it is a
   finding against R1; `oer-s65-pim-elig` with eligibility `0` -- the prerequisite request did not
   land; a 403 on any read -- a missing permission.
-  **Result:**
+  **Result:** PASS -- the criterion measured against Graph. oer-s65-pim-untouched: listing 200, two policies (member, owner), every field False, eligibility 0. oer-s65-pim-policy: member policy lastModifiedDateTime True, lastModifiedBy.id FALSE, lastModifiedBy.displayName True (a modified GROUP policy carries a date and a name but no id -- the same shape Learn shows for a modified directory policy); owner policy all False; eligibility 0. oer-s65-pim-elig: eligibility schedules 1, instances 1, and NO policy field set: an eligibility request that onboards a group does NOT stamp its policies (answer to the open question; the eligibility half of R1 is what catches this group).
+  ```text
+  --- 1.1-untouched: <oer-s65-pim-untouched>: policy listing status 200 ; policies 2; assignment listing status 200 
+      policy (owner): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+      policy (member): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+  --- 1.1-untouched: any policy modified: False; eligibility schedules: 0; eligibility schedule instances: 0
+  --- 1.1-policy: <oer-s65-pim-policy>: policy listing status 200 ; policies 2; assignment listing status 200 
+      policy (member): lastModifiedDateTime set True; lastModifiedBy.id set False; lastModifiedBy.displayName set True
+      policy (owner): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+  --- 1.1-policy: any policy modified: True; eligibility schedules: 0; eligibility schedule instances: 0
+  --- 1.1-elig: <oer-s65-pim-elig>: policy listing status 200 ; policies 2; assignment listing status 200 
+      policy (member): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+      policy (owner): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+  --- 1.1-elig: any policy modified: False; eligibility schedules: 1; eligibility schedule instances: 1
+  ```
 
-- [ ] **1.2 `Test-OERGroupPimInUse` per group.** Read-only; the helper runs in the module's scope, with the eligibility count 1.1 read for the group, exactly as `Get-OERInventory` passes it.
+- [x] **1.2 `Test-OERGroupPimInUse` per group.** Read-only; the helper runs in the module's scope, with the eligibility count 1.1 read for the group, exactly as `Get-OERInventory` passes it.
 
   ```powershell
   $M = Get-Module Omnicit.EntraRBAC
@@ -1369,9 +1724,15 @@ active group assignment, so it is not run live ("What this file does not check")
   **Failure looks like:** any other `InUse` in the first three lines -- the criterion is wrong for that
   case: record 1.1's fields beside it, it is a defect; a `THREW` line -- a listing answered something
   other than 200 or 404 (a 403 is a missing permission).
-  **Result:**
+  **Result:** PASS. untouched InUse False (no modified policy, no eligibility); policy InUse True (modified policy); elig InUse True (eligibility). Data line: oer-s65-pim-elig on its policies alone InUse False, equal to 1.1's any policy modified False.
+  ```text
+  oer-s65-pim-untouched (eligibility count 0): InUse False; Reason: no PIM policy of the group has been modified and no PIM eligibility was counted
+  oer-s65-pim-policy (eligibility count 0): InUse True; Reason: a PIM policy of the group has been modified
+  oer-s65-pim-elig (eligibility count 1): InUse True; Reason: the group has PIM eligibility
+  oer-s65-pim-elig on its policies alone (eligibility count 0; data, not pass/fail): InUse False; Reason: no PIM policy of the group has been modified and no PIM eligibility was counted
+  ```
 
-- [ ] **1.3 The export follows the criterion: `pimPolicy` for the two groups in use only, and the untouched and the dynamic group each cost one PIM listing and no policy read.** Read-only.
+- [x] **1.3 The export follows the criterion: `pimPolicy` for the two groups in use only, and the untouched and the dynamic group each cost one PIM listing and no policy read.** Read-only.
 
   ```powershell
   Invoke-S65Call -Cmdlet Get-OERInventory -Splat @{ Include = 'Groups'; GroupFilter = "startswith(displayName,'$Pim')" } -Label '1.3 the four oer-s65-pim groups'
@@ -1412,9 +1773,59 @@ active group assignment, so it is not run live ("What this file does not check")
   with a `Could not determine whether group ...` cause is the defect the fix "treat a group PIM for
   Groups cannot manage as not using it" exists for: Graph answered the dynamic group's listing with a
   code the criterion does not declare -- record it with 1.5's raw answer.
-  **Result:**
+  **Result:** PASS. untouched: pimPolicy absent, 1 eligibility read, 1 criterion listing, 0 policy-assignment listings, 0 rule reads, verbose reason as 1.2. policy: pimPolicy present (member activationMaxHours 4), 1/1/4/2. elig: pimPolicy present (member activationMaxHours 8), 1/0/4/2 -- its eligibility decides without a listing. dynamic: pimPolicy absent, 1/1/0/0, verbose "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". Rule reads in all 4; the per-group split works (policy ids read Group_<group id>_<id>). No warning, no error, no InventoryPartial.
+  ```text
+  === 1.3 the four oer-s65-pim groups -- Get-OERInventory
+  --- requests, in the order sent: 29 (GET=28, POST=1)
+      GET v1.0/groups?$filter=startswith(displayName,'oer-s65-pim')
+      GET v1.0/groups/<oer-s65-pim-dynamic>/members
+      GET v1.0/groups/<oer-s65-pim-dynamic>/owners
+      GET beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter=groupId eq '<oer-s65-pim-dynamic>'
+      GET v1.0/groups/<oer-s65-pim-elig>/members
+      GET v1.0/groups/<oer-s65-pim-elig>/owners
+      GET beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter=groupId eq '<oer-s65-pim-elig>'
+      GET v1.0/groups/<oer-s65-pim-policy>/members
+      GET v1.0/groups/<oer-s65-pim-policy>/owners
+      GET beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter=groupId eq '<oer-s65-pim-policy>'
+      GET v1.0/groups/<oer-s65-pim-untouched>/members
+      GET v1.0/groups/<oer-s65-pim-untouched>/owners
+      GET beta/identityGovernance/privilegedAccess/group/eligibilityScheduleInstances?$filter=groupId eq '<oer-s65-pim-untouched>'
+      GET beta/policies/roleManagementPolicies?$filter=scopeId eq '<oer-s65-pim-dynamic>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy
+      POST v1.0/directoryObjects/getByIds
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-elig>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-elig>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-elig>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicies/Group_<oer-s65-pim-elig>_<not a test object>/rules
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-elig>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicies/Group_<oer-s65-pim-elig>_<not a test object>/rules
+      GET beta/policies/roleManagementPolicies?$filter=scopeId eq '<oer-s65-pim-policy>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-policy>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-policy>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-policy>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicies/Group_<oer-s65-pim-policy>_<not a test object>/rules
+      GET beta/policies/roleManagementPolicyAssignments?$filter=scopeId eq '<oer-s65-pim-policy>' and scopeType eq 'Group'
+      GET beta/policies/roleManagementPolicies/Group_<oer-s65-pim-policy>_<not a test object>/rules
+      GET beta/policies/roleManagementPolicies?$filter=scopeId eq '<oer-s65-pim-untouched>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy
+  --- the cmdlet's own verbose lines: 8
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      Get-OERInventory: group 'oer-s65-pim-dynamic': pimPolicy not exported -- PIM for Groups cannot manage the group (ResourceTypeNotSupported).
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      Get-OERInventory: group 'oer-s65-pim-untouched': pimPolicy not exported -- no PIM policy of the group has been modified and no PIM eligibility was counted.
+  --- warnings: 0
+  --- errors published by Get-OERInventory: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  oer-s65-pim-untouched: in the inventory 1; pimPolicy present False (member activationMaxHours -); requests: eligibility read 1, criterion listing 1, policy-assignment listings 0, rule reads 0
+  oer-s65-pim-policy: in the inventory 1; pimPolicy present True (member activationMaxHours 4); requests: eligibility read 1, criterion listing 1, policy-assignment listings 4, rule reads 2
+  oer-s65-pim-elig: in the inventory 1; pimPolicy present True (member activationMaxHours 8); requests: eligibility read 1, criterion listing 0, policy-assignment listings 4, rule reads 2
+  oer-s65-pim-dynamic: in the inventory 1; pimPolicy present False (member activationMaxHours -); requests: eligibility read 1, criterion listing 1, policy-assignment listings 0, rule reads 0
+  rule reads in all: 4
+  ```
 
-- [ ] **1.4 The onboarding warning, `-WhatIf` ONLY: a changed `pimPolicy` for the untouched group warns, for the modified one it does not, and nothing is written.** Never run these two documents without `-WhatIf` -- `Invoke-S65Check` without `-Apply` IS `-WhatIf`.
+- [x] **1.4 The onboarding warning, `-WhatIf` ONLY: a changed `pimPolicy` for the untouched group warns, for the modified one it does not, and nothing is written.** Never run these two documents without `-WhatIf` -- `Invoke-S65Check` without `-Apply` IS `-WhatIf`.
 
   ```powershell
   $Doc14a = New-S65Doc -Group ([ordered]@{ displayName = "$Pim-untouched"; pimPolicy = [ordered]@{ member = [ordered]@{ activationMaxHours = 2 } } })
@@ -1444,9 +1855,66 @@ active group assignment, so it is not run live ("What this file does not check")
   criterion said "in use"; a warning in 1.4b -- the criterion missed the modified policy; any row
   `Updated`, or `1.4-untouched-after` with a field `True` -- the plan WROTE: stop, the untouched
   group is onboarded and section 1's measurement is spent; record it.
-  **Result:**
+  **Result:** PASS (-WhatIf only). 1.4a: What if Set PIM policy (member) on oer-s65-pim-untouched, exactly ONE warning "was not found to use PIM for Groups (no PIM policy ... counted); applying its pimPolicy onboards it ...", rows Unchanged + Skipped would set pimPolicy. 1.4b: the What if line, NO warning, same two rows. 1.4-untouched-after: all fields False, eligibility 0 -- nothing written. Also recorded: the offline validator adds its step 1 Warning for the omitted members key (Valid True), which the Expect did not name.
+  ```text
+  === 1.4a
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-pim-untouched",
+            "pimPolicy": {
+              "member": {
+                "activationMaxHours": 2
+              }
+            }
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  What if: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s65-pim-untouched".
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureGroup: group 'oer-s65-pim-untouched' was not found to use PIM for Groups (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups').
+  --- errors: 0
+  --- results, in the order returned: 2
+      [groups] oer-s65-pim-untouched | Unchanged | group properties match
+      [groups] oer-s65-pim-untouched | Skipped | would set pimPolicy (member): activationMaxHours=2
+  --- counts per section and action: groups, Skipped=1; groups, Unchanged=1
+  === 1.4b
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-pim-policy",
+            "pimPolicy": {
+              "member": {
+                "activationMaxHours": 2
+              }
+            }
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  What if: Performing the operation "Set PIM policy (member): activationMaxHours=2" on target "oer-s65-pim-policy".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 2
+      [groups] oer-s65-pim-policy | Unchanged | group properties match
+      [groups] oer-s65-pim-policy | Skipped | would set pimPolicy (member): activationMaxHours=2
+  --- counts per section and action: groups, Skipped=1; groups, Unchanged=1
+  --- 1.4-untouched-after: <oer-s65-pim-untouched>: policy listing status 200 ; policies 2; assignment listing status 200 
+      policy (owner): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+      policy (member): lastModifiedDateTime set False; lastModifiedBy.id set False; lastModifiedBy.displayName set False
+  --- 1.4-untouched-after: any policy modified: False; eligibility schedules: 0; eligibility schedule instances: 0
+  ```
 
-- [ ] **1.5 A dynamic group PIM for Groups cannot manage: Graph's raw answer on the criterion's listing, and the criterion's answer.** Read-only; nothing PIM is ever written to `oer-s65-pim-dynamic`.
+- [x] **1.5 A dynamic group PIM for Groups cannot manage: Graph's raw answer on the criterion's listing, and the criterion's answer.** Read-only; nothing PIM is ever written to `oer-s65-pim-dynamic`.
 
   ```powershell
   $P15 = Get-S65RawGroupPim -GroupId $IdPimDynamic -Label '1.5-dynamic'
@@ -1476,7 +1944,12 @@ active group assignment, so it is not run live ("What this file does not check")
   declare: record the status and code `1.5-dynamic` printed (it names the code), it is a defect of
   the fix for dynamic groups; `InUse True` -- a group PIM cannot manage shows a modified policy:
   record the fields; a 403 -- a missing permission (Stop conditions).
-  **Result:**
+  **Result:** PASS -- first measurement for a dynamic group: the criterion's listing answers 400 ResourceTypeNotSupported (as do the policy-assignment listing and both eligibility reads); the criterion: InUse False, Reason "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". 1.3 exported the group without pimPolicy and without InventoryPartial.
+  ```text
+  --- 1.5-dynamic: <oer-s65-pim-dynamic>: policy listing status 400 ResourceTypeNotSupported; policies 0; assignment listing status 400 ResourceTypeNotSupported
+  --- 1.5-dynamic: any policy modified: False; eligibility schedules: status 400 ResourceTypeNotSupported; eligibility schedule instances: status 400 ResourceTypeNotSupported
+  oer-s65-pim-dynamic (eligibility count 0): InUse False; Reason: PIM for Groups cannot manage the group (ResourceTypeNotSupported)
+  ```
 
 ---
 
@@ -1486,7 +1959,7 @@ Ruling R15: the spec's "checked against the portal" is done as an INDEPENDENT ra
 read -- the certificate identity has no portal, and the raw schedules are the same data the portal
 shows.
 
-- [ ] **2.1 `Get-OERInventory` exports exactly the `oer-s65` directory assignments Graph holds, and Reports Reader's policy with activation maximum 3.** Read-only.
+- [x] **2.1 `Get-OERInventory` exports exactly the `oer-s65` directory assignments Graph holds, and Reports Reader's policy with activation maximum 3.** Read-only.
 
   ```powershell
   Invoke-S65Call -Cmdlet Get-OERInventory -Splat @{ Include = 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments' } -Label '2.1 the two directory sections'
@@ -1539,9 +2012,40 @@ shows.
   than 3 for Reports Reader -- the prerequisite change did not land, or the projection is wrong
   (compare with `0.5-rr-policy-raw.json`); a `scope` or `id` key -- the directory projection kept a
   field it must not.
-  **Result:**
+  **Result:** PASS. One read each of both schedule lists, one getByIds, the policy list and the role-definition list; no warning, no error. Exactly four entries of the two roles: MCR oer-s65-rag Active durationDays 2; MCR oer-s65-user1 Active (none -- permanent, as 0.3 chose); RR oer-s65-rag Eligible (none -- permanent); RR oer-s65-user1 Eligible 5; no id; no entry for oer-s65-user2 (Graph listed NO inherited row for it at all); other roles naming oer-s65: 0. Policies: RR activationMaxHours 3, MCR 1, both allowPermanentEligibility True, eligibleDurationDays 365, allowPermanentActiveAssignment True, activeDurationDays 180, requireApproval False, no scope, no id. Raw vs export: 4 = 4, the same keys, only raw [] only exported []. Tenant totals: 56 assignment entries, 24 policy entries.
+  ```text
+  === 2.1 the two directory sections -- Get-OERInventory
+  --- requests, in the order sent: 5 (GET=4, POST=1)
+      GET v1.0/roleManagement/directory/roleEligibilitySchedules?$filter=directoryScopeId eq '/'&$expand=principal,roleDefinition
+      GET v1.0/roleManagement/directory/roleAssignmentSchedules?$filter=directoryScopeId eq '/'&$expand=principal,roleDefinition
+      POST v1.0/directoryObjects/getByIds
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole'&$expand=policy($expand=rules)
+      GET v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName
+  --- the cmdlet's own verbose lines: 4
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+  --- warnings: 0
+  --- errors published by Get-OERInventory: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  assignment entries: 56 in all, of the two roles 4; policy entries: 24 in all
+      entry: Message Center Reader | oer-s65-rag | Group | Active | durationDays 2 | id present False
+      entry: Message Center Reader | oer-s65-user1@<test domain> | User | Active | durationDays (none) | id present False
+      entry: Reports Reader | oer-s65-rag | Group | Eligible | durationDays (none) | id present False
+      entry: Reports Reader | oer-s65-user1@<test domain> | User | Eligible | durationDays 5 | id present False
+  entries of other roles naming an oer-s65 principal: 0
+      policy Message Center Reader: activationMaxHours 1; allowPermanentEligibility True; eligibleDurationDays 365; allowPermanentActiveAssignment True; activeDurationDays 180; requireApproval False; scope key False; id present False
+      policy Reports Reader: activationMaxHours 3; allowPermanentEligibility True; eligibleDurationDays 365; allowPermanentActiveAssignment True; activeDurationDays 180; requireApproval False; scope key False; id present False
+      raw: Reports Reader Eligible <oer-s65-rag> memberType Direct; scope /; assignmentType ; days never ends
+      raw: Reports Reader Eligible <oer-s65-user1> memberType Direct; scope /; assignmentType ; days 5
+      raw: Message Center Reader Active <oer-s65-rag> memberType Direct; scope /; assignmentType Assigned; days 2
+      raw: Message Center Reader Active <oer-s65-user1> memberType Direct; scope /; assignmentType Assigned; days never ends
+  managed raw rows of the two roles: 4; exported entries of the two roles: 4; the same (role, principal, principalType, assignmentType, durationDays): True
+  only raw: []; only exported: []
+  ```
 
-- [ ] **2.2 `-AllDirectoryRolePolicies` exports every role's policy: more than the default, and exactly as many as Graph lists.** Read-only.
+- [x] **2.2 `-AllDirectoryRolePolicies` exports every role's policy: more than the default, and exactly as many as Graph lists.** Read-only.
 
   ```powershell
   Invoke-S65Call -Cmdlet Get-OERInventory -Splat @{ Include = 'DirectoryRoleManagementPolicies'; AllDirectoryRolePolicies = $true } -Label '2.2 every directory role policy'
@@ -1562,9 +2066,24 @@ shows.
   page this list: record the page count from the requests); `more than the default: False` -- every
   directory role in the tenant is in use, which is implausible: record it; a schedule read -- the
   switch did not skip it.
-  **Result:**
+  **Result:** PASS. Only the policy list and the role-definition list; schedule reads 0; default 24, -AllDirectoryRolePolicies 145, raw policy assignments at / 145 -- more than the default True, equal to the raw count True.
+  ```text
+  === 2.2 every directory role policy -- Get-OERInventory
+  --- requests, in the order sent: 2 (GET=2)
+      GET v1.0/policies/roleManagementPolicyAssignments?$filter=scopeId eq '/' and scopeType eq 'DirectoryRole'&$expand=policy($expand=rules)
+      GET v1.0/roleManagement/directory/roleDefinitions?$select=id,displayName
+  --- the cmdlet's own verbose lines: 2
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+  --- warnings: 0
+  --- errors published by Get-OERInventory: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  policy entries: default (2.1) 24; -AllDirectoryRolePolicies 145; raw policy assignments at '/' 145 (status 200 )
+  more than the default: True; equal to the raw count: True
+  schedule reads in this call: 0
+  ```
 
-- [ ] **2.3 `Export-OERInventory` with its default `-Include`: both directory files, both sections in `inventory.json` without `id`, the summary counts, and `Test-OERStructure` Valid.** Signs in again WITH Azure Resource Manager: the default `-Include` has `RoleAssignments`, which walks Azure. Writes only under `raw/s65/`.
+- [x] **2.3 `Export-OERInventory` with its default `-Include`: both directory files, both sections in `inventory.json` without `id`, the summary counts, and `Test-OERStructure` Valid.** Signs in again WITH Azure Resource Manager: the default `-Include` has `RoleAssignments`, which walks Azure. Writes only under `raw/s65/`.
 
   ```powershell
   Connect-S65 -Arm
@@ -1611,7 +2130,92 @@ shows.
   permission is a stop condition; `groups/oer-s65-pim-dynamic/pimPolicy` is the dynamic-group defect
   of 1.3 and 1.5); an `InventoryPartial` naming a subscription -- the Azure walk could
   not read the test subscription: stop, sections 2 to 4 need it.
-  **Result:**
+  **Result:** PASS on every measured point, with two PRE-EXISTING findings recorded. ARM token True; all four files exist; inventory.json keys in the expected order; directoryRoleManagementPolicies 24 and directoryRoleAssignments 56, with id 0 and 0; per-area files equal the sections True True; summary counts equal True; the two roles' entries equal 2.1's True; Test-OERStructure Valid True, errors 0, warnings 0; AzurePimEligibility 2, ScopesEnumerated 1, ScopeCount 1, SkippedScopes [], SkippedEligibilityScopes [], IncompleteReads 0. BUT the -ErrorVariable collected 65 records and no InventoryPartial: (a) three access reviews of the tenant point at access packages and policies that were deleted -- Get-OERInventory falls back to the id (lines 1036/1043) but the nested cmdlets' error records still reach the caller (the error-record family of step 1); (b) the management-group listing is refused (AuthorizationFailed, as R14 expects) and the walk treats it silently as "no management groups": no InventoryPartial, no SkippedScopes -- a refused read taken as an empty fact (#76 family), outside this branch.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  the session holds an Azure Resource Manager token: True
+  warnings: 1
+      WARNING: Get-OERInventory: skipped 1 access review definition(s) that are not access-package-scoped. Only access-package reviews round-trip through Invoke-OERStructure; group, application and directory-role reviews are not captured.
+  errors: 65
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound,Get-OERAccessPackage]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound,Get-OERAccessPackageAssignmentPolicy]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound,Get-OERAccessPackage]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound,Get-OERAccessPackageAssignmentPolicy]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [AccessPackageNotFound,Get-OERAccessPackage]: AccessPackageNotFound: The access package was not found.
+      ERROR []: 
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest]: Response status code does not indicate success: NotFound (Not Found).
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound]: PolicyNotFound: The policy was not found.
+      ERROR []: 
+      ERROR [PolicyNotFound,Get-OERAccessPackageAssignmentPolicy]: PolicyNotFound: The policy was not found.
+      ERROR [AuthorizationFailed]: AuthorizationFailed: The client '<not a test object>' with object id '<oer-live-cc>' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+      ERROR [AuthorizationFailed]: AuthorizationFailed: The client '<not a test object>' with object id '<oer-live-cc>' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+      ERROR []: 
+      ERROR [AuthorizationFailed]: AuthorizationFailed: The client '<not a test object>' with object id '<oer-live-cc>' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+      ERROR [AuthorizationFailed,Get-OERManagementGroup]: AuthorizationFailed: The client '<not a test object>' with object id '<oer-live-cc>' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+  bundle: oer-inventory-<TenantId>-20260930-213232; files: inventory.json, groups.json, administrativeUnits.json, catalogs.json, accessPackages.json, accessReviews.json, directoryRoleManagementPolicies.json, directoryRoleAssignments.json, roleAssignments.json, roleManagementPolicies.json, groupsRoster.json, scopeHierarchy.json, azurePimEligibility.json, schema.json, rbac-architect-prompt.md, README.md
+  inventory.json exists: True
+  directoryRoleManagementPolicies.json exists: True
+  directoryRoleAssignments.json exists: True
+  azurePimEligibility.json exists: True
+  inventory.json keys: version, groups, administrativeUnits, catalogs, accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAssignments, roleAssignments, roleManagementPolicies
+  inventory.json directoryRoleManagementPolicies 24 (with id: 0); directoryRoleAssignments 56 (with id: 0)
+  per-area files equal the sections: policies True; assignments True
+  summary: DirectoryRoleManagementPolicies 24; DirectoryRoleAssignments 56; AzurePimEligibility 2; ScopesEnumerated 1; ScopeCount 1; SkippedScopes []; SkippedEligibilityScopes []; IncompleteReads 0
+  summary counts equal inventory.json: True
+  the two roles' assignment entries equal 2.1's: True
+  Test-OERStructure on inventory.json: Valid True; errors 0; warnings 0
+  ```
 
 ---
 
@@ -1622,7 +2226,7 @@ tenant, read-only); the real applies run on a document filtered to Reports Reade
 Reader. The documents are built from 2.3's `inventory.json`, read from disk again, so this section
 also runs from a reopened window.
 
-- [ ] **3.1 Every directory role, `-WhatIf` only: every row `Unchanged`.**
+- [x] **3.1 Every directory role, `-WhatIf` only: every row `Unchanged`.**
 
   ```powershell
   $B23Path = (Get-ChildItem -LiteralPath (Join-Path $Raw 'export-2.3') -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
@@ -1640,9 +2244,24 @@ also runs from a reopened window.
   create`, `Extra` or `Failed`: **STOP**. The export does not converge on this tenant for that entry
   (it is printed; a `What if:` line above it names the principal as it stands -- redact it). Record
   the row; do not run 3.2's real apply until it is understood.
-  **Result:**
+  **Result:** PASS (-WhatIf only). The full export's two directory sections of EVERY role: Valid True, no warning, no error, no What if line; all 80 rows Unchanged -- directoryRoleManagementPolicies Unchanged=24, directoryRoleAssignments Unchanged=56 (2.3's counts); the six rows of the two roles shown.
+  ```text
+  === 3.1
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 80 (shown: 6 -- the two roles, and every row that is not Unchanged)
+      [directoryRoleManagementPolicies] Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-user1@<test domain> (Eligible) | Unchanged | assignment matches
+  --- counts per section and action: directoryRoleAssignments, Unchanged=56; directoryRoleManagementPolicies, Unchanged=24
+  ```
 
-- [ ] **3.2 The two roles: the plan all `Unchanged`, the real run all `Unchanged` with no write request, and a second real run the same.**
+- [x] **3.2 The two roles: the plan all `Unchanged`, the real run all `Unchanged` with no write request, and a second real run the same.**
 
   ```powershell
   $Two = { param($Entries) @($Entries | Where-Object { $_.role -in $RoleRR, $RoleMCR }) }
@@ -1670,9 +2289,240 @@ also runs from a reopened window.
   PATCH, PUT or DELETE in 3.2b or 3.2c -- the engine wrote although every row was `Unchanged`:
   record the request, it is a defect; 3.2c different from 3.2b -- the first real run changed
   something after all.
-  **Result:**
+  **Result:** PASS. Two policy entries and four assignment entries (2.1's). 3.2a, 3.2b and 3.2c: Valid True, no warning, no error, no What if line, the same six rows all Unchanged (policies Unchanged=2, assignments Unchanged=4), requests 26, all GET: not a GET 0, writes 0 -- in both REAL runs.
+  ```text
+  === 3.2a
+      {
+        "version": "1.0",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Message Center Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 1,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          },
+          {
+            "role": "Reports Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 3,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          }
+        ],
+        "directoryRoleAssignments": [
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Active",
+            "durationDays": 2
+          },
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Active"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Eligible"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Eligible",
+            "durationDays": 5
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -WhatIf -Verbose
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-user1@<test domain> (Eligible) | Unchanged | assignment matches
+  --- counts per section and action: directoryRoleAssignments, Unchanged=4; directoryRoleManagementPolicies, Unchanged=2
+  --- requests: 26 (GET=26)
+  --- requests that are not a GET: 0; writes among them (not the read-only getByIds / getMemberGroups): 0
+  --- the real runs (3.2b, 3.2c), after the runner re-ran the plan and found it equal to the reviewed one:
+  === 3.2b
+      {
+        "version": "1.0",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Message Center Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 1,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          },
+          {
+            "role": "Reports Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 3,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          }
+        ],
+        "directoryRoleAssignments": [
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Active",
+            "durationDays": 2
+          },
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Active"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Eligible"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Eligible",
+            "durationDays": 5
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false -Verbose
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-user1@<test domain> (Eligible) | Unchanged | assignment matches
+  --- counts per section and action: directoryRoleAssignments, Unchanged=4; directoryRoleManagementPolicies, Unchanged=2
+  --- requests: 26 (GET=26)
+  --- requests that are not a GET: 0; writes among them (not the read-only getByIds / getMemberGroups): 0
+  === 3.2c
+      {
+        "version": "1.0",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Message Center Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 1,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          },
+          {
+            "role": "Reports Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 3,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          }
+        ],
+        "directoryRoleAssignments": [
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Active",
+            "durationDays": 2
+          },
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Active"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Eligible"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Eligible",
+            "durationDays": 5
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Confirm:$false -Verbose
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-user1@<test domain> (Eligible) | Unchanged | assignment matches
+  --- counts per section and action: directoryRoleAssignments, Unchanged=4; directoryRoleManagementPolicies, Unchanged=2
+  --- requests: 26 (GET=26)
+  --- requests that are not a GET: 0; writes among them (not the read-only getByIds / getMemberGroups): 0
+  ```
 
-- [ ] **3.3 The two roles with `-Prune -WhatIf`: nothing would be removed.**
+- [x] **3.3 The two roles with `-Prune -WhatIf`: nothing would be removed.**
 
   ```powershell
   Invoke-S65Check -Id '3.3' -Json $Doc32 -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -Prune
@@ -1684,7 +2534,84 @@ also runs from a reopened window.
   (role, assignmentType) pairs is declared, since the export named them all.
   **Failure looks like:** any `Removed`, `Extra` or `would remove` row -- the export left out an
   assignment the prune pass sees: record it; it is never run without `-WhatIf` in this file.
-  **Result:**
+  **Result:** PASS (-Prune -WhatIf). The same six Unchanged rows, no warning, no What if line; rows that remove, would remove or report Extra: 0.
+  ```text
+  === 3.3
+      {
+        "version": "1.0",
+        "directoryRoleManagementPolicies": [
+          {
+            "role": "Message Center Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 1,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          },
+          {
+            "role": "Reports Reader",
+            "allowPermanentEligibility": true,
+            "activationMaxHours": 3,
+            "eligibleDurationDays": 365,
+            "allowPermanentActiveAssignment": true,
+            "activeDurationDays": 180,
+            "requireMfaOnActivation": false,
+            "requireJustificationOnActivation": true,
+            "requireTicketOnActivation": false,
+            "requireApproval": false,
+            "requireMfaOnActiveAssignment": false,
+            "requireJustificationOnActiveAssignment": true
+          }
+        ],
+        "directoryRoleAssignments": [
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Active",
+            "durationDays": 2
+          },
+          {
+            "role": "Message Center Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Active"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-rag",
+            "principalType": "Group",
+            "assignmentType": "Eligible"
+          },
+          {
+            "role": "Reports Reader",
+            "principal": "oer-s65-user1@<test domain>",
+            "principalType": "User",
+            "assignmentType": "Eligible",
+            "durationDays": 5
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include DirectoryRoleManagementPolicies,DirectoryRoleAssignments -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 6
+      [directoryRoleManagementPolicies] Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+      [directoryRoleManagementPolicies] Reports Reader | Unchanged | policy already matches for 'Reports Reader'
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-rag (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Message Center Reader -> oer-s65-user1@<test domain> (Active) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-rag (Eligible) | Unchanged | assignment matches
+      [directoryRoleAssignments] Reports Reader -> oer-s65-user1@<test domain> (Eligible) | Unchanged | assignment matches
+  --- counts per section and action: directoryRoleAssignments, Unchanged=4; directoryRoleManagementPolicies, Unchanged=2
+  rows that remove, would remove or report Extra: 0
+  ```
 
 ---
 
@@ -1703,7 +2630,7 @@ holds Owner on the test subscription only; either no management group in the tre
 management-group scopes listed as skipped is accepted here, and section 6 covers the management
 group level.
 
-- [ ] **4.1 The file holds `oer-s65-user1`'s Reader eligibility at `oer-s65-rg`, read through the subscription.** Read-only; writes only under `raw/s65/`. The session from 2.3 holds the ARM token.
+- [x] **4.1 The file holds `oer-s65-user1`'s Reader eligibility at `oer-s65-rg`, read through the subscription.** Read-only; writes only under `raw/s65/`. The session from 2.3 holds the ARM token.
 
   ```powershell
   $Out41 = Join-Path $Raw 'export-4.1'
@@ -1735,9 +2662,41 @@ group level.
   `azurePimEligibility.json`, and the design (R4) must change.** Record it as that finding, not as a
   flake, and do not tick this box. The subscription in `SkippedEligibilityScopes` -- the read was
   refused (a missing permission, Stop conditions) and the measurement was not made: `[~]`.
-  **Result:**
+  **Result:** PASS -- R4 HOLDS. THE MEASUREMENT: True -- the UNFILTERED subscription read (GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01) returned oer-s65-user1's Reader eligibility AT oer-s65-rg: scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg, role Reader, principal OER S65 User1, User, Direct, Provisioned, endDateTime in 30 days. File entries 2, at a scope below a subscription 1. No error published by the cmdlet; the 5 other records collected are the refused management-group listing (R14; see 2.3 finding b).
+  ```text
+  === 4.1 the default scope walk, RoleAssignments only -- Export-OERInventory
+  --- requests, in the order sent: 12 (GET=10, POST=2)
+      GET /providers/Microsoft.Management/managementGroups?api-version=2020-05-01
+      GET /subscriptions?api-version=2022-12-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01
+      POST v1.0/directoryObjects/getByIds
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      POST v1.0/directoryObjects/getByIds
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01
+  --- the cmdlet's own verbose lines: 8
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      Performing the operation "Write inventory bundle (RoleAssignments)" on target "<Repo>\docs\live-verification\raw\s65\export-4.1\oer-inventory-<TenantId>-20260930-213822".
+  --- warnings: 0
+  --- errors published by Export-OERInventory: 0 (other records collected, not shown: 5)
+  --- objects returned: 1
+  azurePimEligibility.json exists: True; entries: 2; at a scope below a subscription: 1
+  entries at resource group oer-s65-rg: 1
+      scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg; role Reader; principal OER S65 User1; principalType User; memberType Direct; status Provisioned; endDateTime in 30 days
+  THE MEASUREMENT -- the unfiltered subscription read returned the resource-group-level eligibility of oer-s65-user1: True
+  ```
 
-- [ ] **4.2 What the walk cost: one eligibility request per scope, plus one per extra page.** Read-only; from 4.1's captured requests and summary. The numbers go into the final report.
+- [x] **4.2 What the walk cost: one eligibility request per scope, plus one per extra page.** Read-only; from 4.1's captured requests and summary. The numbers go into the final report.
 
   ```powershell
   $Elig42 = @($R41 | Where-Object { $_ -match '^GET /.*/providers/Microsoft\.Authorization/roleEligibilitySchedules\?' })
@@ -1761,9 +2720,62 @@ group level.
   **Failure looks like:** more eligibility requests than scopes plus pages -- a scope read twice, or
   one read per role (R4 says one per scope): record it; fewer -- a scope was not read at all; the
   subscription skipped -- see 4.1.
-  **Result:**
+  **Result:** PASS. roleEligibilitySchedules requests: 1 = ScopesEnumerated 1 + pages after the first 0 -- the subscription read once, with no $filter; ARM requests in all 10 (management-group list, subscription list, roleAssignments, six roleDefinitions, the eligibility read); ScopeCount 1; SkippedScopes []; SkippedEligibilityScopes []; AzurePimEligibility 2 = the file's entries; scopeHierarchy management groups 0 (the listing was refused, R14), subscriptions 1.
+  ```text
+  roleEligibilitySchedules requests: 1 (pages after the first: 0)
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01
+  ARM requests in all: 10
+  summary: ScopesEnumerated 1; ScopeCount 1; SkippedScopes []; SkippedEligibilityScopes []; AzurePimEligibility 2
+  scopeHierarchy.json: management groups 0; subscriptions 1
+  AzurePimEligibility equals the file's entries: True
+  ```
 
-- [ ] **4.3 An independent read of the resource group agrees with the file.** Read-only.
+  **Re-run:** (CC, 2026-10-01, fd8bc11, with 4.1 re-run in the same process.) PASS with the fixed build: 1 roleEligibilitySchedules request = ScopesEnumerated 1 + 0 pages, ARM requests 10; the refused management-group listing is now REPORTED -- SkippedScopes and SkippedEligibilityScopes both [<management groups: the listing failed>], one InventoryPartial error ("1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked ...") and the warning "Could not list the management groups ... AuthorizationFailed"; scopeHierarchy management groups 0, subscriptions 1; AzurePimEligibility 2 = the file. 4.1 again: THE MEASUREMENT True.
+  ```text
+  === 4.1 the default scope walk, RoleAssignments only -- Export-OERInventory
+  --- requests, in the order sent: 12 (GET=10, POST=2)
+      GET /providers/Microsoft.Management/managementGroups?api-version=2020-05-01
+      GET /subscriptions?api-version=2022-12-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01
+      POST v1.0/directoryObjects/getByIds
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/<not a test object>?api-version=2022-04-01
+      POST v1.0/directoryObjects/getByIds
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01
+  --- the cmdlet's own verbose lines: 8
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      Performing the operation "Write inventory bundle (RoleAssignments)" on target "<Repo>\docs\live-verification\raw\s65\export-4.1\oer-inventory-<TenantId>-20261001-123910".
+  --- warnings: 1
+      WARNING: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '<not a test object>' with object id '<oer-live-cc>' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+  --- errors published by Export-OERInventory: 1 (other records collected, not shown: 7)
+      ERROR [InventoryPartial,Export-OERInventory]: This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json. Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it. Skipped: <management groups: the listing failed>. Do not treat it as a full tenant snapshot.
+  --- objects returned: 1
+  azurePimEligibility.json exists: True; entries: 2; at a scope below a subscription: 1
+  entries at resource group oer-s65-rg: 1
+      scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg; role Reader; principal OER S65 User1; principalType User; memberType Direct; status Provisioned; endDateTime in 29,4 days
+  THE MEASUREMENT -- the unfiltered subscription read returned the resource-group-level eligibility of oer-s65-user1: True
+  --- 4.2:
+  roleEligibilitySchedules requests: 1 (pages after the first: 0)
+      GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01
+  ARM requests in all: 10
+  summary: ScopesEnumerated 1; ScopeCount 1; SkippedScopes [<management groups: the listing failed>]; SkippedEligibilityScopes [<management groups: the listing failed>]; AzurePimEligibility 2
+  scopeHierarchy.json: management groups 0; subscriptions 1
+  AzurePimEligibility equals the file's entries: True
+  ```
+
+  **Re-run:** (CC, 2026-10-01, eef9fd7.) Identical to the fd8bc11 re-run: 1 eligibility request = ScopesEnumerated 1 + 0 pages; ARM 10; both skipped lists [<management groups: the listing failed>]; one InventoryPartial; 4.1 THE MEASUREMENT True.
+
+- [x] **4.3 An independent read of the resource group agrees with the file.** Read-only.
 
   ```powershell
   Invoke-S65Call -Cmdlet Get-OEREligibleRoleAssignment -Splat @{ Scope = $RgScope } -Label '4.3 the resource group read directly'
@@ -1781,7 +2793,20 @@ group level.
   `the file's entries at the resource group equal the direct read's: True`.
   **Failure looks like:** the row here but not in 4.1 -- the finding 4.1 describes (R4 must change);
   a value that differs -- the projection changes what it reads: record both.
-  **Result:**
+  **Result:** PASS. One request, GET /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01; no error; rows AT the resource group 1 (and 1 inherited from above, not printed), the same values as 4.1; the file's entries at the resource group equal the direct read's: True.
+  ```text
+  === 4.3 the resource group read directly -- Get-OEREligibleRoleAssignment
+  --- requests, in the order sent: 1 (GET=1)
+      GET /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01
+  --- the cmdlet's own verbose lines: 1
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+  --- warnings: 0
+  --- errors published by Get-OEREligibleRoleAssignment: 0 (other records collected, not shown: 0)
+  --- objects returned: 2
+  rows AT the resource group: 1; rows above it (inherited, not printed): 1
+      scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg; role Reader; principal OER S65 User1; principalType User; memberType Direct; status Provisioned; endDateTime in 30 days
+  the file's entries at the resource group equal the direct read's: True
+  ```
 
 ---
 
@@ -1791,7 +2816,7 @@ Every write below is preceded by its `-WhatIf` plan. The group created as `oer-s
 tracked by its id throughout (`<oer-s65-rename-group>`); it ends as `oer-s65-rename-direct`, and the
 teardown finds it by that id.
 
-- [ ] **5.1 A rename through the document: planned, applied, read back by the same id, the window measured with an immediate `-WhatIf` plan, and `Unchanged` once the new name resolves.**
+- [x] **5.1 A rename through the document: planned, applied, read back by the same id, the window measured with an immediate `-WhatIf` plan, and `Unchanged` once the new name resolves.**
 
   ```powershell
   $null = Get-S65RawGroup -Id $IdRename -Label '5.1-before'
@@ -1857,9 +2882,122 @@ teardown finds it by that id.
   second `oer-s65-rename-new` group; the wait never printing `True` -- do NOT run 5.1c/5.1d until it
   does (with neither name resolving they would only fail with `GroupRenameNotFound`, and measure
   nothing); 5.1c anything but `Unchanged`.
-  **Result:**
+  **Result:** PASS, with one measured delay. 5.1a: the What if line and one Skipped row "would rename ... ; would update group properties (Description)" (runtime warnings 0; the validator's step 1 Warning for the omitted members key, Valid True). 5.1b: Updated "renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)". 5.1b-after, read BY THE SAME ID about a second after the PATCH, still returned the OLD name and description -- Graph's read-after-write lag reaches a GET by id too, not only the name filter; a re-read minutes later returns oer-s65-rename-new / s65 renamed, so the PATCH carried both. THE WINDOW: an immediate re-run (0 s) would "rename it again" (the old name still resolved); the name filter then listed NEITHER name at 1 s (new 0, old 0) -- the window the rename guard now fails with GroupRenameNotFound instead of creating a second group -- and the new name under the same id at 11 s. 5.1c and 5.1d (real): Unchanged "group properties match".
+  ```text
+  --- 5.1-before: group <oer-s65-rename-group>: displayName 'oer-s65-rename-old'; description 'Omnicit.EntraRBAC live verification: renamed by check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  === 5.1a
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-rename-new",
+            "previousDisplayName": "oer-s65-rename-old",
+            "description": "s65 renamed"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  What if: Performing the operation "Rename group 'oer-s65-rename-old' to 'oer-s65-rename-new' and update group properties (Description)" on target "oer-s65-rename-new".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-rename-new | Skipped | would rename group 'oer-s65-rename-old' to 'oer-s65-rename-new'; would update group properties (Description)
+  --- counts per section and action: groups, Skipped=1
+  --- 5.1b (gated: the re-run plan equalled the reviewed one), 5.1b-after, 5.1b-now, the wait and 5.1c:
+  === 5.1b
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-rename-new",
+            "previousDisplayName": "oer-s65-rename-old",
+            "description": "s65 renamed"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-rename-new | Updated | renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)
+  --- counts per section and action: groups, Updated=1
+  --- 5.1b-after: group <oer-s65-rename-group>: displayName 'oer-s65-rename-old'; description 'Omnicit.EntraRBAC live verification: renamed by check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  === 5.1b-now
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-rename-new",
+            "previousDisplayName": "oer-s65-rename-old",
+            "description": "s65 renamed"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  What if: Performing the operation "Rename group 'oer-s65-rename-old' to 'oer-s65-rename-new' and update group properties (Description)" on target "oer-s65-rename-new".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-rename-new | Skipped | would rename group 'oer-s65-rename-old' to 'oer-s65-rename-new'; would update group properties (Description)
+  --- counts per section and action: groups, Skipped=1
+  an immediate re-run, 0 s after the rename, would: rename it again
+  try 1, 1 s after the rename: new name listed 0, old name listed 0; the name filter lists the new name under the same id and the old name nowhere: False
+  try 2, 11 s after the rename: new name listed 1, old name listed 0; the name filter lists the new name under the same id and the old name nowhere: True
+  === 5.1c
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-rename-new",
+            "previousDisplayName": "oer-s65-rename-old",
+            "description": "s65 renamed"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-rename-new | Unchanged | group properties match
+  --- counts per section and action: groups, Unchanged=1
+  --- a re-read by the same id a few minutes later (the block's label says 5.1-before; it is this later read):
+  --- 5.1-before: group <oer-s65-rename-group>: displayName 'oer-s65-rename-new'; description 's65 renamed'; isAssignableToRole ''; securityEnabled True; members []
+  --- 5.1d (gated on 5.1c):
+  === 5.1d
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-rename-new",
+            "previousDisplayName": "oer-s65-rename-old",
+            "description": "s65 renamed"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-rename-new | Unchanged | group properties match
+  --- counts per section and action: groups, Unchanged=1
+  ```
 
-- [ ] **5.2 A conflict: both names exist as different groups -- one `Failed` row, `GroupRenameConflict`, and both groups untouched.** The entry writes nothing by design; the plan runs first all the same.
+- [x] **5.2 A conflict: both names exist as different groups -- one `Failed` row, `GroupRenameConflict`, and both groups untouched.** The entry writes nothing by design; the plan runs first all the same.
 
   ```powershell
   $A0 = Get-S65RawGroup -Id $IdConflictA -Label '5.2-a-before'
@@ -1887,9 +3025,58 @@ teardown finds it by that id.
   `unchanged ...: True`.
   **Failure looks like:** more than one row, an `Updated` row, or either read-back changed -- the
   conflict wrote or merged: record it, it is a defect; an error id other than `GroupRenameConflict`.
-  **Result:**
+  **Result:** PASS. 5.2a and 5.2b alike: Valid True (the validator's omitted-members Warning only), no warning, no What if line, ONE error GroupRenameConflict with the expected message, exactly ONE Failed row with the expected Detail. Both groups keep their ids, names, descriptions and (empty) membership: unchanged True, True.
+  ```text
+  --- 5.2-a-before: group <oer-s65-conflict-a>: displayName 'oer-s65-conflict-a'; description 'Omnicit.EntraRBAC live verification: the previous name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  --- 5.2-b-before: group <oer-s65-conflict-b>: displayName 'oer-s65-conflict-b'; description 'Omnicit.EntraRBAC live verification: the new name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  === 5.2a
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-conflict-b",
+            "previousDisplayName": "oer-s65-conflict-a"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 1
+      ERROR [GroupRenameConflict,Invoke-OERStructure]: Group 'oer-s65-conflict-b' (<oer-s65-conflict-b>) and its previousDisplayName 'oer-s65-conflict-a' (<oer-s65-conflict-a>) are different groups. The document never merges two groups, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName.
+  --- results, in the order returned: 1
+      [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+  --- counts per section and action: groups, Failed=1
+  --- 5.2b (gated) and the read-back:
+  === 5.2b
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-conflict-b",
+            "previousDisplayName": "oer-s65-conflict-a"
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 1
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  --- Invoke-OERStructure -Include Groups -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 1
+      ERROR [GroupRenameConflict,Invoke-OERStructure]: Group 'oer-s65-conflict-b' (<oer-s65-conflict-b>) and its previousDisplayName 'oer-s65-conflict-a' (<oer-s65-conflict-a>) are different groups. The document never merges two groups, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName.
+  --- results, in the order returned: 1
+      [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+  --- counts per section and action: groups, Failed=1
+  --- 5.2-a-after: group <oer-s65-conflict-a>: displayName 'oer-s65-conflict-a'; description 'Omnicit.EntraRBAC live verification: the previous name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  --- 5.2-b-after: group <oer-s65-conflict-b>: displayName 'oer-s65-conflict-b'; description 'Omnicit.EntraRBAC live verification: the new name of the rename conflict in check 5.'; isAssignableToRole ''; securityEnabled True; members []
+  oer-s65-conflict-a unchanged (name, description, members): True
+  oer-s65-conflict-b unchanged (name, description, members): True
+  ```
 
-- [ ] **5.3 `Set-OERGroup -NewDisplayName` renames, and with no property it reports `NothingToUpdate` naming `-NewDisplayName`.**
+- [x] **5.3 `Set-OERGroup -NewDisplayName` renames, and with no property it reports `NothingToUpdate` naming `-NewDisplayName`.**
 
   ```powershell
   Invoke-S65Call -Cmdlet Set-OERGroup -Splat @{ Group = "$Prefix-rename-new"; NewDisplayName = "$Prefix-rename-direct"; WhatIf = $true } -Label '5.3a plan'
@@ -1916,9 +3103,44 @@ teardown finds it by that id.
   **Failure looks like:** 5.3a or 5.3b `GroupNotFound` -- Graph's name filter has not caught up with
   5.1 yet: wait a minute and run the plan again; a request in 5.3c -- the property check runs after
   the lookup; a read-back with another name.
-  **Result:**
+  **Result:** PASS, with the same read-after-write delay as 5.1. 5.3a: one lookup GET, What if "Update group properties" on the id of oer-s65-rename-group, 0 objects. 5.3b: the lookup, PATCH v1.0/groups/<oer-s65-rename-group>, GET of it; no error; one object -- returned DisplayName 'oer-s65-rename-direct', the same group True. 5.3b-after, a raw read by id right after, still read 'oer-s65-rename-new'; a re-read a minute later reads 'oer-s65-rename-direct' / 's65 renamed'. 5.3c: NO request, one NothingToUpdate error naming -NewDisplayName, 0 objects.
+  ```text
+  What if: Performing the operation "Update group properties" on target "00000000-0000-0000-0000-000000000013".
+  === 5.3a plan -- Set-OERGroup
+  --- requests, in the order sent: 1 (GET=1)
+      GET v1.0/groups?$filter=displayName eq 'oer-s65-rename-new'&$select=id,displayName
+  --- the cmdlet's own verbose lines: 1
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+  --- warnings: 0
+  --- errors published by Set-OERGroup: 0 (other records collected, not shown: 0)
+  --- objects returned: 0
+  --- 5.3b and 5.3c:
+  === 5.3b rename -- Set-OERGroup
+  --- requests, in the order sent: 3 (GET=2, PATCH=1)
+      GET v1.0/groups?$filter=displayName eq 'oer-s65-rename-new'&$select=id,displayName
+      PATCH v1.0/groups/<oer-s65-rename-group>
+      GET v1.0/groups/<oer-s65-rename-group>
+  --- the cmdlet's own verbose lines: 2
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+      Performing the operation "Update group properties" on target "<oer-s65-rename-group>".
+  --- warnings: 0
+  --- errors published by Set-OERGroup: 0 (other records collected, not shown: 0)
+  --- objects returned: 1
+  returned: DisplayName 'oer-s65-rename-direct'; the same group: True
+  --- 5.3b-after: group <oer-s65-rename-group>: displayName 'oer-s65-rename-new'; description 's65 renamed'; isAssignableToRole ''; securityEnabled True; members []
+  === 5.3c no property -- Set-OERGroup
+  --- requests, in the order sent: 0 ()
+  --- the cmdlet's own verbose lines: 1
+      [Initialize-OERAuth] Returning cached auth state for tenant '<TenantId>'.
+  --- warnings: 0
+  --- errors published by Set-OERGroup: 1 (other records collected, not shown: 0)
+      ERROR [NothingToUpdate,Set-OERGroup]: No updatable property was supplied. Pass at least one of -NewDisplayName, -Description, -MailNickname, -MembershipRule, or -MembershipRuleProcessingState.
+  --- objects returned: 0
+  --- a re-read by the same id a minute later (the block's label says 5.1-before; it is this later read):
+  --- 5.1-before: group <oer-s65-rename-group>: displayName 'oer-s65-rename-direct'; description 's65 renamed'; isAssignableToRole ''; securityEnabled True; members []
+  ```
 
-- [ ] **5.4 `Test-OERStructure` warns once when `previousDisplayName` equals `displayName`.** Offline; no request.
+- [x] **5.4 `Test-OERStructure` warns once when `previousDisplayName` equals `displayName`.** Offline; no request.
 
   ```powershell
   $Path54 = Join-Path $Raw '5.4.json'
@@ -1933,9 +3155,14 @@ teardown finds it by that id.
   -- equal ignoring letter case, as Graph matches display names, so the document cannot express a
   case-only rename.
   **Failure looks like:** no finding, an Error, or `Valid False`.
-  **Result:**
+  **Result:** PASS on its point, with a checklist gap. Valid True; the previousDisplayName Warning appears exactly once, with the expected text; no Error. Findings are 2, not the 1 the Expect names: the document omits members, so the step 1 omitted-members Warning is added too -- the Expect did not count it.
+  ```text
+  Valid True; findings 2
+      [Warning] groups groups[0].previousDisplayName: 'previousDisplayName' at groups[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName.
+      [Warning] groups groups[0].members: 'members' is omitted at groups[0]. An omitted members key is still reconciled, against an empty declared set, so Invoke-OERStructure -Prune removes every live entry in it. Declare the key (an empty array removes them deliberately), or set it to null to leave the collection untouched.
+  ```
 
-- [ ] **5.5 A catalog resource and an access package resource role outlive their group's rename: with the OLD name and with the NEW name in the document, a `-Prune -WhatIf` plan of the `catalogs` and `accessPackages` sections removes neither.** Only 5.5b writes -- the rename of `oer-s65-catres-old`, a group of this file; every other run here is a `-WhatIf` plan, and nothing here writes to the catalog or the access package. **If ANY plan below lists a removal (a row whose Detail starts `would remove`): STOP after 5.5d, record exactly what was matched against what -- the blocks print the declared name, the name the catalog recorded, the id each points at and the access package's binding key -- and change nothing, in the module or the tenant, until there is a decision.**
+- [x] **5.5 A catalog resource and an access package resource role outlive their group's rename: with the OLD name and with the NEW name in the document, a `-Prune -WhatIf` plan of the `catalogs` and `accessPackages` sections removes neither.** Only 5.5b writes -- the rename of `oer-s65-catres-old`, a group of this file; every other run here is a `-WhatIf` plan, and nothing here writes to the catalog or the access package. **If ANY plan below lists a removal (a row whose Detail starts `would remove`): STOP after 5.5d, record exactly what was matched against what -- the blocks print the declared name, the name the catalog recorded, the id each points at and the access package's binding key -- and change nothing, in the module or the tenant, until there is a decision.**
 
   ```powershell
   function Show-S65Em55 {
@@ -2031,7 +3258,342 @@ teardown finds it by that id.
   compared with which recorded name or id; the result line says `[ ]`, never `[x]` or `[~]`, until a
   decision; 5.5a `Failed` (`GroupRenameNotFound`) -- the old name did not resolve: stop and look at
   the group; a write in any plan (`Created`, `Updated`, `Removed`).
-  **Result:**
+  **Result:** STOP -- NOT PASSED; a decision is needed, nothing was changed. 5.5d (the NEW name in the document, -Prune -WhatIf) PLANS A REMOVAL: [catalogs] oer-s65-catalog | Skipped | would remove undeclared resource 'oer-s65-catres-old' (and would add Group resource 'oer-s65-catres-new'). What was matched against what: after the rename Graph still records the catalog resource as 'oer-s65-catres-old' (5.5-after; the catalog does not refresh the name on the group's rename -- measured). The catalogs handler compares the declared resources[].name 'oer-s65-catres-new' with the resource's recorded displayName 'oer-s65-catres-old' (no) and with its originId <oer-s65-catres-group> (a group's identifier there is the declared NAME, so no), finds it absent, plans an add, and its prune pass then finds the recorded 'oer-s65-catres-old' undeclared. The accessPackages handler is safe: 'oer-s65-catres-new' is not a recorded catalog name, its fallback Resolve-OERGroupId gives <oer-s65-catres-group>, the key 'Member|<oer-s65-catres-group>' matches the live binding: Unchanged, no removal. With the OLD name (5.5c, and the control before the rename): 0 planned removals in both sections. 5.5a/5.5b as expected (rename Updated; the name filter caught up at 10 s).
+  ```text
+  --- 5.5-before: <oer-s65-catalog> resources: status 200 ; 1
+      resource: recorded displayName 'oer-s65-catres-old'; originSystem AadGroup; originId <oer-s65-catres-group>
+  --- 5.5-before: <oer-s65-ap> resource role bindings: status 200 ; 1
+      binding: role 'Member'; scope originId <oer-s65-catres-group>; the handler's key 'Member|<oer-s65-catres-group>'
+      Graph's name filter: 'oer-s65-catres-old' -> [oer-s65-catres-group]
+      Graph's name filter: 'oer-s65-catres-new' -> []
+  === 5.5-control
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-old"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-old",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 4
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Unchanged | resource 'oer-s65-catres-old' already present
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-old' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Unchanged=2
+  5.5-control (old name, before the rename): planned removals: 0
+  === 5.5a
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-catres-new",
+            "previousDisplayName": "oer-s65-catres-old",
+            "members": null
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  What if: Performing the operation "Rename group 'oer-s65-catres-old' to 'oer-s65-catres-new'" on target "oer-s65-catres-new".
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-catres-new | Skipped | would rename group 'oer-s65-catres-old' to 'oer-s65-catres-new'
+  --- counts per section and action: groups, Skipped=1
+  --- 5.5b (gated: the re-run plan equalled the reviewed one), the wait, 5.5-after, 5.5c and 5.5d:
+  === 5.5b
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-catres-new",
+            "previousDisplayName": "oer-s65-catres-old",
+            "members": null
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -Confirm:$false
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-catres-new | Updated | renamed group 'oer-s65-catres-old' to 'oer-s65-catres-new'
+  --- counts per section and action: groups, Updated=1
+  try 1, 0 s after the rename: the name filter lists the new name under the same id and the old name nowhere: False
+  try 2, 10 s after the rename: the name filter lists the new name under the same id and the old name nowhere: True
+  --- 5.5-after: <oer-s65-catalog> resources: status 200 ; 1
+      resource: recorded displayName 'oer-s65-catres-old'; originSystem AadGroup; originId <oer-s65-catres-group>
+  --- 5.5-after: <oer-s65-ap> resource role bindings: status 200 ; 1
+      binding: role 'Member'; scope originId <oer-s65-catres-group>; the handler's key 'Member|<oer-s65-catres-group>'
+      Graph's name filter: 'oer-s65-catres-old' -> []
+      Graph's name filter: 'oer-s65-catres-new' -> [oer-s65-catres-group]
+  === 5.5c
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-old"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-old",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 4
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Unchanged | resource 'oer-s65-catres-old' already present
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-old' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Unchanged=2
+  5.5c (OLD name, after the rename): planned removals: 0
+  === 5.5d
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-new"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-new",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  What if: Performing the operation "Add Group resource 'oer-s65-catres-new'" on target "oer-s65-catalog".
+  What if: Performing the operation "Remove undeclared resource 'oer-s65-catres-old'" on target "oer-s65-catalog".
+  --- warnings, in the order written: 1
+      WARNING: Sync-OERStructureCatalog: would remove undeclared resource 'oer-s65-catres-old' from catalog 'oer-s65-catalog'.
+  --- errors: 0
+  --- results, in the order returned: 5
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Skipped | would add Group resource 'oer-s65-catres-new'
+      [catalogs] oer-s65-catalog | Skipped | would remove undeclared resource 'oer-s65-catres-old'
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-new' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Skipped=2; catalogs, Unchanged=1
+  5.5d (NEW name, after the rename): planned removals: 1
+      [catalogs] oer-s65-catalog | Skipped | would remove undeclared resource 'oer-s65-catres-old'
+  ```
+
+  **Re-run:** (CC as oer-live-cc, 2026-10-01, fd8bc11 -- "fix: match catalog resources by object id and export their current names".) PASS: NEITHER section plans a removal, with the old name or the new one. Graph still records the resource as 'oer-s65-catres-old' after the rename (measured again). OLD name (5.5c, and the control, which now also runs after the rename): catalogs -- Failed "Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it" with GroupNotFound, and "prune withheld: ..." for the resource, no removal; accessPackages Unchanged (resolved by the name the catalog recorded). NEW name (5.5d): every row Unchanged -- "resource 'oer-s65-catres-new' already present", matched by object id although the catalog records the old name; "resourceRole 'Member' on 'oer-s65-catres-new' already bound". planned removals: 0 and 0. The first run's STOP (on baf5c64) stands above as the record of the defect.
+  ```text
+  --- 5.5-before: <oer-s65-catalog> resources: status 200 ; 1
+      resource: recorded displayName 'oer-s65-catres-old'; originSystem AadGroup; originId <oer-s65-catres-group>
+  --- 5.5-before: <oer-s65-ap> resource role bindings: status 200 ; 1
+      binding: role 'Member'; scope originId <oer-s65-catres-group>; the handler's key 'Member|<oer-s65-catres-group>'
+      Graph's name filter: 'oer-s65-catres-old' -> []
+      Graph's name filter: 'oer-s65-catres-new' -> [oer-s65-catres-group]
+  === 5.5-control
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-old"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-old",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 1
+      ERROR [GroupNotFound,Invoke-OERStructure]: Group 'oer-s65-catres-old' not found: no group carries that name, so the catalog resource it names cannot be identified.
+  --- results, in the order returned: 5
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+      [catalogs] oer-s65-catalog | Skipped | prune withheld: declared entry 'oer-s65-catres-old' could not be resolved, so undeclared resource 'oer-s65-catres-old' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-old' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Failed=1; catalogs, Skipped=1; catalogs, Unchanged=1
+  5.5-control (old name, before the rename): planned removals: 0
+  === 5.5a
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "groups": [
+          {
+            "displayName": "oer-s65-catres-new",
+            "previousDisplayName": "oer-s65-catres-old",
+            "members": null
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Groups -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 1
+      [groups] oer-s65-catres-new | Unchanged | group properties match
+  --- counts per section and action: groups, Unchanged=1
+  --- after the rename (block lines 11-15; the rename itself was NOT re-run):
+  --- 5.5-after: <oer-s65-catalog> resources: status 200 ; 1
+      resource: recorded displayName 'oer-s65-catres-old'; originSystem AadGroup; originId <oer-s65-catres-group>
+  --- 5.5-after: <oer-s65-ap> resource role bindings: status 200 ; 1
+      binding: role 'Member'; scope originId <oer-s65-catres-group>; the handler's key 'Member|<oer-s65-catres-group>'
+      Graph's name filter: 'oer-s65-catres-old' -> []
+      Graph's name filter: 'oer-s65-catres-new' -> [oer-s65-catres-group]
+  === 5.5c
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-old"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-old",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 1
+      ERROR [GroupNotFound,Invoke-OERStructure]: Group 'oer-s65-catres-old' not found: no group carries that name, so the catalog resource it names cannot be identified.
+  --- results, in the order returned: 5
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+      [catalogs] oer-s65-catalog | Skipped | prune withheld: declared entry 'oer-s65-catres-old' could not be resolved, so undeclared resource 'oer-s65-catres-old' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection.
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-old' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Failed=1; catalogs, Skipped=1; catalogs, Unchanged=1
+  5.5c (OLD name, after the rename): planned removals: 0
+  === 5.5d
+      {
+        "version": "1.0",
+        "tenantAlias": "<Alias>",
+        "catalogs": [
+          {
+            "displayName": "oer-s65-catalog",
+            "resources": [
+              {
+                "type": "Group",
+                "name": "oer-s65-catres-new"
+              }
+            ]
+          }
+        ],
+        "accessPackages": [
+          {
+            "displayName": "oer-s65-ap",
+            "catalog": "oer-s65-catalog",
+            "resourceRoles": [
+              {
+                "resource": "oer-s65-catres-new",
+                "role": "Member"
+              }
+            ]
+          }
+        ]
+      }
+  --- offline validation: Valid = True, findings = 0
+  --- Invoke-OERStructure -Include Catalogs,AccessPackages -Prune -WhatIf
+  --- warnings, in the order written: 0
+  --- errors: 0
+  --- results, in the order returned: 4
+      [catalogs] oer-s65-catalog | Unchanged | catalog properties match
+      [catalogs] oer-s65-catalog | Unchanged | resource 'oer-s65-catres-new' already present
+      [accessPackages] oer-s65-ap | Unchanged | access package properties match
+      [accessPackages] oer-s65-ap | Unchanged | resourceRole 'Member' on 'oer-s65-catres-new' already bound
+  --- counts per section and action: accessPackages, Unchanged=2; catalogs, Unchanged=2
+  5.5d (NEW name, after the rename): planned removals: 0
+  ```
 
 ---
 
@@ -2058,7 +3620,7 @@ What your account needs:
   Properties > "Access management for Azure resources", which assigns YOU User Access Administrator at
   root scope `/` and needs Global Administrator ACTIVE -- and 6.2 turns it off again. Never leave it on.
 
-- [ ] **6.1 Manual (operator) -- an eligible Reader assignment at the dedicated management group `oer-s65-mg` reaches `azurePimEligibility.json` at that scope; the full-tree call count.**
+- [~] **6.1 Manual (operator) -- an eligible Reader assignment at the dedicated management group `oer-s65-mg` reaches `azurePimEligibility.json` at that scope; the full-tree call count.**
 
   (a) In a NEW PowerShell 7 window of your own on the machine that holds the clone, paste the Setup
   variables block from `$Repo` down to `$StatePath` (the assignments only -- not the build lines),
@@ -2193,9 +3755,13 @@ What your account needs:
   record it, it is a defect in R4; `entries ... in all: 3` or more -- the deduplication did not hold;
   `the walk read the tenant root group: False` or a skipped scope -- you cannot read part of the tree:
   record which, and whether you elevated.
-  **Result:**
+  **Result:** `[~]` (Philip as himself, 2026-10-01 11:37-11:52, the clone at baf5c64; recorded by Cowork and CC, redacted per [README.md](README.md) -- counts and True/False only; Philip's raw output stays outside the repository). The identity lines `True` four times; the tenant root group readable, so no elevation. `oer-s65-mg` created under the root, with 0 children and 0 subscriptions. (b): the Reader eligibility of `oer-s65-user1` created, and read back as `rows of oer-s65-user1 AT oer-s65-mg: 1`. **(c) did not reach it:** the full-tree export (140 requests, 0 errors) printed `entries of oer-s65-user1 at oer-s65-mg: 0`, 17 roleEligibilitySchedules requests (5 with `atScope()`), `ScopesEnumerated 17`, `SkippedScopes 0`, `SkippedEligibilityScopes 0`. Its line `the walk read the tenant root group: False` said nothing: it compared the raw root path with requests already masked, so it could never print `True` (fixed in (c) above and in 6.1R).
 
-- [ ] **6.2 Manual (operator) -- clean up: the eligibility removed and confirmed gone, `oer-s65-mg` deleted and confirmed gone, the elevation (if any) turned off, you signed out, and every PIM role you activated deactivated.** In your window.
+  **The cause, read from the bundle (CC, 2026-10-01):** `scopeHierarchy.json` held 5 management groups and 12 subscriptions -- 17 = `ScopesEnumerated` (True), and the 5 management groups = the 5 `atScope()` requests (True); `oer-s65-mg` in it: False; the tenant root group in it: True. `azurePimEligibility.json`: 6 entries, 1 at a management-group scope, 0 at `oer-s65-mg`. The management-group LISTING lacked the group created minutes earlier; the per-scope eligibility read did not fail.
+
+  **Why `[~]` (Philip's decision, 2026-10-01):** the management-group list lacks a newly created management group for minutes -- measured in 6.1R with and without `Cache-Control: no-cache` alike -- so an export in that window cannot walk it. That is a limitation of the list, now documented in the help of `Get-OERManagementGroup` and `Export-OERInventory` ("docs: say that a new management group can be missing from the list"), not something a header fixes. The management-group level of the eligibility read is proven otherwise: this same export holds 1 entry read at an existing management group's scope.
+
+- [x] **6.2 Manual (operator) -- clean up: the eligibility removed and confirmed gone, `oer-s65-mg` deleted and confirmed gone, the elevation (if any) turned off, you signed out, and every PIM role you activated deactivated.** In your window.
 
   ```powershell
   Invoke-S65Call -Cmdlet Remove-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; Role = 'Reader'; User = $User1Upn; WhatIf = $true } -Label '6.2 plan'
@@ -2254,8 +3820,8 @@ What your account needs:
   assignments in the portal (Management groups > Tenant Root Group > Access control (IAM)) for a User
   Access Administrator assignment of yours, and remove it there; an activation still listed after the
   deactivation -- deactivate it again, and do not leave it active.
-  **Result:**
-- [ ] **6.1R Manual (operator) -- 6.1 again on this branch's head: the management-group list read right after `oer-s65-mg` is created, WITHOUT and WITH `Cache-Control: no-cache`; then the eligibility and the full-tree export.** Run it BEFORE the Teardown, which deletes `oer-s65-user1`. In your own PowerShell 7 window, as yourself; 6.1 found the tenant root group readable without elevation, so no elevation is planned -- if (a) prints the root line `False`, elevate as 6.1(a) says and turn it off in (e).
+  **Result:** PASS (Philip, 2026-10-01; recorded by Cowork and CC). The eligibility removed, and read back as `rows of oer-s65-user1 AT oer-s65-mg: 0`; `oer-s65-mg` deleted in the portal, and the list at 11:52 held only the five management groups that were there before; no elevation was turned on at any point; `Disconnect-OER` run. Ticked on Philip's decision (2026-10-01).
+- [x] **6.1R Manual (operator) -- 6.1 again on this branch's head: the management-group list read right after `oer-s65-mg` is created, WITHOUT and WITH `Cache-Control: no-cache`; then the eligibility and the full-tree export.** Run it BEFORE the Teardown, which deletes `oer-s65-user1`. In your own PowerShell 7 window, as yourself; 6.1 found the tenant root group readable without elevation, so no elevation is planned -- if (a) prints the root line `False`, elevate as 6.1(a) says and turn it off in (e).
 
   Why: 6.1's export walked five management groups while six existed -- `scopeHierarchy.json` lacked the
   `oer-s65-mg` created minutes earlier, and listed the root -- so the management-group LISTING missed
@@ -2495,7 +4061,9 @@ What your account needs:
   False` -- the fixed build's walk still missed it: record it; (d) `entries ... at oer-s65-mg: 0`
   while `scopeHierarchy.json` HAS `oer-s65-mg` -- the management-group-level read is the defect: stop,
   record it, and change nothing without a decision; a skipped scope, or an error.
-  **Result:**
+  **Result:** `[x]` as a measurement (Philip as himself, 2026-10-01 13:09-13:15, the clone at eef9fd7; recorded by Cowork and CC, redacted -- counts and True/False only). The identity lines `True` four times; the tenant root group readable without elevation. (b): `oer-s65-mg` read back by `-Name` at once -- its parent the root, 0 children, 0 subscriptions. **The control:** 5 s and 50 s after the create, the list WITHOUT the header, the list WITH `Cache-Control: no-cache` and `Get-OERManagementGroup` each held 5 management groups and printed `oer-s65-mg in it: False` -- **the header had no measurable effect.** (c): the eligibility created; the read back with `-AtScope` 1 row. (d): the export (140 requests, 0 errors): `scopeHierarchy.json` with 5 management groups and 12 subscriptions, `oer-s65-mg in it: False`, the tenant root group `True`; `entries of oer-s65-user1 at oer-s65-mg: 0`; the fixed root check `the walk read the tenant root group: True`; 17 roleEligibilitySchedules requests (5 with `atScope()`); `SkippedScopes 0`, `SkippedEligibilityScopes 0`. (e): 0 rows left, `oer-s65-mg is gone: True`, `Disconnect-OER` run; a second removal after the delete answered `InvalidScope` and wrote nothing, which is correct. The line `every variable set:` printed `.Count -eq 0)` instead of True/False: the subexpression closed early (fixed in "docs: fix the variable check of 6.1R and say what it ran on").
+
+  **Outcome:** the header was removed again ("revert: send no Cache-Control header on the management group reads"), the help documents that a management group created in the last few minutes can be missing from the list and from an export run in that window, and 6.1 is `[~]` for it.
 
 ---
 
@@ -2513,7 +4081,7 @@ removed, `oer-s65-rag`'s member removed BEFORE the group is deleted, the groups 
 whatever their current name, the users deleted after all of that, both roles compared with the
 assignment baseline, and the sweep.
 
-- [ ] **T.1 The prerequisite script's teardown -- its plan, then the run.**
+- [x] **T.1 The prerequisite script's teardown -- its plan, then the run.**
 
   ```powershell
   Connect-S65 -Arm
@@ -2588,9 +4156,421 @@ assignment baseline, and the sweep.
   such an object: the operator removes it by hand, or renames it back to an `oer-s65` name and runs
   the teardown again, and records it. Re-run the teardown after a fix (it only restores what differs
   and removes what is still there) and record both runs.
-  **Result:**
+  **Result:** PASS after one re-run (CC as oer-live-cc, 2026-10-01, the clone at e33660a). Every sign-in printed its identity lines True. **Plan 1** (below): every target an `oer-s65` object, one of the two fixed directory roles, or Reader at `oer-s65-rg` -- exactly the list above; the 36 `What if: ... "Update TypeData"` lines that importing the module under -WhatIf prints are left out of every block here. **Run 1** removed the Azure eligibility, restored `oer-s65-rg`'s Reader policy (0 rules differed) and deleted the resource group, removed the four directory assignments and PATCHed Reports Reader's `Expiration_EndUser_Assignment` back to its baseline without a refusal -- but the read straight after the PATCH still showed that rule differing (`restored: False`), so the script stopped BEFORE deleting anything, and its own restore pass PATCHed again with the same answer. **The read between the runs** (T.2's read-only block, minutes later) found both policies at their baseline and both roles' assignments at the assignment baseline: the PATCH had landed and the read straight after it lagged -- the policy replica lag step 2 measured (a read about a second after a write can return the old value). Following this check's failure path, the teardown ran again: **plan 2** named only the oer-s65 objects still there (the resource group does not exist, 0 assignments, 0 rules differing), and **run 2** removed and deleted them all and printed `direct assignments equal the assignment baseline: True` for both roles. Its sweep still listed the two users it had just deleted (Graph's list lags a delete, as the Expect says); T.2 reads 0. Nothing without the prefix was targeted in any of the four runs.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  [oer-s65] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: True; directory assignments exists: True; resource group Reader policy exists: True; state file exists: True.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Teardown: Azure eligibility of oer-s65 principals at resource group oer-s65-rg: 1
+  What if: Performing the operation "Remove (Azure Resource Manager roleEligibilityScheduleRequests, AdminRemove)" on target "eligible Azure role 'Reader' for oer-s65-user1@<test domain> at resource group oer-s65-rg".
+  [oer-s65] The 'Reader' policy listed at oer-s65-rg is the resource group's own: True
+  [oer-s65] Teardown: the Reader policy of oer-s65-rg: rules differing from its baseline: 0
+  [oer-s65] Teardown: the Reader policy of oer-s65-rg: restored: not attempted (WhatIf)
+  What if: Performing the operation "Delete the resource group (Azure Resource Manager DELETE), once its Reader policy is back at its baseline or, without a baseline, reads clean" on target "resource group oer-s65-rg in the test subscription".
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Teardown: oer-s65 assignments on the two roles: 4
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 schedule request, adminRemove)" on target "eligible assignment of directory role 'Reports Reader' for oer-s65-rag at directory scope '/'".
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 schedule request, adminRemove)" on target "eligible assignment of directory role 'Reports Reader' for oer-s65-user1@<test domain> at directory scope '/'".
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 schedule request, adminRemove)" on target "active assignment of directory role 'Message Center Reader' for oer-s65-rag at directory scope '/'".
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 schedule request, adminRemove)" on target "active assignment of directory role 'Message Center Reader' for oer-s65-user1@<test domain> at directory scope '/'".
+  [oer-s65] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 1 (Expiration_EndUser_Assignment)
+  What if: Performing the operation "Restore rule Expiration_EndUser_Assignment from the policy baseline (Microsoft Graph v1.0 PATCH)" on target "PIM policy of directory role 'Reports Reader'".
+  [oer-s65] Teardown: directory role 'Reports Reader': restored: not attempted (WhatIf)
+  [oer-s65] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': restored: not attempted (WhatIf)
+  [oer-s65] Teardown: directory role 'Reports Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: PIM-for-Groups eligibility of oer-s65 users in oer-s65-pim-elig: 1
+  What if: Performing the operation "Remove (Microsoft Graph beta eligibilityScheduleRequests, adminRemove)" on target "member eligibility of oer-s65-user1@<test domain> in oer-s65-pim-elig".
+  [oer-s65] Teardown: resource role bindings of access package oer-s65-ap: 1
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 DELETE resourceRoleScopes/<id>)" on target "binding of role 'Member' of group oer-s65-catres-new in access package oer-s65-ap".
+  What if: Performing the operation "Delete the access package (Microsoft Graph v1.0 DELETE accessPackages/<id>)" on target "oer-s65-ap".
+  [oer-s65] Teardown: resources of catalog oer-s65-catalog: 1
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 resourceRequests, adminRemove)" on target "resource 'oer-s65-catres-old' of catalog oer-s65-catalog".
+  What if: Performing the operation "Delete the catalog (Microsoft Graph v1.0 DELETE catalogs/<id>)" on target "oer-s65-catalog".
+  What if: Performing the operation "Remove member 'oer-s65-user2@<test domain>'" on target "oer-s65-rag".
+  What if: Performing the operation "Delete security group" on target "oer-s65-rag".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-untouched".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-policy".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-elig".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-dynamic".
+  What if: Performing the operation "Delete security group" on target "oer-s65-rename-direct".
+  What if: Performing the operation "Delete security group" on target "oer-s65-conflict-a".
+  What if: Performing the operation "Delete security group" on target "oer-s65-conflict-b".
+  What if: Performing the operation "Delete security group" on target "oer-s65-catres-new".
+  What if: Performing the operation "Delete test user" on target "oer-s65-user1@<test domain>".
+  What if: Performing the operation "Delete test user" on target "oer-s65-user2@<test domain>".
+  [oer-s65] Teardown: directory role 'Reports Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s65] Teardown: directory role 'Message Center Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s65] Sweep, still present: user 'oer-s65-user1@<test domain>' (00000000-0000-0000-0000-000000000006)
+  [oer-s65] Sweep, still present: user 'oer-s65-user2@<test domain>' (00000000-0000-0000-0000-000000000007)
+  [oer-s65] Sweep, still present: group 'oer-s65-catres-new' (00000000-0000-0000-0000-000000000016)
+  [oer-s65] Sweep, still present: group 'oer-s65-conflict-a' (00000000-0000-0000-0000-000000000014)
+  [oer-s65] Sweep, still present: group 'oer-s65-conflict-b' (00000000-0000-0000-0000-000000000015)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-dynamic' (00000000-0000-0000-0000-000000000012)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-elig' (00000000-0000-0000-0000-000000000011)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-policy' (00000000-0000-0000-0000-000000000010)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-untouched' (00000000-0000-0000-0000-000000000009)
+  [oer-s65] Sweep, still present: group 'oer-s65-rag' (00000000-0000-0000-0000-000000000008)
+  [oer-s65] Sweep, still present: group 'oer-s65-rename-direct' (00000000-0000-0000-0000-000000000013)
+  [oer-s65] Sweep, still present: catalog 'oer-s65-catalog' (00000000-0000-0000-0000-000000000023)
+  [oer-s65] Sweep, still present: access package 'oer-s65-ap' (00000000-0000-0000-0000-000000000025)
+  [oer-s65] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                             Name                                                                                        Id
+  ----                             ----                                                                                        --
+  user                             oer-s65-user1@<test domain>                                                       00000000-0000-0000-0000-000000000006
+  user                             oer-s65-user2@<test domain>                                                       00000000-0000-0000-0000-000000000007
+  group                            oer-s65-rag                                                                                 00000000-0000-0000-0000-000000000008
+  group                            oer-s65-pim-untouched                                                                       00000000-0000-0000-0000-000000000009
+  group                            oer-s65-pim-policy                                                                          00000000-0000-0000-0000-000000000010
+  group                            oer-s65-pim-elig                                                                            00000000-0000-0000-0000-000000000011
+  group                            oer-s65-pim-dynamic                                                                         00000000-0000-0000-0000-000000000012
+  group                            oer-s65-rename-direct (created as oer-s65-rename-old)                                       00000000-0000-0000-0000-000000000013
+  group                            oer-s65-conflict-a                                                                          00000000-0000-0000-0000-000000000014
+  group                            oer-s65-conflict-b                                                                          00000000-0000-0000-0000-000000000015
+  group                            oer-s65-catres-new (created as oer-s65-catres-old)                                          00000000-0000-0000-0000-000000000016
+  group member                     oer-s65-rag <- oer-s65-user2@<test domain>                                        00000000-0000-0000-0000-000000000007
+  directory role (built-in, fixed) Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy            Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed) Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy            Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  directory policy change          Reports Reader activation maximum PT3H ()                                                   -
+  PIM for Groups member policy     oer-s65-pim-policy (Expiration_EndUser_Assignment PT4H)                                     (none -- not created)
+  PIM for Groups eligibility       oer-s65-pim-elig <- oer-s65-user1@<test domain> (member, P5D)                     (none -- not created)
+  resource group                   oer-s65-rg                                                                                  /subscriptions/<SubId>/resourceGroups/oer-s65-rg
+  Azure role (built-in, fixed)     Reader                                                                                      /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000005
+  resource group Reader policy     oer-s65-rg                                                                                  /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000005
+  catalog                          oer-s65-catalog                                                                             00000000-0000-0000-0000-000000000023
+  catalog resource (group)         oer-s65-catres-old in oer-s65-catalog                                                       (none -- not created)
+  access package                   oer-s65-ap (hidden, no policy)                                                              00000000-0000-0000-0000-000000000025
+  access package resource role     Member of oer-s65-catres-old in oer-s65-ap                                                  (none -- not created)
+  Azure eligibility (schedule)     Reader at oer-s65-rg <- oer-s65-user1@<test domain> (P30D)                        (none -- not created)
+  policy baseline ()               <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json    -
+  assignment baseline ()           <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json -
+  resource group baseline ()       <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json      -
+  state file ()                    <Repo>\docs\live-verification\raw\s65\prereq-state.json                   -
+  [oer-s65] WhatIf: nothing was created, restored, removed or written.
+  [oer-s65] Done.
+  ```
 
-- [ ] **T.2 Read everything back: both directory policies and both roles' assignments equal their baselines, the resource group is gone, no test object is left, and every write of this file named a test object.**
+  **Run 1 (stopped before any delete):** the real run, as it printed.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  [oer-s65] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: True; directory assignments exists: True; resource group Reader policy exists: True; state file exists: True.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Teardown: Azure eligibility of oer-s65 principals at resource group oer-s65-rg: 1
+  [oer-s65] Removed the eligible 'Reader' assignment of oer-s65-user1@<test domain> at resource group oer-s65-rg.
+  [oer-s65] The 'Reader' policy listed at oer-s65-rg is the resource group's own: True
+  [oer-s65] Teardown: the Reader policy of oer-s65-rg: rules differing from its baseline: 0
+  [oer-s65] Teardown: the Reader policy of oer-s65-rg: restored: True
+  [oer-s65] Deleted resource group oer-s65-rg.
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Teardown: oer-s65 assignments on the two roles: 4
+  [oer-s65] Removed the eligible 'Reports Reader' assignment of oer-s65-rag.
+  [oer-s65] Removed the eligible 'Reports Reader' assignment of oer-s65-user1@<test domain>.
+  [oer-s65] Removed the active 'Message Center Reader' assignment of oer-s65-rag.
+  [oer-s65] Removed the active 'Message Center Reader' assignment of oer-s65-user1@<test domain>.
+  [oer-s65] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 1 (Expiration_EndUser_Assignment)
+  [oer-s65] Restored rule Expiration_EndUser_Assignment of 'Reports Reader'.
+  [oer-s65] Teardown: directory role 'Reports Reader': restored: False
+  [oer-s65] Teardown: directory role 'Reports Reader': still differing: Expiration_EndUser_Assignment
+  [oer-s65] Stopped at: at Restore-S65DirectoryPolicy, <Vault>\Initialize-OerS65Prereq.ps1: line 2435 <- at Invoke-S65DirectoryTeardown, <Vault>\Initialize-OerS65Prereq.ps1: line 2692 <- at <ScriptBlock>, <Vault>\Initialize-OerS65Prereq.ps1: line 2967
+  [oer-s65] This run stopped after it had written; restoring from the baselines before it exits (nothing is deleted here -- run -Teardown for the test objects):
+  [oer-s65] Restore: the Reader policy of oer-s65-rg: not restored here (no Azure Resource Manager session in this phase, no resource group, or no baseline for it); setup never writes that policy.
+  [oer-s65] Restore: directory role 'Reports Reader': rules differing from the policy baseline: 1 (Expiration_EndUser_Assignment)
+  [oer-s65] Restored rule Expiration_EndUser_Assignment of 'Reports Reader'.
+  [oer-s65] Restore: directory role 'Reports Reader': restored: False
+  [oer-s65] Restore: directory role 'Reports Reader': still differing: Expiration_EndUser_Assignment
+  [oer-s65] Restore: directory role 'Reports Reader': NOT restored: the PIM policy of directory role 'Reports Reader' is not back at its policy baseline after the restore. Nothing was deleted. Look at the policy before running the teardown again.
+  [oer-s65] Restore: directory role 'Message Center Reader': rules differing from the policy baseline: 0
+  [oer-s65] Restore: directory role 'Message Center Reader': restored: True
+  [oer-s65] Stopped after this run had written to the tenant or the baseline files (see the lines above): the PIM policy of directory role 'Reports Reader' is not back at its policy baseline after the restore. Nothing was deleted. Look at the policy before running the teardown again.
+  ```
+
+  **Read between the runs (read-only, T.2's block):** both policies at the baseline, every test object still there, the resource group gone.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- T.2: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.2: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.2: Reports Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Reports Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Message Center Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Message Center Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  resource group oer-s65-rg exists: False; answer: ResourceGroupNotFound: Resource group 'oer-s65-rg' could not be found.
+  the Reader policy of the deleted resource group, read by its baseline id (data): still readable; rules differing from its baseline: 0
+  users starting with the prefix: 2
+  groups starting with the prefix: 9
+  catalogs starting with the prefix: 1 (status 200)
+  accessPackages starting with the prefix: 1 (status 200)
+      5.1b [groups] oer-s65-rename-new | Updated | renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)
+      5.2a [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.2a [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.2b [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.5b [groups] oer-s65-catres-new | Updated | renamed group 'oer-s65-catres-old' to 'oer-s65-catres-new'
+      5.5-control [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+      5.5c [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+  rows that changed something outside 5.1b, 5.3 and 5.5b: 0
+  directory rows that are not Unchanged: 0
+  ```
+
+  **Plan 2:** only the oer-s65 objects run 1 had not reached.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  [oer-s65] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: True; directory assignments exists: True; resource group Reader policy exists: True; state file exists: True.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Teardown: resource group oer-s65-rg does not exist.
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Teardown: oer-s65 assignments on the two roles: 0
+  [oer-s65] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0
+  [oer-s65] Teardown: directory role 'Reports Reader': restored: not attempted (WhatIf)
+  [oer-s65] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': restored: not attempted (WhatIf)
+  [oer-s65] Teardown: directory role 'Reports Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: PIM-for-Groups eligibility of oer-s65 users in oer-s65-pim-elig: 1
+  What if: Performing the operation "Remove (Microsoft Graph beta eligibilityScheduleRequests, adminRemove)" on target "member eligibility of oer-s65-user1@<test domain> in oer-s65-pim-elig".
+  [oer-s65] Teardown: resource role bindings of access package oer-s65-ap: 1
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 DELETE resourceRoleScopes/<id>)" on target "binding of role 'Member' of group oer-s65-catres-new in access package oer-s65-ap".
+  What if: Performing the operation "Delete the access package (Microsoft Graph v1.0 DELETE accessPackages/<id>)" on target "oer-s65-ap".
+  [oer-s65] Teardown: resources of catalog oer-s65-catalog: 1
+  What if: Performing the operation "Remove (Microsoft Graph v1.0 resourceRequests, adminRemove)" on target "resource 'oer-s65-catres-old' of catalog oer-s65-catalog".
+  What if: Performing the operation "Delete the catalog (Microsoft Graph v1.0 DELETE catalogs/<id>)" on target "oer-s65-catalog".
+  What if: Performing the operation "Remove member 'oer-s65-user2@<test domain>'" on target "oer-s65-rag".
+  What if: Performing the operation "Delete security group" on target "oer-s65-rag".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-untouched".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-policy".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-elig".
+  What if: Performing the operation "Delete security group" on target "oer-s65-pim-dynamic".
+  What if: Performing the operation "Delete security group" on target "oer-s65-rename-direct".
+  What if: Performing the operation "Delete security group" on target "oer-s65-conflict-a".
+  What if: Performing the operation "Delete security group" on target "oer-s65-conflict-b".
+  What if: Performing the operation "Delete security group" on target "oer-s65-catres-new".
+  What if: Performing the operation "Delete test user" on target "oer-s65-user1@<test domain>".
+  What if: Performing the operation "Delete test user" on target "oer-s65-user2@<test domain>".
+  [oer-s65] Teardown: directory role 'Reports Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s65] Teardown: directory role 'Message Center Reader': direct assignments equal the assignment baseline: not checked (WhatIf)
+  [oer-s65] Sweep, still present: user 'oer-s65-user1@<test domain>' (00000000-0000-0000-0000-000000000006)
+  [oer-s65] Sweep, still present: user 'oer-s65-user2@<test domain>' (00000000-0000-0000-0000-000000000007)
+  [oer-s65] Sweep, still present: group 'oer-s65-catres-new' (00000000-0000-0000-0000-000000000016)
+  [oer-s65] Sweep, still present: group 'oer-s65-conflict-a' (00000000-0000-0000-0000-000000000014)
+  [oer-s65] Sweep, still present: group 'oer-s65-conflict-b' (00000000-0000-0000-0000-000000000015)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-dynamic' (00000000-0000-0000-0000-000000000012)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-elig' (00000000-0000-0000-0000-000000000011)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-policy' (00000000-0000-0000-0000-000000000010)
+  [oer-s65] Sweep, still present: group 'oer-s65-pim-untouched' (00000000-0000-0000-0000-000000000009)
+  [oer-s65] Sweep, still present: group 'oer-s65-rag' (00000000-0000-0000-0000-000000000008)
+  [oer-s65] Sweep, still present: group 'oer-s65-rename-direct' (00000000-0000-0000-0000-000000000013)
+  [oer-s65] Sweep, still present: catalog 'oer-s65-catalog' (00000000-0000-0000-0000-000000000023)
+  [oer-s65] Sweep, still present: access package 'oer-s65-ap' (00000000-0000-0000-0000-000000000025)
+  [oer-s65] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                             Name                                                                                        Id
+  ----                             ----                                                                                        --
+  user                             oer-s65-user1@<test domain>                                                       00000000-0000-0000-0000-000000000006
+  user                             oer-s65-user2@<test domain>                                                       00000000-0000-0000-0000-000000000007
+  group                            oer-s65-rag                                                                                 00000000-0000-0000-0000-000000000008
+  group                            oer-s65-pim-untouched                                                                       00000000-0000-0000-0000-000000000009
+  group                            oer-s65-pim-policy                                                                          00000000-0000-0000-0000-000000000010
+  group                            oer-s65-pim-elig                                                                            00000000-0000-0000-0000-000000000011
+  group                            oer-s65-pim-dynamic                                                                         00000000-0000-0000-0000-000000000012
+  group                            oer-s65-rename-direct (created as oer-s65-rename-old)                                       00000000-0000-0000-0000-000000000013
+  group                            oer-s65-conflict-a                                                                          00000000-0000-0000-0000-000000000014
+  group                            oer-s65-conflict-b                                                                          00000000-0000-0000-0000-000000000015
+  group                            oer-s65-catres-new (created as oer-s65-catres-old)                                          00000000-0000-0000-0000-000000000016
+  group member                     oer-s65-rag <- oer-s65-user2@<test domain>                                        00000000-0000-0000-0000-000000000007
+  directory role (built-in, fixed) Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy            Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed) Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy            Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  directory policy change          Reports Reader activation maximum PT3H ()                                                   -
+  PIM for Groups member policy     oer-s65-pim-policy (Expiration_EndUser_Assignment PT4H)                                     (none -- not created)
+  PIM for Groups eligibility       oer-s65-pim-elig <- oer-s65-user1@<test domain> (member, P5D)                     (none -- not created)
+  resource group                   oer-s65-rg                                                                                  (none -- not created)
+  Azure role (built-in, fixed)     Reader                                                                                      /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000005
+  resource group Reader policy     oer-s65-rg                                                                                  (none -- not created)
+  catalog                          oer-s65-catalog                                                                             00000000-0000-0000-0000-000000000023
+  catalog resource (group)         oer-s65-catres-old in oer-s65-catalog                                                       (none -- not created)
+  access package                   oer-s65-ap (hidden, no policy)                                                              00000000-0000-0000-0000-000000000025
+  access package resource role     Member of oer-s65-catres-old in oer-s65-ap                                                  (none -- not created)
+  Azure eligibility (schedule)     Reader at oer-s65-rg <- oer-s65-user1@<test domain> (P30D)                        (none -- not created)
+  policy baseline ()               <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json    -
+  assignment baseline ()           <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json -
+  resource group baseline ()       <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json      -
+  state file ()                    <Repo>\docs\live-verification\raw\s65\prereq-state.json                   -
+  [oer-s65] WhatIf: nothing was created, restored, removed or written.
+  [oer-s65] Done.
+  ```
+
+  **Run 2:** the teardown completed.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  [oer-s65] Mode: RESTORE and REMOVE. Tenant alias '<Alias>', tenant <TenantId>, subscription <SubId>, prefix 'oer-s65', expected organization '<test tenant>'.
+  [oer-s65] Directory roles (fixed): 'Reports Reader', 'Message Center Reader'. Azure (fixed): role 'Reader' only, resource group 'oer-s65-rg' in subscription <SubId>, location 'swedencentral'.
+  [oer-s65] Baselines and state in <Repo>\docs\live-verification\raw\s65: directory policies exists: True; directory assignments exists: True; resource group Reader policy exists: True; state file exists: True.
+  [oer-s65] Omnicit.EntraRBAC 1.1.0 loaded from <Repo>\output\module\Omnicit.EntraRBAC\1.1.0.
+  [oer-s65] No Tenant Profile '<Alias>' on this machine; the sign-ins name -TenantId.
+  [oer-s65] Azure Resource Manager sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-OER -Certificate -IncludeARM as the certificate identity (app-only, certificate from Cert:\CurrentUser\My; Microsoft Graph and Azure Resource Manager).
+  [oer-s65] Azure Resource Manager sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Azure Resource Manager sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Azure Resource Manager sign-in identity check: the session holds an Azure Resource Manager token for the test tenant, from the certificate: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Identified the test subscription: it belongs to the test tenant: True; state 'Enabled'.
+  [oer-s65] Unattended run: the confirmation question is not asked; the identity check and the tenant identification above both passed.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Azure role 'Reader': one built-in role definition at the test subscription: True.
+  [oer-s65] Teardown: resource group oer-s65-rg does not exist.
+  [oer-s65] Microsoft Graph sign-in: Disconnect-OER and Disconnect-MgGraph first, then Connect-MgGraph as the certificate identity (app-only, certificate from Cert:\CurrentUser\My, process-scoped context, no Azure Resource Manager).
+  [oer-s65] Microsoft Graph sign-in identity check: session app id is oer-live-cc: True
+  [oer-s65] Microsoft Graph sign-in identity check: tenant is the test tenant: True
+  [oer-s65] Identified the test tenant: organization '<test tenant>', tenant id <TenantId>, verified domain <test domain>.
+  [oer-s65] Directory role 'Reports Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Message Center Reader': one built-in role definition and one tenant-wide policy assignment: True (17 rules).
+  [oer-s65] Directory role 'Reports Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Directory role 'Message Center Reader': both baselines name the same role definition and policy as this tenant: True
+  [oer-s65] Teardown: oer-s65 assignments on the two roles: 0
+  [oer-s65] Teardown: directory role 'Reports Reader': rules differing from the policy baseline: 0
+  [oer-s65] Teardown: directory role 'Reports Reader': restored: True
+  [oer-s65] Teardown: directory role 'Message Center Reader': rules differing from the policy baseline: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': restored: True
+  [oer-s65] Teardown: directory role 'Reports Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: directory role 'Message Center Reader': baseline assignments missing and re-created: 0
+  [oer-s65] Teardown: PIM-for-Groups eligibility of oer-s65 users in oer-s65-pim-elig: 1
+  [oer-s65] Removed the member eligibility of oer-s65-user1@<test domain> in oer-s65-pim-elig.
+  [oer-s65] Teardown: resource role bindings of access package oer-s65-ap: 1
+  [oer-s65] Removed the binding of role 'Member' of group oer-s65-catres-new in access package oer-s65-ap.
+  [oer-s65] Deleted access package oer-s65-ap.
+  [oer-s65] Teardown: resources of catalog oer-s65-catalog: 1
+  [oer-s65] Removed the resource 'oer-s65-catres-old' of catalog oer-s65-catalog.
+  [oer-s65] Deleted catalog oer-s65-catalog.
+  [oer-s65] Removed oer-s65-user2@<test domain> from oer-s65-rag.
+  [oer-s65] Deleted group oer-s65-rag.
+  [oer-s65] Deleted group oer-s65-pim-untouched.
+  [oer-s65] Deleted group oer-s65-pim-policy.
+  [oer-s65] Deleted group oer-s65-pim-elig.
+  [oer-s65] Deleted group oer-s65-pim-dynamic.
+  [oer-s65] Deleted group oer-s65-rename-direct (created as oer-s65-rename-old).
+  [oer-s65] Deleted group oer-s65-conflict-a.
+  [oer-s65] Deleted group oer-s65-conflict-b.
+  [oer-s65] Deleted group oer-s65-catres-new (created as oer-s65-catres-old).
+  [oer-s65] Deleted user oer-s65-user1@<test domain>.
+  [oer-s65] Deleted user oer-s65-user2@<test domain>.
+  [oer-s65] Teardown: directory role 'Reports Reader': direct assignments equal the assignment baseline: True
+  [oer-s65] Teardown: directory role 'Message Center Reader': direct assignments equal the assignment baseline: True
+  [oer-s65] Sweep, still present: user 'oer-s65-user1@<test domain>' (00000000-0000-0000-0000-000000000006)
+  [oer-s65] Sweep, still present: user 'oer-s65-user2@<test domain>' (00000000-0000-0000-0000-000000000007)
+  [oer-s65] Summary -- REAL object ids. Redact them per docs/live-verification/README.md before pasting:
+  Kind                             Name                                                                                        Id
+  ----                             ----                                                                                        --
+  user                             oer-s65-user1@<test domain>                                                       00000000-0000-0000-0000-000000000006
+  user                             oer-s65-user2@<test domain>                                                       00000000-0000-0000-0000-000000000007
+  group                            oer-s65-rag                                                                                 00000000-0000-0000-0000-000000000008
+  group                            oer-s65-pim-untouched                                                                       00000000-0000-0000-0000-000000000009
+  group                            oer-s65-pim-policy                                                                          00000000-0000-0000-0000-000000000010
+  group                            oer-s65-pim-elig                                                                            00000000-0000-0000-0000-000000000011
+  group                            oer-s65-pim-dynamic                                                                         00000000-0000-0000-0000-000000000012
+  group                            oer-s65-rename-direct (created as oer-s65-rename-old)                                       00000000-0000-0000-0000-000000000013
+  group                            oer-s65-conflict-a                                                                          00000000-0000-0000-0000-000000000014
+  group                            oer-s65-conflict-b                                                                          00000000-0000-0000-0000-000000000015
+  group                            oer-s65-catres-new (created as oer-s65-catres-old)                                          00000000-0000-0000-0000-000000000016
+  group member                     oer-s65-rag <- oer-s65-user2@<test domain>                                        00000000-0000-0000-0000-000000000007
+  directory role (built-in, fixed) Reports Reader                                                                              00000000-0000-0000-0000-000000000001
+  directory role policy            Reports Reader                                                                              DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000002
+  directory role (built-in, fixed) Message Center Reader                                                                       00000000-0000-0000-0000-000000000003
+  directory role policy            Message Center Reader                                                                       DirectoryRole_<TenantId>_00000000-0000-0000-0000-000000000004
+  directory policy change          Reports Reader activation maximum PT3H ()                                                   -
+  PIM for Groups member policy     oer-s65-pim-policy (Expiration_EndUser_Assignment PT4H)                                     (none -- not created)
+  PIM for Groups eligibility       oer-s65-pim-elig <- oer-s65-user1@<test domain> (member, P5D)                     (none -- not created)
+  resource group                   oer-s65-rg                                                                                  (none -- not created)
+  Azure role (built-in, fixed)     Reader                                                                                      /subscriptions/<SubId>/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000005
+  resource group Reader policy     oer-s65-rg                                                                                  (none -- not created)
+  catalog                          oer-s65-catalog                                                                             00000000-0000-0000-0000-000000000023
+  catalog resource (group)         oer-s65-catres-old in oer-s65-catalog                                                       (none -- not created)
+  access package                   oer-s65-ap (hidden, no policy)                                                              00000000-0000-0000-0000-000000000025
+  access package resource role     Member of oer-s65-catres-old in oer-s65-ap                                                  (none -- not created)
+  Azure eligibility (schedule)     Reader at oer-s65-rg <- oer-s65-user1@<test domain> (P30D)                        (none -- not created)
+  policy baseline ()               <Repo>\docs\live-verification\raw\s65\baseline-directory-policies.json    -
+  assignment baseline ()           <Repo>\docs\live-verification\raw\s65\baseline-directory-assignments.json -
+  resource group baseline ()       <Repo>\docs\live-verification\raw\s65\baseline-rg-reader-policy.json      -
+  state file ()                    <Repo>\docs\live-verification\raw\s65\prereq-state.json                   -
+  [oer-s65] Done.
+  ```
+
+- [x] **T.2 Read everything back: both directory policies and both roles' assignments equal their baselines, the resource group is gone, no test object is left, and every write of this file named a test object.**
 
   ```powershell
   Show-S65BaselineDiff -Label 'T.2'
@@ -2641,9 +4621,34 @@ assignment baseline, and the sweep.
   baseline files) and never delete the raw folder (T.3) while this is not clean: it holds the only
   record of the original state; the resource group still there; a count above 0; a row not listed
   above.
-  **Result:**
+  **Result:** PASS (CC as oer-live-cc, 2026-10-01, after run 2 of T.1). `differing from the baseline: 0` for both roles; the assignment diff `only live []`, `only baseline []` for both roles and both kinds; `resource group oer-s65-rg exists: False` (ResourceGroupNotFound); its Reader policy, read by the baseline id, still readable with 0 rules differing (the policy outlives its resource group, as step 3 found); 0 users, 0 groups, 0 catalogs and 0 access packages starting with the prefix (status 200). The rows are the ones Expect lists, plus the two `Failed` catalogs rows of the fixed-build 5.5 re-run (5.5-control and 5.5c: `GroupNotFound`, nothing written -- 5.5's updated Expect); the 5.2a `Failed` row is in the results file twice, and a `Failed` row writes nothing. `rows that changed something outside 5.1b, 5.3 and 5.5b: 0`; `directory rows that are not Unchanged: 0`.
+  ```text
+  identity check: session app id is oer-live-cc: True
+  identity check: tenant is the test tenant: True
+  --- T.2: Reports Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.2: Message Center Reader: the baseline names this policy: True; rules live 17, baseline 17; differing from the baseline: 0
+  --- T.2: Reports Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Reports Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Message Center Reader, Eligible: direct principals live 0, baseline 0; only live []; only baseline []
+  --- T.2: Message Center Reader, Active: direct principals live 0, baseline 0; only live []; only baseline []
+  resource group oer-s65-rg exists: False; answer: ResourceGroupNotFound: Resource group 'oer-s65-rg' could not be found.
+  the Reader policy of the deleted resource group, read by its baseline id (data): still readable; rules differing from its baseline: 0
+  users starting with the prefix: 0
+  groups starting with the prefix: 0
+  catalogs starting with the prefix: 0 (status 200)
+  accessPackages starting with the prefix: 0 (status 200)
+      5.1b [groups] oer-s65-rename-new | Updated | renamed group 'oer-s65-rename-old' to 'oer-s65-rename-new'; updated group properties (Description)
+      5.2a [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.2a [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.2b [groups] oer-s65-conflict-b | Failed | both 'oer-s65-conflict-b' and its previousDisplayName 'oer-s65-conflict-a' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName
+      5.5b [groups] oer-s65-catres-new | Updated | renamed group 'oer-s65-catres-old' to 'oer-s65-catres-new'
+      5.5-control [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+      5.5c [catalogs] oer-s65-catalog | Failed | Group resource 'oer-s65-catres-old' could not be resolved to an object id; nothing was added for it
+  rows that changed something outside 5.1b, 5.3 and 5.5b: 0
+  directory rows that are not Unchanged: 0
+  ```
 
-- [ ] **T.3 Redact, then delete `raw/s65`.** Only once T.2 printed `differing from the baseline: 0` twice, the assignment diff was empty and the resource group was gone: the raw folder holds the baseline files, the only records of the original state. Move what the results above need from `docs/live-verification/raw/s65/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
+- [x] **T.3 Redact, then delete `raw/s65`.** Only once T.2 printed `differing from the baseline: 0` twice, the assignment diff was empty and the resource group was gone: the raw folder holds the baseline files, the only records of the original state. Move what the results above need from `docs/live-verification/raw/s65/` into this file, redacted per [README.md](README.md) and the rules at the top, then delete the folder.
 
   Object ids to `00000000-0000-0000-0000-0000000000NN` -- the role definition ids, every policy id
   and the certificate identity's service principal id included -- the tenant id to `<TenantId>`, the
@@ -2668,4 +4673,7 @@ assignment baseline, and the sweep.
   placeholder, an address outside `example.com`, the tenant or subscription id, the organization or
   domain name -- means redaction is not finished: redact it before the commit, and if it was a
   credential, rotate it ([README.md](README.md), "Credentials").
-  **Result:**
+  **Result:** PASS (CC, 2026-10-01; no sign-in needed). Run only after T.2 printed `differing from the baseline: 0` for both roles, an empty assignment diff and the resource group gone. Every result in this file was redacted on the way in -- the runner replaced the tenant values and every object id before any output was read, and the operator's sections are recorded as counts and True/False -- and nothing was copied out of the baseline or state files. `raw/s65 exists after: False`; `git status` in the clone listed nothing under `docs/live-verification` (this checklist is written and committed from the worktree that holds the branch; nothing under `raw/` was ever staged). A scan of this file finds no tenant or subscription id, organization, domain, alias, application id or thumbprint, 0 GUIDs that are not `00000000-...` placeholders (with whitespace removed too), 0 email addresses and 0 tokens; `tests/QA/dochygiene.tests.ps1` runs green in the full gate before the commit.
+  ```text
+  raw/s65 exists after: False
+  ```
