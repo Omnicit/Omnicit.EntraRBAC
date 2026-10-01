@@ -4,10 +4,10 @@ function Set-OERGroup {
     Updates the editable properties of an existing Entra ID group.
 
     .DESCRIPTION
-    Patches an existing Entra ID group identified by -Group. Only the supplied properties
-    are sent: -Description, -MailNickname, -MembershipRule, and -MembershipRuleProcessingState. At least
-    one updatable property must be supplied or a non-terminating NothingToUpdate error is emitted. A
-    group that cannot be resolved produces a non-terminating GroupNotFound error.
+    Patches an existing Entra ID group identified by -Group. Only the supplied properties are sent:
+    -NewDisplayName, -Description, -MailNickname, -MembershipRule, and -MembershipRuleProcessingState.
+    At least one updatable property must be supplied or a non-terminating NothingToUpdate error is
+    emitted. A group that cannot be resolved produces a non-terminating GroupNotFound error.
 
     -MembershipRule and -MembershipRuleProcessingState only apply to a dynamic-membership group (one
     whose groupTypes contains DynamicMembership). A static or role-assignable group cannot be converted
@@ -23,6 +23,11 @@ function Set-OERGroup {
     from the pipeline by property name, and still accepts the historical -Id, -GroupId and
     -DisplayName parameter names as aliases. GroupId takes precedence during pipeline binding so a
     piped Get-OERGroupMember object binds the group's GroupId instead of a principal's Id.
+
+    .PARAMETER NewDisplayName
+    New display name to rename the group to. Distinct from -Group (or its -DisplayName alias),
+    which only locates the existing group. Entra does not enforce unique group display names, so a
+    rename to a name another group already carries is not refused.
 
     .PARAMETER Description
     New description for the group.
@@ -45,6 +50,10 @@ function Set-OERGroup {
     Updates the description of the named group and returns the refreshed group object.
 
     .EXAMPLE
+    Set-OERGroup -Group 'role_sec_hr' -NewDisplayName 'role_sec_hr_emea'
+    Renames the group from role_sec_hr to role_sec_hr_emea.
+
+    .EXAMPLE
     Set-OERGroup -DisplayName 'role_sec_identity_administrator' -Description 'Updated identity admins'
     Updates the group, using the historical -DisplayName alias for -Group.
     #>
@@ -56,6 +65,9 @@ function Set-OERGroup {
         # principal's Id, during ValueFromPipelineByPropertyName alias resolution.
         [Alias('GroupId', 'Id', 'DisplayName')]
         [string]$Group,
+
+        [ValidateNotNullOrEmpty()]
+        [string]$NewDisplayName,
 
         [string]$Description,
         [string]$MailNickname,
@@ -73,6 +85,7 @@ function Set-OERGroup {
     }
     process {
         $Body = @{}
+        if ($PSBoundParameters.ContainsKey('NewDisplayName'))                { $Body.displayName = $NewDisplayName }
         if ($PSBoundParameters.ContainsKey('Description'))                   { $Body.description = $Description }
         if ($PSBoundParameters.ContainsKey('MailNickname'))                  { $Body.mailNickname = $MailNickname }
         if ($PSBoundParameters.ContainsKey('MembershipRule'))                { $Body.membershipRule = $MembershipRule }
@@ -80,7 +93,7 @@ function Set-OERGroup {
 
         if ($Body.Count -eq 0) {
             Write-CmdletError `
-                -Message ([System.Exception]::new('No updatable property was supplied. Pass at least one of -Description, -MailNickname, -MembershipRule, or -MembershipRuleProcessingState.')) `
+                -Message ([System.Exception]::new('No updatable property was supplied. Pass at least one of -NewDisplayName, -Description, -MailNickname, -MembershipRule, or -MembershipRuleProcessingState.')) `
                 -ErrorId 'NothingToUpdate' `
                 -Category InvalidArgument `
                 -TargetObject $Group `

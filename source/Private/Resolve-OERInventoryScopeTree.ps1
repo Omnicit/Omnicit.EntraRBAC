@@ -9,6 +9,15 @@ function Resolve-OERInventoryScopeTree {
     scopeHierarchy.json context file. -ManagementGroup narrows to a single branch; -Scope returns
     exactly that one raw scope without enumerating. Authentication (with ARM) is ensured at entry.
 
+    A listing that fails is never read as an empty level. For the full tree, a management-group or
+    subscription listing that is refused or fails is caught, warned about, and named in the output's
+    SkippedScopes ('<management groups: the listing failed>' / '<subscriptions: the listing
+    failed>'), and the other level is still enumerated; the caller reports those levels as skipped.
+    For a -ManagementGroup branch the read of the named branch throws, since nothing of it could be
+    walked. The management-group list comes from Get-OERManagementGroup, which bypasses the
+    service's cache; a management group created moments ago can still be missing until Azure has
+    updated its hierarchy.
+
     .PARAMETER ManagementGroup
     A management group name or display name to narrow enumeration to one branch.
 
@@ -36,6 +45,12 @@ function Resolve-OERInventoryScopeTree {
     $Scopes = [System.Collections.Generic.List[string]]::new()
     $MgNodes = [System.Collections.Generic.List[object]]::new()
     $SubNodes = [System.Collections.Generic.List[object]]::new()
+    # A level of the tree that could not be LISTED. A refused or failed listing is never taken as
+    # "there is nothing at that level": the level is named here, and the caller reports it as skipped
+    # (Export-OERInventory folds it into SkippedScopes and SkippedEligibilityScopes, so the bundle is
+    # InventoryPartial). Measured live 2026-09-30: app-only, the management-group listing answers
+    # AuthorizationFailed, and the walk used to read that as "no management groups".
+    $SkippedScopes = [System.Collections.Generic.List[string]]::new()
 
     if ($Scope) {
         $Scopes.Add($Scope)
@@ -45,14 +60,25 @@ function Resolve-OERInventoryScopeTree {
                 managementGroups = @()
                 subscriptions    = @()
             }
+            SkippedScopes = @()
         }
         return $Out
     }
 
+    # A named branch that cannot be read leaves nothing to walk, so its failure throws and the caller
+    # records the whole Azure walk as skipped. The full tree's listings are caught one by one instead:
+    # the level that could not be listed is named in SkippedScopes, and the other level is still walked.
     $ManagementGroups = if ($ManagementGroup) {
-        @(Get-OERManagementGroup -Name $ManagementGroup)
+        @(Get-OERManagementGroup -Name $ManagementGroup -ErrorAction Stop)
     } else {
-        @(Get-OERManagementGroup)
+        try {
+            @(Get-OERManagementGroup -ErrorAction Stop)
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            Write-Warning "Could not list the management groups, so no management group is walked: $($PSItem.Exception.Message)"
+            $SkippedScopes.Add('<management groups: the listing failed>')
+            @()
+        }
     }
     foreach ($Mg in $ManagementGroups) {
         if ($Mg.ResourceId) { $Scopes.Add([string]$Mg.ResourceId) }
@@ -64,9 +90,16 @@ function Resolve-OERInventoryScopeTree {
     }
 
     $Subscriptions = if ($ManagementGroup) {
-        @(Get-OERSubscription -ManagementGroup $ManagementGroup)
+        @(Get-OERSubscription -ManagementGroup $ManagementGroup -ErrorAction Stop)
     } else {
-        @(Get-OERSubscription)
+        try {
+            @(Get-OERSubscription -ErrorAction Stop)
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            Write-Warning "Could not list the subscriptions, so no subscription is walked: $($PSItem.Exception.Message)"
+            $SkippedScopes.Add('<subscriptions: the listing failed>')
+            @()
+        }
     }
     foreach ($Sub in $Subscriptions) {
         if ($Sub.ResourceId) { $Scopes.Add([string]$Sub.ResourceId) }
@@ -84,6 +117,7 @@ function Resolve-OERInventoryScopeTree {
             managementGroups = $MgNodes.ToArray()
             subscriptions    = $SubNodes.ToArray()
         }
+        SkippedScopes = $SkippedScopes.ToArray()
     }
     $Out
 }

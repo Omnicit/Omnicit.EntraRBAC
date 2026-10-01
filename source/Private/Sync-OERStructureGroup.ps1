@@ -8,13 +8,43 @@ function Sync-OERStructureGroup {
     the Invoke-OERStructure engine and emits one or more ConvertTo-OERStructureResult records
     describing what was created, updated, removed, skipped, or left unchanged.
 
-    displayName is the match key: an existing group is matched and updated by it. Renaming through
-    the document is not possible -- changing displayName creates a new group and leaves the old one
-    in place, unreported (Set-OERGroup has no -NewDisplayName parameter at all).
+    displayName is the match key: an existing group is matched and updated by it. To rename a group,
+    the document declares its new name as displayName and its current name as previousDisplayName,
+    and both names are resolved on every run before anything is read or written:
+    - Both resolve to DIFFERENT groups: the item emits exactly one Failed row and a non-terminating
+      GroupRenameConflict error (category ResourceExists, target the new name), and nothing else is
+      read or written for it -- the document never merges two groups.
+    - Only previousDisplayName resolves: that group takes the existing-group path, and the rename is
+      folded into the step-1 property update (Set-OERGroup -NewDisplayName, in the same PATCH as every
+      other changed property), reported as one Updated row "renamed group '<previous>' to '<new>'".
+      When that update fails, the Failed row is the last one: no child of the group is reconciled.
+    - Both resolve to the SAME group, or only displayName resolves: the item is applied normally.
+    - Neither resolves: the item emits exactly one Failed row and a non-terminating
+      GroupRenameNotFound error (category ObjectNotFound, target the new name), and nothing is
+      created, read or written for it. A document that declares a rename names a group that already
+      exists; a group is created only by an entry WITHOUT previousDisplayName.
+    A previousDisplayName matching several groups throws AmbiguousName, as an ambiguous displayName
+    does, and the item fails with nothing created or renamed. previousDisplayName also accepts the
+    group's object id, which is the way to rename a group whose old name is ambiguous. An object id
+    is verified with one read (v1.0/groups/<id>?$select=id): an id that no longer names a group counts
+    as not matching, so a stale id never reports a false conflict (with displayName resolving, the
+    item is applied normally; with it not resolving, the item fails as above), and any other failure
+    of that read throws, again with nothing created or renamed.
+
+    Microsoft Graph's displayName lookup can follow a rename with a delay. On the run that renames
+    the group, a reference to the NEW name elsewhere in the same document can therefore fail to
+    resolve. It fails loudly -- a Failed row, and a handler that withholds its prune while a declared
+    entry does not resolve withholds it -- and re-running the document once the new name resolves is
+    safe. Keep previousDisplayName in the document until the new name resolves: a run after that
+    finds the group under displayName and reports it Unchanged, and a re-run inside the window in
+    which neither name resolves yet fails with GroupRenameNotFound instead of creating a second
+    group. Once the new name resolves, remove previousDisplayName: a group created later under the
+    old name makes the item fail.
 
     Processing order within a single group (the PIM chicken-and-egg ordering):
-    1. Create the group when absent, or diff and update mutable properties (Description, MailNickname,
-       and MembershipRule/MembershipRuleProcessingState when the live group is already dynamic) when it
+    1. Create the group when absent, or diff and update mutable properties (the display name when
+       previousDisplayName renames the group, Description, MailNickname, and
+       MembershipRule/MembershipRuleProcessingState when the live group is already dynamic) when it
        already exists. Two properties
        are Graph-immutable once the group is created -- isAssignableToRole ("can only be set while
        creating the group and is immutable" per Microsoft Learn) and the static/dynamic membership type
@@ -49,10 +79,18 @@ function Sync-OERStructureGroup {
        via requireApproval/approvers) -- after the time-bound eligibility entries. Microsoft Graph
        lists a group's policies whether or not the group was ever used with PIM for Groups, and the
        first policy update onboards the group, which cannot be undone (Microsoft Graph documentation,
-       "Onboarding groups to PIM for Groups"). A declared approver (a UPN or a group display name) is
-       resolved to an object id before the diff, for each access type in turn; an approver that does
-       not resolve reports Failed
-       for that access type ONLY -- the other access type (member/owner) and every later step still run.
+       "Onboarding groups to PIM for Groups"). So before the first CHANGED policy write of an item for
+       a group that already existed -- and before its ShouldProcess gate, so -WhatIf shows it too --
+       the handler asks Test-OERGroupPimInUse, once per item, whether the group uses PIM for Groups,
+       and writes a warning when the group was not found to use it (a finding of the criterion, which
+       has a documented blind spot, not a fact), or when that cannot be read. The warning never blocks
+       and never changes a row: the write still runs. It is not asked for a group created in the
+       same run, nor once step 3 of the same item has written an eligibility (which onboarded the
+       group already). The eligibility it passes is what the item read, and the item reads PIM
+       eligibility only when it declares eligibility. A declared approver (a UPN or a group display
+       name) is resolved to an object id before the diff, for each access type in turn; an approver
+       that does not resolve reports Failed for that access type ONLY -- the other access type
+       (member/owner) and every later step still run.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -111,11 +149,16 @@ function Sync-OERStructureGroup {
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the group itself does not exist and
-    its creation is skipped under -WhatIf, no child read or write calls are made.
+    its creation is skipped under -WhatIf, no child read or write calls are made. A rename under
+    -WhatIf is reported Skipped ("would rename group '<previous>' to '<new>'"), and the group found
+    under its previous name is still read, so its children are planned against it. A rename that
+    neither name resolves, and a rename conflict, are Failed under -WhatIf too: both are decided
+    before any ShouldProcess gate.
 
     .PARAMETER Item
     One element from the groups[] array in the structure document, as a PSCustomObject produced by
-    ConvertFrom-Json.
+    ConvertFrom-Json. Its optional previousDisplayName names the group's current display name when
+    displayName declares a new one; see the rename rule above.
 
     .PARAMETER Caller
     The engine's $PSCmdlet reference, used to gate writes with ShouldProcess and to route errors
@@ -179,6 +222,67 @@ function Sync-OERStructureGroup {
 
         # -- Check existence ----------------------------------------------------------------
         $Gid = Resolve-OERGroupId -DisplayName $Name
+
+        # -- Rename through previousDisplayName -------------------------------------------
+        # Resolved on every run, before anything is read or written. Not wrapped in try: a previous
+        # name matching several groups throws AmbiguousName exactly as an ambiguous displayName does,
+        # and the engine reports the item Failed with nothing written for it.
+        $RenameFrom = $null
+        if (Test-OERDeclaredProperty -Node $Item -Name 'previousDisplayName') {
+            $PrevName = [string]$Item.previousDisplayName
+            if (Test-OERGuid -Value $PrevName) {
+                # An object id. Resolve-OERGroupId would hand it back verbatim without asking Graph,
+                # so a stale id of a deleted group would look like a live one: a false conflict when
+                # displayName exists, and a failed read instead of a create when it does not. One
+                # read settles it. The not-found answer is declared to the transport and means "no
+                # group under that id"; any other failure is not evidence either way and throws, so
+                # the engine reports the item Failed with nothing written.
+                $PrevProbe = Invoke-OERGraphRequest -Uri "v1.0/groups/$PrevName`?`$select=id" `
+                    -ExpectedErrorCode 'Request_ResourceNotFound', 'ResourceNotFound'
+                $PrevGid = if (@($PrevProbe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { $null } else { $PrevName }
+            } else {
+                $PrevGid = Resolve-OERGroupId -DisplayName $PrevName
+            }
+            # Both names on DIFFERENT groups: the document never merges two groups, so this is the
+            # item's only row -- no read, no write, no child reconciled. -ne compares the two ids
+            # case-insensitively, so one group reached under an upper-case id is never two groups.
+            if ($Gid -and $PrevGid -and ([string]$Gid -ne [string]$PrevGid)) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Group '$Name' ($Gid) and its previousDisplayName '$PrevName' ($PrevGid) are different groups. The document never merges two groups, so nothing was changed for this entry; rename or delete one of them, or remove previousDisplayName."),
+                    'GroupRenameConflict',
+                    [System.Management.Automation.ErrorCategory]::ResourceExists,
+                    $Name
+                )
+                $Caller.WriteError($ErrRec)
+                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                    -Detail "both '$Name' and its previousDisplayName '$PrevName' exist as different groups; the document never merges two groups, so nothing was changed -- rename or delete one of them, or remove previousDisplayName" `
+                    -ErrorRecord $ErrRec
+                return
+            }
+            # NEITHER name resolves: a document that declares a rename names a group that already
+            # exists, so this is never a create. Right after a rename, Graph's name lookup can find
+            # the group under neither name for a while, and creating it then would leave a duplicate
+            # beside the renamed one. One Failed row, nothing read or written.
+            if (-not $Gid -and -not $PrevGid) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Neither '$Name' nor its previousDisplayName '$PrevName' matches a group, so nothing was created or renamed for this entry. Right after a rename Microsoft Graph can take a while to resolve the new name: wait and re-run. To create a new group, remove previousDisplayName."),
+                    'GroupRenameNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $Name
+                )
+                $Caller.WriteError($ErrRec)
+                ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
+                    -Detail "neither '$Name' nor its previousDisplayName '$PrevName' matches a group, so nothing was created -- right after a rename Microsoft Graph can take a while to resolve the new name, so wait and re-run; to create a new group, remove previousDisplayName" `
+                    -ErrorRecord $ErrRec
+                return
+            }
+            # Only the previous name exists: that group takes the existing-group path below, and the
+            # rename is folded into its property update.
+            if (-not $Gid -and $PrevGid) {
+                $Gid = $PrevGid
+                $RenameFrom = $PrevName
+            }
+        }
 
         # Whether THIS run created the group, consulted only by the step-4 pimPolicy wait below: a
         # brand-new group's policy assignments can take a moment to be listed by Graph, but a missing
@@ -309,6 +413,12 @@ function Sync-OERStructureGroup {
             # contradictory 'group properties match' Unchanged for the same group.
             $DriftReported = $false
 
+            # A rename through previousDisplayName travels in the same PATCH as every other changed
+            # property, so the group is renamed and updated in one call.
+            if ($RenameFrom) {
+                $UpdateParams.NewDisplayName = $Name
+            }
+
             if (Test-OERDeclaredProperty -Node $Item -Name 'description') {
                 if ($Cur.Description -ne $Item.description) {
                     $UpdateParams.Description = $Item.description
@@ -356,17 +466,38 @@ function Sync-OERStructureGroup {
             }
 
             if ($UpdateParams.Count -gt 0) {
-                if ($Caller.ShouldProcess($Name, 'Update group properties')) {
+                # The rename is reported on its own terms; the other changed keys keep the wording
+                # every property update has always had.
+                $PropertyKeys = @($UpdateParams.Keys | Where-Object { $_ -ne 'NewDisplayName' })
+                $PropertyList = $PropertyKeys -join ', '
+                if ($RenameFrom) {
+                    $UpdateAction = "Rename group '$RenameFrom' to '$Name'"
+                    $UpdatedDetail = "renamed group '$RenameFrom' to '$Name'"
+                    $PlannedDetail = "would rename group '$RenameFrom' to '$Name'"
+                    if ($PropertyKeys.Count -gt 0) {
+                        $UpdateAction += " and update group properties ($PropertyList)"
+                        $UpdatedDetail += "; updated group properties ($PropertyList)"
+                        $PlannedDetail += "; would update group properties ($PropertyList)"
+                    }
+                } else {
+                    $UpdateAction = 'Update group properties'
+                    $UpdatedDetail = "updated group properties ($PropertyList)"
+                    $PlannedDetail = "would update group properties ($PropertyList)"
+                }
+                if ($Caller.ShouldProcess($Name, $UpdateAction)) {
                     try {
                         Set-OERGroup -Id $Gid @UpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
-                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "updated group properties ($($UpdateParams.Keys -join ', '))"
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail $UpdatedDetail
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
                         $Caller.WriteError($PSItem)
                         ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "update failed: $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        # The group still carries its previous name, not the one the document
+                        # declares, so none of its children is reconciled under the new name.
+                        if ($RenameFrom) { return }
                     }
                 } else {
-                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would update group properties ($($UpdateParams.Keys -join ', '))"
+                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail $PlannedDetail
                 }
             } elseif (-not $DriftReported) {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail 'group properties match'
@@ -618,6 +749,13 @@ function Sync-OERStructureGroup {
             return $null
         }
 
+        # Whether step 3 below wrote an eligibility for this group in THIS run. That request onboards
+        # the group to PIM for Groups, so step 4 no longer asks whether the group uses PIM for Groups
+        # before it writes the policy: the onboarding its warning would announce has already happened.
+        # Set only on a SUCCESSFUL write -- a refused request, or one skipped under -WhatIf, onboards
+        # nothing.
+        $EligibilityWrittenThisRun = $false
+
         # Step 3: time-bound eligibility
         foreach ($EEntry in $TimeBoundEntries) {
             $EPrinRef = $EEntry.principal
@@ -657,6 +795,7 @@ function Sync-OERStructureGroup {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                     continue
                 }
+                $EligibilityWrittenThisRun = $true
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "set time-bound $($EChange.AccessType) eligibility for '$EPrinRef' ($($EChange.DurationDays) days): $($EChange.Detail)"
             } else {
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would set time-bound $($EChange.AccessType) eligibility for '$EPrinRef': $($EChange.Detail)"
@@ -692,6 +831,11 @@ function Sync-OERStructureGroup {
             # ONE wait budget for the whole group item (at most 30 s of waiting total: 2 + 4 + 8 +
             # 16), shared by the member and owner access types below -- not one budget each.
             $PolicyRetryDelays = [System.Collections.Generic.Queue[int]]::new([int[]]@(2, 4, 8, 16))
+
+            # Whether this item has already asked Test-OERGroupPimInUse. Asked at most ONCE per item,
+            # at the first access type whose diff is Changed: one question and one warning cover both
+            # access types of the same group.
+            $PimUsageAsked = $false
 
             foreach ($AccessType in $DesiredByAccess.Keys) {
                 $Declared = $DesiredByAccess[$AccessType]
@@ -802,6 +946,42 @@ function Sync-OERStructureGroup {
                 if (-not $Change.Changed) {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Unchanged' -Detail "pimPolicy ($AccessType) already matches"
                     continue
+                }
+
+                # Microsoft Graph lists a group's PIM-for-Groups policies whether or not the group was
+                # ever used with PIM for Groups, and this write onboards a group that was not, which
+                # cannot be undone. So before the FIRST changed write of the item -- and before its
+                # ShouldProcess gate, so -WhatIf shows it -- ask Test-OERGroupPimInUse, the single
+                # owner of that rule, and WARN when the group was not found to use PIM for Groups. Never
+                # blocks and never changes a row: the document asked for this policy, and a group
+                # onboarded on purpose is the normal case (ruling R3,
+                # docs/development/rationale.md#pim-in-use-criterion). Not asked for a group this run
+                # created (it has no PIM history to protect) or once step 3 of this item wrote an
+                # eligibility (that already onboarded it). The eligibility count is what this item
+                # READ, which it did only when eligibility is declared; 0 otherwise.
+                # A not-in-use group the criterion also reports as not Manageable (ResourceTypeNotSupported
+                # -- a dynamic or on-premises-synced group) cannot be onboarded at all, so the "onboards
+                # it ... cannot be undone" wording would be self-contradictory; that case gets its own
+                # warning instead. Decided from Test-OERGroupPimInUse's Manageable property, the stable
+                # signal for that case, never by matching the text of Reason.
+                if (-not $PimUsageAsked) {
+                    $PimUsageAsked = $true
+                    if (-not $CreatedThisRun -and -not $EligibilityWrittenThisRun) {
+                        $KnownEligibility = if ($NeedElig) { @($CurrentEligibles | Where-Object { $null -ne $_ }).Count } else { 0 }
+                        try {
+                            $Usage = Test-OERGroupPimInUse -GroupId $Gid -EligibilityCount $KnownEligibility
+                            if (-not $Usage.InUse) {
+                                if (-not $Usage.Manageable) {
+                                    Write-Warning "Sync-OERStructureGroup: PIM for Groups cannot manage group '$Name' (ResourceTypeNotSupported), so its pimPolicy cannot be applied."
+                                } else {
+                                    Write-Warning "Sync-OERStructureGroup: group '$Name' was not found to use PIM for Groups ($($Usage.Reason)); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM for Groups')."
+                                }
+                            }
+                        } catch {
+                            Remove-OERErrorRecord -Record $PSItem
+                            Write-Warning "Sync-OERStructureGroup: could not determine whether group '$Name' uses PIM for Groups ($($PSItem.Exception.Message)); if it does not, applying its pimPolicy onboards it, which cannot be undone."
+                        }
+                    }
                 }
 
                 if ($Caller.ShouldProcess($Name, "Set PIM policy ($AccessType): $($Change.Changes -join '; ')")) {

@@ -14,6 +14,8 @@
           <TableColumnHeader><Label>Catalogs</Label></TableColumnHeader>
           <TableColumnHeader><Label>AccessPackages</Label></TableColumnHeader>
           <TableColumnHeader><Label>AccessReviews</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRolePol</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRoleAsgn</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleAssignments</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleMgmtPolicies</Label></TableColumnHeader>
         </TableHeaders>
@@ -26,6 +28,8 @@
               <TableColumnItem><ScriptBlock>@($_.Catalogs).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.AccessPackages).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.AccessReviews).Count</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>@($_.DirectoryRoleManagementPolicies).Count</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>@($_.DirectoryRoleAssignments).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.RoleAssignments).Count</ScriptBlock></TableColumnItem>
               <TableColumnItem><ScriptBlock>@($_.RoleManagementPolicies).Count</ScriptBlock></TableColumnItem>
             </TableColumnItems>
@@ -43,6 +47,8 @@
           <TableColumnHeader><Label>BundlePath</Label></TableColumnHeader>
           <TableColumnHeader><Label>Groups</Label></TableColumnHeader>
           <TableColumnHeader><Label>Roster</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRolePol</Label></TableColumnHeader>
+          <TableColumnHeader><Label>DirRoleAsgn</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleAssignments</Label></TableColumnHeader>
           <TableColumnHeader><Label>RoleMgmtPolicies</Label></TableColumnHeader>
           <TableColumnHeader><Label>Scopes</Label></TableColumnHeader>
@@ -53,6 +59,8 @@
               <TableColumnItem><PropertyName>BundlePath</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>Groups</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>RosterCount</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DirectoryRoleManagementPolicies</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DirectoryRoleAssignments</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>RoleAssignments</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>RoleManagementPolicies</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>ScopeCount</PropertyName></TableColumnItem>

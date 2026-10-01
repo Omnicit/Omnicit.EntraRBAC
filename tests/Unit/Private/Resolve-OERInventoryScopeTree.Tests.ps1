@@ -121,4 +121,49 @@ Describe 'Resolve-OERInventoryScopeTree' {
             $Tree.Hierarchy.managementGroups[0].id | Should -Be '/providers/Microsoft.Management/managementGroups/mg-stripped'
         }
     }
+
+    # A listing that fails is never read as an empty level (measured live 2026-09-30: app-only, the
+    # management-group listing answers AuthorizationFailed).
+    Context 'a level that cannot be listed' {
+        It 'names a failed management-group listing in SkippedScopes, warns, and still enumerates the subscriptions' {
+            InModuleScope $script:moduleName {
+                # Non-terminating, as the real cmdlet reports a refused read: only -ErrorAction Stop at
+                # the call site makes it reach the catch.
+                Mock Get-OERManagementGroup { Write-Error -Message 'AuthorizationFailed: no Microsoft.Management/managementGroups/read' -ErrorId 'AuthorizationFailed' }
+                Mock Get-OERSubscription { [PSCustomObject]@{ SubscriptionId = 's1'; DisplayName = 'Sub 1'; ResourceId = '/subscriptions/s1'; State = 'Enabled' } }
+                $T = Resolve-OERInventoryScopeTree -WarningAction SilentlyContinue -WarningVariable W
+                @($T.SkippedScopes) | Should -Be @('<management groups: the listing failed>')
+                @($T.Scopes) | Should -Be @('/subscriptions/s1')
+                @($T.Hierarchy.managementGroups).Count | Should -Be 0
+                @($W | Where-Object { [string]$_ -like 'Could not list the management groups*AuthorizationFailed*' }).Count | Should -Be 1
+                Should -Invoke Get-OERManagementGroup -Exactly -Times 1
+            }
+        }
+
+        It 'names a failed subscription listing in SkippedScopes and still enumerates the management groups' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERManagementGroup { [PSCustomObject]@{ Name = 'mg-1'; DisplayName = 'MG 1'; ResourceId = '/providers/Microsoft.Management/managementGroups/mg-1' } }
+                Mock Get-OERSubscription { Write-Error -Message 'AuthorizationFailed: subscriptions' -ErrorId 'AuthorizationFailed' }
+                $T = Resolve-OERInventoryScopeTree -WarningAction SilentlyContinue
+                @($T.SkippedScopes) | Should -Be @('<subscriptions: the listing failed>')
+                @($T.Scopes) | Should -Be @('/providers/Microsoft.Management/managementGroups/mg-1')
+            }
+        }
+
+        It 'reports no skipped level when both listings succeed' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERManagementGroup { @() }
+                Mock Get-OERSubscription { @() }
+                @((Resolve-OERInventoryScopeTree).SkippedScopes).Count | Should -Be 0
+            }
+        }
+
+        It 'throws, rather than walking nothing, when the named -ManagementGroup branch cannot be read' {
+            InModuleScope $script:moduleName {
+                Mock Get-OERManagementGroup { Write-Error -Message 'AuthorizationFailed: mg-x' -ErrorId 'AuthorizationFailed' }
+                Mock Get-OERSubscription { @() }
+                { Resolve-OERInventoryScopeTree -ManagementGroup 'mg-x' } | Should -Throw -ExpectedMessage '*AuthorizationFailed*'
+            }
+        }
+    }
 }

@@ -9,11 +9,17 @@ Describe 'Get-OERInventoryReadme' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Md | Should -BeOfType ([string])
-            foreach ($File in @('inventory.json', 'groups.json', 'groupsRoster.json',
-                    'scopeHierarchy.json', 'roleAssignments.json', 'roleManagementPolicies.json',
-                    'schema.json', 'rbac-architect-prompt.md')) {
+            # Every file Export-OERInventory writes, the two directory role area files included.
+            foreach ($File in @('inventory.json', 'groups.json', 'administrativeUnits.json',
+                    'catalogs.json', 'accessPackages.json', 'accessReviews.json',
+                    'directoryRoleManagementPolicies.json', 'directoryRoleAssignments.json',
+                    'groupsRoster.json', 'scopeHierarchy.json', 'azurePimEligibility.json',
+                    'roleAssignments.json', 'roleManagementPolicies.json', 'schema.json',
+                    'rbac-architect-prompt.md')) {
                 $Md | Should -Match ([regex]::Escape($File))
             }
+            # No cross-reference to a heading the README does not have.
+            ($Md -replace '\s+', ' ') | Should -Not -Match ([regex]::Escape('"Azure PIM eligibility" under Coverage limits'))
             $Md | Should -Match 'Test-OERStructure'
             $Md | Should -Match 'Invoke-OERStructure'
         }
@@ -27,14 +33,26 @@ Describe 'Get-OERInventoryReadme' {
             # fabricated as a lossy single-stage self review; it is skipped instead).
             $Md | Should -Match 'Coverage limits'
             $Md | Should -Match 'Azure resource groups and individual Azure resources'
-            $Md | Should -Match 'not captured at all'
+            $Md | Should -Match 'not captured anywhere in this bundle'
             $Md | Should -Match 'SKIPPED entirely'
             $Md | Should -Match 'ACCESS-PACKAGE-SCOPED'
             foreach ($Cmdlet in @('New-OERResourceGroup', 'Get-OERResource',
-                    'New-OEREligibleRoleAssignment', 'New-OERActiveRoleAssignment',
-                    'New-OERAccessReviewStage')) {
+                    'New-OEREligibleRoleAssignment', 'Remove-OEREligibleRoleAssignment',
+                    'New-OERActiveRoleAssignment', 'New-OERAccessReviewStage')) {
                 $Md | Should -Match ([regex]::Escape($Cmdlet))
             }
+        }
+    }
+
+    It 'states eligible Azure PIM assignments are read-only context in azurePimEligibility.json' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme
+            # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
+            # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
+            # read-only context, so the README must say so rather than repeat the old blanket claim.
+            $Md | Should -Match ([regex]::Escape('azurePimEligibility.json'))
+            $Md | Should -Match 'read-only context'
+            $Md | Should -Match 'not an apply section'
         }
     }
 
@@ -71,7 +89,7 @@ Describe 'Get-OERInventoryReadme' {
 Describe 'Get-OERInventoryReadme apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the README claiming fewer.
-    It 'counts and names every section schema.json declares, and marks both directory role sections apply-only' {
+    It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
@@ -82,7 +100,10 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
                 $Md | Should -Match "\b$Section\b"
             }
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
-            ($Md -replace '\s+', ' ') | Should -Match '`directoryRoleManagementPolicies` \(the PIM settings of Microsoft Entra directory roles\) and `directoryRoleAssignments` \(eligible and active assignments of Microsoft Entra directory roles\) are apply-only for now: `Get-OERInventory` does not read them'
+            $Collapsed = $Md -replace '\s+', ' '
+            $Collapsed | Should -Not -Match 'apply-only for now'
+            $Collapsed | Should -Not -Match 'does not read them'
+            $Collapsed | Should -Match ([regex]::Escape('`directoryRoleManagementPolicies` (the PIM settings of Microsoft Entra directory roles) and `directoryRoleAssignments` (eligible and active assignments of Microsoft Entra directory roles) are both captured in `inventory.json` (policies for roles with at least one eligible or active assignment unless the export used `-AllDirectoryRolePolicies`; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
         }
     }
 }

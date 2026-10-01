@@ -99,7 +99,7 @@ function Get-OERRequiredScopeMap {
                          'EntitlementManagement.Read.All', 'PrivilegedEligibilitySchedule.Read.AzureADGroup',
                          'RoleManagement.Read.Directory', 'RoleManagementPolicy.Read.AzureADGroup'
             AzureRole = 'Reader'
-            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups.'
+            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers.'
         }
         @{
             Cmdlet = 'Get-OERAccessPackage'; Transport = 'Graph'
@@ -203,7 +203,7 @@ function Get-OERRequiredScopeMap {
                          'EntitlementManagement.Read.All', 'PrivilegedEligibilitySchedule.Read.AzureADGroup',
                          'RoleManagement.Read.Directory', 'RoleManagementPolicy.Read.AzureADGroup'
             AzureRole = 'Reader'
-            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups.'
+            Note = 'The scopes listed are the union over every -Include area; a narrower -Include needs only the corresponding subset. Directory.Read.All is required outright, to name principals through directoryObjects/getByIds, and it already covers the user, group and service-principal reads behind the friendly-name lookups. The DirectoryRoleManagementPolicies and DirectoryRoleAssignments sections read the directory role policies and the eligibility and assignment schedules, which RoleManagement.Read.Directory already covers.'
         }
         @{
             Cmdlet = 'Get-OERManagementGroup'; Transport = 'Arm'

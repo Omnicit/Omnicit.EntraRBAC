@@ -5,16 +5,20 @@ function Export-OERInventory {
 
     .DESCRIPTION
     Composes the existing Get-OER* read cmdlets into a timestamped bundle folder containing the
-    canonical round-trippable inventory.json, per-area JSON files, read-only context
-    (scopeHierarchy.json, groupsRoster.json), a formal JSON Schema (schema.json), a predefined LLM
-    prompt (rbac-architect-prompt.md), and a README. The bundle is designed to be handed to any LLM to produce appliable RBAC
-    proposals. Only RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with
-    eligibility) are kept in full detail in inventory.json. Microsoft Graph lists PIM-for-groups
-    policies for a group that was never used with PIM for Groups as well, so a group whose policy was
-    read carries a pimPolicy block whether or not it was ever onboarded. -AllGroupsDetailed keeps
-    every group inventory.json covers. The cmdlet reads only -- no tenant state changes -- and authenticates at entry; an ARM
-    token is acquired only when -Include names RoleAssignments or RoleManagementPolicies, the two
-    Azure sections.
+    canonical round-trippable inventory.json, per-area JSON files -- including
+    directoryRoleManagementPolicies.json and directoryRoleAssignments.json for the Microsoft Entra
+    directory role sections -- read-only context (scopeHierarchy.json, groupsRoster.json,
+    azurePimEligibility.json), a formal
+    JSON Schema (schema.json), a predefined LLM prompt (rbac-architect-prompt.md), and a README. The
+    bundle is designed to be handed to any LLM to produce appliable RBAC proposals. Only
+    RBAC-relevant groups (role-assignable, carrying a pimPolicy block, or with eligibility) are kept
+    in full detail in inventory.json. Microsoft Graph lists PIM-for-groups policies for a group that
+    was never used with PIM for Groups as well, so Get-OERInventory exports a pimPolicy block only
+    for a group that uses PIM for Groups -- one with PIM eligibility, or one whose PIM-for-Groups
+    policy has been modified -- and a group whose policies Graph merely lists is not kept in full
+    detail on that account. -AllGroupsDetailed keeps every group inventory.json covers. The cmdlet
+    reads only -- no tenant state changes -- and authenticates at entry; an ARM token is acquired
+    only when -Include names RoleAssignments or RoleManagementPolicies, the two Azure sections.
 
     WHICH GROUPS INVENTORY.JSON COVERS, AND WHICH IT DOES NOT. The Groups section is read with the
     'securityEnabled eq true' filter Get-OERInventory applies by default, so it carries the
@@ -31,13 +35,46 @@ function Export-OERInventory {
     not. When anything was skipped the bundle summary is still emitted first and is then followed by
     a non-terminating InventoryPartial error, so a caller using -ErrorAction Stop or a try/catch
     finds out that roleAssignments.json and roleManagementPolicies.json are incomplete instead of
-    treating a truncated bundle as a full tenant snapshot.
+    treating a truncated bundle as a full tenant snapshot. A level of the tree that could not be
+    LISTED is skipped the same way: a refused or failed management-group listing is named in
+    SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
+    subscription listing as '<subscriptions: the listing failed>'), never read as "no management
+    groups". A management group created in the last few minutes can be missing from the
+    management-group list, and an export run in that window does not walk it -- nor name it as
+    skipped -- because it cannot know it exists. Wait until Get-OERManagementGroup lists it before
+    relying on an export that should include it.
+
+    Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
+    Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent
+    otherwise. That is UNLIKE the two role-assignment files it sits beside: roleAssignments.json and
+    roleManagementPolicies.json are always written, as an empty [] when no Azure section was
+    requested, while azurePimEligibility.json is the one bundle file that is sometimes not written at
+    all. One paged Get-OEREligibleRoleAssignment read runs per scope the walk visits: a management
+    group scope is read with -AtScope (eligibilities at or above it); every other scope is read
+    unfiltered, which also surfaces eligibilities below that scope -- Microsoft Learn's listForScope
+    documents four filters (atScope(), principalId eq '{id}', assignedTo('{userId}') and asTarget())
+    and no unfiltered semantics at all, so this was MEASURED rather than taken from documentation: in
+    the step 5 live-verification checklist, section 4
+    (docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md), one unfiltered
+    subscription read returned an eligibility at a resource group below it (2026-09-30).
+    Resolve-OERInventoryScopeTree enumerates management group and subscription scopes only, so a
+    resource-group- or resource-scoped eligibility reaches this file ONLY through that unfiltered
+    subscription read's below-scope behaviour. The results
+    are deduplicated on the eligibility schedule id, so one eligibility
+    visible from several scopes in the walk appears once -- for example a management-group
+    eligibility, read once directly at the management group and again, inherited, from every
+    subscription below it. The file is read-only context, exactly like scopeHierarchy.json and
+    groupsRoster.json: it is never an apply-document section and no apply cmdlet reads it back. Every
+    per-area file and azurePimEligibility.json alike is always a JSON array on disk, written as [] when
+    it carries nothing. A scope whose eligibility read fails is named in SkippedEligibilityScopes and
+    folds into the same trailing InventoryPartial error as a failed role-assignment scope.
+
     Entra ID coverage is reported the same way. IncompleteReads carries one entry per partial
     report from Get-OERInventory, each naming the affected section/displayName/key triples -- so a
     single run that lost three collections reports one entry listing all three, not three entries.
     Its Count is therefore the number of partial reports, not the number of unread collections; read
     the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
-    IncompleteReads or SkippedScopes is non-empty. Such a collection is NOT written into
+    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. Such a collection is NOT written into
     inventory.json as an empty one: a members or scopedRoles key it names is an explicit null, which
     the apply engine reads as "leave untouched". Do not hand-edit that null to [] -- under
     Invoke-OERStructure -Prune an empty declared collection deletes every live member.
@@ -62,7 +99,10 @@ function Export-OERInventory {
     directory. Use the returned object's BundlePath to address the files afterwards.
 
     .PARAMETER Include
-    Which sections to gather from the tenant. Defaults to the Entra sections plus RoleAssignments.
+    Which sections to gather from the tenant. Defaults to the Entra sections (Groups,
+    AdministrativeUnits, Catalogs, AccessPackages, AccessReviews, DirectoryRoleManagementPolicies,
+    DirectoryRoleAssignments) plus RoleAssignments. The two DirectoryRole* sections are Graph-only
+    and never acquire an ARM token by themselves.
 
     .PARAMETER AllGroupsDetailed
     Keep every group the Groups section covers in full detail in inventory.json, not just the
@@ -70,6 +110,12 @@ function Export-OERInventory {
     distribution group or a Microsoft 365 group whose securityEnabled is false -- neither is in
     inventory.json at any detail level. Use Get-OERInventory -GroupFilter to widen the scope
     itself; groupsRoster.json already lists every group in the tenant unfiltered.
+
+    .PARAMETER AllDirectoryRolePolicies
+    For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
+    directory role, instead of only the roles that have at least one row in the tenant-scope
+    eligibility or assignment schedules (the default). Forwarded to the internal Get-OERInventory
+    call; has no effect unless -Include names DirectoryRoleManagementPolicies.
 
     .PARAMETER ManagementGroup
     Narrow the Azure scope walk to a single management group branch identified by name or id.
@@ -106,9 +152,12 @@ function Export-OERInventory {
     [CmdletBinding(SupportsShouldProcess)]
     param(
         [string]$OutputPath = '.',
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies')]
-        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments'),
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
+        [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments'),
         [switch]$AllGroupsDetailed,
+        [switch]$AllDirectoryRolePolicies,
         [string]$ManagementGroup,
         [string]$Scope,
         [switch]$Force,
@@ -129,7 +178,10 @@ function Export-OERInventory {
     }
     process {
         # --- Gather the Entra ID sections (names only, for portability) ---
-        $EntraSections = @($Include | Where-Object { $_ -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews') })
+        # DirectoryRoleManagementPolicies and DirectoryRoleAssignments are Graph-only, same as the
+        # other five: they are deliberately absent from the ARM-triggering check above, so naming
+        # either one alone never acquires an ARM token.
+        $EntraSections = @($Include | Where-Object { $_ -in @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments') })
         # -IncludeId is threaded through PURELY to key the roster member-count join on object id
         # instead of display name below (Entra permits duplicate group display names --
         # Add-OERGroupMember.ps1:43-45 -- so a display-name join can attribute one group's member
@@ -151,7 +203,21 @@ function Export-OERInventory {
             # keeps the record non-terminating while still delivering it to BOTH the caller's error
             # stream and $InventoryReadErrors; Export's own trailing Write-CmdletError is what
             # honours -ErrorAction Stop, and it runs after $Out has been emitted.
-            Get-OERInventory -Include $EntraSections -IncludeId -ErrorAction Continue -ErrorVariable InventoryReadErrors
+            #
+            # -AllDirectoryRolePolicies is added to the splat only when the switch is actually set,
+            # not forwarded unconditionally as -AllDirectoryRolePolicies:$AllDirectoryRolePolicies
+            # would be: Get-OERInventory's own default behaviour (policy of only the in-use roles) is
+            # what every OTHER -Include combination in this file's test suite already relies on, and
+            # binding the parameter at all -- even to $false -- is observable to a caller's
+            # -ParameterFilter, so adding it only when true keeps every existing call site untouched.
+            $InvParams = @{
+                Include       = $EntraSections
+                IncludeId     = $true
+                ErrorAction   = 'Continue'
+                ErrorVariable = 'InventoryReadErrors'
+            }
+            if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
+            Get-OERInventory @InvParams
         } else {
             ConvertTo-OERInventory
         }
@@ -201,6 +267,8 @@ function Export-OERInventory {
         $ScopeCount = 0
         $ScopesEnumerated = 0
         $SkippedScopes = [System.Collections.Generic.List[string]]::new()
+        $AzureEligibilities = @()
+        $SkippedEligibilityScopes = [System.Collections.Generic.List[string]]::new()
 
         if ($AzureSections.Count -gt 0) {
             $TreeParams = @{}
@@ -211,6 +279,15 @@ function Export-OERInventory {
                 $Tree = Resolve-OERInventoryScopeTree @TreeParams
                 $ScopeHierarchy = $Tree.Hierarchy
                 $ScopesEnumerated = @($Tree.Scopes).Count
+                # A level of the tree that could not be LISTED (a refused management-group listing,
+                # say) was not walked at all: it is skipped for the role-assignment walk AND for
+                # azurePimEligibility.json, which makes the bundle InventoryPartial below -- never
+                # "no management groups".
+                foreach ($TreeSkip in @($Tree.SkippedScopes)) {
+                    if (-not $TreeSkip) { continue }
+                    $SkippedScopes.Add([string]$TreeSkip)
+                    $SkippedEligibilityScopes.Add([string]$TreeSkip)
+                }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"
@@ -219,6 +296,10 @@ function Export-OERInventory {
                 # Without this the bundle is written with ZERO role assignments and zero policies and
                 # nothing but a warning says so, which leaves $? true and -ErrorAction Stop inert.
                 $SkippedScopes.Add('<all Azure scopes: scope enumeration failed>')
+                # Same reasoning for the eligibility read: with no scope tree there is nothing to walk
+                # for azurePimEligibility.json either, and the gap must be named rather than silently
+                # written as an empty (and therefore misleadingly "complete") file.
+                $SkippedEligibilityScopes.Add('<all Azure scopes: scope enumeration failed>')
             }
             if ($Tree) {
                 $SeenRa = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -255,6 +336,15 @@ function Export-OERInventory {
                     }
                 } finally {
                     Write-Progress -Activity 'Export-OERInventory' -Completed
+                }
+
+                # R4: one bounded eligibility read of the SAME scope list, after the role-assignment /
+                # policy walk above rather than interleaved with it, so a throttled or failing scope
+                # is never charged against both files from the same failed request.
+                $EligResult = Get-OERInventoryAzureEligibility -Scope @($Tree.Scopes)
+                $AzureEligibilities = @($EligResult.Eligibilities)
+                foreach ($SkEl in @($EligResult.SkippedScopes)) {
+                    if ($SkEl) { $SkippedEligibilityScopes.Add([string]$SkEl) }
                 }
             }
         }
@@ -307,7 +397,8 @@ function Export-OERInventory {
         # reaches that nested collection as well.
         $StampedSections = @(
             $Inv.Groups, $Inv.AdministrativeUnits, $Inv.Catalogs,
-            $Inv.AccessPackages, $Inv.AccessReviews
+            $Inv.AccessPackages, $Inv.AccessReviews,
+            $Inv.DirectoryRoleManagementPolicies, $Inv.DirectoryRoleAssignments
         )
         foreach ($Section in $StampedSections) {
             foreach ($Item in @($Section)) {
@@ -360,12 +451,20 @@ function Export-OERInventory {
         }
 
         # --- Reassemble the canonical inventory object with the (possibly filtered) groups ---
+        # The two directory-role sections are filtered with Where-Object { $null -ne $_ } rather than
+        # a bare @(...) wrap: @($null) is a ONE-element array holding a null, not an empty one, and a
+        # caller whose Get-OERInventory result omits these properties entirely (a $null property
+        # read) would otherwise hand ConvertTo-OERInventory a single null entry -- which then fails
+        # apply-schema validation ("'role' is required at directoryRoleManagementPolicies[0]")
+        # instead of writing a genuinely empty section, same footgun $AllGroups above guards against.
         $Canonical = ConvertTo-OERInventory `
             -Groups $DetailedGroups `
             -AdministrativeUnits @($Inv.AdministrativeUnits) `
             -Catalogs @($Inv.Catalogs) `
             -AccessPackages @($Inv.AccessPackages) `
             -AccessReviews @($Inv.AccessReviews) `
+            -DirectoryRoleManagementPolicies @($Inv.DirectoryRoleManagementPolicies | Where-Object { $null -ne $_ }) `
+            -DirectoryRoleAssignments @($Inv.DirectoryRoleAssignments | Where-Object { $null -ne $_ }) `
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
 
@@ -392,7 +491,13 @@ function Export-OERInventory {
             param([string]$Name, [object]$Data)
             if ($ShouldWrite) {
                 $Path = Join-Path $BundlePath $Name
-                ($Data | ConvertTo-Json -Depth 12) | Set-Content -Path $Path -Encoding utf8
+                # -InputObject, NOT a pipe: PowerShell unrolls a piped collection into its elements,
+                # so an EMPTY array piped into ConvertTo-Json sends zero objects down the pipeline --
+                # ConvertTo-Json then emits nothing at all, Set-Content receives no input and silently
+                # never creates the file, even though $WrittenFiles (below) still names it. -InputObject
+                # passes the array as a single argument instead, so an empty $Data correctly serializes
+                # to the literal "[]" and the file this cmdlet's help promises is actually written.
+                (ConvertTo-Json -InputObject $Data -Depth 12) | Set-Content -Path $Path -Encoding utf8
             }
             # Recorded either way: under -WhatIf the Files list IS the plan.
             $WrittenFiles.Add($Name)
@@ -404,10 +509,15 @@ function Export-OERInventory {
         Write-OERBundleJson -Name 'catalogs.json'               -Data @($Canonical.Catalogs)
         Write-OERBundleJson -Name 'accessPackages.json'         -Data @($Canonical.AccessPackages)
         Write-OERBundleJson -Name 'accessReviews.json'          -Data @($Canonical.AccessReviews)
+        Write-OERBundleJson -Name 'directoryRoleManagementPolicies.json' -Data @($Canonical.DirectoryRoleManagementPolicies)
+        Write-OERBundleJson -Name 'directoryRoleAssignments.json'        -Data @($Canonical.DirectoryRoleAssignments)
         Write-OERBundleJson -Name 'roleAssignments.json'        -Data @($Canonical.RoleAssignments)
         Write-OERBundleJson -Name 'roleManagementPolicies.json' -Data @($Canonical.RoleManagementPolicies)
         Write-OERBundleJson -Name 'groupsRoster.json'           -Data $Roster
         Write-OERBundleJson -Name 'scopeHierarchy.json'         -Data $ScopeHierarchy
+        if ($AzureSections.Count -gt 0) {
+            Write-OERBundleJson -Name 'azurePimEligibility.json' -Data @($AzureEligibilities)
+        }
 
         # --- Formal JSON Schema (so a consumer without the module can validate a proposal) ---
         if ($ShouldWrite) {
@@ -460,12 +570,16 @@ function Export-OERInventory {
             Catalogs               = @($Canonical.Catalogs).Count
             AccessPackages         = @($Canonical.AccessPackages).Count
             AccessReviews          = @($Canonical.AccessReviews).Count
+            DirectoryRoleManagementPolicies = @($Canonical.DirectoryRoleManagementPolicies).Count
+            DirectoryRoleAssignments        = @($Canonical.DirectoryRoleAssignments).Count
             RoleAssignments        = @($Canonical.RoleAssignments).Count
             RoleManagementPolicies = @($Canonical.RoleManagementPolicies).Count
             RosterCount            = @($Roster).Count
             ScopeCount             = $ScopeCount
             ScopesEnumerated       = $ScopesEnumerated
             SkippedScopes          = @($SkippedScopes)
+            AzurePimEligibility    = @($AzureEligibilities).Count
+            SkippedEligibilityScopes = @($SkippedEligibilityScopes)
             IncompleteReads        = @($IncompleteReads)
             Files                  = $WrittenFiles.ToArray()
         }
@@ -476,22 +590,53 @@ function Export-OERInventory {
         # then learns the coverage is incomplete. A warning alone left $? true, -ErrorAction Stop
         # inert and a try/catch seeing success, which is how a heavily truncated bundle reached the
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
-        if ($SkippedScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0) {
+        if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
+            # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
+            # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
+            # so none of its scopes was enumerated. Counting it as "N of M scopes" would misstate which
+            # scopes were read.
+            $WalkFailed = (@($SkippedScopes) + @($SkippedEligibilityScopes)) -contains '<all Azure scopes: scope enumeration failed>'
+            $DescribeSkip = {
+                param([string[]]$Skipped, [string]$What)
+                $Read = @($Skipped | Where-Object { -not ([string]$_).StartsWith('<') })
+                $Levels = @($Skipped | Where-Object { ([string]$_).StartsWith('<') })
+                $Parts = @()
+                if ($Read.Count -gt 0) { $Parts += "$($Read.Count) of $ScopesEnumerated Azure scopes could not be read$What" }
+                if ($Levels.Count -gt 0) { $Parts += "$($Levels.Count) level(s) of the Azure scope tree could not be listed, so none of their scopes was walked$What" }
+                $Parts -join ', and '
+            }
             if ($SkippedScopes.Count -gt 0) {
                 # The "missing data is absent from ... Skipped: ..." clause is appended to BOTH
                 # arms, not folded into the enumerated one. A failed scope WALK is exactly the case
                 # where the operator most needs to be told which files are short and what was
                 # skipped; burying that inside the $ScopesEnumerated -gt 0 arm silently drops it
                 # from the louder of the two failures.
-                $ScopeDetail = if ($ScopesEnumerated -gt 0) {
-                    "$($SkippedScopes.Count) of $ScopesEnumerated Azure scopes could not be read"
+                $ScopeDetail = if (-not $WalkFailed) {
+                    & $DescribeSkip @($SkippedScopes) ''
                 } else {
                     'the Azure scope walk could not be started, so no Azure scope was read'
                 }
                 $PartialParts.Add(
                     "$ScopeDetail, and the missing data is absent from roleAssignments.json and " +
                     "roleManagementPolicies.json. Skipped: $($SkippedScopes -join ', ')")
+            }
+            if ($SkippedEligibilityScopes.Count -gt 0) {
+                # A separate clause, not folded into the roleAssignments/roleManagementPolicies one
+                # above: the eligibility read (R4) runs as its own pass over the same scope list, so a
+                # scope can fail here without having failed the role-assignment walk, or vice versa,
+                # and the operator needs to know which FILE is short. Same two-arm split as the
+                # roleAssignments/roleManagementPolicies clause above, for the same reason: a failed
+                # scope WALK (no tree at all) reads differently from N of M individual scopes failing
+                # the eligibility read specifically.
+                $EligDetail = if (-not $WalkFailed) {
+                    & $DescribeSkip @($SkippedEligibilityScopes) ' for azurePimEligibility.json'
+                } else {
+                    'the Azure scope walk could not be started, so no scope was read for azurePimEligibility.json'
+                }
+                $PartialParts.Add(
+                    "$EligDetail, and their eligible assignments are absent from it. " +
+                    "Skipped: $($SkippedEligibilityScopes -join ', ')")
             }
             if ($IncompleteReads.Count -gt 0) {
                 # The count is of REPORTS, not collections: one Get-OERInventory run raises one

@@ -16,17 +16,24 @@ Export-OERInventory -OutputPath C:\Temp
 This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 
 - `inventory.json` -- canonical, round-trippable inventory (all sections).
-- per-area JSON files (`groups.json`, `catalogs.json`, ...).
-- `groupsRoster.json`, `scopeHierarchy.json` -- read-only context.
+- per-area JSON files (`groups.json`, `catalogs.json`, `directoryRoleManagementPolicies.json`,
+  `directoryRoleAssignments.json`, ...).
+- `groupsRoster.json`, `scopeHierarchy.json`, `azurePimEligibility.json` -- read-only context.
+  `azurePimEligibility.json` (the Azure PIM eligible role assignments at the walked scopes) is
+  written only when an Azure section (`RoleAssignments` or `RoleManagementPolicies`) is included.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
 - `README.md` -- a short next-steps guide.
 
-By default the Entra sections plus tenant-wide `RoleAssignments` are captured. Add
-`RoleManagementPolicies` to `-Include` to also read PIM policies at every scope (slower). Only
-RBAC-relevant groups are detailed in `inventory.json`; the full landscape is in `groupsRoster.json`.
-Use `-AllGroupsDetailed` to keep every group in full detail.
+By default the Entra sections -- including the Microsoft Entra directory role sections,
+`DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
+`RoleAssignments` are captured. The two directory role sections are Graph-only and never acquire an
+ARM token by themselves. `DirectoryRoleManagementPolicies` exports the policy of every directory
+role that is actually in use; add `-AllDirectoryRolePolicies` to export the policy of every
+directory role instead. Add `RoleManagementPolicies` to `-Include` to also read Azure PIM policies
+at every scope (slower). Only RBAC-relevant groups are detailed in `inventory.json`; the full
+landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every group in full detail.
 
 ## 2. Ask an LLM
 
@@ -136,14 +143,117 @@ this page used to document (`activationEnabledRules`, `activeEnabledRules`,
 `eligibleAlertRecipients`, `activeAlertRecipients`, `activationAlertRecipients`) -- is reported as a
 `Warning` by `Test-OERStructure`, with a "did you mean" hint at the current name for those five.
 
-A group that was never used with PIM for Groups carries a `pimPolicy` too: Microsoft Graph lists its
-policies before the group is onboarded. Applying a `pimPolicy` that changes such a group's policy
-onboards the group to PIM for Groups, and that cannot be undone (Microsoft Graph documentation,
-"Onboarding groups to PIM for Groups"). A `pimPolicy` whose policy Graph does not list yet -- in
-practice a group created moments ago -- is not silently skipped: the apply reports that access type
-`Failed` (`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same
-apply run, the engine first waits up to about 30 seconds for its policies to be listed and
-readable.
+Microsoft Graph lists PIM-for-Groups policies for every group, including one never used with PIM for
+Groups, and applying a `pimPolicy` that changes such a group's policy onboards the group to PIM for
+Groups, which cannot be undone (Microsoft Graph documentation, "Onboarding groups to PIM for
+Groups"). The inventory therefore exports a `pimPolicy` only for a group found to use PIM for
+Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it carries a
+`lastModifiedDateTime` or a `lastModifiedBy`). A group without a `pimPolicy` in the export therefore
+was not found to use PIM for Groups (no PIM eligibility and no modified policy), or has no policy
+the inventory could project. That is what the inventory found, not a guarantee: a group used only
+through PIM active assignments, with untouched policies, is not found to use PIM for Groups either.
+Whenever a read behind that answer failed -- the policy listing, or the group's PIM eligibility when
+no modified policy was found -- the bundle's `IncompleteReads` names the group's `pimPolicy`. A
+`pimPolicy` added for a group that does not use PIM for Groups yet onboards it the first time the
+apply changes its policy: for a group that already exists, the apply writes a warning before that
+change, and still makes it. A `pimPolicy` whose policy Graph does not list yet -- in practice a
+group created moments ago -- is not silently skipped: the apply reports that access type `Failed`
+(`PimPolicyNotFound`), and a re-run usually applies it. For a group created by the same apply run,
+the engine first waits up to about 30 seconds for its policies to be listed and readable.
+
+## Renaming a group
+
+`displayName` is the match key for a group. To rename a group through the apply document, declare
+its new name as `displayName` and its current name as `previousDisplayName`, next to the entry's
+other keys:
+
+```json
+{
+  "displayName": "role_sec_hr_emea",
+  "previousDisplayName": "role_sec_hr"
+}
+```
+
+Every apply run looks up both names, with three outcomes:
+
+- **Only `previousDisplayName` matches a live group.** That group is renamed to `displayName`, in
+  the same update as any other property that changed, and reported `Updated`. Its members, owners,
+  eligibility and `pimPolicy` are then reconciled as usual.
+- **Both names match, and they are different groups.** The entry fails and nothing is changed for
+  it -- the document never merges two groups. Rename or delete one of them, or remove
+  `previousDisplayName`.
+- **Neither name matches.** The entry fails with `GroupRenameNotFound` and nothing is created: a
+  document that declares a rename names a group that already exists. To create a new group, declare
+  it without `previousDisplayName`.
+
+When both names find the same group, the entry is applied as usual.
+
+**Microsoft Graph's name lookup can follow a rename with a delay.** Keep `previousDisplayName` in
+the document, and wait until the new name resolves (for example `Get-OERGroup -Group '<new name>'`
+finds the group) before you apply the document again: a run after that finds the group under
+`displayName` and reports it `Unchanged`. A run inside the window in which neither name resolves yet
+fails the entry with `GroupRenameNotFound` and creates nothing; wait and re-run. Once the new name
+resolves, remove `previousDisplayName`: a group created later under the old name would make the entry
+fail. `Get-OERInventory` never exports `previousDisplayName`, and `Test-OERStructure` reports an empty
+or non-string one as an error and one equal to `displayName` (ignoring case) as a warning -- a
+case-only rename is not possible through the document; use `Set-OERGroup -NewDisplayName`.
+Administrative units, catalogs and access packages cannot be renamed through the document.
+
+`previousDisplayName` also accepts the group's object id instead of its old name. That is the way to
+rename a group whose old name is ambiguous, since a name that matches several groups fails the
+entry. The apply engine checks that the id still names a group: an id that no longer exists (a
+deleted group, say) counts as not matching, exactly like an old name nobody carries any more -- so
+with `displayName` not matching either, the entry fails as above.
+
+Everywhere else in the SAME document, refer to the group by its NEW name: in
+`administrativeUnits[].members`, catalog `resources`, access package `resourceRoles`,
+`roleAssignments` and `directoryRoleAssignments` principals, and eligibility, owner, member or
+approver entries. Once Graph's name lookup has caught up with the rename, the old name resolves to
+nothing, so a reference that still uses it fails or is reported as not found. The new name can lag too: on the run that renames the group, a reference to the new name
+can fail to resolve. It fails loudly -- a `Failed` row, and a handler that withholds its prune while
+a declared entry does not resolve withholds it -- and re-applying the document once the new name
+resolves, with `previousDisplayName` still in it, is safe. Under `-WhatIf` the rename is only
+planned, so the new name does not resolve yet either -- those references are reported the same way
+as references to a group that the same run would create.
+
+**Catalog `resources` and access package `resourceRoles` follow the rename like every other
+reference.** A Group or Application resource is identified by the object id its name resolves to,
+never by the display name Microsoft Entra recorded for the resource when it was added to the catalog
+-- that recorded name stays as it was after a group is renamed (measured live; the same is expected
+of an application), so matching on it made a document naming the group's new name plan the removal
+of the group's own resource under `-Prune`. `Get-OERInventory` writes the group's or application's CURRENT name (its
+object id when the name cannot be read), and a name that resolves to no object, or to several,
+fails its entry and withholds that catalog's prune.
+
+## Directory roles
+
+`directoryRoleManagementPolicies[]` and `directoryRoleAssignments[]` cover Microsoft Entra directory
+role PIM, through Microsoft Graph only -- neither one ever acquires an ARM token. Their full field
+lists are in `schema.json`, under the same-named properties; this section covers only what
+`Get-OERInventory` selects and exports into `inventory.json`.
+
+**Policy selection.** `directoryRoleManagementPolicies` exports the policy of every directory role
+that has at least one row in the tenant-scope eligibility or assignment schedules (any member type,
+activations included). Add `-AllDirectoryRolePolicies` to export the policy of every directory role
+instead -- the schedules are then not read for the policy section at all, though they are still read,
+once, when `DirectoryRoleAssignments` is included too. A failed schedule or policy read is reported
+through `InventoryPartial` and never stated as a fact.
+
+**Assignment export.** `directoryRoleAssignments` exports only the rows
+`Select-OERManagedDirectoryRoleAssignment` keeps: direct assignments at tenant scope. An activation of
+an eligible assignment, an assignment a principal holds through a group, and one scoped to an
+administrative unit are never exported -- their absence here is not evidence the tenant has none. A
+user is named by its user principal name and a group by its display name, each falling back to its
+object id when the name cannot be read, or, for a group, when its display name matches that of
+another principal holding the same role and assignment type; a service principal, or a principal of
+unknown type, is named by its object id. `principalType` is carried whenever the type is known. A
+time-bound assignment carries `durationDays` reconstructed from the live schedule window, so a
+re-applied export is `Unchanged`; a permanent one carries neither `durationDays` nor `permanent`.
+
+Both sections are ordinary apply-document sections: propose changes to them like any other. A
+directory role's policy always exists, so there is nothing to create or remove and `-Prune` has no
+effect on `directoryRoleManagementPolicies`; `directoryRoleAssignments` reconciles, and can be
+pruned, only for the `(role, assignmentType)` pairs the document declares.
 
 ## Access package assignment policy schema
 

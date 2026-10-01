@@ -576,7 +576,7 @@ reads.
 ```powershell
 # 1. Export the current posture into a timestamped bundle (JSON + schema + LLM prompt + README)
 $Bundle = Export-OERInventory -OutputPath ./exports `
-    -Include Groups, AdministrativeUnits, Catalogs, AccessPackages, RoleAssignments
+    -Include Groups, AdministrativeUnits, Catalogs, AccessPackages, DirectoryRoleManagementPolicies, DirectoryRoleAssignments, RoleAssignments
 
 # 2. Edit the inventory.json in that bundle, or feed the bundle to an LLM and take its proposal.
 #    Then validate the result offline -- no tenant call, no authentication.
@@ -603,8 +603,7 @@ repository (or browse it on GitHub) to read it.
 - [docs/inventory-to-llm/README.md](docs/inventory-to-llm/README.md) -- the export -> LLM ->
   validate -> apply loop in full, including the `schema.json` / `Test-Json` escape hatch.
 - [docs/examples/example-structure.json](docs/examples/example-structure.json) -- a worked apply
-  document showing every section the engine understands, except `roleManagementPolicies`,
-  `directoryRoleManagementPolicies` and `directoryRoleAssignments`, which are not in the example yet.
+  document showing every section the engine understands.
 - `Get-Help about_Omnicit.EntraRBAC` -- the in-box overview: command cohorts, Azure scope forms,
   the Tenant Profile schema, access package policy settings and the duration vocabulary. This one
   ships inside the module.

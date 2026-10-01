@@ -3348,3 +3348,123 @@ Describe 'Test-OERStructureSchema directoryRoleAssignments' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema directory role sections as Get-OERInventory -IncludeId exports them' {
+    # Get-OERInventory -IncludeId stamps id on every directoryRoleManagementPolicies and
+    # directoryRoleAssignments entry (the policy id and the schedule id). Both sections' known-key
+    # lists admit it, so a captured document re-applies without an unknown-key Warning on every entry.
+    It 'reports no finding at all, and none on an id key, for an exported entry of each section' {
+        $Doc = ('{ "version": "1.0", ' +
+            '"directoryRoleManagementPolicies": [ { "role": "Fixture Role A", "id": "policy-a", "allowPermanentEligibility": false, ' +
+            '"activationMaxHours": 8, "eligibleDurationDays": 365, "allowPermanentActiveAssignment": false, "activeDurationDays": 180, ' +
+            '"requireJustificationOnActivation": true, "requireTicketOnActivation": false, "requireApproval": true, ' +
+            '"requireMfaOnActiveAssignment": false, "requireJustificationOnActiveAssignment": true, "authenticationContextId": "c1", ' +
+            '"approvers": { "users": [ "aaaaaaaa-0000-0000-0000-000000000001" ], "groups": [ "bbbbbbbb-0000-0000-0000-000000000001" ] } } ], ' +
+            '"directoryRoleAssignments": [ ' +
+            '{ "role": "Fixture Role A", "principal": "person1@example.com", "principalType": "User", "assignmentType": "Eligible", "durationDays": 30, "id": "schedule-0001" }, ' +
+            '{ "role": "Fixture Role A", "principal": "cccccccc-0000-0000-0000-000000000001", "principalType": "ServicePrincipal", "assignmentType": "Active", "id": "schedule-0002" } ] }') |
+            ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object { $_.Path -like '*.id' }) | Should -BeNullOrEmpty
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Test-OERStructureSchema group previousDisplayName' {
+    # R9: previousDisplayName names a group's current display name when displayName declares a new
+    # one. A known key; a non-string or empty value is an Error; one equal to displayName, ignoring
+    # case, is a Warning, since both names find the same group and a case-only rename cannot be
+    # expressed through the document.
+    It 'accepts a non-empty previousDisplayName with no finding at all' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'reports an Error for a previousDisplayName that is <Case>' -TestCases @(
+        @{ Case = 'an empty string'; Value = '""' }
+        @{ Case = 'a number'; Value = '42' }
+        @{ Case = 'an array'; Value = '[ "role_sec_hr" ]' }
+        @{ Case = 'an object'; Value = '{ "name": "role_sec_hr" }' }
+        @{ Case = 'a boolean'; Value = 'true' }
+    ) {
+        $Doc = ('{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": ' + $Value + ', "members": null } ] }') | ConvertFrom-Json
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].previousDisplayName' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Error'
+            $Hit[0].Section | Should -BeExactly 'groups'
+            $Hit[0].Item | Should -BeExactly 'role_sec_hr_emea'
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] must be a non-empty string."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeFalse
+        }
+    }
+
+    It 'warns, and stays Valid, when previousDisplayName equals displayName ignoring case' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr", "previousDisplayName": "ROLE_SEC_HR", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].previousDisplayName' })
+            $Hit.Count | Should -Be 1
+            $Hit[0].Severity | Should -BeExactly 'Warning'
+            $Hit[0].Item | Should -BeExactly 'role_sec_hr'
+            # Not "nothing to rename": a case-only rename is a real change, but Graph matches names
+            # case-insensitively, so the document cannot express it and the cmdlet has to.
+            $Hit[0].Message | Should -BeExactly "'previousDisplayName' at groups[0] equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName."
+            @($V.Errors).Count | Should -Be 1
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'treats an explicit null previousDisplayName as undeclared, like every other key' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr", "previousDisplayName": null, "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    It 'accepts previousDisplayName on a template-based group without comparing it to the computed name' {
+        InModuleScope $script:moduleName {
+            $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors) | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+
+    # Task 8: the worked example must carry every section the schema understands, so it stays a
+    # complete starting point rather than a document missing the directory-role sections.
+    # Three Split-Path hops from tests\Unit\Private: tests\Unit\Private -> tests\Unit -> tests ->
+    # repo root. A two-hop version resolves to tests\ and was corrected once already on this
+    # branch (Task 1) -- do not repeat that mistake.
+    It 'the worked apply-document example is Valid, has zero Error findings, and declares all nine section keys' {
+        $RepoRoot = $PSScriptRoot | Split-Path | Split-Path | Split-Path
+        $ExamplePath = Join-Path -Path $RepoRoot -ChildPath 'docs/examples/example-structure.json'
+        $Doc = Get-Content -Path $ExamplePath -Raw | ConvertFrom-Json
+
+        foreach ($Section in @('groups', 'administrativeUnits', 'catalogs', 'accessPackages',
+                'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+                'roleAssignments', 'roleManagementPolicies')) {
+            $Doc.PSObject.Properties.Name | Should -Contain $Section
+        }
+
+        InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+            param($Doc)
+            $V = Test-OERStructureSchema -Document $Doc
+            @($V.Errors | Where-Object Severity -eq 'Error') | Should -BeNullOrEmpty
+            $V.Valid | Should -BeTrue
+        }
+    }
+}

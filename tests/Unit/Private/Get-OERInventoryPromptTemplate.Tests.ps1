@@ -41,6 +41,15 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'warns that pimPolicy is exported only for groups found to use PIM for Groups and onboards on write' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match 'pimPolicy is exported only for a group the inventory found to use PIM for Groups'
+            $T | Should -Match ([regex]::Escape('Adding or changing a pimPolicy on a group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone'))
+            $T | Should -Match 'propose that only deliberately, and say so in the rationale'
+        }
+    }
+
     It 'documents the granular assignment policy fields' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
@@ -95,7 +104,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # declaring invented resource-group scopes, PIM eligibility, or a "corrected" review.
             $T | Should -Match 'Coverage limits'
             $T | Should -Match 'Azure resource GROUPS and individual RESOURCES'
-            $T | Should -Match 'Azure PIM eligible and active role assignments are NOT captured'
+            $T | Should -Match 'Azure PIM eligible and active role assignments are NOT appliable'
             $T | Should -Match 'SKIPPED entirely'
             $T | Should -Match 'ACCESS-PACKAGE-SCOPED'
             # each area must point at the cmdlet that does manage it
@@ -104,6 +113,18 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'New-OEREligibleRoleAssignment'
             $T | Should -Match 'New-OERActiveRoleAssignment'
             $T | Should -Match 'New-OERAccessReviewStage'
+        }
+    }
+
+    It 'points the model at azurePimEligibility.json for the eligible half, but never lets it express eligibility itself' {
+        InModuleScope $script:moduleName {
+            $T = Get-OERInventoryPromptTemplate
+            # Regression guard for a stale claim: eligible Azure PIM assignments used to be entirely
+            # uncaptured; Export-OERInventory now writes them into azurePimEligibility.json as
+            # read-only context, so the Inputs list and the coverage bullet must both say so -- while
+            # still refusing to let the model express an eligibility inside the apply document.
+            $T | Should -Match ([regex]::Escape('azurePimEligibility.json'))
+            $T | Should -Match 'do not try to express the eligibility itself'
         }
     }
 
@@ -117,6 +138,12 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $T | Should -Match 'resource-group or resource scope does apply'
             $T | Should -Match 'preserve it verbatim'
             $T | Should -Match 'Least privilege'
+            # A resource-group-scoped eligibility can now reach azurePimEligibility.json (see the
+            # R4 below-scope coverage), so a verbatim scope already there is a second legitimate
+            # source, not just inventory.json. \s+ bridges the prose's own line wrap between the
+            # filename and its parenthetical -- the source text wraps at ~100 chars, and a raw
+            # multi-line here-string keeps that newline as a literal character -Match sees.
+            $T | Should -Match 'azurePimEligibility\.json\s+\(an eligibility there can be scoped below a subscription\)'
         }
     }
 
@@ -203,7 +230,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
 Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
     # The coverage paragraph counts and lists the apply-document sections. Tie both to the sections
     # schema.json declares, so a section added to the schema cannot leave the prompt claiming fewer.
-    It 'counts and names every section schema.json declares, and marks both directory role sections apply-only' {
+    It 'counts and names every section schema.json declares, and names both directory role sections as captured' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
@@ -214,7 +241,64 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
                 $T | Should -Match "\b$Section\b"
             }
             # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
-            ($T -replace '\s+', ' ') | Should -Match 'directoryRoleManagementPolicies \(the PIM settings of Microsoft Entra directory roles\) and directoryRoleAssignments \(eligible and active assignments of Microsoft Entra directory roles\) are apply-only for now: Get-OERInventory does not read them'
+            $Collapsed = $T -replace '\s+', ' '
+            $Collapsed | Should -Not -Match 'apply-only for now'
+            $Collapsed | Should -Not -Match 'does not read them'
+            $Collapsed | Should -Match ([regex]::Escape('directoryRoleManagementPolicies (the PIM settings of Microsoft Entra directory roles) and directoryRoleAssignments (eligible and active assignments of Microsoft Entra directory roles) are both captured in inventory.json (policies for roles with at least one eligible or active assignment unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope -- activations and assignments inherited through a group are not listed), and may be proposed.'))
+        }
+    }
+
+    It 'documents the directoryRoleManagementPolicies[] and directoryRoleAssignments[] output-schema fields' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('directoryRoleManagementPolicies[]: { role (required -- a Microsoft Entra directory role display name or role definition id), and the same fields as roleManagementPolicies without scope }'))
+            $T | Should -Match 'approvers replace only the declared side \(users or groups\); an empty array clears that side'
+            $T | Should -Match 'the policy always exists and is never removed'
+            $T | Should -Match 'it is applied before directoryRoleAssignments'
+            $T | Should -Match ([regex]::Escape('directoryRoleAssignments[]: { role (required), principal (required -- UPN, group display name, or service principal OBJECT ID), principalType (User | Group | ServicePrincipal), assignmentType (required -- Eligible | Active), durationDays (1-3650; omit for a permanent assignment), permanent (bool), justification }'))
+            $T | Should -Match 'matched on role, principal and assignmentType'
+            $T | Should -Match ([regex]::Escape('a permanent assignment needs a policy that allows it (declare it in directoryRoleManagementPolicies)'))
+            $T | Should -Match 'only role-assignable groups can hold a directory role'
+            $T | Should -Match ([regex]::Escape('under -Prune only the (role, assignmentType) pairs the document declares are reconciled'))
+            $T | Should -Match "the signed-in identity's own assignments are never removed"
+            $T | Should -Match 'prefer Eligible over Active for privileged roles'
+        }
+    }
+
+    It 'extends the Entra directory roles common-values line with the two new role fields' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Entra directory roles (directoryRoleManagementPolicies[].role, directoryRoleAssignments[].role, administrativeUnits[].scopedRoles[].role):'))
+        }
+    }
+}
+
+Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayName' {
+    # The groups bullet used to tell the model a rename was impossible. previousDisplayName now
+    # renames a group in place, so the prompt must teach the rule -- while the units, catalogs and
+    # access packages, which still cannot be renamed, keep their sentences.
+    It 'teaches the rename rule and lists previousDisplayName among the group fields' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: the group found under previousDisplayName alone is renamed in place. When both names match different groups the entry fails and nothing is changed (two groups are never merged), and when neither matches the entry fails and nothing is created: a rename names an existing group. A NEW group is declared without previousDisplayName.'))
+            $T | Should -Match ([regex]::Escape('{ displayName (or template + tokens object), previousDisplayName (rename only'))
+            $T | Should -Match ([regex]::Escape("previousDisplayName (rename only -- the group's current display name or object id when displayName declares a new one"))
+            $T | Should -Not -Match 'changing displayName creates a new group'
+            # A rename must carry every other reference to the group with it, directory role
+            # assignments included, and the model must be told the name lookup can lag the rename.
+            $T | Should -Match ([regex]::Escape('When a proposal renames a group, every other reference to it in the same document uses the NEW name: administrativeUnits members, catalog resources[] and access package resourceRoles[], eligibility, owner, member and approver entries, and roleAssignments and directoryRoleAssignments principals.'))
+            # Measured live 2026-09-30: a catalog keeps the name it recorded for a resource after the
+            # group's rename, so a Group or Application resource is matched by object id, and the model
+            # is told the inventory writes the CURRENT name -- no "keep the old name" exception.
+            $T | Should -Match ([regex]::Escape('A Group or Application catalog resource (and a resourceRole on one) is identified by the object id its name resolves to, never by the name the catalog recorded when the resource was added'))
+            $T | Should -Not -Match 'EXCEPTION -- they are matched by the display name the catalog recorded'
+            $T | Should -Match ([regex]::Escape("Microsoft Graph's name lookup can follow a rename with a delay."))
+            $T | Should -Match ([regex]::Escape('a re-run while neither name resolves yet fails the entry and creates nothing. Keep previousDisplayName in the proposal'))
+            # The three sections that still cannot be renamed keep saying so.
+            $T | Should -Match 'changing displayName creates a new unit'
+            $T | Should -Match 'changing displayName creates a new catalog'
+            $T | Should -Match 'changing displayName creates a new package'
         }
     }
 }

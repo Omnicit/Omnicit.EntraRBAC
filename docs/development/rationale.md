@@ -393,8 +393,11 @@ empty collection.
 
 ## pim-beta-pin
 
-PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All eight call sites route
-through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All fifteen call sites, in ten
+source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
+constant. (The count read "eight" until Sprint 6 step 5; it had been counting FILES, and had
+already fallen behind by one -- `Get-OERListedGroupPimPolicy` -- before `Test-OERGroupPimInUse`
+added the tenth. The test below now lists every calling file and fails on one it does not name.)
 
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are
@@ -2597,3 +2600,259 @@ Learn documents `$filter` on `roleDefinitionId` and `principalId` without `direc
 refusal would fail the read and keep the original error; and step 4 measured that Graph lists no
 inherited row in the per-role read (check 4.4), so the group case may not occur for these schedules
 at all.
+
+## inventory-azure-eligibility
+
+Task 3 of Sprint 6 step 5 added `azurePimEligibility.json` to the `Export-OERInventory` bundle: the
+Azure PIM eligible role assignments at the scopes `Resolve-OERInventoryScopeTree` already walks for
+`roleAssignments.json` and `roleManagementPolicies.json`, projected read-only and never fed back
+through `Invoke-OERStructure`. This anchor records ruling R4 and the one claim in it that is
+measured rather than documented.
+
+**R4 (decided): one paged `roleEligibilitySchedules` list per scope of the walk, not per
+role-assignment-and-eligibility pair.** `Get-OERInventoryAzureEligibility` calls
+`Get-OEREligibleRoleAssignment` exactly once for each scope `Export-OERInventory`'s Azure walk
+visits: a management group scope is read with `-AtScope` (eligibilities at or above it, matching how
+Learn documents the `atScope()` filter); every other scope -- every subscription
+`Resolve-OERInventoryScopeTree` enumerates -- is read with no filter at all. The read runs as its own
+pass AFTER the existing role-assignment / policy walk over the same scope list, not interleaved with
+it, so a throttled request against one file is never blamed on the other and a scope that fails one
+read can still succeed the other. Results are deduplicated on `RoleEligibilityScheduleId` (falling
+back to a scope/role/principal composite key on the rare row that carries none), so an eligibility
+visible from several scopes in the walk -- a management group's own eligibility, read once directly
+at the management group and again, inherited, from every subscription below it -- is written once.
+A scope whose read fails is named in `SkippedScopes` (`Export-OERInventory`'s
+`SkippedEligibilityScopes`) and folds into the bundle's existing `InventoryPartial` error with its
+own clause naming `azurePimEligibility.json`, exactly as a failed role-assignment scope already
+named `roleAssignments.json` and `roleManagementPolicies.json` -- never presented as a scope with no
+eligibility, since that would read as a fact nothing measured.
+
+**Why per-scope, not per management group only, and not filtered by `-AsTarget` or a principal:**
+the bundle's job is to tell an LLM (and an operator) who can already activate what at the scopes the
+rest of the bundle proposes against, not to answer "what can the signed-in identity activate" -- so
+`-AsTarget` is wrong on its face, and a principal filter would require already knowing which
+principal to ask about, which is exactly what this file exists to surface. Reading every scope
+unfiltered, rather than only management groups with `-AtScope`, is what makes a subscription's own
+directly-scoped eligibilities visible at all: `-AtScope` on a subscription would show only
+eligibilities inherited from a management group above it, silently dropping every eligibility
+declared AT that subscription or below it.
+
+**The below-scope coverage of an unfiltered read is an EXPECTED claim awaiting live verification, not
+a measured or documented one.** Microsoft Learn's `roleEligibilitySchedules` `listForScope`
+reference documents FOUR supported filters -- `atScope()`, `principalId eq '{id}'` ("at, above, or
+below the scope for the specified principal"), `assignedTo('{userId}')` (used here as the module's
+`-User`/`-Group`/`-ServicePrincipal` filters) and `asTarget()` -- and none of the four documents what
+an unfiltered, `$filter`-less list returns relative to the scope in the URL. No live check of this
+module's own unfiltered read has been run yet, so this is neither an observed nor a measured fact:
+`Get-OEREligibleRoleAssignment`'s own help attributes the phrase "every eligibility that applies at
+the scope (direct and inherited)" to the UNFILTERED read itself -- "Without a filter, every
+eligibility that applies at the scope (direct and inherited) is returned" -- with the filtered forms
+(a principal filter, `-AtScope`, `-AsTarget`) each getting their own sentence after it. "Applies at
+the scope (direct and inherited)" names eligibilities AT the scope and INHERITED from a scope ABOVE
+it; it says nothing about a scope BELOW it, and establishes no below-scope coverage either way. That
+is exactly the gap Microsoft documents for no unfiltered read at all, and this helper's own
+`.DESCRIPTION` and `Export-OERInventory`'s help are worded as EXPECTED behaviour pending the step 5
+live-verification checklist, section 4 -- not as anything measured -- do not read either as stronger
+than that.
+
+**This is not a low-stakes hedge: `Resolve-OERInventoryScopeTree` enumerates management group and
+subscription scopes only, never a resource group or a resource, so a resource-group- or
+resource-scoped eligibility can reach `azurePimEligibility.json` in exactly ONE way -- through an
+unfiltered subscription read's below-scope coverage.** There is no second path and no independent
+walk that would catch it if the unfiltered read turns out not to reach that far: unlike a
+management-group-level gap (caught anyway, later, when the walk visits the subscription directly, as
+the deduplication case above shows), a resource-group-scoped eligibility has no scope of its own in
+the walk to be caught FROM. The step 5 live-verification checklist, section 4
+(`docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md`, written by a later
+task), is where this gets measured for the first time. If that check finds an unfiltered
+subscription-scoped read does NOT surface a resource-group-scoped eligibility beneath it, this
+design does not capture resource-group-scoped eligibility at all, and R4 needs revisiting -- not a
+silent gap to leave documented away.
+
+**Measured, step 5 live run (2026-09-30), check 4.1: the unfiltered subscription read DOES return a
+resource-group-level eligibility.** One `roleEligibilitySchedules` read of the test subscription,
+with no `$filter`, returned an eligible Reader assignment at a resource group below it, identical to
+a direct read of that resource group (4.3); the walk cost one eligibility request per scope (4.2). R4
+stands. The two paragraphs above record why this had to be measured; they no longer describe an open
+question.
+
+**A listing that fails is never an empty level (step 5 live run, 2026-09-30 and 2026-10-01).** Two
+gaps showed in the scope walk itself, before any eligibility read:
+- App-only, the management-group LISTING answers `AuthorizationFailed`, and
+  `Resolve-OERInventoryScopeTree` read that as "no management groups": the bundle reported nothing
+  skipped. The full tree's management-group and subscription listings are now each caught: the level
+  that could not be listed is named in the tree's `SkippedScopes` (`<management groups: the listing
+  failed>`, `<subscriptions: the listing failed>`), and `Export-OERInventory` folds it into both
+  `SkippedScopes` and `SkippedEligibilityScopes`, which makes the bundle `InventoryPartial`. A
+  `-ManagementGroup` branch that cannot be read throws instead, since nothing of it could be walked,
+  and the export then records the whole Azure walk as skipped.
+- An operator's full-tree export minutes after creating a management group walked five management
+  groups while six existed: the new one was absent from `scopeHierarchy.json` (the tenant root group
+  was there), so its eligibility never reached `azurePimEligibility.json` although the per-scope read
+  had nothing to do with it. The Management Groups API documents `Cache-Control: no-cache` as the
+  way to bypass its caches, so `Get-OERManagementGroup` was made to send it -- and the operator's
+  re-run, check 6.1R, measured it to change nothing: a few seconds and again about a minute after a
+  new management group was created, the list lacked it with the header and without it alike, while a
+  read by `-Name` found it at once. The header was removed again, with the private `-Header`
+  parameter of `Invoke-OERArmRequest` that only it used. **This is a documented limitation, not a
+  fixed gap:** a management group created in the last few minutes can be missing from the list, and
+  an export in that window neither walks it nor names it as skipped, since nothing tells it the
+  group exists; the help of `Get-OERManagementGroup` and `Export-OERInventory` says so. Not done, and
+  why: enumerating the tree from the root with `$expand=children&$recurse=true`, or the root's
+  `descendants`, might see a new group sooner -- unmeasured -- but needs read at the tenant root
+  group, which an operator who sees only part of the tree does not hold. Parked until measured,
+  together with how long the list lags.
+- The management-group level of the eligibility read itself is NOT in doubt: the same 6.1 export
+  holds an eligible assignment read at an existing management group's scope.
+
+## pim-in-use-criterion
+
+Task 6 of Sprint 6 step 5 made `Test-OERGroupPimInUse` the single owner of one question: does this
+group use PIM for Groups? It records rulings R1-R3 and the one claim in them that is documented
+rather than measured.
+
+**The problem.** Microsoft Graph lists PIM-for-Groups policies for EVERY group, including one never
+used with PIM for Groups (measured live 2026-09-28,
+`docs/live-verification/feat-pim-group-approval-checklist.md`, run 2, check X.1). `Get-OERInventory`
+read and exported them, so every exported group carried a default `pimPolicy` -- and a proposal that
+changes one of those blocks onboards the group to PIM for Groups on apply, which cannot be undone,
+and changes its policy ids (Microsoft Graph documentation, "Onboarding groups to PIM for Groups").
+The export was inviting an irreversible change to groups nobody had chosen to put under PIM.
+
+**R1 (the criterion).** A group uses PIM for Groups when EITHER its PIM eligibility is non-empty
+(the caller passes the count it already read, as `-EligibilityCount`, so no second eligibility read
+is made), OR any of its policies, listed in ONE request through `Get-OERPimGroupsGraphPath` as
+`policies/roleManagementPolicies?$filter=scopeId eq '<id>' and scopeType eq 'Group'&$select=id,lastModifiedDateTime,lastModifiedBy`,
+carries a non-empty `lastModifiedDateTime`, `lastModifiedBy.id` or `lastModifiedBy.displayName`. A
+404 `ResourceNotFound` on that listing means PIM does not know the group: not in use. A 400
+`ResourceTypeNotSupported` means PIM for Groups cannot manage the group at all: not in use either,
+reported with the reason "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". Any
+other failure -- `ResourceNotFound` with another status included -- throws, and each caller accounts
+for it.
+
+**Why `ResourceTypeNotSupported` is an answer (final review of step 5).** Microsoft Learn ("Bring
+groups into Privileged Identity Management", and the PIM for Groups API overview) says dynamic groups
+and groups synchronized from on-premises cannot be managed in PIM for Groups, and this module's
+sibling reads of the same beta family already take 400 `ResourceTypeNotSupported` as an answer:
+`Get-OERGroup`'s eligibility read (no eligibility) and `Get-OERPimGroupPolicyId` (no policy). The
+first version declared only `ResourceNotFound`, so for such a group the criterion threw, every
+`Get-OERInventory` run recorded `groups/<name>/pimPolicy` unread, and a tenant with dynamic or
+synchronized groups could never export anything but `InventoryPartial`. The code is declared at the
+REQUEST, like the others, so it leaves no record in a caller's `-ErrorVariable`, and it is accepted
+whatever the status, exactly as the two sibling reads accept it. What this listing answers for a
+dynamic group is not yet measured: the step 5 checklist creates one (`oer-s65-pim-dynamic`) and
+records the answer.
+
+**The basis, and exactly how far it reaches.** Microsoft Learn, "List roleManagementPolicies" (v1.0):
+Example 3 lists the two policies of a GROUP (`scopeType` `Group`), both untouched, each reading
+`"lastModifiedDateTime": null, "lastModifiedBy": { "displayName": null, "id": null }`. The MODIFIED
+shape comes from a different example: Example 2's policy has `scopeType` `Directory` and reads
+`"lastModifiedDateTime": "2022-04-20T16:12:29.553Z", "lastModifiedBy": { "displayName": "MOD Administrator", "id": null }`.
+Two things follow. The `id` can be null on a modified policy, which is why any ONE of the three fields
+counts. And Learn shows no modified GROUP policy at all, so "a modified group policy carries a date
+or a name" is an inference from a directory-role example -- documented for one scope type and
+assumed for the other. Nor does Learn say whether an eligibility request that onboards a group
+stamps its policies (the eligibility half of R1 covers that case whatever the answer), or what this
+listing answers for a group PIM does not know: the 404 is MEASURED only on the policy-ASSIGNMENT
+listing of the same family (`Get-OERPimGroupPolicyId`, 2026-09-28), and expected here.
+
+**What an earlier live run already observed, which is not the same as having measured this
+criterion.** The 2026-09-28 run of `docs/live-verification/feat-pim-group-approval-checklist.md`
+printed `lastModifiedDateTime` for group policies in two follow-up reads: both policies of a group
+nothing had ever onboarded read it empty (check 6.1), and on a group that run created and patched,
+the patched owner policy read `2026-09-28 09:46:01` while the unpatched member policy read it empty
+(check 5.2). That is the date half of R1 seen on a GROUP policy. It did not print `lastModifiedBy`,
+did not look at a group onboarded only through an eligibility, and did not run this helper.
+
+**The criterion is NOT counted as proven until it is measured live in the step 5 checklist**
+(`docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md`, written by a later
+task): an untouched group, a group whose policy was changed, a group onboarded only through an
+eligibility, and a dynamic group PIM for Groups cannot manage. Cost if it is wrong, in each direction: a used group whose policy never shows a
+modification loses its exported `pimPolicy` (safe -- an omitted block leaves the live policy
+untouched on apply), or an untouched group's policy is still exported (the original risk, which the
+apply-side warning below still catches). The live check detects both.
+
+**R2 (`Get-OERInventory`).** The criterion runs BEFORE the four policy calls (two
+`Get-OERPimGroupPolicyId` pre-checks, two `Get-OERGroupPimPolicy` reads) and a group not in use makes
+none of them and carries no `pimPolicy` key -- one listing instead of four calls, and the reason is
+written to the verbose stream. A criterion that could not be read is never guessed in either
+direction: `pimPolicy` is omitted (an export would claim a use nobody measured) AND
+`groups/<name>/pimPolicy` is recorded as unread, with its cause, so the run ends in `InventoryPartial`
+(an omission alone would claim the group does not use PIM for Groups). That cause is a tenth
+read-failure message shape, so the distinct-cause cap rose from nine to ten with it. When the
+group's eligibility read itself failed, the count passed is 0 by default, not by measurement. A
+modified policy still decides "in use" on its own, and that path is unchanged; but a "not in use"
+decided on the policies alone is half an answer, so `pimPolicy` is omitted AND
+`groups/<name>/pimPolicy` is reported unread beside `groups/<name>/eligibility` (fix round 1 of
+Task 6; the first version reported only the eligibility, which left the help's "reported through
+InventoryPartial" promise false for this case). No second cause is recorded for it: the eligibility
+read's own cause is already on the list. `Export-OERInventory`'s RBAC-relevance filter is unchanged:
+a `pimPolicy` key now implies the group was found to use PIM for Groups.
+
+**A known blind spot of R1, named once.** A group used only through PIM ACTIVE assignments (no
+eligibility) whose policies were never modified is not found to use PIM for Groups: R1 does not
+look at assignment schedules. Its `pimPolicy` is then omitted from the export (the safe direction:
+an omitted block leaves the live policy untouched on apply), and an apply that declares one for it
+writes the R3 warning although the group is already onboarded. The documents therefore say "not
+found to use PIM for Groups (no PIM eligibility and no modified policy)", never "does not use".
+
+**R3 (`Sync-OERStructureGroup`).** Before the FIRST changed policy write of an item for a group that
+already existed -- once per item, and before its `ShouldProcess` gate so `-WhatIf` shows it -- the
+handler asks the criterion and warns when the group was not found to use PIM for Groups, or when that
+could not be determined -- worded as the criterion's finding, never as "does not use", for the blind
+spot above. It WARNS and never blocks, and it never changes a row: the document asked
+for this policy, and onboarding a group on purpose through its first policy is the normal way a group
+comes under PIM. It does not ask for a group created in the same run (no PIM history to protect), nor
+once step 3 of the same item has SUCCESSFULLY written an eligibility (that request onboarded the group
+already; a refused or `-WhatIf`-skipped one did not). The count it passes is what the item read, and
+the item reads PIM eligibility only when it declares `eligibility` -- deliberately, since requesting
+that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoint fail an item that
+has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
+path and is asked like any other existing group.
+
+## group-rename
+
+Sprint 6 step 5 made a group renameable through the apply document: `previousDisplayName` names the
+group's current display name or object id beside the new `displayName`. Both names are resolved on
+every run, before anything is read or written, and the outcome is decided by which of them match.
+
+**Why "neither name matches" fails instead of creating (decision before the step 5 live run,
+2026-09-30).** The first version created the group under `displayName` when neither name resolved,
+exactly as an entry without `previousDisplayName` does. Its own documentation then had to tell the
+operator not to re-apply too soon: Microsoft Graph's display-name lookup can follow a rename with a
+delay, and inside the window in which neither name resolves yet, a re-run created a SECOND group
+beside the renamed one -- a duplicate that nothing reports, which other sections' references could
+then bind to. A document that declares a rename names a group that already exists, so no reading of
+that document asks for a create. The entry now fails with `GroupRenameNotFound` (category
+`ObjectNotFound`, target the new name) and one Failed row, nothing is created, read or written, and
+the same holds under `-WhatIf`, since the decision is made before any `ShouldProcess` gate. An object
+id in `previousDisplayName` that no longer names a group (checked with one read,
+`v1.0/groups/<id>?$select=id`) counts as not matching, so with `displayName` not matching either, it
+fails the same way.
+
+**Cost, accepted.** A document written to create a group AND carrying a `previousDisplayName` -- one
+copied from a rename, say -- no longer creates it; the error says to remove `previousDisplayName`.
+And a re-run inside the lookup window is a Failed row to re-run later, instead of a silent duplicate.
+An entry without `previousDisplayName` is unchanged: a `displayName` nobody carries is created.
+
+**Both names on different groups** stays `GroupRenameConflict` (category `ResourceExists`): the
+document never merges two groups. A name matching several groups throws `AmbiguousName`, as an
+ambiguous `displayName` does, and the object id is the way around an ambiguous old name.
+
+**Catalog resources follow a rename (step 5 live run, check 5.5, 2026-09-30).** A catalog keeps the
+display name a resource had when it was added: after the group `oer-s65-catres-old` was renamed,
+the catalog still recorded the resource under its old name. The catalogs handler matched Group and
+Application resources on that recorded name, so a document naming the group by its NEW name -- what
+every other section is told to do after a rename -- planned `would remove undeclared resource` for
+the renamed group's own resource under `-Prune`, the P0 family (an access package then loses its
+resource). A Group or Application resource is now identified by the object id its declared name
+resolves to (`Resolve-OERGroupId`, or `Resolve-OERApplicationId` for an application's service
+principal; an object id is taken as it is), compared with the live originId; a SharePoint site keeps
+its name/url keys. A name that resolves to nothing, or to several, fails its entry and withholds that
+catalog's prune (the step 1 rule); a lookup that FAILS throws, so a failed read is never read as an
+absent resource. `Get-OERInventory` writes the CURRENT name, looked up by originId with the id as
+the fallback, in both the catalogs and the access packages sections, and the access package handler
+resolves a name to the group first when that group is a resource of the catalog -- otherwise a name
+the catalog still records for ANOTHER resource could bind the role to the wrong group and read the
+right binding as undeclared. The earlier documentation that told a proposal to keep the old recorded
+name in those two sections is withdrawn.

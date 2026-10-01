@@ -253,15 +253,109 @@ Describe 'Omnicit.EntraRBAC.Inventory format view' {
                 -Catalogs @([PSCustomObject]@{ displayName = 'c1' }) `
                 -AccessPackages @([PSCustomObject]@{ displayName = 'ap1' }, [PSCustomObject]@{ displayName = 'ap2' }, [PSCustomObject]@{ displayName = 'ap3' }, [PSCustomObject]@{ displayName = 'ap4' }) `
                 -AccessReviews @([PSCustomObject]@{ displayName = 'ar1' }, [PSCustomObject]@{ displayName = 'ar2' }, [PSCustomObject]@{ displayName = 'ar3' }, [PSCustomObject]@{ displayName = 'ar4' }, [PSCustomObject]@{ displayName = 'ar5' }) `
+                -DirectoryRoleManagementPolicies @(1..8 | ForEach-Object { [PSCustomObject]@{ role = "r$_" } }) `
+                -DirectoryRoleAssignments @(1..9 | ForEach-Object { [PSCustomObject]@{ role = "r$_" } }) `
                 -RoleAssignments @(1..6 | ForEach-Object { [PSCustomObject]@{ scope = "s$_" } }) `
                 -RoleManagementPolicies @(1..7 | ForEach-Object { [PSCustomObject]@{ scope = "s$_" } })
         }
         $Rendered = ($Inv | Format-Table | Out-String -Width 200)
         $Rendered | Should -Match '1\.0'
+        $Rendered | Should -Match 'AccessReviews\s+DirRolePol\s+DirRoleAsgn\s+RoleAssignments'
         # Column order is Version, Groups, AdminUnits, Catalogs, AccessPackages, AccessReviews,
-        # RoleAssignments, RoleMgmtPolicies. Every counted column below carries a distinct non-zero
-        # value, so the assertion cannot pass on a property lookup that silently returned $null --
-        # unlike a zero, a blank cell here has no digit for the regex to match at all.
-        $Rendered | Should -Match '2\s+3\s+1\s+4\s+5\s+6\s+7\s'
+        # DirRolePol, DirRoleAsgn, RoleAssignments, RoleMgmtPolicies. Every counted column
+        # below carries a distinct non-zero value, so the assertion cannot pass on a property lookup
+        # that silently returned $null -- unlike a zero, a blank cell here has no digit for the regex
+        # to match at all.
+        $Rendered | Should -Match '2\s+3\s+1\s+4\s+5\s+8\s+9\s+6\s+7\s'
+    }
+}
+
+Describe 'Omnicit.EntraRBAC.InventoryBundle format view' {
+    It 'renders BundlePath, Groups, Roster, DirRolePol, DirRoleAsgn, RoleAssignments, RoleMgmtPolicies, Scopes' {
+        $Bundle = [PSCustomObject]@{
+            BundlePath                      = 'C:\Temp\oer-inventory-tenant-20260101-000000'
+            Groups                          = 2
+            RosterCount                     = 3
+            DirectoryRoleManagementPolicies = 4
+            DirectoryRoleAssignments        = 5
+            RoleAssignments                 = 6
+            RoleManagementPolicies          = 7
+            ScopeCount                      = 8
+        }
+        $Bundle.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
+        $Rendered = $Bundle | Format-Table | Out-String -Width 200
+
+        $Rendered | Should -Match 'BundlePath\s+Groups\s+Roster\s+DirRolePol\s+DirRoleAsgn\s+RoleAssignments\s+RoleMgmtPolicies\s+Scopes'
+        # Every counted column below carries a distinct value, so the assertion cannot pass on a
+        # property lookup that silently returned $null (a blank cell has no digit to match).
+        $Rendered | Should -Match '2\s+3\s+4\s+5\s+6\s+7\s+8'
+    }
+}
+
+Describe 'Inventory and InventoryBundle format views fit a 120-column console' {
+    <#
+        Task 1 widened the Inventory view (two new columns) and Task 2 widens the InventoryBundle
+        view the same way; the controller ruling that shortened the labels to DirRolePol/DirRoleAsgn
+        exists precisely so the header row still fits a standard 120-column console. These tests
+        pin that: they render each view at -Width 120 and assert the header line itself is at most
+        120 characters and that every label survives intact on that one line -- Format-Table does
+        not wrap a header across lines when a table is too wide, it silently narrows or truncates
+        columns instead, so a label split or cut short is the failure mode this guards against.
+    #>
+    It 'renders the Inventory view header within 120 columns with every label intact' {
+        $Inv = InModuleScope Omnicit.EntraRBAC {
+            ConvertTo-OERInventory `
+                -Groups @([PSCustomObject]@{ displayName = 'g1' }) `
+                -AdministrativeUnits @([PSCustomObject]@{ displayName = 'au1' }) `
+                -Catalogs @([PSCustomObject]@{ displayName = 'c1' }) `
+                -AccessPackages @([PSCustomObject]@{ displayName = 'ap1' }) `
+                -AccessReviews @([PSCustomObject]@{ displayName = 'ar1' }) `
+                -DirectoryRoleManagementPolicies @([PSCustomObject]@{ role = 'r1' }) `
+                -DirectoryRoleAssignments @([PSCustomObject]@{ role = 'r1' }) `
+                -RoleAssignments @([PSCustomObject]@{ scope = 's1' }) `
+                -RoleManagementPolicies @([PSCustomObject]@{ scope = 's1' })
+        }
+        $Lines = ($Inv | Format-Table | Out-String -Width 120) -split "`r`n|`n"
+        $HeaderLine = @($Lines | Where-Object { $_ -match 'Version' })[0]
+        $HeaderLine | Should -Not -BeNullOrEmpty
+        $HeaderLine.Length | Should -BeLessOrEqual 120
+        foreach ($Label in @('Version', 'Groups', 'AdminUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+                'DirRolePol', 'DirRoleAsgn', 'RoleAssignments', 'RoleMgmtPolicies')) {
+            $HeaderLine | Should -Match ([regex]::Escape($Label)) -Because "label '$Label' must survive intact on the header line at 120 columns"
+        }
+    }
+
+    It 'renders the InventoryBundle view header within 120 columns with every label intact' {
+        <#
+            BundlePath is an autosized column whose width is driven entirely by DATA, not by the
+            view's own labels -- Format-Table sizes it to the widest of the header ("BundlePath",
+            10 chars) and the actual value, and a real bundle path (OutputPath plus
+            "oer-inventory-<36-char tenant GUID>-<15-char timestamp>") commonly runs 60-90+
+            characters. That is a property of the caller's -OutputPath and the tenant id, not of
+            this view's seven other columns, so it is deliberately kept SHORT here to isolate what
+            this test exists to catch: a regression in the fixed-width LABEL portion of the row,
+            the same class of regression Task 1's DirRolePolicies/DirRoleAssignments labels were.
+            A short synthetic path is therefore representative of the thing under test, not a
+            best-case understatement of it.
+        #>
+        $Bundle = [PSCustomObject]@{
+            BundlePath                      = 'C:\b\oer-1'
+            Groups                          = 1
+            RosterCount                     = 1
+            DirectoryRoleManagementPolicies = 1
+            DirectoryRoleAssignments        = 1
+            RoleAssignments                 = 1
+            RoleManagementPolicies          = 1
+            ScopeCount                      = 1
+        }
+        $Bundle.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.InventoryBundle')
+        $Lines = ($Bundle | Format-Table | Out-String -Width 120) -split "`r`n|`n"
+        $HeaderLine = @($Lines | Where-Object { $_ -match 'BundlePath' })[0]
+        $HeaderLine | Should -Not -BeNullOrEmpty
+        $HeaderLine.Length | Should -BeLessOrEqual 120
+        foreach ($Label in @('BundlePath', 'Groups', 'Roster', 'DirRolePol', 'DirRoleAsgn',
+                'RoleAssignments', 'RoleMgmtPolicies', 'Scopes')) {
+            $HeaderLine | Should -Match ([regex]::Escape($Label)) -Because "label '$Label' must survive intact on the header line at 120 columns"
+        }
     }
 }

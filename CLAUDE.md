@@ -172,7 +172,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Six cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Seven cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -191,6 +191,10 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
   the piped parent unit.
+- `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
+  (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
+  `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
+  asserting every row is `Unchanged`.
 
 ---
 
@@ -669,6 +673,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `assignmentType` Assigned), and `Get-OERTokenObjectId` the single owner of reading the signed-in
   identity's object id (the token's `oid` claim, delegated and app-only alike; never `/me`). Never
   re-implement either inline. `Why: docs/development/rationale.md#directory-role-assignments`
+- **`Test-OERGroupPimInUse` is the single owner of whether a group uses PIM for Groups** -- PIM
+  eligibility, or a PIM-for-Groups policy with a non-empty `lastModifiedDateTime`, `lastModifiedBy.id`
+  or `lastModifiedBy.displayName`. Graph lists those policies for EVERY group, so a listed policy is
+  not evidence of use. `Get-OERInventory` exports `pimPolicy` only for a group found in use (a
+  criterion it could not read, or a "not in use" reached while the group's eligibility was unread,
+  omits `pimPolicy` AND reports it unread), and `Sync-OERStructureGroup` warns, never blocks, before
+  a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
+  documented, not yet measured live, and misses a group used only through PIM active assignments.
+  `Why: docs/development/rationale.md#pim-in-use-criterion`
 
 ---
 
@@ -739,12 +752,14 @@ structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 public-cloud path stays byte-identical to what it has always been; the environment name comes from
 `Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All eight call sites route
-through the private `Get-OERPimGroupsGraphPath`, which owns the version constant. Never hardcode
-`beta/` at a call site -- change the constant in the helper. The eligibility paths and the four
-policy paths migrate as ONE unit. `Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint
-availability in US Government and China clouds is not established -- a standing risk, not a bug --
-recorded at `Why: docs/development/rationale.md#sovereign-clouds`.
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All fifteen call sites, in ten
+source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
+`tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
+when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the
+constant in the helper. The eligibility paths and the four policy paths migrate as ONE unit.
+`Why: docs/development/rationale.md#pim-beta-pin` Beta endpoint availability in US Government and
+China clouds is not established -- a standing risk, not a bug -- recorded at
+`Why: docs/development/rationale.md#sovereign-clouds`.
 
 **Microsoft Entra directory-role PIM policies are the opposite: pinned to Graph `v1.0`.** Every
 directory-role policy path is a string literal starting with `v1.0/`, routed through

@@ -22,6 +22,11 @@ Describe 'Get-OERInventory' {
         # the Contexts that need the not-onboarded case override it with { $null }. Without it the
         # real helper runs and reaches the real transport, which no unit test may do.
         Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { 'pol-1' }
+        # Before any of that, the groups section asks Test-OERGroupPimInUse whether the group uses
+        # PIM for Groups at all, and exports no pimPolicy for a group that does not. Answered "in
+        # use" here so every existing fixture keeps reaching the policy reads it stubs; the Context
+        # 'pimPolicy only for a group that uses PIM for Groups' overrides it for the other answers.
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
     }
 
     It 'returns a tagged Omnicit.EntraRBAC.Inventory object' {
@@ -306,6 +311,179 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName Omnicit.EntraRBAC Get-OERGroupPimPolicy { }
             $Group = (Get-OERInventory -Include Groups).Groups[0]
             $Group.PSObject.Properties.Name | Should -Not -Contain 'mailNickname'
+        }
+    }
+
+    Context 'pimPolicy only for a group that uses PIM for Groups' {
+        # Microsoft Graph lists PIM-for-Groups policies for EVERY group, including one never used
+        # with PIM for Groups, and the first policy update onboards the group, which cannot be
+        # undone. An exported pimPolicy for such a group is a proposal waiting to onboard it, so the
+        # section asks Test-OERGroupPimInUse first and exports pimPolicy only for a group in use
+        # (docs/development/rationale.md#pim-in-use-criterion, ruling R2).
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_identity_administrator'
+                    Description = 'Identity admins'; GroupType = 'RoleEnabled'
+                    IsAssignableToRole = $true; MembershipRule = $null
+                    Members = @(); Owners = @(); PimEligibility = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy {
+                [PSCustomObject]@{ ActivationMaxHours = 8; AuthenticationContextId = $null; ActivationEnabledRules = @('Justification')
+                    AllowPermanentEligibility = $false; EligibleDurationDays = 365; AllowPermanentActive = $false; ActiveDurationDays = 180
+                    ActiveEnabledRules = @(); Rules = @(); Notifications = $null }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{ 'p-1' = 'person1@example.com' } }
+        }
+
+        It 'exports no pimPolicy, and reads no policy, for a group that does not use PIM for Groups' {
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $false; Reason = 'no PIM policy of the group has been modified' }
+            }
+            $Err = $null
+            $Verbose = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+            $Result = @($Verbose | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+            $Result.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'pimPolicy'
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 0
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-1' -and $EligibilityCount -eq 0
+            }
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                Should -Be 0 -Because 'a group that does not use PIM for Groups is an answer, not an unread collection'
+            $Said = (@($Verbose | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }) | ForEach-Object { $_.Message }) -join "`n"
+            $Said | Should -Match ([regex]::Escape("group 'role_sec_identity_administrator': pimPolicy not exported -- no PIM policy of the group has been modified."))
+        }
+
+        It 'exports pimPolicy as before for a group whose policy has been modified' {
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified' }
+            }
+            $Result = Get-OERInventory -Include Groups
+            $Result.Groups[0].PSObject.Properties.Name | Should -Contain 'pimPolicy'
+            $Result.Groups[0].pimPolicy.member.activationMaxHours | Should -Be 8
+            $Result.Groups[0].pimPolicy.owner.activationMaxHours | Should -Be 8
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 2 -Exactly
+        }
+
+        It 'passes the eligibility it already read to the criterion, and exports pimPolicy for an eligible group' {
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_identity_administrator'
+                    Description = 'Identity admins'; GroupType = 'RoleEnabled'
+                    IsAssignableToRole = $true; MembershipRule = $null
+                    Members = @(); Owners = @(); PimEligibility = @(@{ principalId = 'p-1' })
+                }
+            }
+            # In use ONLY when the count arrives: a call site that stopped passing it would export
+            # no pimPolicy here and fail the assertion below, not just the parameter filter.
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = ($EligibilityCount -gt 0); Reason = 'from the count' }
+            }
+            $Result = Get-OERInventory -Include Groups
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-1' -and $EligibilityCount -eq 1
+            }
+            $Result.Groups[0].PSObject.Properties.Name | Should -Contain 'pimPolicy'
+        }
+
+        It 'counts no eligibility when the eligibility read failed or held only nulls' {
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_one'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                }
+                [PSCustomObject]@{
+                    Id = 'g-2'; DisplayName = 'role_sec_two'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                    PimEligibility = @($null)
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x' } }
+            $Err = $null
+            $Result = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-1' -and $EligibilityCount -eq 0
+            }
+            Should -Invoke -ModuleName $script:moduleName Test-OERGroupPimInUse -Times 1 -Exactly -ParameterFilter {
+                $GroupId -eq 'g-2' -and $EligibilityCount -eq 0
+            }
+            # A "not in use" decided WITHOUT the eligibility half is a guess, not an answer: role_sec_one's
+            # eligibility was never read, so its pimPolicy is reported unread beside its eligibility.
+            # role_sec_two's eligibility WAS read (and held nothing), so its "not in use" stands.
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            @($Partial).Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'groups/role_sec_one/eligibility'
+            $Unread | Should -Contain 'groups/role_sec_one/pimPolicy'
+            $Unread | Should -Not -Contain 'groups/role_sec_two/pimPolicy'
+            @($Result.Groups | ForEach-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' }) | Should -Not -Contain $true
+        }
+
+        It 'names the unread eligibility cause once, not again for the pimPolicy it left undecided' {
+            # The eligibility read's own cause is already on the list; the pimPolicy entry it drags in
+            # adds a COLLECTION, never a second cause.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                Write-Error -Message "Could not read PIM eligibility for group g-1: Too many requests (429). The PimEligibility property is omitted rather than reported as empty." `
+                    -ErrorId 'GroupPimEligibilityReadFailed' -Category ReadError -TargetObject 'g-1' -ErrorAction Continue
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_one'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x' } }
+            $Err = $null
+            $null = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err 2>$null
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            @($Partial).Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_one/eligibility, groups/role_sec_one/pimPolicy'
+            $Causes = ([string]$Partial[0].Exception.Message -split 'Causes: ')[1]
+            $Causes | Should -Not -BeNullOrEmpty -Because 'a missing Causes clause would make the counts below vacuous'
+            @([regex]::Matches($Causes, 'Could not read PIM eligibility')).Count | Should -Be 1
+            $Causes | Should -Not -Match 'Could not determine'
+        }
+
+        It 'exports pimPolicy, and reports nothing about it, when a modified policy decides "in use" without the eligibility' {
+            # A modified policy is conclusive on its own, so an unread eligibility changes nothing here.
+            Mock -ModuleName $script:moduleName Get-OERGroup {
+                [PSCustomObject]@{
+                    Id = 'g-1'; DisplayName = 'role_sec_one'; Description = $null; GroupType = 'Assigned'
+                    IsAssignableToRole = $false; MembershipRule = $null; Members = @(); Owners = @()
+                }
+            }
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                [PSCustomObject]@{ InUse = $true; Reason = 'a PIM policy of the group has been modified' }
+            }
+            $Err = $null
+            $Result = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result.Groups[0].PSObject.Properties.Name | Should -Contain 'pimPolicy'
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_one/eligibility'
+        }
+
+        It 'omits pimPolicy and reports it unread when the criterion itself cannot be read' {
+            # Review Focus 4: never guessed in either direction. Not exported (an export would claim
+            # a use nobody measured), and not silently absent either (that would claim the group
+            # does not use PIM for Groups) -- the collection is named in InventoryPartial.
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges'),
+                    'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-1')
+            }
+            $Err = $null
+            $Result = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err `
+                -WarningAction SilentlyContinue -WarningVariable Warned
+            $Result.Groups[0].PSObject.Properties.Name | Should -Not -Contain 'pimPolicy'
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupPimPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 0
+            $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            @($Partial).Count | Should -Be 1 -Because 'a criterion nobody could read leaves the pimPolicy collection unread'
+            [string]$Partial[0].TargetObject | Should -Be 'groups/role_sec_identity_administrator/pimPolicy'
+            [string]$Partial[0].Exception.Message |
+                Should -Match 'Could not determine whether group .g-1. uses PIM for Groups: Authorization_RequestDenied'
+            $Warned | Should -BeNullOrEmpty -Because 'a per-collection failure is accounted for at the projection, not warned once per group'
         }
     }
 
@@ -641,6 +819,54 @@ Describe 'Get-OERInventory' {
         }
     }
 
+    # A catalog keeps the display name a resource had when it was added, also after the group or
+    # application is renamed (measured live 2026-09-30); the apply engine identifies a Group or
+    # Application resource by the object id its name resolves to. So both sections write the group's
+    # or application's CURRENT name, looked up by originId, with the id as the fallback.
+    Context 'Catalog and access package resources are exported under their current name' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-Core'; Description = 'd' } }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                @(
+                    [PSCustomObject]@{ Id = 'res-g'; DisplayName = 'grp-old'; OriginId = '11111111-aaaa-1111-1111-000000000001'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+                    [PSCustomObject]@{ Id = 'res-a'; DisplayName = 'App Old'; OriginId = '11111111-aaaa-1111-1111-000000000002'; OriginSystem = 'AadApplication'; ResourceType = 'Application' }
+                    [PSCustomObject]@{ Id = 'res-s'; DisplayName = 'Finance'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline' }
+                )
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                @{ '11111111-aaaa-1111-1111-000000000001' = 'grp-new'; '11111111-aaaa-1111-1111-000000000002' = 'App New' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-1'; Description = 'd' } }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = '11111111-aaaa-1111-1111-000000000001' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        }
+
+        It 'writes a renamed group''s and application''s CURRENT name in resources[], and a site''s name as it stands' {
+            $Res = @((Get-OERInventory -Include Catalogs).Catalogs[0].resources)
+            ($Res | Where-Object type -eq 'Group').name | Should -BeExactly 'grp-new'
+            ($Res | Where-Object type -eq 'Application').name | Should -BeExactly 'App New'
+            ($Res | Where-Object type -eq 'SharePointSite').name | Should -BeExactly 'Finance'
+            # Only the group and the application are looked up, by their originIds, in one call.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Exactly -Times 1 -ParameterFilter {
+                $PreferDisplayName -and @($Id).Count -eq 2 -and @($Id) -contains '11111111-aaaa-1111-1111-000000000001' -and @($Id) -contains '11111111-aaaa-1111-1111-000000000002'
+            }
+        }
+
+        It 'writes the object id when the lookup returns the id itself (a deleted or unreadable object)' {
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = $I }; $M }
+            $Res = @((Get-OERInventory -Include Catalogs).Catalogs[0].resources)
+            ($Res | Where-Object type -eq 'Group').name | Should -BeExactly '11111111-aaaa-1111-1111-000000000001'
+        }
+
+        It 'names the access package resource role by the same current name, with one lookup shared by both sections' {
+            $Result = Get-OERInventory -Include Catalogs, AccessPackages
+            $Result.AccessPackages[0].resourceRoles[0].resource | Should -BeExactly 'grp-new'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Exactly -Times 1
+        }
+    }
+
     Context 'AccessPackages section' {
         BeforeEach {
             Mock -ModuleName $script:moduleName Get-OERCatalog {
@@ -654,6 +880,8 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERCatalogResource {
                 [PSCustomObject]@{ OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
             }
+            # The group's current name, looked up by originId, equals the recorded one here.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
                 [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x' }
             }
@@ -2939,18 +3167,20 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- six of them since a failed PIM policy
-            # read became its own shape (group members, group owners, group PIM eligibility, group
-            # PIM policy, AU members, AU scoped roles) -- and the remainder is counted rather than
-            # silently lost. Raise the numbers here and $UnreadCauseCap together, or a whole shape
-            # can be crowded out of the clause purely by the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- ten of them since the PIM-in-use
+            # criterion added its own (group members, group owners, group PIM eligibility, group
+            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+            # eligibility schedules, directory role assignment schedules, directory role policies) --
+            # and the remainder is counted rather than silently lost. Raise the numbers here and
+            # $UnreadCauseCap together, or a whole shape can be crowded out of the clause purely by the
+            # order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..8) {
+                foreach ($N in 1..11) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..8) {
+                foreach ($N in 1..11) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -2967,10 +3197,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 6 -Because 'the clause names at most six distinct causes, one per read-failure shape'
-            $Causes | Should -Match 'plus 2 more distinct cause\(s\)'
-            # All eight units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..8) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+                Should -Be 10 -Because 'the clause names at most ten distinct causes, one per read-failure shape'
+            $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
+            # All eleven units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..11) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3055,6 +3285,428 @@ Describe 'Get-OERInventory' {
             } | ConvertTo-Json -Depth 10
             $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson }
             Test-Json -Json $Doc -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+        }
+    }
+
+    Context 'Directory role sections' {
+        # The four readers are mocked; Select-OERManagedDirectoryRoleAssignment and
+        # ConvertTo-OERInventoryRoleManagementPolicy run for real, since which live row may be
+        # exported, and in what shape, is exactly what these tests pin. No id below is version-4
+        # shaped.
+        BeforeAll {
+            $script:DirRoleA = '11111111-1111-1111-1111-111111111111'
+            $script:DirRoleB = '22222222-2222-2222-2222-222222222222'
+            $script:DirRoleC = '33333333-3333-3333-3333-333333333333'
+            $script:DirUser1 = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DirUser2 = 'aaaaaaaa-0000-0000-0000-000000000002'
+            $script:DirGroup1 = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DirSp1 = 'cccccccc-0000-0000-0000-000000000001'
+            $script:DirNames = @{
+                $script:DirUser1  = 'person1@example.com'
+                $script:DirUser2  = 'person2@example.com'
+                $script:DirGroup1 = 'Fixture Group'
+            }
+            $script:DirRoleNames = @{
+                $script:DirRoleA = 'Fixture Role A'
+                $script:DirRoleB = 'Fixture Role B'
+                $script:DirRoleC = 'Fixture Role C'
+            }
+
+            # One projected schedule row, the shape ConvertTo-OERDirectoryRoleAssignment emits. The
+            # default is a direct, tenant-scope, 30-day row of person1 for role A.
+            function script:New-DirRow {
+                param(
+                    [ValidateSet('Eligible', 'Active')][string]$Kind = 'Eligible',
+                    [string]$ScheduleId = 'schedule-0001',
+                    [string]$RoleDefinitionId = $script:DirRoleA,
+                    [object]$RoleName = 'Fixture Role A',
+                    [string]$PrincipalId = $script:DirUser1,
+                    [object]$PrincipalType = 'User',
+                    [string]$MemberType = 'Direct',
+                    [string]$AssignmentType = 'Assigned',
+                    [object]$Start = '2026-01-01T00:00:00Z',
+                    [object]$End = '2026-01-31T00:00:00Z',
+                    [object]$DurationDays = 30
+                )
+                $Row = [ordered]@{
+                    ScheduleId           = $ScheduleId
+                    RoleDefinitionId     = $RoleDefinitionId
+                    RoleName             = $RoleName
+                    PrincipalId          = $PrincipalId
+                    PrincipalDisplayName = 'fixture'
+                    PrincipalType        = $PrincipalType
+                    DirectoryScopeId     = '/'
+                    MemberType           = $MemberType
+                }
+                if ($Kind -eq 'Active') { $Row.AssignmentType = $AssignmentType }
+                $Row.Status = 'Provisioned'
+                $Row.StartDateTime = $Start
+                $Row.EndDateTime = $End
+                $Row.ExpirationType = $(if ($End) { 'afterDateTime' } else { 'noExpiration' })
+                $Row.DurationDays = $DurationDays
+                $Out = [PSCustomObject]$Row
+                $Out.PSObject.TypeNames.Insert(0, "Omnicit.EntraRBAC.$($Kind)DirectoryRoleAssignment")
+                $Out
+            }
+
+            # One directory role policy, the shape Get-OERDirectoryRoleManagementPolicy returns.
+            function script:New-DirPolicy {
+                param([string]$RoleDefinitionId, [string]$PolicyId)
+                $Out = [PSCustomObject]@{
+                    PolicyId                               = $PolicyId
+                    Scope                                  = '/'
+                    RoleName                               = $script:DirRoleNames[$RoleDefinitionId]
+                    RoleDefinitionId                       = $RoleDefinitionId
+                    ActivationMaxHours                     = 8
+                    RequireMfaOnActivation                 = $true
+                    RequireJustificationOnActivation       = $true
+                    RequireTicketOnActivation              = $false
+                    RequireApproval                        = $false
+                    Approvers                              = @()
+                    AuthenticationContextId                = $null
+                    AllowPermanentEligibility              = $false
+                    EligibleDurationDays                   = 365
+                    AllowPermanentActiveAssignment         = $false
+                    ActiveDurationDays                     = 180
+                    RequireMfaOnActiveAssignment           = $false
+                    RequireJustificationOnActiveAssignment = $true
+                }
+                $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RoleManagementPolicy')
+                $Out
+            }
+        }
+
+        BeforeEach {
+            $script:DirEligible = @()
+            $script:DirActive = @()
+            $script:DirPolicies = @(
+                New-DirPolicy -RoleDefinitionId $script:DirRoleA -PolicyId 'policy-a'
+                New-DirPolicy -RoleDefinitionId $script:DirRoleB -PolicyId 'policy-b'
+                New-DirPolicy -RoleDefinitionId $script:DirRoleC -PolicyId 'policy-c'
+            )
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment { $script:DirEligible }
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment { $script:DirActive }
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy { $script:DirPolicies }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
+                $Map = @{}
+                foreach ($One in @($Id)) {
+                    $Map[$One] = $(if ($script:DirNames.ContainsKey($One)) { $script:DirNames[$One] } else { $One })
+                }
+                $Map
+            }
+            # Nothing in this Context may reach the transport: a helper that would is a missing mock.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected transport call: $Uri" }
+        }
+
+        It 'exports a direct tenant-scope eligible row of a user as its UPN, with principalType, assignmentType and durationDays' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1
+            @($Entries[0].PSObject.Properties.Name) | Should -Be @('role', 'principal', 'principalType', 'assignmentType', 'durationDays')
+            $Entries[0].role | Should -BeExactly 'Fixture Role A'
+            $Entries[0].principal | Should -BeExactly 'person1@example.com'
+            $Entries[0].principalType | Should -BeExactly 'User'
+            $Entries[0].assignmentType | Should -BeExactly 'Eligible'
+            $Entries[0].durationDays | Should -Be 30
+            $Entries[0].durationDays | Should -BeOfType [int]
+        }
+
+        It 'falls back to the role definition id when the row carries no role name' {
+            $script:DirEligible = @(New-DirRow -RoleName '')
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments)[0].role | Should -BeExactly $script:DirRoleA
+        }
+
+        It 'does not export an activation (an Active row whose AssignmentType is Activated)' {
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'activation-0001' -AssignmentType 'Activated' -End '2026-01-01T08:00:00Z' -DurationDays 1
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1 -Because 'the activation of person1 must not be exported as a standing active assignment'
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Active'
+        }
+
+        It 'does not export a row a principal holds through a group (MemberType Group)' {
+            $script:DirEligible = @(
+                New-DirRow
+                New-DirRow -ScheduleId 'schedule-0002' -PrincipalId $script:DirUser2 -MemberType 'Group'
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1 -Because 'the group-inherited row of person2 is managed through the group'
+            $Entries[0].principal | Should -BeExactly 'person1@example.com'
+        }
+
+        It 'exports a service principal as its object id with principalType ServicePrincipal, and never asks Resolve-OERPrincipalName to name it' {
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -PrincipalId $script:DirSp1 -PrincipalType 'ServicePrincipal' -End $null -DurationDays $null
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Sp = @($Inv.directoryRoleAssignments | Where-Object { $_.assignmentType -eq 'Active' })
+            $Sp.Count | Should -Be 1
+            $Sp[0].principal | Should -BeExactly $script:DirSp1
+            $Sp[0].principalType | Should -BeExactly 'ServicePrincipal'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0 -ParameterFilter { @($Id) -contains $script:DirSp1 }
+            # One batched call names every user and group principal of the section.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+        }
+
+        It 'exports a principal of unknown type as its object id, without principalType, and does not name it' {
+            $script:DirEligible = @(New-DirRow -PrincipalId $script:DirUser2 -PrincipalType $null)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entry = @($Inv.directoryRoleAssignments)[0]
+            $Entry.principal | Should -BeExactly $script:DirUser2
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'principalType'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 0
+        }
+
+        It 'exports a permanent row with neither durationDays nor permanent' {
+            $script:DirEligible = @(New-DirRow -End $null -DurationDays $null)
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            $Entry = @($Inv.directoryRoleAssignments)[0]
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'durationDays'
+            $Entry.PSObject.Properties.Name | Should -Not -Contain 'permanent'
+        }
+
+        It 'exports one entry, the first, and warns once for two schedules of one role, principal and kind' {
+            # The second row spells the role id in upper case: the duplicate check ignores letter case.
+            $script:DirEligible = @(
+                New-DirRow
+                New-DirRow -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleA.ToUpperInvariant() -End '2026-03-02T00:00:00Z' -DurationDays 60
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments -WarningAction SilentlyContinue -WarningVariable DirWarn
+            $Entries = @($Inv.directoryRoleAssignments)
+            $Entries.Count | Should -Be 1
+            $Entries[0].durationDays | Should -Be 30 -Because 'the first schedule the tenant-wide read returned is the one exported'
+            @($DirWarn).Count | Should -Be 1
+            [string]@($DirWarn)[0].Message | Should -BeExactly ("Get-OERInventory: directory role 'Fixture Role A' has more than one eligible schedule for principal " +
+                "'$($script:DirUser1)'; exporting the first. Invoke-OERStructure compares against the first schedule Microsoft Graph " +
+                'returns for that role and principal, so if the two differ it may report a change for this entry.')
+        }
+
+        It 'names two same-named groups holding one role and kind by their object ids, so the section stays valid' {
+            # Entra does not keep group display names unique. Two groups both named 'Fixture Group'
+            # would otherwise export two identical (role, principal, assignmentType) entries, which the
+            # validator refuses as a duplicate -- invalidating the whole document. A third group whose
+            # name equals a user's UPN in the same role and kind collides the same way. The user, and a
+            # same-named group holding a DIFFERENT role, keep their names.
+            $DirGroup2 = 'bbbbbbbb-0000-0000-0000-000000000002'
+            $DirGroup3 = 'bbbbbbbb-0000-0000-0000-000000000003'
+            $DirGroup4 = 'bbbbbbbb-0000-0000-0000-000000000004'
+            $script:DirNames[$DirGroup2] = 'fixture group'
+            $script:DirNames[$DirGroup3] = 'person1@example.com'
+            $script:DirNames[$DirGroup4] = 'Fixture Group'
+            try {
+                $script:DirEligible = @(
+                    New-DirRow -ScheduleId 's-1' -PrincipalId $script:DirGroup1 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-2' -PrincipalId $DirGroup2 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-3' -PrincipalId $DirGroup3 -PrincipalType 'Group'
+                    New-DirRow -ScheduleId 's-4' -PrincipalId $script:DirUser1
+                    New-DirRow -ScheduleId 's-5' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $DirGroup4 -PrincipalType 'Group'
+                )
+                $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+                @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
+                    "Fixture Role A|$($script:DirGroup1)|Group"
+                    "Fixture Role A|$DirGroup2|Group"
+                    "Fixture Role A|$DirGroup3|Group"
+                    'Fixture Role A|person1@example.com|User'
+                    'Fixture Role B|Fixture Group|Group'
+                )
+                $Doc = [PSCustomObject]@{ version = '1.0'; directoryRoleAssignments = @($Inv.directoryRoleAssignments) }
+                $Validation = InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                    param($Doc)
+                    Test-OERStructureSchema -Document $Doc
+                }
+                @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' } | ForEach-Object { "$($_.Path): $($_.Message)" }) |
+                    Should -BeNullOrEmpty
+                $Validation.Valid | Should -BeTrue
+            } finally {
+                foreach ($One in $DirGroup2, $DirGroup3, $DirGroup4) { $script:DirNames.Remove($One) }
+            }
+        }
+
+        It 'sorts the entries by role, then Eligible before Active, then principal' {
+            $script:DirEligible = @(
+                New-DirRow -ScheduleId 's-1' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+                New-DirRow -ScheduleId 's-2' -PrincipalId $script:DirUser2
+                New-DirRow -ScheduleId 's-3' -PrincipalId $script:DirGroup1 -PrincipalType 'Group' -End $null -DurationDays $null
+            )
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 's-4' -PrincipalId $script:DirUser1
+                New-DirRow -Kind Active -ScheduleId 's-5' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser1
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments | ForEach-Object { "$($_.role)|$($_.assignmentType)|$($_.principal)" }) | Should -Be @(
+                'Fixture Role A|Eligible|Fixture Group'
+                'Fixture Role A|Eligible|person2@example.com'
+                'Fixture Role A|Active|person1@example.com'
+                'Fixture Role B|Eligible|person2@example.com'
+                'Fixture Role B|Active|person1@example.com'
+            )
+            @($Inv.directoryRoleAssignments)[0].principalType | Should -BeExactly 'Group'
+        }
+
+        It 'exports only the policies of roles that appear in either schedule read, activations included' {
+            # Role A has a direct eligible row; role B appears ONLY as an activation, which the
+            # assignments section never exports but the policy selection still counts; role C has
+            # no row at all.
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'activation-0001' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -AssignmentType 'Activated'
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A', 'Fixture Role B')
+            @($Inv.directoryRoleManagementPolicies)[0].PSObject.Properties.Name | Should -Not -Contain 'scope'
+            @($Inv.directoryRoleAssignments).Count | Should -Be 0 -Because 'the assignments section was not included'
+            Should -Invoke -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy -Times 1 -Exactly -ParameterFilter { $All }
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'exports every policy with -AllDirectoryRolePolicies and issues no schedule read when the assignments section is not included' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -AllDirectoryRolePolicies
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A', 'Fixture Role B', 'Fixture Role C')
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 0
+        }
+
+        It 'still reads the schedules once with -AllDirectoryRolePolicies when the assignments section is included' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -AllDirectoryRolePolicies
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 3
+            @($Inv.directoryRoleAssignments).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'on a failed eligible read exports no eligible entry, still exports the active ones, and reports both gaps' {
+            Mock -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment {
+                # A real advanced function honours the caller's -ErrorAction; a mock body does not
+                # inherit it across the session-state boundary, so it is passed on explicitly here.
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the eligibility schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirActive = @(
+                New-DirRow -Kind Active -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleAssignments)
+            @($Entries | Where-Object { $_.assignmentType -eq 'Eligible' }).Count | Should -Be 0
+            $Entries.Count | Should -Be 1
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Active'
+            # The selection still exports the roles the read that succeeded found.
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role B')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'directoryRoleAssignments/Eligible'
+            $Unread | Should -Contain 'directoryRoleManagementPolicies/role selection'
+            $Unread | Should -Not -Contain 'directoryRoleAssignments/Active'
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the eligibility schedules'
+        }
+
+        It 'on a failed active read exports no active entry, still exports the eligible ones, and reports both gaps' {
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the assignment schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(
+                New-DirRow -ScheduleId 'schedule-0002' -RoleDefinitionId $script:DirRoleB -RoleName 'Fixture Role B' -PrincipalId $script:DirUser2
+            )
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            $Entries = @($Inv.directoryRoleAssignments)
+            @($Entries | Where-Object { $_.assignmentType -eq 'Active' }).Count | Should -Be 0
+            $Entries.Count | Should -Be 1
+            $Entries[0].principal | Should -BeExactly 'person2@example.com'
+            $Entries[0].assignmentType | Should -BeExactly 'Eligible'
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role B')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+            $Unread | Should -Contain 'directoryRoleAssignments/Active'
+            $Unread | Should -Contain 'directoryRoleManagementPolicies/role selection'
+            $Unread | Should -Not -Contain 'directoryRoleAssignments/Eligible'
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the assignment schedules'
+        }
+
+        It 'on a failed schedule read with only the policy section included reports the role selection, not the assignments' {
+            Mock -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the assignment schedules.' -ErrorId 'Forbidden' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).role | Should -Be @('Fixture Role A')
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies/role selection')
+        }
+
+        It 'on a failed policy read reports directoryRoleManagementPolicies and exports no policy entry' {
+            Mock -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy {
+                $Ea = if ($PesterBoundParameters.ContainsKey('ErrorAction')) { $PesterBoundParameters['ErrorAction'] } else { 'Continue' }
+                Write-Error -Message 'Forbidden: fixture refusal of the policies.' -ErrorId 'PolicyReadFailed' -ErrorAction $Ea
+            }
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies -ErrorAction SilentlyContinue -ErrorVariable DirErr
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            $Partial = @(@($DirErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ') | Should -Be @('directoryRoleManagementPolicies')
+            $Partial[0].Exception.Message | Should -Match 'fixture refusal of the policies'
+        }
+
+        It 'reads each schedule list exactly once, unfiltered, when both directory sections are included' {
+            $script:DirEligible = @(New-DirRow)
+            $script:DirActive = @(New-DirRow -Kind Active -ScheduleId 'schedule-0002')
+            $null = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                -not $Role -and -not $PrincipalId -and -not $User -and -not $Group -and -not $ServicePrincipal
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 1 -Exactly -ParameterFilter {
+                -not $Role -and -not $PrincipalId -and -not $User -and -not $Group -and -not $ServicePrincipal
+            }
+        }
+
+        It 'calls no directory reader under the default -Include' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {}
+            Mock -ModuleName $script:moduleName Get-OERCatalog {}
+            $Inv = Get-OERInventory
+            Should -Invoke -ModuleName $script:moduleName Get-OEREligibleDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERActiveDirectoryRoleAssignment -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERDirectoryRoleManagementPolicy -Times 0
+            @($Inv.directoryRoleManagementPolicies).Count | Should -Be 0
+            @($Inv.directoryRoleAssignments).Count | Should -Be 0
+        }
+
+        It 'stamps the schedule id on an assignment entry and the policy id on a policy entry under -IncludeId' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments -IncludeId
+            @($Inv.directoryRoleAssignments)[0].id | Should -BeExactly 'schedule-0001'
+            @($Inv.directoryRoleManagementPolicies)[0].id | Should -BeExactly 'policy-a'
+        }
+
+        It 'stamps no id without -IncludeId' {
+            $script:DirEligible = @(New-DirRow)
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            @($Inv.directoryRoleAssignments)[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+            @($Inv.directoryRoleManagementPolicies)[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+        }
+
+        It 'emits the inventory keys in the documented section order' {
+            $Inv = Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+            @($Inv.PSObject.Properties.Name) | Should -Be @('version', 'groups', 'administrativeUnits', 'catalogs',
+                'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
+                'roleAssignments', 'roleManagementPolicies')
         }
     }
 }
@@ -3158,6 +3810,9 @@ Describe 'Get-OERInventory does not provoke a PimPolicyNotFound for a group that
                 Members = @(); Owners = @(); PimEligibility = @()
             }
         }
+        # These cases pin the policy-id pre-check and the read behind it, which the section reaches
+        # only for a group Test-OERGroupPimInUse reports in use -- so it answers in use here.
+        Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x' } }
     }
 
     It 'never calls Get-OERGroupPimPolicy at all when the group has no policy id' {
@@ -3331,6 +3986,16 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                         return ($NotOnboarded | ConvertFrom-Json -AsHashtable)
                     }
                     if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        # The PIM-in-use criterion's listing. Graph lists a member and an owner
+                        # policy for EVERY group, untouched ones included, exactly as Learn shows an
+                        # untouched group policy. The onboarded four are in use through their
+                        # eligibility and never ask; the other 96 are not in use at all.
+                        return @{ value = @(
+                                @{ id = "Group_m_$Index"; lastModifiedDateTime = $null; lastModifiedBy = @{ id = $null; displayName = $null } }
+                                @{ id = "Group_o_$Index"; lastModifiedDateTime = $null; lastModifiedBy = @{ id = $null; displayName = $null } })
+                        }
+                    }
                     if ($U -match 'roleManagementPolicies/.+/rules') {
                         return @{ value = @(
                                 @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
@@ -3376,10 +4041,14 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
     It 'surfaces the refusal, and omits pimPolicy, when the policy-id lookup answers 403' {
         InModuleScope $script:moduleName {
             try {
-                # Identical to the healthy fixture except on ONE endpoint: the policy-assignment
-                # lookup answers 403 Authorization_RequestDenied for the 96 groups that answered
-                # 400 ResourceTypeNotSupported there before. The eligibility endpoint is untouched,
-                # so anything that moves below is the policy path and nothing else.
+                # The healthy fixture with the policy-assignment lookup answering 403
+                # Authorization_RequestDenied for the 96 groups that answered 400
+                # ResourceTypeNotSupported there before. The eligibility endpoint is untouched, so
+                # anything that moves below is the policy path and nothing else. The PIM-in-use
+                # criterion's listing reports every policy MODIFIED here, and succeeds: that is what
+                # sends the 96 on to the lookup this case refuses. A group the criterion reports not
+                # in use never reaches it (the healthy case), and a refused criterion is its own case
+                # below.
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -3412,6 +4081,12 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                         return ($Forbidden | ConvertFrom-Json -AsHashtable)
                     }
                     if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        return @{ value = @(
+                                @{ id = "Group_m_$Index"; lastModifiedDateTime = '2026-01-01T00:00:00Z'; lastModifiedBy = @{ id = $null; displayName = 'Person One' } }
+                                @{ id = "Group_o_$Index"; lastModifiedDateTime = $null; lastModifiedBy = @{ id = $null; displayName = $null } })
+                        }
+                    }
                     if ($U -match 'roleManagementPolicies/.+/rules') {
                         return @{ value = @(
                                 @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
@@ -3457,6 +4132,255 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                     Should -Be 0 -Because 'omitted, never present-and-empty -- a failed read is not an empty fact'
             } finally {
                 Remove-Item 'function:Invoke-MgGraphRequest'
+            }
+        }
+    }
+
+    It 'leaves no error record, and exports no pimPolicy, when the PIM-in-use listing answers 404 ResourceNotFound' {
+        InModuleScope $script:moduleName {
+            try {
+                # The criterion declares a 404 ResourceNotFound on its listing as the answer "PIM does
+                # not know this group", so the REAL wrapper must hand it back as a marker with nothing
+                # raised: the caller's -ErrorVariable stays empty and the group is simply not in use.
+                # Three groups: the first is eligible (in use without asking), the other two answer
+                # the listing with 404. Both halves of InvokeMgGraphRequest.cs are modelled, as above.
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    $U = [string]$Uri
+                    $Index = 0
+                    if ($U -match '(\d{8})-0000-0000-0000-000000000000') { $Index = [int]$Matches[1] }
+                    $Onboarded = ($Index -eq 1)
+                    $NotOnboarded = '{"error":{"code":"ResourceTypeNotSupported","message":"Resource type not supported for onboarding"}}'
+                    $NotFound = '{"error":{"code":"ResourceNotFound","message":"The resource could not be found."}}'
+                    if ($U -match 'eligibilityScheduleInstances') {
+                        if ($Onboarded) {
+                            if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                            return @{ value = @(@{ id = "e$Index"; accessId = 'member'; principalId = "p$Index" }) }
+                        }
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotOnboarded) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotOnboarded | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotFound) }
+                        Set-Variable -Name $StatusCodeVariable -Value 404 -Scope 1
+                        return ($NotFound | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicyAssignments') {
+                        if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                        return @{ value = @(
+                                @{ roleDefinitionId = 'member'; policyId = "pol-m-$Index" }
+                                @{ roleDefinitionId = 'owner'; policyId = "pol-o-$Index" })
+                        }
+                    }
+                    if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies/.+/rules') {
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+                        }
+                    }
+                    if ($U -match '/members|/owners|getByIds|/directoryObjects') { return @{ value = @() } }
+                    if ($U -match '^v1\.0/groups') {
+                        return @{ value = @(1..3 | ForEach-Object {
+                                    @{ id = ('{0:d8}-0000-0000-0000-000000000000' -f $PSItem); displayName = "g$PSItem"
+                                        securityEnabled = $true; isAssignableToRole = $false; groupTypes = @()
+                                        description = $null; mailNickname = "g$PSItem"
+                                    }
+                                })
+                        }
+                    }
+                    return @{ value = @() }
+                }
+
+                $Err = $null
+                $Warned = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err `
+                    -WarningAction SilentlyContinue -WarningVariable Warned
+
+                @($Err).Count |
+                    Should -Be 0 -Because 'a 404 on the listing is the declared answer for a group PIM does not know, not a failure'
+                @($Warned).Count | Should -Be 0
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 3
+                @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' } | ForEach-Object { $_.displayName }) |
+                    Should -Be @('g1') -Because 'only the eligible group is in use; the two PIM does not know carry no pimPolicy'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+            }
+        }
+    }
+
+    It 'leaves no error record, reports nothing unread, and exports no pimPolicy, when the PIM-in-use listing answers 400 ResourceTypeNotSupported' {
+        InModuleScope $script:moduleName {
+            try {
+                # Microsoft Learn: a dynamic group and a group synchronized from on-premises cannot be
+                # managed in PIM for Groups, and Graph answers 400 ResourceTypeNotSupported for them on
+                # this family of endpoints. The criterion declares that code as the answer "not in use",
+                # exactly as the eligibility read and the policy-id lookup already do, so the REAL
+                # wrapper hands it back as a marker: nothing is raised, nothing is reported unread, and
+                # the export is not InventoryPartial on account of such a group. Three groups: the
+                # first is eligible (in use without asking), the other two answer 400 everywhere.
+                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    $U = [string]$Uri
+                    $Index = 0
+                    if ($U -match '(\d{8})-0000-0000-0000-000000000000') { $Index = [int]$Matches[1] }
+                    $Onboarded = ($Index -eq 1)
+                    $NotSupported = '{"error":{"code":"ResourceTypeNotSupported","message":"Resource type not supported for onboarding"}}'
+                    if ($U -match 'eligibilityScheduleInstances') {
+                        if ($Onboarded) {
+                            if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                            return @{ value = @(@{ id = "e$Index"; accessId = 'member'; principalId = "p$Index" }) }
+                        }
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotSupported) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotSupported | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotSupported) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotSupported | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicyAssignments') {
+                        $script:PolicyLookups.Add($Index)
+                        if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                        return @{ value = @(
+                                @{ roleDefinitionId = 'member'; policyId = "pol-m-$Index" }
+                                @{ roleDefinitionId = 'owner'; policyId = "pol-o-$Index" })
+                        }
+                    }
+                    if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies/.+/rules') {
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+                        }
+                    }
+                    if ($U -match '/members|/owners|getByIds|/directoryObjects') { return @{ value = @() } }
+                    if ($U -match '^v1\.0/groups') {
+                        return @{ value = @(1..3 | ForEach-Object {
+                                    @{ id = ('{0:d8}-0000-0000-0000-000000000000' -f $PSItem); displayName = "g$PSItem"
+                                        securityEnabled = $true; isAssignableToRole = $false; groupTypes = @()
+                                        description = $null; mailNickname = "g$PSItem"
+                                    }
+                                })
+                        }
+                    }
+                    return @{ value = @() }
+                }
+
+                $Err = $null
+                $Warned = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err `
+                    -WarningAction SilentlyContinue -WarningVariable Warned
+
+                @($Err).Count |
+                    Should -Be 0 -Because 'a 400 ResourceTypeNotSupported on the listing is the declared answer for a group PIM for Groups cannot manage, not a failure'
+                @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                    Should -Be 0 -Because 'nothing about such a group is unread'
+                @($Warned).Count | Should -Be 0
+                @($script:PolicyLookups | Sort-Object -Unique) |
+                    Should -Be @(1) -Because 'a group the criterion does not find in use makes no policy call'
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 3
+                @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' } | ForEach-Object { $_.displayName }) |
+                    Should -Be @('g1') -Because 'only the eligible group is in use; the two PIM for Groups cannot manage carry no pimPolicy'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+                Remove-Variable -Name PolicyLookups -Scope Script -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    It 'reports pimPolicy unread, and reads no policy, when the PIM-in-use listing answers 403' {
+        InModuleScope $script:moduleName {
+            try {
+                # The healthy fixture with the criterion's own listing refused for the 96 groups
+                # without eligibility, driven through the REAL Test-OERGroupPimInUse and the REAL
+                # wrapper: the listing declares only a 404 ResourceNotFound and a 400
+                # ResourceTypeNotSupported as answers, so a 403 must throw out of the helper and be
+                # accounted for, never read as "not in use".
+                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
+                function Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                        [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                    $U = [string]$Uri
+                    $Index = 0
+                    if ($U -match '(\d{8})-0000-0000-0000-000000000000') { $Index = [int]$Matches[1] }
+                    $Onboarded = ($Index -ge 1 -and $Index -le 4)
+                    $NotOnboarded = '{"error":{"code":"ResourceTypeNotSupported","message":"Resource type not supported for onboarding"}}'
+                    $Forbidden = '{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges to complete the operation."}}'
+                    if ($U -match 'eligibilityScheduleInstances') {
+                        if ($Onboarded) {
+                            if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                            return @{ value = @(@{ id = "e$Index"; accessId = 'member'; principalId = "p$Index" }) }
+                        }
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($NotOnboarded) }
+                        Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+                        return ($NotOnboarded | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicies\?') {
+                        if (-not $SkipHttpErrorCheck) { throw [System.Exception]::new($Forbidden) }
+                        Set-Variable -Name $StatusCodeVariable -Value 403 -Scope 1
+                        return ($Forbidden | ConvertFrom-Json -AsHashtable)
+                    }
+                    if ($U -match 'roleManagementPolicyAssignments') {
+                        $script:PolicyLookups.Add($Index)
+                        if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                        return @{ value = @(
+                                @{ roleDefinitionId = 'member'; policyId = "pol-m-$Index" }
+                                @{ roleDefinitionId = 'owner'; policyId = "pol-o-$Index" })
+                        }
+                    }
+                    if ($StatusCodeVariable) { Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1 }
+                    if ($U -match 'roleManagementPolicies/.+/rules') {
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification') })
+                        }
+                    }
+                    if ($U -match '/members|/owners|getByIds|/directoryObjects') { return @{ value = @() } }
+                    if ($U -match '^v1\.0/groups') {
+                        return @{ value = @(1..100 | ForEach-Object {
+                                    @{ id = ('{0:d8}-0000-0000-0000-000000000000' -f $PSItem); displayName = "g$PSItem"
+                                        securityEnabled = $true; isAssignableToRole = $false; groupTypes = @()
+                                        description = $null; mailNickname = "g$PSItem"
+                                    }
+                                })
+                        }
+                    }
+                    return @{ value = @() }
+                }
+
+                $Err = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err
+
+                $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+                @($Partial).Count |
+                    Should -Be 1 -Because 'a criterion nobody could read must reach the caller, not pass as "not in use"'
+                $Unread = @(([string]$Partial[0].TargetObject) -split ', ')
+                @($Unread | Where-Object { $_ -match '^groups/g\d+/pimPolicy$' }).Count | Should -Be 96
+                $Unread | Should -Contain 'groups/g5/pimPolicy'
+                $Unread | Should -Not -Contain 'groups/g1/pimPolicy' -Because 'an eligible group is in use without asking the listing'
+                [string]$Partial[0].Exception.Message | Should -Match 'Could not determine whether group'
+                [string]$Partial[0].Exception.Message | Should -Match 'Authorization_RequestDenied'
+                @($script:PolicyLookups | Sort-Object -Unique) |
+                    Should -Be @(1, 2, 3, 4) -Because 'only the four eligible groups reach a policy-id lookup at all'
+
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 100
+                @($Groups | Where-Object { $_.PSObject.Properties.Name -contains 'pimPolicy' }).Count |
+                    Should -Be 4 -Because 'a group whose use of PIM for Groups nobody could read exports no pimPolicy'
+            } finally {
+                Remove-Item 'function:Invoke-MgGraphRequest'
+                Remove-Variable -Name PolicyLookups -Scope Script -ErrorAction SilentlyContinue
             }
         }
     }

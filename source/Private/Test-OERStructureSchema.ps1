@@ -104,8 +104,14 @@ function Test-OERStructureSchema {
     fallback and warns the same way: Sync-OERStructureAccessReview collects no fallback from it and
     reports Failed without creating the review. A DECLARED but EMPTY reviewers array is not that
     case and is never flagged: it means a self review on both the create and the update path, and a
-    self review needs no fallback. A groups[] entry declaring a non-empty administrativeUnit whose
-    matching administrativeUnits[] entry (by displayName, case-insensitively) exists in the same
+    self review needs no fallback. A groups[] entry's previousDisplayName (the group's current display
+    name or object id, when displayName declares a new one and the apply engine is to rename the
+    group) must be a non-empty string (Error); one equal to displayName, ignoring case, is a
+    Warning, since both names then find the same group and a case-only rename is not possible
+    through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
+    as for every other key, and a template-based group's computed name is not compared. A groups[] entry
+    declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
+    displayName, case-insensitively) exists in the same
     document but does not name the group in its members is a Warning (issue #59): administrativeUnit
     is applied only when the group is created and never round-trips, so without the reciprocal members
     entry -Prune removes the membership in the SAME apply run -- Invoke-OERStructure dispatches
@@ -262,8 +268,8 @@ function Test-OERStructureSchema {
                 $GItem = if ($HasDN) { $G.displayName } else { "groups[$I]" }
 
                 Add-UnknownKeyWarning -Node $G -Section 'groups' -Item $GItem -Path $GPath `
-                    -KnownKey @('displayName', 'template', 'tokens', 'roleAssignable', 'dynamic',
-                        'description', 'membershipRule', 'membershipRuleProcessingState', 'mailNickname',
+                    -KnownKey @('displayName', 'previousDisplayName', 'template', 'tokens', 'roleAssignable',
+                        'dynamic', 'description', 'membershipRule', 'membershipRuleProcessingState', 'mailNickname',
                         'administrativeUnit', 'members', 'owners', 'eligibility', 'pimPolicy', 'id')
 
                 if ($HasDN -and $HasTpl) {
@@ -277,6 +283,22 @@ function Test-OERStructureSchema {
                         $G.tokens -isnot [PSCustomObject]) {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.tokens" `
                             -Message "Group at $GPath with 'template' must also have a 'tokens' object."
+                    }
+                }
+
+                # previousDisplayName renames the group found under it to displayName. An empty or
+                # non-string value names no group at all; one equal to displayName (Graph matches
+                # display names case-insensitively) resolves to the same group, so nothing is renamed
+                # -- which also means a case-only rename cannot be expressed through the document.
+                # A template-based group's real name is computed at apply time and is not compared.
+                if (Test-HasProp -Node $G -Name 'previousDisplayName') {
+                    $PrevDN = $G.previousDisplayName
+                    if ($PrevDN -isnot [string] -or $PrevDN.Length -eq 0) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.previousDisplayName" `
+                            -Message "'previousDisplayName' at $GPath must be a non-empty string."
+                    } elseif ($HasDN -and ([string]$G.displayName -eq $PrevDN)) {
+                        Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.previousDisplayName" -Severity 'Warning' `
+                            -Message "'previousDisplayName' at $GPath equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName."
                     }
                 }
 

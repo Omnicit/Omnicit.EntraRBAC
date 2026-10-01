@@ -6,8 +6,8 @@ function Get-OERInventory {
     .DESCRIPTION
     Composes the existing Get-OER* cmdlets into a single tagged Omnicit.EntraRBAC.Inventory object whose
     shape matches the Phase 5 JSON document schema, so the output round-trips into the orchestration
-    apply engine. Select which building blocks to read with -Include (default: the Entra ID sections that
-    do not require Azure Resource Manager).
+    apply engine. Select which building blocks to read with -Include (default: Groups,
+    AdministrativeUnits, Catalogs and AccessPackages).
     Azure sections (RoleAssignments, RoleManagementPolicies) need an ARM token: pass -IncludeARM to
     acquire it up front (the Azure sections otherwise acquire it on first use) and supply their
     targeting parameters. Names are emitted by default for portability;
@@ -25,10 +25,19 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. The Groups pimPolicy projection carries requireApproval and, only while it
-    is true, approvers as object ids (a display name is not guaranteed to resolve) -- approvers are
-    omitted while requireApproval is false, since the apply engine ignores declared approvers in that
-    case and the offline validator would otherwise warn on every exported document.
+    has at least one owner. The Groups pimPolicy projection is emitted only for a group found to use
+    PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
+    carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
+    every group, including one never used with PIM for Groups, and applying a changed pimPolicy to
+    such a group onboards it to PIM for Groups, which cannot be undone -- so a group not found to use
+    PIM for Groups carries no pimPolicy, and none of its policies is read. A group used only through
+    PIM active assignments, with untouched policies, is not found to use it either. When that
+    question cannot be answered for a group -- its policies could not be listed, or no modified
+    policy was found while its PIM eligibility could not be read -- its pimPolicy is omitted and
+    reported through the InventoryPartial error below. The projection carries requireApproval and,
+    only while it is true, approvers as object ids (a display name is not guaranteed to resolve) --
+    approvers are omitted while requireApproval is false, since the apply engine ignores declared
+    approvers in that case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
     administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
@@ -42,7 +51,12 @@ function Get-OERInventory {
     which Invoke-OERStructure -Prune acts on by deleting every live member. A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
-    users does not silently re-create as internal-only.
+    users does not silently re-create as internal-only. A Group or Application catalog resource, and
+    an access package resourceRoles entry on one, is written under the group's or application's
+    CURRENT display name, looked up by the resource's originId (its object id when the lookup returns
+    nothing) -- never under the name the catalog recorded when the resource was added, which Graph
+    keeps after a rename. Invoke-OERStructure identifies such a resource by the object id its name
+    resolves to.
     Only access-package-scoped, single-stage review definitions are captured: a group, application,
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
@@ -71,18 +85,47 @@ function Get-OERInventory {
     the activation window. Notification rules are excluded from that projection: they are readable
     through Get-OERRoleManagementPolicy and writable through Set-OERRoleManagementPolicy
     -NotificationRule, but are not part of this document and do not round-trip. Azure PIM eligible
-    and active ROLE ASSIGNMENTS (as opposed to the policy that governs them) are out of scope for
-    every section here: neither roleAssignments (permanent Azure RBAC only) nor
-    roleManagementPolicies (the governing policy) grants, captures or removes one -- manage them
-    directly with New-OEREligibleRoleAssignment, Get-OEREligibleRoleAssignment,
-    New-OERActiveRoleAssignment and Get-OERActiveRoleAssignment.
+    and active ROLE ASSIGNMENTS (as opposed to the policy that governs them) remain outside every
+    APPLY section here: neither roleAssignments (permanent Azure RBAC only) nor
+    roleManagementPolicies (the governing policy) grants, captures or removes one, and this cmdlet
+    itself still does not read them. Export-OERInventory writes the eligible ones into
+    azurePimEligibility.json as read-only context, outside the apply document -- active assignments
+    are not captured there either. Manage them directly with New-OEREligibleRoleAssignment,
+    Get-OEREligibleRoleAssignment, New-OERActiveRoleAssignment and Get-OERActiveRoleAssignment.
+    The DirectoryRoleAssignments and DirectoryRoleManagementPolicies sections cover Microsoft Entra
+    directory roles. DirectoryRoleAssignments exports only the eligible and active assignments the
+    apply engine manages: direct and at tenant scope, and for an active one a standing assignment --
+    an activation of an eligible assignment, an assignment a principal holds through a group, and one
+    scoped to an administrative unit are never exported, by the same rule Invoke-OERStructure matches
+    and prunes by (Select-OERManagedDirectoryRoleAssignment). A user is named by its user principal
+    name and a group by its display name, each falling back to the object id when no name can be
+    read; a service principal, or a principal of unknown type, is named by its object id, and
+    principalType is carried whenever the type is known. Entra does not keep group display names
+    unique, so a group whose display name matches, without regard to letter case, that of another
+    principal holding the same role and assignment type is named by its object id instead (still with
+    principalType Group): two entries with the same role, principal and assignmentType would be
+    refused by the validator. A time-bound assignment carries durationDays reconstructed from the
+    schedule window the same way the apply engine measures it, so a re-applied export is Unchanged; a
+    permanent one carries neither durationDays nor permanent. Two live schedules for one role,
+    principal and kind export only the first this read returns, with a warning: Invoke-OERStructure
+    compares against the first schedule Microsoft Graph returns for that role and principal, which is
+    not guaranteed to be the same one, so such an entry may report a change when applied.
+    DirectoryRoleManagementPolicies exports the policy of every directory role that has at least one
+    row in the tenant-scope eligibility or assignment schedules -- any member type, activations
+    included -- or, with -AllDirectoryRolePolicies, of every directory role; a directory policy
+    carries approvers only while approval is required. A failed read of either schedule list or of
+    the policies is reported through the InventoryPartial error and never stated as a fact: the kind
+    whose read failed exports no entry, and a role selection made from an incomplete read is
+    reported as partial.
 
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only access-package-scoped, single-stage review
     definitions (optionally narrowed by -AccessReviewFilter); a group, application, directory-role
-    or multi-stage review is skipped with a warning. RoleAssignments and RoleManagementPolicies
-    require -IncludeARM plus their targeting parameters.
+    or multi-stage review is skipped with a warning. DirectoryRoleManagementPolicies and
+    DirectoryRoleAssignments read Microsoft Entra directory roles through Microsoft Graph and need no
+    ARM token. RoleAssignments and RoleManagementPolicies require -IncludeARM plus their targeting
+    parameters.
 
     .PARAMETER GroupFilter
     An OData filter (without the $filter= prefix) selecting which groups to read. When omitted,
@@ -127,6 +170,12 @@ function Get-OERInventory {
     single roleManagementPolicyAssignments list-for-scope call (one paged ARM list, not one lookup per
     role). Mutually exclusive with -Role and -CommonRoles.
 
+    .PARAMETER AllDirectoryRolePolicies
+    For the DirectoryRoleManagementPolicies section, export the policy of every Microsoft Entra
+    directory role, instead of only the roles that have at least one row in the tenant-scope
+    eligibility or assignment schedules. The schedules are then not read for the policy section at
+    all; they are still read, once, when DirectoryRoleAssignments is included too.
+
     .PARAMETER IncludeId
     Stamp each top-level object with its id property (handy for same-tenant round-trips).
 
@@ -147,11 +196,17 @@ function Get-OERInventory {
     .EXAMPLE
     Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -CommonRoles -IncludeARM
     Reads the PIM policy for each curated common role on the Prod subscription into the inventory.
+
+    .EXAMPLE
+    Get-OERInventory -Include DirectoryRoleManagementPolicies, DirectoryRoleAssignments
+    Reads the Microsoft Entra directory role assignments the apply engine manages, and the PIM policy
+    of every directory role in use, through Microsoft Graph only.
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
     param(
-        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'RoleAssignments', 'RoleManagementPolicies')]
+        [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews',
+            'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
         [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages'),
 
         [string]$GroupFilter,
@@ -163,6 +218,7 @@ function Get-OERInventory {
         [string[]]$Role,
         [switch]$CommonRoles,
         [switch]$AllRolesAtScope,
+        [switch]$AllDirectoryRolePolicies,
         [switch]$IncludeId,
         [switch]$IncludeARM,
         [string]$TenantId
@@ -180,6 +236,8 @@ function Get-OERInventory {
         $Catalogs               = [System.Collections.Generic.List[object]]::new()
         $AccessPackages         = [System.Collections.Generic.List[object]]::new()
         $AccessReviews          = [System.Collections.Generic.List[object]]::new()
+        $DirectoryRoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
+        $DirectoryRoleAssignments        = [System.Collections.Generic.List[object]]::new()
         $RoleAssignments        = [System.Collections.Generic.List[object]]::new()
         $RoleManagementPolicies = [System.Collections.Generic.List[object]]::new()
         # Collections a section asked for and did not get back. An inventory document must never
@@ -201,15 +259,16 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits six
-        # read-failure message shapes (group members, group owners, group PIM eligibility, group PIM
-        # policy, AU members, AU scoped roles), so six admits one of each and a normal partial run is
-        # still reported in full; only a genuinely heterogeneous large-tenant failure is truncated,
-        # and the dropped count is stated rather than silently lost. Nothing is discarded either way
-        # -- every cause is written to the verbose stream as it is seen. Raise this with the shape
-        # count when a seventh read-failure message is added, or one shape starts crowding out
-        # another purely by ordering.
-        $UnreadCauseCap = 6
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits ten
+        # read-failure message shapes (group members, group owners, group PIM eligibility, group
+        # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+        # eligibility schedules, directory role assignment schedules, directory role policies), so
+        # ten admits one of each and a normal partial run is still reported in full; only a
+        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
+        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
+        # verbose stream as it is seen. Raise this with the shape count when an eleventh
+        # read-failure message is added, or one shape starts crowding out another purely by ordering.
+        $UnreadCauseCap = 10
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -437,7 +496,51 @@ function Get-OERInventory {
 
                 $MemberPim = $null
                 $OwnerPim  = $null
-                # ASK FIRST WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
+                # ASK FIRST WHETHER THE GROUP USES PIM FOR GROUPS AT ALL. Microsoft Graph lists
+                # PIM-for-Groups policies for every group, including one never used with PIM for
+                # Groups (measured live 2026-09-28), so reading and exporting them used to put a
+                # default pimPolicy on EVERY group -- and a proposal that changes one of those blocks
+                # onboards the group on apply, which cannot be undone (Microsoft Graph documentation,
+                # "Onboarding groups to PIM for Groups"). Test-OERGroupPimInUse owns the rule: the
+                # eligibility this section already read, or one listing of the group's policies for a
+                # modified one (docs/development/rationale.md#pim-in-use-criterion, ruling R2). A group
+                # the criterion does not find in use gets no pimPolicy key and none of the four reads
+                # below. A criterion that could not be read is never guessed in either direction:
+                # pimPolicy is omitted AND the collection is reported unread, with its cause, exactly
+                # like a failed policy read. The null-filter on the count is load-bearing:
+                # @($null).Count is 1.
+                $EligibilityRead = $G.PSObject.Properties.Name -contains 'PimEligibility'
+                $EligCount = if ($EligibilityRead) {
+                    @($G.PimEligibility | Where-Object { $null -ne $_ }).Count
+                } else { 0 }
+                $Usage = $null
+                try {
+                    $Usage = Test-OERGroupPimInUse -GroupId $G.Id -EligibilityCount $EligCount
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $CriterionCause = "Could not determine whether group '$($G.Id)' uses PIM for Groups: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CriterionCause"
+                    Add-UnreadCause -Cause $CriterionCause -Target ([string]$G.Id)
+                    $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
+                    $Usage = $null
+                }
+                $PimInUse = ($null -ne $Usage -and [bool]$Usage.InUse)
+                if ($null -ne $Usage -and -not $PimInUse) {
+                    if ($EligibilityRead) {
+                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported -- $($Usage.Reason)."
+                    } else {
+                        # HALF AN ANSWER. The eligibility read failed, so the count above was 0 by
+                        # default, not by measurement: "not in use" was decided on the policies alone
+                        # and is a guess. pimPolicy is omitted and reported unread too. The eligibility
+                        # read's own cause is already on the cause list (it is what omitted
+                        # PimEligibility), so this adds the COLLECTION only, never a second cause. A
+                        # modified policy, by contrast, decides "in use" on its own and never gets here.
+                        Write-Verbose "Get-OERInventory: group '$($G.DisplayName)': pimPolicy not exported and not decided -- $($Usage.Reason), and its PIM eligibility could not be read."
+                        $UnreadCollections.Add("groups/$($G.DisplayName)/pimPolicy")
+                    }
+                }
+
+                # ASK NEXT WHETHER THERE IS A POLICY AT ALL, rather than reading one and swallowing
                 # the answer. For a group whose policy Graph does not list (an empty assignments
                 # collection, or 400 ResourceTypeNotSupported) Get-OERGroupPimPolicy correctly
                 # reports a non-terminating PimPolicyNotFound -- which -ErrorAction Stop turns into
@@ -448,10 +551,14 @@ function Get-OERInventory {
                 # answering with no listed policy, driving the real wrapper and the real cmdlets with
                 # only the transport stubbed: 384 records for an entirely clean read -- it does not
                 # depend on whether the assignments call answers 200-empty or 400, since
-                # Get-OERPimGroupPolicyId returns $null either way. A group that was never used with
-                # PIM for Groups is NOT such a group: Graph lists its policies before the group is
-                # onboarded (measured live 2026-09-28), so its policy is read and exported like any
-                # other.
+                # Get-OERPimGroupPolicyId returns $null either way. A group the criterion above does
+                # not find to use PIM for Groups (no PIM eligibility and no modified policy) never
+                # gets this far: Graph lists a group's policies before it is onboarded (measured live
+                # 2026-09-28), which is exactly why the criterion runs first, and a group it does not
+                # find in use -- or could not decide -- makes none of the four calls below and
+                # carries no pimPolicy. That finding is the criterion's, not a measured fact about
+                # the tenant: a group used only through PIM ACTIVE assignments, with untouched
+                # policies, is not found in use either (rationale.md#pim-in-use-criterion).
                 #
                 # NOT -ErrorAction Ignore on the reads below. That would silence a genuine 403 or 429
                 # along with the not-listed case and leave the operator with a document quietly
@@ -479,12 +586,16 @@ function Get-OERInventory {
                 #
                 # pimPolicy stays OMITTED for that access type either way, never present and empty --
                 # exactly as Get-OERGroup omits PimEligibility on a failed read.
-                $ReadMemberPim = $true
-                $ReadOwnerPim  = $true
-                try { $ReadMemberPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType member) }
-                catch { Remove-OERErrorRecord -Record $PSItem; $ReadMemberPim = $true }
-                try { $ReadOwnerPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType owner) }
-                catch { Remove-OERErrorRecord -Record $PSItem; $ReadOwnerPim = $true }
+                $ReadMemberPim = $false
+                $ReadOwnerPim  = $false
+                if ($PimInUse) {
+                    $ReadMemberPim = $true
+                    $ReadOwnerPim  = $true
+                    try { $ReadMemberPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType member) }
+                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadMemberPim = $true }
+                    try { $ReadOwnerPim = [bool](Get-OERPimGroupPolicyId -GroupId $G.Id -AccessType owner) }
+                    catch { Remove-OERErrorRecord -Record $PSItem; $ReadOwnerPim = $true }
+                }
                 foreach ($PimAccessType in @('member', 'owner')) {
                     if ($PimAccessType -eq 'member' -and -not $ReadMemberPim) { continue }
                     if ($PimAccessType -eq 'owner' -and -not $ReadOwnerPim) { continue }
@@ -619,6 +730,23 @@ function Get-OERInventory {
         # returns only a [string] id and cannot substitute here. Resolve once so the default -Include
         # (which contains both sections) does not issue the catalog list/read call twice.
         $ResolvedCatalogList = $null
+        # The CURRENT display name of each Group and Application resource of a catalog, keyed by
+        # originId: a catalog keeps the name a resource had when it was added, also after the group or
+        # application is renamed (measured live 2026-09-30), and the apply engine identifies a Group or
+        # Application resource by the object id its declared name resolves to. One getByIds call per
+        # catalog through Resolve-OERPrincipalName, shared by both sections; an object the directory
+        # does not return (deleted, unreadable, or a failed call) falls back to its id, which the apply
+        # engine takes as the object id itself.
+        $CatalogResourceNames = @{}
+        $GetCatalogResourceNames = {
+            param([string]$ForCatalogId, [object[]]$Resources)
+            if (-not $CatalogResourceNames.ContainsKey($ForCatalogId)) {
+                $Ids = @($Resources | Where-Object { [string]$_.OriginSystem -in @('AadGroup', 'AadApplication') -and $_.OriginId } |
+                        ForEach-Object { [string]$_.OriginId })
+                $CatalogResourceNames[$ForCatalogId] = if ($Ids.Count -gt 0) { Resolve-OERPrincipalName -Id $Ids -PreferDisplayName } else { @{} }
+            }
+            $CatalogResourceNames[$ForCatalogId]
+        }
         if ($Include -contains 'Catalogs' -or $Include -contains 'AccessPackages') {
             $ResolvedCatalogList = if ($Catalog) {
                 if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog) } else { @(Get-OERCatalog -DisplayName $Catalog) }
@@ -636,7 +764,9 @@ function Get-OERInventory {
                     externallyVisible = [bool]$Cat.ExternallyVisible
                 }
                 if ($IncludeId) { $Proj.id = $Cat.Id }
-                $Proj.resources = @(foreach ($R in @(Get-OERCatalogResource -Catalog $Cat.Id)) {
+                $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id)
+                $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
+                $Proj.resources = @(foreach ($R in $CatRes) {
                     # Map the resource type to the schema enum from the stable originSystem (the raw
                     # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
                     # schema/apply do not accept). Falls back to the raw value for unknown systems.
@@ -650,8 +780,15 @@ function Get-OERInventory {
                     # resource originId -- the display name is only the site title and cannot be fed
                     # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
                     # 'url' field so the apply engine has the real identifier while the human-readable
-                    # name is preserved. Group and application resources keep the name as identifier.
-                    $ResProj = [ordered]@{ type = $ResType; name = $R.DisplayName }
+                    # name is preserved. A Group or Application resource is written under the group's
+                    # or application's CURRENT name (looked up by originId, the id when it cannot be),
+                    # never the name the catalog recorded when it was added.
+                    $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
+                        $CurrentNames[[string]$R.OriginId]
+                    } else {
+                        $R.DisplayName
+                    }
+                    $ResProj = [ordered]@{ type = $ResType; name = $ResName }
                     if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
                         $ResProj.url = [string]$R.OriginId
                     }
@@ -675,9 +812,18 @@ function Get-OERInventory {
                 # the binding's resource against Get-OERCatalogResource display names, so project that
                 # same name here (joined on OriginId) instead of the scope label, or the binding will
                 # not round-trip.
+                # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
+                # section names it, so a binding resolves to the same object id on apply.
                 $ApCatResMap = @{}
-                foreach ($Cr in @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)) {
-                    if ($Cr.OriginId) { $ApCatResMap[[string]$Cr.OriginId] = [string]$Cr.DisplayName }
+                $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)
+                $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
+                foreach ($Cr in $ApCatRes) {
+                    if (-not $Cr.OriginId) { continue }
+                    $ApCatResMap[[string]$Cr.OriginId] = if ([string]$Cr.OriginSystem -in @('AadGroup', 'AadApplication') -and $ApCurrentNames.ContainsKey([string]$Cr.OriginId)) {
+                        [string]$ApCurrentNames[[string]$Cr.OriginId]
+                    } else {
+                        [string]$Cr.DisplayName
+                    }
                 }
                 foreach ($Ap in @(Get-OERAccessPackage -Catalog $ApCat.Id)) {
                     $Proj = [ordered]@{
@@ -1119,6 +1265,206 @@ function Get-OERInventory {
             }
         }
 
+        # Microsoft Entra directory roles, read through Microsoft Graph only. The two tenant-wide
+        # schedule reads are shared by both sections and issued at most once per call: the
+        # assignments section exports from them, and the policy section selects the roles in use from
+        # them -- unless -AllDirectoryRolePolicies asks for every role, when they are read only if the
+        # assignments section needs them.
+        $IncludeDirectoryAssignments = $Include -contains 'DirectoryRoleAssignments'
+        $IncludeDirectoryPolicies = $Include -contains 'DirectoryRoleManagementPolicies'
+        # Per kind: the rows read, and whether the read succeeded. A failed read is not an empty one,
+        # so the flag -- never the row count -- decides what the document may state.
+        $DirectoryRows = @{ Eligible = @(); Active = @() }
+        $DirectoryRead = @{ Eligible = $false; Active = $false }
+        if ($IncludeDirectoryAssignments -or ($IncludeDirectoryPolicies -and -not $AllDirectoryRolePolicies)) {
+            # Unfiltered: every tenant-scope schedule, direct and group-inherited, activations
+            # included. -ErrorAction Stop, each read in its own try/catch, so a refused read lands in
+            # the catch and is reported, never mistaken for an empty list.
+            try {
+                $DirectoryRows.Eligible = @(Get-OEREligibleDirectoryRoleAssignment -ErrorAction Stop)
+                $DirectoryRead.Eligible = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role eligibility schedules: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                if ($IncludeDirectoryAssignments) { $UnreadCollections.Add('directoryRoleAssignments/Eligible') }
+            }
+            try {
+                $DirectoryRows.Active = @(Get-OERActiveDirectoryRoleAssignment -ErrorAction Stop)
+                $DirectoryRead.Active = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role assignment schedules: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                if ($IncludeDirectoryAssignments) { $UnreadCollections.Add('directoryRoleAssignments/Active') }
+            }
+        }
+
+        if ($IncludeDirectoryAssignments) {
+            $DirectoryKept = [System.Collections.Generic.List[object]]::new()
+            foreach ($DirectoryKind in @('Eligible', 'Active')) {
+                if (-not $DirectoryRead[$DirectoryKind]) { continue }
+                $DirectorySeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                # Only the rows the apply engine may match or prune -- tenant scope, direct, and for
+                # Active an Assigned schedule, never an activation -- decided by the same single owner
+                # Sync-OERStructureDirectoryRoleAssignment uses, so the export can never emit a row
+                # the apply engine would not match.
+                foreach ($DirectoryRow in @(Select-OERManagedDirectoryRoleAssignment -Assignment $DirectoryRows[$DirectoryKind] -Kind $DirectoryKind)) {
+                    # Two schedules for one role, principal and kind (a future-dated second one, for
+                    # example) would be two entries the validator refuses as a duplicate. Keep the
+                    # first this read returned and say so. The handler compares against the first
+                    # schedule ITS filtered read returns, and Microsoft Graph does not promise the two
+                    # reads the same order, so the warning says the entry may then report a change.
+                    if (-not $DirectorySeen.Add("$($DirectoryRow.RoleDefinitionId)|$($DirectoryRow.PrincipalId)")) {
+                        $DuplicateRole = if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId }
+                        Write-Warning ("Get-OERInventory: directory role '$DuplicateRole' has more than one $($DirectoryKind.ToLowerInvariant()) " +
+                            "schedule for principal '$($DirectoryRow.PrincipalId)'; exporting the first. Invoke-OERStructure compares against " +
+                            'the first schedule Microsoft Graph returns for that role and principal, so if the two differ it may report a change for this entry.')
+                        continue
+                    }
+                    $DirectoryKept.Add([PSCustomObject]@{ Kind = $DirectoryKind; Row = $DirectoryRow })
+                }
+            }
+
+            # Users and groups are named in ONE batched lookup through the shared per-invocation
+            # cache. A service principal is never looked up: it is exported by object id, since its
+            # display name is not unique and an ambiguous one fails on apply.
+            $DirectoryNameIds = @($DirectoryKept |
+                    Where-Object { [string]$_.Row.PrincipalType -in @('User', 'Group') } |
+                    ForEach-Object { [string]$_.Row.PrincipalId } |
+                    Where-Object { $_ -and -not $PrincipalNameCache.ContainsKey($_) } |
+                    Select-Object -Unique)
+            if ($DirectoryNameIds.Count -gt 0) {
+                $ResolvedDirectory = Resolve-OERPrincipalName -Id $DirectoryNameIds
+                foreach ($K in $ResolvedDirectory.Keys) { $PrincipalNameCache[$K] = $ResolvedDirectory[$K] }
+            }
+
+            # A user by its UPN and a group by its display name, each falling back to the object id
+            # when no name was read; a service principal, or a principal of unknown type, by its
+            # object id, which the apply engine resolves verbatim.
+            $DirectoryPrincipals = [string[]]::new($DirectoryKept.Count)
+            for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                $DirectoryRow = $DirectoryKept[$Index].Row
+                $DirectoryPrincipalId = [string]$DirectoryRow.PrincipalId
+                $DirectoryPrincipals[$Index] = if ([string]$DirectoryRow.PrincipalType -in @('User', 'Group') -and $PrincipalNameCache.ContainsKey($DirectoryPrincipalId)) {
+                    [string]$PrincipalNameCache[$DirectoryPrincipalId]
+                } else {
+                    $DirectoryPrincipalId
+                }
+            }
+            # Entra does not keep group display names unique, so two groups holding one role and kind
+            # can carry the same name -- or a group can carry another principal's name -- and export
+            # two identical (role, principal, assignmentType) entries, which the validator refuses as
+            # a duplicate and so invalidates the whole document. Every GROUP row whose name collides,
+            # without regard to letter case, with another row of the same role definition id and kind
+            # is named by its object id instead; principalType stays Group. Repeated until nothing
+            # changes, since a group's id can in turn equal another group's display name. Each pass
+            # moves at least one group to its id, so it ends; only groups ever move.
+            do {
+                $DirectoryNameCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                    $CollisionKey = "$($DirectoryKept[$Index].Row.RoleDefinitionId)|$($DirectoryKept[$Index].Kind)|$($DirectoryPrincipals[$Index])"
+                    $DirectoryNameCount[$CollisionKey] = 1 + $(if ($DirectoryNameCount.ContainsKey($CollisionKey)) { $DirectoryNameCount[$CollisionKey] } else { 0 })
+                }
+                $DirectoryRenamed = $false
+                for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                    $DirectoryRow = $DirectoryKept[$Index].Row
+                    if ([string]$DirectoryRow.PrincipalType -ne 'Group') { continue }
+                    if ($DirectoryPrincipals[$Index] -eq [string]$DirectoryRow.PrincipalId) { continue }
+                    $CollisionKey = "$($DirectoryRow.RoleDefinitionId)|$($DirectoryKept[$Index].Kind)|$($DirectoryPrincipals[$Index])"
+                    if ($DirectoryNameCount[$CollisionKey] -gt 1) {
+                        $DirectoryPrincipals[$Index] = [string]$DirectoryRow.PrincipalId
+                        $DirectoryRenamed = $true
+                    }
+                }
+            } while ($DirectoryRenamed)
+
+            $DirectoryEntries = [System.Collections.Generic.List[object]]::new()
+            for ($Index = 0; $Index -lt $DirectoryKept.Count; $Index++) {
+                $Kept = $DirectoryKept[$Index]
+                $DirectoryRow = $Kept.Row
+                $DirectoryPrincipalType = [string]$DirectoryRow.PrincipalType
+                $Proj = [ordered]@{
+                    role      = $(if ($DirectoryRow.RoleName) { [string]$DirectoryRow.RoleName } else { [string]$DirectoryRow.RoleDefinitionId })
+                    principal = $DirectoryPrincipals[$Index]
+                }
+                if ($DirectoryPrincipalType) { $Proj.principalType = $DirectoryPrincipalType }
+                $Proj.assignmentType = $Kept.Kind
+                # DurationDays is the schedule window in whole days as the reader reconstructed it
+                # through Resolve-OEREligibilityDuration -- the measure the apply engine compares
+                # against -- so a re-applied export is Unchanged. A permanent assignment carries
+                # neither durationDays nor permanent: the absence is how the document says permanent.
+                if ($null -ne $DirectoryRow.DurationDays) { $Proj.durationDays = [int]$DirectoryRow.DurationDays }
+                if ($IncludeId) { $Proj.id = [string]$DirectoryRow.ScheduleId }
+                $DirectoryEntries.Add([PSCustomObject]$Proj)
+            }
+            # Role, then Eligible before Active, then principal -- ordinal, ignoring letter case, so
+            # the document reads the same on every run and every machine.
+            $DirectoryEntries.Sort([System.Comparison[object]] {
+                    param($Left, $Right)
+                    $Order = [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.role, [string]$Right.role)
+                    if ($Order -eq 0) {
+                        $LeftRank = if ($Left.assignmentType -eq 'Eligible') { 0 } else { 1 }
+                        $RightRank = if ($Right.assignmentType -eq 'Eligible') { 0 } else { 1 }
+                        $Order = $LeftRank.CompareTo($RightRank)
+                    }
+                    if ($Order -eq 0) {
+                        $Order = [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.principal, [string]$Right.principal)
+                    }
+                    $Order
+                })
+            foreach ($DirectoryEntry in $DirectoryEntries) { $DirectoryRoleAssignments.Add($DirectoryEntry) }
+        }
+
+        if ($IncludeDirectoryPolicies) {
+            $DirectoryPolicies = @()
+            $DirectoryPoliciesRead = $false
+            try {
+                $DirectoryPolicies = @(Get-OERDirectoryRoleManagementPolicy -All -ErrorAction Stop)
+                $DirectoryPoliciesRead = $true
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $DirectoryCause = "Could not read the Microsoft Entra directory role management policies: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $DirectoryCause"
+                Add-UnreadCause -Cause $DirectoryCause
+                $UnreadCollections.Add('directoryRoleManagementPolicies')
+            }
+            if ($DirectoryPoliciesRead) {
+                if (-not $AllDirectoryRolePolicies) {
+                    # The policy of every role that has at least one row in the tenant-scope schedule
+                    # reads -- the UNFILTERED rows, so a role held only through a group or only as an
+                    # activation still counts. A policy customized on a role nobody holds is exported
+                    # only by -AllDirectoryRolePolicies.
+                    $DirectoryRolesInUse = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($DirectoryKind in @('Eligible', 'Active')) {
+                        foreach ($DirectoryRow in @($DirectoryRows[$DirectoryKind])) {
+                            if ($DirectoryRow -and $DirectoryRow.RoleDefinitionId) { $null = $DirectoryRolesInUse.Add([string]$DirectoryRow.RoleDefinitionId) }
+                        }
+                    }
+                    # A selection made from an incomplete read still exports the roles the read that
+                    # succeeded found, but is reported as partial, never presented as complete.
+                    if (-not ($DirectoryRead.Eligible -and $DirectoryRead.Active)) {
+                        $UnreadCollections.Add('directoryRoleManagementPolicies/role selection')
+                    }
+                    $DirectoryPolicies = @($DirectoryPolicies | Where-Object { $_ -and $DirectoryRolesInUse.Contains([string]$_.RoleDefinitionId) })
+                }
+                $DirectoryPolicyEntries = [System.Collections.Generic.List[object]]::new()
+                foreach ($DirectoryPolicy in $DirectoryPolicies) {
+                    if ($null -eq $DirectoryPolicy) { continue }
+                    $DirectoryPolicyEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $DirectoryPolicy -Directory
+                    if ($IncludeId) { $DirectoryPolicyEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue ([string]$DirectoryPolicy.PolicyId) }
+                    $DirectoryPolicyEntries.Add($DirectoryPolicyEntry)
+                }
+                $DirectoryPolicyEntries.Sort([System.Comparison[object]] {
+                        param($Left, $Right)
+                        [System.StringComparer]::OrdinalIgnoreCase.Compare([string]$Left.role, [string]$Right.role)
+                    })
+                foreach ($DirectoryPolicyEntry in $DirectoryPolicyEntries) { $DirectoryRoleManagementPolicies.Add($DirectoryPolicyEntry) }
+            }
+        }
+
         if ($Include -contains 'RoleManagementPolicies') {
             $RoleSources = @()
             if ($Role) { $RoleSources += 'Role' }
@@ -1147,50 +1493,12 @@ function Get-OERInventory {
                     else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams } }
                 )
                 foreach ($Rmp in $Policies) {
-                    # scope/role/allowPermanentEligibility/activationMaxHours keep their original
-                    # unconditional emission so an existing document keeps its shape. Everything else
-                    # is emitted only when the live policy actually carries a value, so a policy whose
-                    # rule set omits an optional field does not produce a null the apply must interpret.
-                    # Approvers project as object IDS: they resolve verbatim through
-                    # Set-OERRoleManagementPolicy -ApproverUser / -ApproverGroup, whereas an ARM
-                    # approver description is a display name a user lookup cannot resolve.
-                    $Proj = [ordered]@{
-                        scope                     = $Rmp.Scope
-                        role                      = $(if ($Rmp.RoleName) { $Rmp.RoleName } else { $Rmp.RoleDefinitionId })
-                        allowPermanentEligibility = $Rmp.AllowPermanentEligibility
-                        activationMaxHours        = $Rmp.ActivationMaxHours
-                    }
-                    if ($null -ne $Rmp.EligibleDurationDays) { $Proj.eligibleDurationDays = [int]$Rmp.EligibleDurationDays }
-                    if ($null -ne $Rmp.AllowPermanentActiveAssignment) { $Proj.allowPermanentActiveAssignment = [bool]$Rmp.AllowPermanentActiveAssignment }
-                    if ($null -ne $Rmp.ActiveDurationDays) { $Proj.activeDurationDays = [int]$Rmp.ActiveDurationDays }
-                    # Azure PIM treats MFA on activation and an authentication context as mutually
-                    # exclusive -- ARM rejects both at once and Test-OERStructureSchema raises an Error
-                    # on a document carrying both. A live policy can still report MultiFactorAuthentication
-                    # in Enablement_EndUser_Assignment while the context is enabled, so emitting both
-                    # would produce an inventory that fails its own validation (and the
-                    # Export-OERInventory schema self-check). The authentication context is the
-                    # authoritative, more specific control, so it is the one carried; requireMfaOnActivation
-                    # is omitted in that case.
-                    $HasAuthContext = [bool]$Rmp.AuthenticationContextId
-                    if (-not $HasAuthContext) {
-                        $Proj.requireMfaOnActivation             = [bool]$Rmp.RequireMfaOnActivation
-                    }
-                    $Proj.requireJustificationOnActivation       = [bool]$Rmp.RequireJustificationOnActivation
-                    $Proj.requireTicketOnActivation              = [bool]$Rmp.RequireTicketOnActivation
-                    $Proj.requireApproval                        = [bool]$Rmp.RequireApproval
-                    $Proj.requireMfaOnActiveAssignment           = [bool]$Rmp.RequireMfaOnActiveAssignment
-                    $Proj.requireJustificationOnActiveAssignment = [bool]$Rmp.RequireJustificationOnActiveAssignment
-                    if ($HasAuthContext) { $Proj.authenticationContextId = [string]$Rmp.AuthenticationContextId }
-                    $ApproverUser  = @(@($Rmp.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'User' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    $ApproverGroup = @(@($Rmp.Approvers) | Where-Object { $_ -and [string]$_.UserType -eq 'Group' } | ForEach-Object { [string]$_.Id } | Where-Object { $_ })
-                    if ($ApproverUser.Count -gt 0 -or $ApproverGroup.Count -gt 0) {
-                        $ApproverProj = [ordered]@{}
-                        if ($ApproverUser.Count -gt 0)  { $ApproverProj.users = $ApproverUser }
-                        if ($ApproverGroup.Count -gt 0) { $ApproverProj.groups = $ApproverGroup }
-                        $Proj.approvers = [PSCustomObject]$ApproverProj
-                    }
-                    if ($IncludeId) { $Proj.id = $Rmp.PolicyId }
-                    $RoleManagementPolicies.Add([PSCustomObject]$Proj)
+                    # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the
+                    # directoryRoleManagementPolicies section; without -Directory it is the Azure
+                    # roleManagementPolicies entry, scope first.
+                    $RmpEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $Rmp
+                    if ($IncludeId) { $RmpEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue $Rmp.PolicyId }
+                    $RoleManagementPolicies.Add($RmpEntry)
                 }
             }
         }
@@ -1201,6 +1509,8 @@ function Get-OERInventory {
             -Catalogs $Catalogs.ToArray() `
             -AccessPackages $AccessPackages.ToArray() `
             -AccessReviews $AccessReviews.ToArray() `
+            -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
+            -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `
             -RoleManagementPolicies $RoleManagementPolicies.ToArray()
 

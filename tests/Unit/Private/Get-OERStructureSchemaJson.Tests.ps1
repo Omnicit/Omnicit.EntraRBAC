@@ -941,3 +941,39 @@ Describe 'Get-OERStructureSchemaJson directory role assignments' {
         }
     }
 }
+
+Describe 'Get-OERStructureSchemaJson group previousDisplayName' {
+    # R9: a group is renamed through the document by declaring its new name as displayName and its
+    # current name as previousDisplayName. The groups description states the three outcomes, and the
+    # property itself is a non-empty string that Get-OERInventory never exports.
+    It 'states the rename rule in the groups description, keeping displayName as the match key' {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Schema.properties.groups.description |
+                Should -BeExactly 'Entra ID groups. displayName is the match key: an existing group is matched and updated by it. To rename a group, declare its new name as displayName and its current name as previousDisplayName: when only previousDisplayName matches a live group, that group is renamed; when both names match different groups, the entry fails and the groups are never merged; when neither matches, the entry fails and nothing is created, since a rename names an existing group (declare a new group without previousDisplayName).'
+        }
+    }
+
+    It 'declares previousDisplayName as a non-empty string on the group item' {
+        InModuleScope $script:moduleName {
+            $Prev = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties.groups.items.properties.previousDisplayName
+            $Prev.type | Should -BeExactly 'string'
+            $Prev.minLength | Should -Be 1
+            # Not "ignored once displayName matches": a different group under the old name, or an
+            # ambiguous old name, fails the entry, so the description must tell the author to remove it.
+            $Prev.description |
+                Should -BeExactly 'The group''s current display name or object id, when displayName declares a new one. When only this value matches a live group, that group is renamed; when displayName also matches a different group, the entry fails and nothing is merged. Microsoft Graph''s name lookup can follow a rename with a delay: keep this value and wait until the new name resolves before re-applying, since a re-run while neither name resolves yet fails the entry and creates nothing, and a reference to the new name elsewhere in the same document can fail on the renaming run and is safe to re-run. Remove it once the new name resolves. Not exported by Get-OERInventory.'
+            $Prev.description | Should -Not -Match 'ignored once displayName matches'
+        }
+    }
+
+    It 'validates a group declaring previousDisplayName, and rejects an empty one' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Good = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "role_sec_hr" } ] }'
+            $Empty = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_hr_emea", "previousDisplayName": "" } ] }'
+            Test-Json -Json $Good -Schema $Schema | Should -BeTrue
+            Test-Json -Json $Empty -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+}

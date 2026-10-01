@@ -55,6 +55,9 @@ PowerShell module.
 - scopeHierarchy.json -- the management group / subscription tree. Use it to place role
   assignments at the correct scope. NOTE: management groups and subscriptions are context only;
   do not try to create them.
+- azurePimEligibility.json -- read-only context: the Azure PIM eligible role assignments at the
+  scopes in scopeHierarchy.json. Use it to see who can already activate what; you cannot create or
+  remove an eligibility through the document.
 - the per-area files (groups.json, catalogs.json, ...) are the same data split out for convenience.
 - schema.json -- a formal JSON Schema (draft-07) for the apply document. Validate every proposal
   you emit against it; it encodes the required fields, enums, and numeric ranges exactly.
@@ -66,22 +69,26 @@ accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAss
 roleAssignments and roleManagementPolicies. Any other top-level key is rejected.
 directoryRoleManagementPolicies (the PIM settings of Microsoft Entra directory roles) and
 directoryRoleAssignments (eligible and active assignments of Microsoft Entra directory roles) are
-apply-only for now: Get-OERInventory does not read them, so inventory.json carries no current state
-for them and the field reference below does not cover them -- leave them out of your proposals.
+both captured in inventory.json (policies for roles with at least one eligible or active assignment
+unless the export used -AllDirectoryRolePolicies; assignments that are direct and at tenant scope --
+activations and assignments inherited through a group are not listed), and may be proposed.
 Four areas fall outside that model, each in a different way, so treat them differently:
 
 - Azure resource GROUPS and individual RESOURCES cannot be created or managed by the document.
   A role assignment AT a resource-group or resource scope does apply -- scope is passed through as
   a raw ARM string -- but scopeHierarchy.json enumerates management groups and subscriptions only,
-  so you have no verified resource-group names to work from. Never invent a resource-group or
-  resource scope string. If one already appears in inventory.json, you may preserve it verbatim;
-  otherwise place the assignment at a subscription or management group scope, and say in your
-  rationale where a narrower scope would be better once the operator supplies the names.
-- Azure PIM eligible and active role assignments are NOT captured and NOT appliable.
-  roleAssignments[] is PERMANENT Azure RBAC only, and roleManagementPolicies[] configures the PIM
-  policy that GOVERNS eligibility -- neither one grants, captures or removes an eligible or active
-  PIM assignment. Propose the policy that makes a role PIM-ready; do not try to express the
-  eligibility itself, and do not read its absence as evidence that the tenant has none.
+  so it alone gives you no verified resource-group names to work from. Never invent a resource-group
+  or resource scope string. If one already appears in inventory.json OR in azurePimEligibility.json
+  (an eligibility there can be scoped below a subscription), you may preserve it verbatim; otherwise
+  place the assignment at a subscription or management group scope, and say in your rationale where
+  a narrower scope would be better once the operator supplies the names.
+- Azure PIM eligible and active role assignments are NOT appliable. roleAssignments[] is PERMANENT
+  Azure RBAC only, and roleManagementPolicies[] configures the PIM policy that GOVERNS eligibility --
+  neither one grants, captures or removes an eligible or active PIM assignment. The eligible ones are
+  listed read-only in azurePimEligibility.json (attached; not part of the apply document); active
+  ones that are not permanent are not captured anywhere in this bundle. Propose the policy that makes
+  a role PIM-ready; do not try to express the eligibility itself, and do not read an absence from the
+  apply document as evidence that the tenant has none.
 - A multi-stage access review is SKIPPED entirely, not exported lossily: its reviewers live under
   stageSettings, which accessReviews[] does not model, so it is skipped with a warning instead of
   being fabricated as a single-stage self review. It never appears in accessReviews.json or
@@ -150,16 +157,33 @@ $NamingLine
 Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), tenantAlias
 (optional), and the section arrays. Any other top-level key is rejected.
 
-- groups[]: { displayName (or template + tokens object), roleAssignable (bool), dynamic (bool),
+- groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
+  group's current display name or object id when displayName declares a new one; NOT captured by
+  inventory), roleAssignable (bool), dynamic (bool),
   description, mailNickname, administrativeUnit (create-only -- applied when the group is created and
   NOT captured by inventory), membershipRule, membershipRuleProcessingState (On|Paused; dynamic
   groups only), members[] (UPNs / object ids), owners[] (UPNs / object ids -- a group owner can ADD
   MEMBERS, so this is a privilege path in its own right, not a cosmetic field), eligibility[] {
   principal (required), accessType (member|owner, default member), durationDays (1-3650;
   omit it to declare a PERMANENT eligibility) }, pimPolicy }
-  - displayName is the match key: an existing group is matched and updated by it. Renaming through
-    the document is not possible -- changing displayName creates a new group and leaves the old one
-    in place, unreported.
+  - displayName is the match key: an existing group is matched and updated by it. To rename a
+    group, declare its new name as displayName and its current name as previousDisplayName: the
+    group found under previousDisplayName alone is renamed in place. When both names match
+    different groups the entry fails and nothing is changed (two groups are never merged), and when
+    neither matches the entry fails and nothing is created: a rename names an existing group. A NEW
+    group is declared without previousDisplayName.
+  - When a proposal renames a group, every other reference to it in the same document uses the NEW
+    name: administrativeUnits members, catalog resources[] and access package resourceRoles[],
+    eligibility, owner, member and approver entries, and roleAssignments and
+    directoryRoleAssignments principals. A Group or Application catalog resource (and a
+    resourceRole on one) is identified by the object id its name resolves to, never by the name the
+    catalog recorded when the resource was added -- which Microsoft Graph keeps after a rename --
+    and the inventory writes the CURRENT name.
+  - Microsoft Graph's name lookup can follow a rename with a delay. On the run that renames the
+    group, a reference to the new name can fail (loudly, with any prune it drives withheld) and is
+    safe to re-run once the new name resolves; a re-run while neither name resolves yet fails the
+    entry and creates nothing. Keep previousDisplayName in the proposal, and tell the operator in the
+    rationale to wait until the new name resolves before applying again.
   - IMPORTANT (issue #59): administrativeUnit is create-only and never round-trips, so if you set it,
     you MUST also add this group's displayName to the members[] array of the matching
     administrativeUnits[] entry (same displayName, case-insensitive) in this SAME document. Otherwise
@@ -188,6 +212,10 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
   - an activationEnablement containing "MultiFactorAuthentication" and a non-empty
     authenticationContextId are mutually exclusive; declare only one. Declaring both is accepted but
     the MFA requirement is cleared on apply.
+  - pimPolicy is exported only for a group the inventory found to use PIM for Groups; a group with
+    no pimPolicy in inventory.json was not found to use it. Adding or changing a pimPolicy on a
+    group that does not use PIM for Groups yet ONBOARDS it, which cannot be undone -- propose that
+    only deliberately, and say so in the rationale.
 - administrativeUnits[]: { displayName (required), description, restricted (bool; immutable once the
   unit is created -- only declare it when creating a new unit), dynamic (bool; freely declare it -- the
   apply engine changes membershipType on an existing unit, but a unit declared dynamic must also declare
@@ -203,7 +231,8 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     change membershipRule instead. scopedRoles[] are unaffected and apply on either kind of unit.
 - catalogs[]: { displayName (required), description, externallyVisible (bool -- whether the
   catalog's access packages are requestable by connected-organization users outside the
-  directory), resources[] { name (required),
+  directory), resources[] { name (required -- for a Group or Application its current name or object
+  id, matched by the object id it resolves to),
   type (Group | Application | SharePointSite), url (SharePoint site URL -- STRONGLY RECOMMENDED for a
   SharePointSite resource; the site is onboarded by URL. If url is omitted the apply falls back to
   name, which only works when name is itself a site URL) } }
@@ -255,6 +284,23 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
   - "reviewers": [] is a declared EMPTY list and means a SELF review, on both the create and the
     update path. It is NOT the same as omitting reviewers, which defaults to the requestor's manager
     and then REQUIRES fallbackReviewers; an explicit null counts as omitted.
+- directoryRoleManagementPolicies[]: { role (required -- a Microsoft Entra directory role display
+  name or role definition id), and the same fields as roleManagementPolicies without scope }
+  - approvers replace only the declared side (users or groups); an empty array clears that side.
+  - the policy always exists and is never removed.
+  - it is applied before directoryRoleAssignments.
+- directoryRoleAssignments[]: { role (required), principal (required -- UPN, group display name, or
+  service principal OBJECT ID), principalType (User | Group | ServicePrincipal), assignmentType
+  (required -- Eligible | Active), durationDays (1-3650; omit for a permanent assignment),
+  permanent (bool), justification }
+  - matched on role, principal and assignmentType.
+  - a permanent assignment needs a policy that allows it (declare it in
+    directoryRoleManagementPolicies).
+  - only role-assignable groups can hold a directory role.
+  - under -Prune only the (role, assignmentType) pairs the document declares are reconciled; an
+    activation, an assignment inherited through a group, and the signed-in identity's own
+    assignments are never removed.
+  - prefer Eligible over Active for privileged roles.
 - roleAssignments[]: { scope (required), role (required), principal (required),
   principalType (User | Group | ServicePrincipal) }
   - Optional per assignment: description, condition (ABAC), conditionVersion ("2.0"). Azure permits
@@ -297,8 +343,9 @@ schema.json. Any valid name works; these are common least-privilege choices:
 - Azure roles (roleAssignments[].role, roleManagementPolicies[].role): Reader, Contributor, Owner,
   User Access Administrator, Role Based Access Control Administrator. Prefer Reader / Contributor;
   reserve Owner and User Access Administrator for PIM-eligible, approval-gated assignments.
-- Entra directory roles (administrativeUnits[].scopedRoles[].role): User Administrator,
-  Helpdesk Administrator, Groups Administrator, Authentication Administrator, License Administrator.
+- Entra directory roles (directoryRoleManagementPolicies[].role, directoryRoleAssignments[].role,
+  administrativeUnits[].scopedRoles[].role): User Administrator, Helpdesk Administrator, Groups
+  Administrator, Authentication Administrator, License Administrator.
 - requestorScope.scope (accessPackages[].assignmentPolicies[].requestorScope): AllMemberUsers,
   AllConfiguredConnectedOrganizationUsers, SpecificDirectoryUsers, NotSpecified. Use NotSpecified
   for administrator-assignment-only. Do NOT write NoSubjects: it is a legacy beta spelling the

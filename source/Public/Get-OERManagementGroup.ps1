@@ -13,6 +13,11 @@ function Get-OERManagementGroup {
     they pipe into Get-OERSubscription and the RBAC cmdlets. Requires an ARM token; authentication
     is ensured at entry via Initialize-OERAuth -IncludeARM.
 
+    A management group created in the last few minutes can be missing from the management-group
+    list, although a -Name read already finds it, and an Export-OERInventory run in that window does
+    not walk it, because it cannot know it exists. Measured live: sending 'Cache-Control: no-cache'
+    with the list does not shorten that window.
+
     .PARAMETER Name
     The management group name (its id segment, not the display name). Also bindable as
     -ManagementGroup, the name every RBAC and PIM cmdlet uses for the same scope target, or as

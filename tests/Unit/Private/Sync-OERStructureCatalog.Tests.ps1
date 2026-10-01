@@ -112,7 +112,7 @@ Describe 'Sync-OERStructureCatalog' {
         }
     }
 
-    It 'adds a missing Group resource using -Group parameter' {
+    It 'adds a missing Group resource by the object id its name resolves to (-GroupId)' {
         InModuleScope $script:moduleName {
             function Invoke-SyncCatViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
@@ -122,6 +122,7 @@ Describe 'Sync-OERStructureCatalog' {
             Mock Resolve-OERCatalogId { 'cat-1' }
             Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
             Mock Get-OERCatalogResource { @() }
+            Mock Resolve-OERGroupId { 'aaaaaaaa-1111-1111-1111-000000000001' } -ParameterFilter { $DisplayName -eq 'role_sec_x' }
             Mock Add-OERCatalogResource {}
             Mock Initialize-OERAuth {}
             $ResItem = [PSCustomObject]@{
@@ -129,8 +130,9 @@ Describe 'Sync-OERStructureCatalog' {
                 resources   = @([PSCustomObject]@{ type = 'Group'; name = 'role_sec_x' })
             }
             $r = @(Invoke-SyncCatViaCaller -Item $ResItem)
-            Should -Invoke Add-OERCatalogResource -Times 1 -ParameterFilter { $Group -eq 'role_sec_x' }
-            ($r | Where-Object Action -eq 'Updated').Count | Should -BeGreaterThan 0
+            Should -Invoke Add-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $GroupId -eq 'aaaaaaaa-1111-1111-1111-000000000001' -and $Catalog -eq 'cat-1' }
+            Should -Invoke Add-OERCatalogResource -Exactly -Times 1
+            ($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added Group resource 'role_sec_x'" }).Count | Should -Be 1
         }
     }
 
@@ -156,7 +158,7 @@ Describe 'Sync-OERStructureCatalog' {
         }
     }
 
-    It 'reports Unchanged for a resource already present by DisplayName and does not call Add-OERCatalogResource' {
+    It 'reports Unchanged for a Group resource already present by originId and does not call Add-OERCatalogResource' {
         InModuleScope $script:moduleName {
             function Invoke-SyncCatViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
@@ -165,7 +167,8 @@ Describe 'Sync-OERStructureCatalog' {
             }
             Mock Resolve-OERCatalogId { 'cat-1' }
             Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
-            Mock Get-OERCatalogResource { [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'role_sec_x'; ResourceType = 'Group' } }
+            Mock Resolve-OERGroupId { 'aaaaaaaa-1111-1111-1111-000000000001' } -ParameterFilter { $DisplayName -eq 'role_sec_x' }
+            Mock Get-OERCatalogResource { [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'role_sec_x'; ResourceType = 'Group'; OriginSystem = 'AadGroup'; OriginId = 'AAAAAAAA-1111-1111-1111-000000000001' } }
             Mock Add-OERCatalogResource {}
             Mock Initialize-OERAuth {}
             $ResItem = [PSCustomObject]@{
@@ -357,7 +360,7 @@ Describe 'Sync-OERStructureCatalog' {
         }
     }
 
-    It 'adds an Application resource using the -Application parameter' {
+    It 'adds an Application resource by the service principal id its name resolves to (-ApplicationId)' {
         InModuleScope $script:moduleName {
             function Invoke-SyncCatViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
@@ -367,13 +370,14 @@ Describe 'Sync-OERStructureCatalog' {
             Mock Resolve-OERCatalogId { 'cat-1' }
             Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; Description = $null } }
             Mock Get-OERCatalogResource { @() }
+            Mock Resolve-OERApplicationId { 'bbbbbbbb-2222-2222-2222-000000000001' } -ParameterFilter { $DisplayName -eq 'Contoso App' }
             Mock Add-OERCatalogResource {}
             Mock Initialize-OERAuth {}
             $r = @(Invoke-SyncCatViaCaller -Item ([PSCustomObject]@{
                 displayName = 'CAT-IT'
                 resources   = @([PSCustomObject]@{ type = 'Application'; name = 'Contoso App' })
             }))
-            Should -Invoke Add-OERCatalogResource -Times 1 -ParameterFilter { $Application -eq 'Contoso App' }
+            Should -Invoke Add-OERCatalogResource -Exactly -Times 1 -ParameterFilter { $ApplicationId -eq 'bbbbbbbb-2222-2222-2222-000000000001' }
             ($r | Where-Object Action -eq 'Updated').Count | Should -BeGreaterThan 0
         }
     }
@@ -673,6 +677,209 @@ Describe 'Sync-OERStructureCatalog' {
                 Should -Invoke Add-OERCatalogResource -Times 1 -Exactly -ParameterFilter {
                     $SharePointSite -eq 'https://contoso.sharepoint.com/sites/finance3'
                 }
+            }
+        }
+    }
+
+    # Measured live 2026-09-30 (step 5, check 5.5): a catalog keeps the display name a resource had
+    # when it was added, also after the group is renamed. Matching a Group or Application resource on
+    # that recorded name made a document naming the group by its NEW name plan the removal of the
+    # renamed group's own resource under -Prune. A Group or Application resource is now identified by
+    # the object id its declared name resolves to, compared with the live originId.
+    Context 'Group and Application resources are matched by object id, never by the recorded name' {
+
+        It 'reports a renamed group''s resource Unchanged under its NEW name and removes nothing under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                # The catalog still records the group's OLD name.
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'grp-old'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000001' }
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Resolve-OERGroupId { 'aaaaaaaa-1111-1111-1111-000000000001' } -ParameterFilter { $DisplayName -eq 'grp-new' }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Group'; name = 'grp-new' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resource 'grp-new' already present" }).Count | Should -Be 1
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                @($r | Where-Object { $_.Action -in 'Removed', 'Extra', 'Failed' -or [string]$_.Detail -like 'would remove*' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+            }
+        }
+
+        It 'treats a live Group resource as undeclared when only its RECORDED name equals a declared name of another group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                # 'shared' is the name the catalog recorded for group ...0001, which has since been
+                # renamed; group ...0002 carries the name 'shared' now.
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'shared'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000001' }
+                }
+                Mock Resolve-OERGroupId { 'aaaaaaaa-1111-1111-1111-000000000002' } -ParameterFilter { $DisplayName -eq 'shared' }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Group'; name = 'shared' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -WhatIf -Prune -WarningAction SilentlyContinue)
+
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add Group resource 'shared'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would remove undeclared resource 'shared'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Unchanged' }).Count | Should -Be 1
+            }
+        }
+
+        It 'withholds the prune, removing and reporting Extra nothing, while a declared Group resource resolves to no group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'grp-old'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000001' }
+                }
+                # The group was renamed: its old name resolves to nothing.
+                Mock Resolve-OERGroupId { $null }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Group'; name = 'grp-old' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly "Group resource 'grp-old' could not be resolved to an object id; nothing was added for it"
+                $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotFound'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'GroupNotFound*' }).Count | Should -Be 1
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and [string]$_.Detail -like 'prune withheld:*' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -Match "undeclared resource 'grp-old'"
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+                @($r | Where-Object { $_.Action -in 'Removed', 'Extra' }).Count | Should -Be 0
+            }
+        }
+
+        It 'throws -- never reads the resource as absent -- when the group lookup itself fails, and removes nothing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'grp-x'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000001' }
+                }
+                Mock Resolve-OERGroupId { throw 'Graph 503 Service Unavailable' }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Group'; name = 'grp-x' }) }
+                { Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
+                    Should -Throw -ExpectedMessage '*Graph 503*'
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+            }
+        }
+
+        It 'reports an ambiguous group name Failed with AmbiguousGroupName and withholds the prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'dup'; OriginSystem = 'AadGroup'; OriginId = 'aaaaaaaa-1111-1111-1111-000000000001' }
+                }
+                Mock Resolve-OERGroupId {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Group display name 'dup' matches 2 groups (g-a, g-b)."), 'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument, 'dup')
+                }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Group'; name = 'dup' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^AmbiguousGroupName'
+                $Failed[0].Detail | Should -Match 'g-a, g-b'
+                @($r | Where-Object { [string]$_.Detail -like 'prune withheld:*' }).Count | Should -Be 1
+                Should -Invoke Remove-OERCatalogResource -Times 0
+            }
+        }
+
+        It 'matches an Application resource on the service principal id, not on the name the catalog recorded' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'App Old Name'; OriginSystem = 'AadApplication'; OriginId = 'bbbbbbbb-2222-2222-2222-000000000001' }
+                }
+                Mock Resolve-OERApplicationId { 'bbbbbbbb-2222-2222-2222-000000000001' } -ParameterFilter { $DisplayName -eq 'App New Name' }
+                Mock Add-OERCatalogResource {}
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Application'; name = 'App New Name' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resource 'App New Name' already present" }).Count | Should -Be 1
+                Should -Invoke Remove-OERCatalogResource -Times 0
+                Should -Invoke Add-OERCatalogResource -Times 0
+            }
+        }
+
+        It 'takes a declared object id as it is, with no lookup, and matches it against the originId' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncCatViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureCatalog -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERCatalog { [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    [PSCustomObject]@{ Id = 'r-1'; DisplayName = 'App'; OriginSystem = 'AadApplication'; OriginId = 'bbbbbbbb-2222-2222-2222-000000000001' }
+                }
+                Mock Resolve-OERApplicationId { throw 'a declared object id must not be looked up' }
+                Mock Remove-OERCatalogResource {}
+                $Item = [PSCustomObject]@{ displayName = 'CAT-IT'; resources = @([PSCustomObject]@{ type = 'Application'; name = 'BBBBBBBB-2222-2222-2222-000000000001' }) }
+                $r = @(Invoke-SyncCatViaCaller -Item $Item -Prune -WarningAction SilentlyContinue)
+
+                Should -Invoke Resolve-OERApplicationId -Times 0
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and [string]$_.Detail -like 'resource *already present' }).Count | Should -Be 1
+                Should -Invoke Remove-OERCatalogResource -Times 0
             }
         }
     }
