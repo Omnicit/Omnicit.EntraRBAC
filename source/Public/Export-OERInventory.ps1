@@ -591,14 +591,28 @@ function Export-OERInventory {
         # LLM -> Invoke-OERStructure workflow looking exactly like a full tenant snapshot.
         if ($SkippedScopes.Count -gt 0 -or $SkippedEligibilityScopes.Count -gt 0 -or $IncompleteReads.Count -gt 0) {
             $PartialParts = [System.Collections.Generic.List[string]]::new()
+            # A '<...>' entry is not a scope that failed to READ: it names the whole walk that could not
+            # start, or a level of the tree (management groups, subscriptions) that could not be LISTED,
+            # so none of its scopes was enumerated. Counting it as "N of M scopes" would misstate which
+            # scopes were read.
+            $WalkFailed = (@($SkippedScopes) + @($SkippedEligibilityScopes)) -contains '<all Azure scopes: scope enumeration failed>'
+            $DescribeSkip = {
+                param([string[]]$Skipped, [string]$What)
+                $Read = @($Skipped | Where-Object { -not ([string]$_).StartsWith('<') })
+                $Levels = @($Skipped | Where-Object { ([string]$_).StartsWith('<') })
+                $Parts = @()
+                if ($Read.Count -gt 0) { $Parts += "$($Read.Count) of $ScopesEnumerated Azure scopes could not be read$What" }
+                if ($Levels.Count -gt 0) { $Parts += "$($Levels.Count) level(s) of the Azure scope tree could not be listed, so none of their scopes was walked$What" }
+                $Parts -join ', and '
+            }
             if ($SkippedScopes.Count -gt 0) {
                 # The "missing data is absent from ... Skipped: ..." clause is appended to BOTH
                 # arms, not folded into the enumerated one. A failed scope WALK is exactly the case
                 # where the operator most needs to be told which files are short and what was
                 # skipped; burying that inside the $ScopesEnumerated -gt 0 arm silently drops it
                 # from the louder of the two failures.
-                $ScopeDetail = if ($ScopesEnumerated -gt 0) {
-                    "$($SkippedScopes.Count) of $ScopesEnumerated Azure scopes could not be read"
+                $ScopeDetail = if (-not $WalkFailed) {
+                    & $DescribeSkip @($SkippedScopes) ''
                 } else {
                     'the Azure scope walk could not be started, so no Azure scope was read'
                 }
@@ -614,8 +628,8 @@ function Export-OERInventory {
                 # roleAssignments/roleManagementPolicies clause above, for the same reason: a failed
                 # scope WALK (no tree at all) reads differently from N of M individual scopes failing
                 # the eligibility read specifically.
-                $EligDetail = if ($ScopesEnumerated -gt 0) {
-                    "$($SkippedEligibilityScopes.Count) Azure scope(s) could not be read for azurePimEligibility.json"
+                $EligDetail = if (-not $WalkFailed) {
+                    & $DescribeSkip @($SkippedEligibilityScopes) ' for azurePimEligibility.json'
                 } else {
                     'the Azure scope walk could not be started, so no scope was read for azurePimEligibility.json'
                 }

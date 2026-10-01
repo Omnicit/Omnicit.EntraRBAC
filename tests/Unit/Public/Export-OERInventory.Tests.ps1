@@ -614,6 +614,10 @@ Describe 'Export-OERInventory (Azure PIM eligibility)' {
         $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         @($Partial).Count | Should -Be 1
         $Partial[0].Exception.Message | Should -Match 'management groups: the listing failed'
+        # The subscription WAS read: the unlisted level is named as a level, never counted as a scope
+        # that could not be read.
+        $Partial[0].Exception.Message | Should -Match ([regex]::Escape('1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked'))
+        $Partial[0].Exception.Message | Should -Not -Match 'of 1 Azure scopes could not be read'
     }
     It 'sets SkippedEligibilityScopes to the enumeration-failure sentinel and raises InventoryPartial when the scope walk fails' {
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
