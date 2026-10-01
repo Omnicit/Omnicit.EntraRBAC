@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.1.0. A preview published from this point differs from 1.1.0 only
+in documentation, tests or the build.
+
+## [1.1.0] - 2026-10-01
+
 `Invoke-OERStructure -Prune` no longer removes anything because a lookup failed: a declared entry
 that cannot be resolved is `Failed`, and the undeclared live entries of its collection are `Skipped`
 with `prune withheld`; earlier versions could delete them. An ambiguous service principal name is
