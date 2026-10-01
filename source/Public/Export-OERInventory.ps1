@@ -35,7 +35,13 @@ function Export-OERInventory {
     not. When anything was skipped the bundle summary is still emitted first and is then followed by
     a non-terminating InventoryPartial error, so a caller using -ErrorAction Stop or a try/catch
     finds out that roleAssignments.json and roleManagementPolicies.json are incomplete instead of
-    treating a truncated bundle as a full tenant snapshot.
+    treating a truncated bundle as a full tenant snapshot. A level of the tree that could not be
+    LISTED is skipped the same way: a refused or failed management-group listing is named in
+    SkippedScopes and SkippedEligibilityScopes as '<management groups: the listing failed>' (a failed
+    subscription listing as '<subscriptions: the listing failed>'), never read as "no management
+    groups". The management groups are listed with the service's cache bypassed, but a management
+    group created moments ago can still be missing until Azure has updated its hierarchy: wait for
+    it to appear in Get-OERManagementGroup before relying on an export that should include it.
 
     Azure PIM eligibility is read the same walk over, into azurePimEligibility.json, but only when an
     Azure section (RoleAssignments or RoleManagementPolicies) is included -- the file is absent
@@ -44,15 +50,15 @@ function Export-OERInventory {
     requested, while azurePimEligibility.json is the one bundle file that is sometimes not written at
     all. One paged Get-OEREligibleRoleAssignment read runs per scope the walk visits: a management
     group scope is read with -AtScope (eligibilities at or above it); every other scope is read
-    unfiltered, which is EXPECTED to also surface eligibilities below that scope -- Microsoft Learn's
-    listForScope documents four filters (atScope(), principalId eq '{id}', assignedTo('{userId}') and
-    asTarget()) and no unfiltered semantics at all, so the below-scope coverage of an unfiltered read
-    is to be verified live, not assumed from documentation: see the step 5 live-verification
-    checklist, section 4 (docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md).
+    unfiltered, which also surfaces eligibilities below that scope -- Microsoft Learn's listForScope
+    documents four filters (atScope(), principalId eq '{id}', assignedTo('{userId}') and asTarget())
+    and no unfiltered semantics at all, so this was MEASURED rather than taken from documentation: in
+    the step 5 live-verification checklist, section 4
+    (docs/live-verification/feat-inventory-directory-roles-and-rename-checklist.md), one unfiltered
+    subscription read returned an eligibility at a resource group below it (2026-09-30).
     Resolve-OERInventoryScopeTree enumerates management group and subscription scopes only, so a
-    resource-group- or resource-scoped eligibility can reach this file ONLY through that unfiltered
-    subscription read's below-scope behaviour -- if the live check finds it does not go that far,
-    this design does not capture resource-group-scoped eligibility and needs revisiting. The results
+    resource-group- or resource-scoped eligibility reaches this file ONLY through that unfiltered
+    subscription read's below-scope behaviour. The results
     are deduplicated on the eligibility schedule id, so one eligibility
     visible from several scopes in the walk appears once -- for example a management-group
     eligibility, read once directly at the management group and again, inherited, from every
@@ -272,6 +278,15 @@ function Export-OERInventory {
                 $Tree = Resolve-OERInventoryScopeTree @TreeParams
                 $ScopeHierarchy = $Tree.Hierarchy
                 $ScopesEnumerated = @($Tree.Scopes).Count
+                # A level of the tree that could not be LISTED (a refused management-group listing,
+                # say) was not walked at all: it is skipped for the role-assignment walk AND for
+                # azurePimEligibility.json, which makes the bundle InventoryPartial below -- never
+                # "no management groups".
+                foreach ($TreeSkip in @($Tree.SkippedScopes)) {
+                    if (-not $TreeSkip) { continue }
+                    $SkippedScopes.Add([string]$TreeSkip)
+                    $SkippedEligibilityScopes.Add([string]$TreeSkip)
+                }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 Write-Warning "Could not enumerate Azure scopes: $($PSItem.Exception.Message)"

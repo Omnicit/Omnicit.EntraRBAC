@@ -595,6 +595,26 @@ Describe 'Export-OERInventory (Azure PIM eligibility)' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 0
     }
 
+    # Measured live 2026-09-30: app-only, the management-group listing answers AuthorizationFailed, and
+    # the walk read that as "no management groups" -- an incomplete bundle reported as complete.
+    It 'reports a level the tree could not LIST in SkippedScopes and SkippedEligibilityScopes, and raises InventoryPartial' {
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes        = @('/subscriptions/s1')
+                Hierarchy     = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+                SkippedScopes = @('<management groups: the listing failed>')
+            }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig-mglist') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Bundle.SkippedScopes | Should -Contain '<management groups: the listing failed>'
+        $Bundle.SkippedEligibilityScopes | Should -Contain '<management groups: the listing failed>'
+        # The subscription that WAS listed is still walked and read.
+        $Bundle.ScopeCount | Should -Be 1
+        $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        @($Partial).Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'management groups: the listing failed'
+    }
     It 'sets SkippedEligibilityScopes to the enumeration-failure sentinel and raises InventoryPartial when the scope walk fails' {
         Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'elig2') -Include RoleAssignments `

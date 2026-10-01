@@ -2669,6 +2669,33 @@ subscription-scoped read does NOT surface a resource-group-scoped eligibility be
 design does not capture resource-group-scoped eligibility at all, and R4 needs revisiting -- not a
 silent gap to leave documented away.
 
+**Measured, step 5 live run (2026-09-30), check 4.1: the unfiltered subscription read DOES return a
+resource-group-level eligibility.** One `roleEligibilitySchedules` read of the test subscription,
+with no `$filter`, returned an eligible Reader assignment at a resource group below it, identical to
+a direct read of that resource group (4.3); the walk cost one eligibility request per scope (4.2). R4
+stands. The two paragraphs above record why this had to be measured; they no longer describe an open
+question.
+
+**A listing that fails is never an empty level (step 5 live run, 2026-09-30 and 2026-10-01).** Two
+gaps showed in the scope walk itself, before any eligibility read:
+- App-only, the management-group LISTING answers `AuthorizationFailed`, and
+  `Resolve-OERInventoryScopeTree` read that as "no management groups": the bundle reported nothing
+  skipped. The full tree's management-group and subscription listings are now each caught: the level
+  that could not be listed is named in the tree's `SkippedScopes` (`<management groups: the listing
+  failed>`, `<subscriptions: the listing failed>`), and `Export-OERInventory` folds it into both
+  `SkippedScopes` and `SkippedEligibilityScopes`, which makes the bundle `InventoryPartial`. A
+  `-ManagementGroup` branch that cannot be read throws instead, since nothing of it could be walked,
+  and the export then records the whole Azure walk as skipped.
+- An operator's full-tree export minutes after creating a management group walked five management
+  groups while six existed: the new one was absent from `scopeHierarchy.json` (the tenant root group
+  was there), so its eligibility never reached `azurePimEligibility.json` although the per-scope read
+  had nothing to do with it. The Management Groups API documents `Cache-Control: no-cache` as the
+  way to bypass its caches; `Get-OERManagementGroup` now sends it on the list and on the `-Name` read,
+  through a private `-Header` parameter of `Invoke-OERArmRequest` (sent on every page and retry,
+  never allowed to replace the bearer). Whether the header alone closes the gap is measured by the
+  operator's re-run, check 6.1R, which lists with and without it; a management group created moments
+  ago can still be missing until Azure has updated its hierarchy, and the help says so.
+
 ## pim-in-use-criterion
 
 Task 6 of Sprint 6 step 5 made `Test-OERGroupPimInUse` the single owner of one question: does this
