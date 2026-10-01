@@ -141,6 +141,20 @@ the hashes change when the branch is rebased onto `main` before it merges.
   the rename window and a dynamic group in the step 5 checklist", "docs: tighten the 1.1.0 release
   note to leave room for live fixes", "docs: measure catalog references after a rename and run section
   6 on a dedicated management group").
+- **H. Fixes after the first live run** ("fix: match catalog resources by object id and export their
+  current names", "fix: report a management group listing that fails as a skipped level", "fix: list
+  management groups past the service cache", "docs: release notes for the catalog match and the
+  management group walk", "docs: re-run the management group check as 6.1R and fix its root check").
+  5.5 stopped on a planned removal of a renamed group's catalog resource: a catalog keeps the name it
+  recorded, and the catalogs section matched on it. A Group or Application resource is now matched
+  by the object id its name resolves to; a name that resolves to nothing withholds the catalog's
+  prune; the inventory writes the current name; the access package section resolves a name to the
+  group first when that group is in the catalog. A refused management-group listing (app-only,
+  measured in 2.3 and 4.1) was read as "no management groups"; it is now named in SkippedScopes and
+  SkippedEligibilityScopes, and the bundle is InventoryPartial. Philip's 6.1c missed a management
+  group created minutes earlier because the LISTING lacked it (scopeHierarchy.json: 5 management
+  groups, the new one absent, the root present); Get-OERManagementGroup now sends
+  `Cache-Control: no-cache`, and 6.1R measures the listing with and without it.
 
 **Every unit test on this branch mocks the transport.** They prove the module's decisions given the
 shapes the tests assume. They cannot prove the six things this file is for:
@@ -1573,14 +1587,16 @@ shows.
   ```
 
   **Expect:** both identity lines `True`, then `the session holds an Azure Resource Manager token: True`.
-  The export: no error (an `InventoryPartial` error is acceptable ONLY when it names management-group
-  scopes as skipped -- R14 -- record it); warnings, if any, only "Skipping scope ..." for a management
-  group. All four files `exists: True`; `inventory.json keys:` `version, groups, administrativeUnits, catalogs, accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAssignments, roleAssignments, roleManagementPolicies`;
+  The export: one `InventoryPartial` error, naming `<management groups: the listing failed>` and
+  nothing else (R14: the certificate identity cannot list management groups -- a refused listing is
+  reported, never read as "no management groups"); the warning
+  `Could not list the management groups, so no management group is walked: ...AuthorizationFailed...`;
+  record both. All four files `exists: True`; `inventory.json keys:` `version, groups, administrativeUnits, catalogs, accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAssignments, roleAssignments, roleManagementPolicies`;
   both sections non-empty, `(with id: 0)` twice; `per-area files equal the sections: policies True; assignments True`;
   the summary's two directory counts equal to the sections (`summary counts equal inventory.json: True`)
   and to 2.1's `policy entries` and `assignment entries` counts -- record them, with
-  `AzurePimEligibility`, `ScopesEnumerated`, `ScopeCount` and the two skipped lists (section 4 reads
-  the same walk); `IncompleteReads 0`; `the two roles' assignment entries equal 2.1's: True`;
+  `AzurePimEligibility`, `ScopesEnumerated`, `ScopeCount` and the two skipped lists -- each
+  `[<management groups: the listing failed>]` (section 4 reads the same walk); `IncompleteReads 0`; `the two roles' assignment entries equal 2.1's: True`;
   `Valid True; errors 0` -- record the warning count, and no finding in a `directoryRole*` section.
   **Failure looks like:** a missing file; an `id` in either section; a count mismatch; `Valid False`
   or a `directoryRole*` finding -- the exported sections do not validate: record the finding;
@@ -1698,8 +1714,9 @@ group level.
   "THE MEASUREMENT -- the unfiltered subscription read returned the resource-group-level eligibility of oer-s65-user1: $(@($Rg41 | Where-Object { $_.role -eq 'Reader' -and $_.principal -eq 'OER S65 User1' }).Count -eq 1)"
   ```
 
-  **Expect:** the call: no error except, per R14, an `InventoryPartial` naming only management-group
-  scopes as skipped (record it); one bundle object. `azurePimEligibility.json exists: True`;
+  **Expect:** the call: one `InventoryPartial` error naming only `<management groups: the listing failed>`
+  (R14; the certificate identity cannot list management groups -- record it) and its warning; one
+  bundle object. `azurePimEligibility.json exists: True`;
   `entries at resource group oer-s65-rg: 1`, reading
   `scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg; role Reader; principal OER S65 User1; principalType User; memberType Direct; status Provisioned; endDateTime in <about 30> days`
   (record the status and the exact figure); and
@@ -1729,8 +1746,9 @@ group level.
   **Expect:** `roleEligibilitySchedules requests:` equal to `ScopesEnumerated` plus the pages after
   the first -- every scope of the walk read once, a management group with `$filter=atScope()` and the
   subscription with no `$filter` at all (`GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01`);
-  per R14 either `management groups 0` (the identity sees none) or management-group scopes named in
-  `SkippedScopes` and `SkippedEligibilityScopes`, and no subscription in either list;
+  `management groups 0` in the hierarchy and `<management groups: the listing failed>` in both
+  `SkippedScopes` and `SkippedEligibilityScopes` (R14: the refused listing is reported, never read
+  as "no management groups"), and no subscription in either list;
   `AzurePimEligibility equals the file's entries: True`. Record every number: requests, pages,
   `ScopesEnumerated`, `ScopeCount`, both skipped lists, the ARM total and the hierarchy counts.
   **Failure looks like:** more eligibility requests than scopes plus pages -- a scope read twice, or
@@ -1992,7 +2010,14 @@ teardown finds it by that id.
   expected -- and the binding, unchanged. Then the two plans, and the decisive lines:
   `5.5c (OLD name, after the rename): planned removals: 0` and
   `5.5d (NEW name, after the rename): planned removals: 0`. Record every row of both plans (a
-  `would add ...` row is recorded, not a removal).
+  `would add ...` row is recorded, not a removal). With "fix: match catalog resources by object id
+  and export their current names" (the build that FIRST ran 5.5 lacked it and stopped here): 5.5c's
+  `catalogs` section reports `Failed` -- `Group resource 'oer-s65-catres-old' could not be resolved
+  to an object id; nothing was added for it` with a `GroupNotFound` error, since the old name no
+  longer names a group -- and one `Skipped` row starting `prune withheld:` for the resource, with no
+  removal; its `accessPackages` rows stay `Unchanged`. 5.5d: every row `Unchanged`, the catalogs
+  section `resource 'oer-s65-catres-new' already present` -- matched by object id although the
+  catalog still records the old name.
   **Failure looks like:** a planned removal in ANY of the three plans -- STOP here (do not go on to
   section 6's hand-over as if 5.5 had passed), paste both `Show-S65Em55` blocks and every row of the
   plan, and write down which declared name (`resources[].name` / `resourceRoles[].resource`) was
@@ -2128,7 +2153,7 @@ What your account needs:
   "entries of oer-s65-user1 at oer-s65-mg: $($Mg61.Count)"
   $Mg61 | ForEach-Object { '    scope {0}; role {1}; principalType {2}; memberType {3}; status {4}; endDateTime in {5} days' -f (Format-S65Text $_.scope), $_.role, $_.principalType, $_.memberType, $_.status, [math]::Round(([datetime]$_.endDateTime - [datetime]::UtcNow).TotalDays, 1) }
   "entries of oer-s65-user1 in all: $(@($E61 | Where-Object { $_.principal -eq 'OER S65 User1' }).Count) (the resource group one of section 4, and this one -- once each: deduplicated on the schedule id)"
-  "the walk read the tenant root group: $(@($B61.SkippedScopes) -notcontains $MgRoot -and ($S65Requests -match [regex]::Escape("$MgRoot/providers/Microsoft.Authorization/roleEligibilitySchedules")).Count -gt 0)"
+  "the walk read the tenant root group: $((@($B61.SkippedScopes) -notcontains $MgRoot) -and (@($S65Requests -match [regex]::Escape((Format-S65Text "$MgRoot/providers/Microsoft.Authorization/roleEligibilitySchedules"))).Count -gt 0))"   # $S65Requests is masked (Format-S65Text): compare it with the MASKED root path
   $Elig61 = @($S65Requests | Where-Object { $_ -match '^GET /.*/providers/Microsoft\.Authorization/roleEligibilitySchedules\?' })
   "roleEligibilitySchedules requests: $($Elig61.Count) (with atScope(): $(@($Elig61 | Where-Object { $_ -match 'atScope\(\)' }).Count); pages after the first: $(@($Elig61 | Where-Object { $_ -match 'skiptoken' }).Count)); ARM requests in all: $(@($S65Requests | Where-Object { $_ -match '^(GET|POST|PUT|PATCH|DELETE) /' }).Count)"
   "summary: ScopesEnumerated $($B61.ScopesEnumerated); ScopeCount $($B61.ScopeCount); SkippedScopes $(@($B61.SkippedScopes).Count); SkippedEligibilityScopes $(@($B61.SkippedEligibilityScopes).Count); AzurePimEligibility $($B61.AzurePimEligibility)"
@@ -2223,11 +2248,247 @@ What your account needs:
   Access Administrator assignment of yours, and remove it there; an activation still listed after the
   deactivation -- deactivate it again, and do not leave it active.
   **Result:**
+- [ ] **6.1R Manual (operator) -- 6.1 again on this branch's head: the management-group list read right after `oer-s65-mg` is created, WITHOUT and WITH `Cache-Control: no-cache`; then the eligibility and the full-tree export.** Run it BEFORE the Teardown, which deletes `oer-s65-user1`. In your own PowerShell 7 window, as yourself; 6.1 found the tenant root group readable without elevation, so no elevation is planned -- if (a) prints the root line `False`, elevate as 6.1(a) says and turn it off in (e).
+
+  Why: 6.1's export walked five management groups while six existed -- `scopeHierarchy.json` lacked the
+  `oer-s65-mg` created minutes earlier, and listed the root -- so the management-group LISTING missed
+  it, not the eligibility read. "fix: list management groups past the service cache" makes
+  `Get-OERManagementGroup` send `Cache-Control: no-cache`. This check shows, minutes after the create,
+  whether the list without the header lacks `oer-s65-mg` while the list with it has it, and that the
+  export of the fixed build then reaches the eligibility at `oer-s65-mg`.
+
+  (a) In a NEW PowerShell 7 window of your own on the machine that holds the clone, paste the Setup variables block from `$Repo` down to `$StatePath` (the assignments only -- not the build lines), then this block. It brings the clone to the PR head, builds it in a process of its own, imports that build, defines the few helpers this check needs and signs you in; every variable it uses is set in it.
+
+  ```powershell
+  # The Setup variables block's assignments were pasted first; stop if any is empty.
+  if (@($Repo, $TenantId, $Domain, $AppId, $NoPermAppId | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0) { throw 'Paste the Setup variables block first: nothing below may run.' }
+  $Prefix    = 'oer-s65'
+  $Branch    = 'feat/inventory-directory-roles-and-rename'
+  $Raw       = Join-Path $Repo 'docs/live-verification/raw/s65'
+  $StatePath = Join-Path $Raw 'prereq-state.json'
+  $User1Upn  = "$Prefix-user1@$Domain"
+  $MgName    = "$Prefix-mg"
+  $MgScope   = "/providers/Microsoft.Management/managementGroups/$MgName"
+  $MgRoot    = "/providers/Microsoft.Management/managementGroups/$TenantId"
+  $MgListPath = '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01'
+
+  # -- The clone on the PR head, built in a process of its own, and THIS build imported. -------------
+  Set-Location $Repo -ErrorAction Stop
+  git fetch origin
+  if ($LASTEXITCODE -ne 0) { throw 'git fetch origin failed: nothing below may run.' }
+  if ((git branch --show-current) -cne $Branch) { git switch $Branch; if ($LASTEXITCODE -ne 0) { throw "git switch $Branch failed: nothing below may run." } }
+  git pull --ff-only
+  if ($LASTEXITCODE -ne 0) { throw 'git pull --ff-only failed: nothing below may run.' }
+  $Head = [string](git rev-parse HEAD)
+  "the clone is on $Branch at $($Head.Substring(0, 7)) -- $(git log -1 --format=%s); equal to origin/$($Branch): $($Head -eq [string](git rev-parse "origin/$Branch"))"
+  pwsh -NoProfile -File ./build.ps1 -Tasks build | Out-Null
+  if ($LASTEXITCODE -ne 0) { throw 'The build failed.' }
+  $Sep = [System.IO.Path]::PathSeparator
+  $env:PSModulePath = (Resolve-Path ./output/module).Path + $Sep + (Resolve-Path ./output/RequiredModules).Path + $Sep + $env:PSModulePath
+  Import-Module Omnicit.EntraRBAC -Force
+  $ErrorActionPreference = 'Continue'
+  $M = Get-Module Omnicit.EntraRBAC
+  '{0} {1} from {2}' -f $M.Name, $M.Version, $M.ModuleBase
+  "this build sends Cache-Control: no-cache on the management-group list: $([bool](Select-String -LiteralPath (Join-Path $M.ModuleBase 'Omnicit.EntraRBAC.psm1') -SimpleMatch "managementGroups?api-version=2020-05-01' -All -Header @{ 'Cache-Control' = 'no-cache' }" -Quiet))"
+  $ST = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable
+  $IdUser1 = [string]$ST['users']['user1']['id']
+  "the state file names oer-s65-user1: $($IdUser1 -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'); every variable set: $(@($Repo, $TenantId, $Domain, $AppId, $NoPermAppId, $User1Upn, $IdUser1, $MgName) | ForEach-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Where-Object { -not $_ }).Count -eq 0)"
+
+  # -- What this check prints: names and True/False, never an id or a tenant value. ---------------------
+  function Format-S65Text {
+      param([AllowNull()][string]$Text)
+      if ([string]::IsNullOrEmpty($Text)) { return [string]$Text }
+      $Out = $Text
+      if ($Me) { $Out = $Out -ireplace [regex]::Escape($Me), '<Me>' }
+      if ($TenantId) { $Out = $Out -ireplace [regex]::Escape($TenantId), '<TenantId>' }
+      if ($IdUser1) { $Out = $Out -ireplace [regex]::Escape($IdUser1), '<oer-s65-user1>' }
+      $Out = $Out -replace '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', '<id>'
+      if ($Domain) { $Out = $Out -ireplace ('@' + [regex]::Escape($Domain)), '@<test domain>' }
+      $Out
+  }
+  function Format-S65Request {
+      param([string]$Message)
+      if ($Message -cnotmatch '^\[Invoke-OER(Graph|Arm)Request\] (?<M>GET|POST|PATCH|PUT|DELETE) (?<U>.+)$') { return }
+      $Uri = [uri]::UnescapeDataString(($Matches['U'] -replace '^https://[^/]+/', ''))
+      "$($Matches['M']) $(Format-S65Text ($Uri -replace '(?i)(\$skiptoken=)[^&]+', '$1<token>'))"
+  }
+  function Invoke-S65Call {
+      # One module cmdlet with -Verbose captured: requests (kept in $S65Requests), warnings, the id and
+      # message of each error it published (never the record), objects returned (kept in $S65Out).
+      param([Parameter(Mandatory)][string]$Cmdlet, [Parameter(Mandatory)][hashtable]$Splat, [Parameter(Mandatory)][string]$Label, [switch]$Quiet)
+      $Call = $Splat + @{ Verbose = $true; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'CallError' }
+      $Out = @(& $Cmdlet @Call 3>&1 4>&1)
+      $VerboseRecords = @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+      $global:S65Requests = @($VerboseRecords | ForEach-Object { Format-S65Request -Message $_.Message } | Where-Object { $_ })
+      $Warnings = @($Out | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+      $global:S65Out = @($Out | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] -and $_ -isnot [System.Management.Automation.WarningRecord] })
+      Write-Host "=== $Label -- $Cmdlet"
+      Write-Host "--- requests, in the order sent: $($S65Requests.Count)"
+      if (-not $Quiet) { $S65Requests | ForEach-Object { Write-Host "    $_" } }
+      Write-Host "--- warnings: $($Warnings.Count)"
+      $Warnings | ForEach-Object { Write-Host "    WARNING: $(Format-S65Text $_.Message)" }
+      $Published = @($CallError | Where-Object { $null -ne $_ -and @(([string]$_.FullyQualifiedErrorId) -split ',') -contains $Cmdlet })
+      Write-Host "--- errors published by $($Cmdlet): $($Published.Count)"
+      $Published | ForEach-Object { Write-Host "    ERROR [$($_.FullyQualifiedErrorId)]: $(Format-S65Text $_.Exception.Message)" }
+      Write-Host "--- objects returned: $($S65Out.Count)"
+  }
+  function Connect-S65Me {
+      # Philip's own delegated sign-in with Azure Resource Manager; True/False only, a False stops here.
+      Disconnect-OER -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+      $null = Connect-OER -TenantId $TenantId -Interactive -IncludeARM -ErrorAction Stop
+      $global:Me = [string](Get-MgContext).Account
+      $global:MeId = & (Get-Module Omnicit.EntraRBAC) { Get-OERSignedInObjectId }
+      $MeRaw = Invoke-MgGraphRequest -Method GET -Uri 'v1.0/me?$select=id' -OutputType HashTable -SkipHttpErrorCheck
+      $TenantOk = [string](Get-MgContext).TenantId -eq $TenantId
+      $PersonOk = ([string](Get-MgContext).ClientId -notin @($AppId, $NoPermAppId)) -and [bool]$Me -and -not $Me.StartsWith($Prefix)
+      $IdOk     = [bool]$MeId -and [string]::Equals([string]$MeRaw['id'], [string]$MeId, [System.StringComparison]::OrdinalIgnoreCase)
+      $ArmOk    = [bool](& (Get-Module Omnicit.EntraRBAC) { $script:_OERAuthState.ArmToken })
+      Write-Host "identity check: tenant is the test tenant: $TenantOk"
+      Write-Host "identity check: a person's delegated sign-in, not a certificate identity: $PersonOk"
+      Write-Host "identity check: the token's object id is this user's (v1.0/me): $IdOk"
+      Write-Host "the session holds an Azure Resource Manager token: $ArmOk"
+      if (-not ($TenantOk -and $PersonOk -and $IdOk -and $ArmOk)) { throw 'The identity check failed: nothing below may run.' }
+  }
+  function Show-S65MgLists {
+      # THE CONTROL: is oer-s65-mg in the management-group list read WITHOUT the header, WITH it, and
+      # through this build's Get-OERManagementGroup? The plain list is read FIRST, since a no-cache read
+      # may refresh the cache for every read after it.
+      param([Parameter(Mandatory)][string]$Label)
+      $Arm = Get-Module Omnicit.EntraRBAC
+      $Plain = @(& $Arm { param($P) (Invoke-OERArmRequest -Path $P -All).value } $MgListPath)
+      $NoCache = @(& $Arm { param($P) (Invoke-OERArmRequest -Path $P -All -Header @{ 'Cache-Control' = 'no-cache' }).value } $MgListPath)
+      $ViaCmdlet = @(Get-OERManagementGroup -ErrorAction SilentlyContinue)
+      $global:Error.Clear()
+      "$Label -- list WITHOUT Cache-Control: management groups $($Plain.Count); oer-s65-mg in it: $(@($Plain | Where-Object { [string]$_.name -eq $MgName }).Count -eq 1)"
+      "$Label -- list WITH Cache-Control: no-cache: management groups $($NoCache.Count); oer-s65-mg in it: $(@($NoCache | Where-Object { [string]$_.name -eq $MgName }).Count -eq 1)"
+      "$Label -- Get-OERManagementGroup (this build): management groups $($ViaCmdlet.Count); oer-s65-mg in it: $(@($ViaCmdlet | Where-Object { [string]$_.Name -eq $MgName }).Count -eq 1)"
+  }
+  Connect-S65Me
+  "before the create: oer-s65-mg exists: $(@(Get-OERManagementGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.Name -eq $MgName }).Count -eq 1); the tenant root group readable: $(@(Get-OERManagementGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.Name -eq $TenantId }).Count -eq 1)"
+  ```
+
+  (b) Create the management group in the Azure portal exactly as in 6.1: **Management groups >
+  + Create**, **Management group ID** `oer-s65-mg`, **Display name** `oer-s65-mg`, parent left at the
+  tenant root group, **Submit**. Then, at once:
+
+  ```powershell
+  $Created61R = Get-Date
+  $Mg = $null
+  for ($Try = 1; $Try -le 12; $Try++) {
+      $Mg = Get-OERManagementGroup -Name $MgName -Expand -ErrorAction SilentlyContinue
+      if ($Mg) { break }
+      Start-Sleep -Seconds 10
+  }
+  $global:Error.Clear()
+  "oer-s65-mg read back by -Name: $([bool]$Mg); its parent is the tenant root group: $([string]::Equals([string]$Mg.ParentId, $MgRoot, [System.StringComparison]::OrdinalIgnoreCase)); children: $(@($Mg.Children | Where-Object { $null -ne $_ }).Count); subscriptions under it: $(@(Get-OERSubscription -ManagementGroup $MgName -ErrorAction SilentlyContinue).Count)"
+  Show-S65MgLists -Label "6.1R-b, $([int]((Get-Date) - $Created61R).TotalSeconds) s after the read-back started"
+  ```
+
+  (c) The plan, then -- only when it matches -- the eligibility (Reader, one day, for the disabled
+  test user `oer-s65-user1`), exactly as 6.1(b):
+
+  ```powershell
+  Invoke-S65Call -Cmdlet New-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; Role = 'Reader'; User = $User1Upn; DurationDays = 1; WhatIf = $true } -Label '6.1R-c plan'
+  ```
+
+  ```powershell
+  Invoke-S65Call -Cmdlet New-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; Role = 'Reader'; User = $User1Upn; DurationDays = 1; Confirm = $false } -Label '6.1R-c create'
+  Invoke-S65Call -Cmdlet Get-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; AtScope = $true } -Label '6.1R-c read back' -Quiet
+  "rows of oer-s65-user1 AT oer-s65-mg: $(@($S65Out | Where-Object { [string]$_.PrincipalId -eq $IdUser1 -and [string]::Equals([string]$_.Scope, $MgScope, [System.StringComparison]::OrdinalIgnoreCase) }).Count)"
+  ```
+
+  (d) The control once more, then the full tree, as yourself, with this build:
+
+  ```powershell
+  Show-S65MgLists -Label "6.1R-d, $([int]((Get-Date) - $Created61R).TotalSeconds) s after the create, right before the export"
+  $Out61R = Join-Path $Raw 'export-6.1R'
+  New-Item -ItemType Directory -Path $Out61R -Force | Out-Null
+  Invoke-S65Call -Cmdlet Export-OERInventory -Splat @{ OutputPath = $Out61R; Include = 'RoleAssignments' } -Label '6.1R-d the full tree' -Quiet
+  $B61R = $S65Out | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.EntraRBAC.InventoryBundle' } | Select-Object -First 1
+  $H61R = Get-Content -LiteralPath (Join-Path $B61R.BundlePath 'scopeHierarchy.json') -Raw | ConvertFrom-Json
+  "scopeHierarchy.json: management groups $(@($H61R.managementGroups).Count); subscriptions $(@($H61R.subscriptions).Count); oer-s65-mg in it: $(@($H61R.managementGroups | Where-Object { [string]$_.name -eq $MgName }).Count -eq 1); the tenant root group in it: $(@($H61R.managementGroups | Where-Object { [string]$_.name -eq $TenantId }).Count -eq 1)"
+  $E61R = @(Get-Content -LiteralPath (Join-Path $B61R.BundlePath 'azurePimEligibility.json') -Raw | ConvertFrom-Json)
+  $Mg61R = @($E61R | Where-Object { [string]::Equals([string]$_.scope, $MgScope, [System.StringComparison]::OrdinalIgnoreCase) -and $_.principal -eq 'OER S65 User1' })
+  "entries of oer-s65-user1 at oer-s65-mg: $($Mg61R.Count)"
+  $Mg61R | ForEach-Object { '    scope {0}; role {1}; principalType {2}; memberType {3}; status {4}; endDateTime in {5} days' -f (Format-S65Text $_.scope), $_.role, $_.principalType, $_.memberType, $_.status, [math]::Round(([datetime]$_.endDateTime - [datetime]::UtcNow).TotalDays, 1) }
+  "entries of oer-s65-user1 in all: $(@($E61R | Where-Object { $_.principal -eq 'OER S65 User1' }).Count) (the resource group one of section 4, and this one -- once each)"
+  "the walk read the tenant root group: $((@($B61R.SkippedScopes) -notcontains $MgRoot) -and (@($S65Requests -match [regex]::Escape((Format-S65Text "$MgRoot/providers/Microsoft.Authorization/roleEligibilitySchedules"))).Count -gt 0))"   # $S65Requests is masked: compare with the MASKED root path
+  $Elig61R = @($S65Requests | Where-Object { $_ -match '^GET /.*/providers/Microsoft\.Authorization/roleEligibilitySchedules\?' })
+  "roleEligibilitySchedules requests: $($Elig61R.Count) (with atScope(): $(@($Elig61R | Where-Object { $_ -match 'atScope\(\)' }).Count); pages after the first: $(@($Elig61R | Where-Object { $_ -match 'skiptoken' }).Count)); ARM requests in all: $(@($S65Requests | Where-Object { $_ -match '^(GET|POST|PUT|PATCH|DELETE) /' }).Count)"
+  "summary: ScopesEnumerated $($B61R.ScopesEnumerated); ScopeCount $($B61R.ScopeCount); SkippedScopes $(@($B61R.SkippedScopes).Count); SkippedEligibilityScopes $(@($B61R.SkippedEligibilityScopes).Count); AzurePimEligibility $($B61R.AzurePimEligibility)"
+  ```
+
+  (e) Clean up exactly as 6.2 -- the plan, then, only when it matches, the removal:
+
+  ```powershell
+  Invoke-S65Call -Cmdlet Remove-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; Role = 'Reader'; User = $User1Upn; WhatIf = $true } -Label '6.1R-e plan'
+  ```
+
+  ```powershell
+  Invoke-S65Call -Cmdlet Remove-OEREligibleRoleAssignment -Splat @{ ManagementGroup = $MgName; Role = 'Reader'; User = $User1Upn; Confirm = $false } -Label '6.1R-e remove'
+  for ($Try = 1; $Try -le 6; $Try++) {
+      $Left = @(Get-OEREligibleRoleAssignment -ManagementGroup $MgName -AtScope -ErrorAction SilentlyContinue | Where-Object { [string]$_.PrincipalId -eq $IdUser1 -and [string]::Equals([string]$_.Scope, $MgScope, [System.StringComparison]::OrdinalIgnoreCase) })
+      "rows of oer-s65-user1 AT oer-s65-mg: $($Left.Count)"
+      if ($Left.Count -eq 0) { break }
+      Start-Sleep -Seconds 10
+  }
+  ```
+
+  Then delete `oer-s65-mg` in the Azure portal (**Management groups > oer-s65-mg > Details**,
+  **Delete**, confirm) and read it back:
+
+  ```powershell
+  for ($Try = 1; $Try -le 12; $Try++) {
+      $Gone = @(Get-OERManagementGroup -ErrorAction SilentlyContinue | Where-Object { [string]$_.Name -eq $MgName }).Count -eq 0
+      "try $($Try): oer-s65-mg is gone: $Gone"
+      if ($Gone) { break }
+      Start-Sleep -Seconds 10
+  }
+  $global:Error.Clear()
+  Disconnect-OER
+  ```
+
+  Last: end every PIM role you activated for this check (Microsoft Entra admin center > **Privileged
+  Identity Management > My roles > Active assignments**, **Deactivate**), and turn off "Access
+  management for Azure resources" if (a) made you elevate. Close your window; the Teardown runs in the
+  Claude window.
+
+  **Expect:** (a) `the clone is on feat/inventory-directory-roles-and-rename at <sha> -- <subject>; equal to origin/...: True`
+  (record the sha and subject: the PR head), the module line from `<Repo>/output/module/...`,
+  `this build sends Cache-Control: no-cache on the management-group list: True`,
+  `the state file names oer-s65-user1: True; every variable set: True`, the four identity lines
+  `True`, and `before the create: oer-s65-mg exists: False; the tenant root group readable: True`.
+  (b) `oer-s65-mg read back by -Name: True; its parent is the tenant root group: True; children: 0; subscriptions under it: 0`,
+  then THE CONTROL, three lines -- RECORD all three, with the seconds:
+  `list WITHOUT Cache-Control: ... oer-s65-mg in it: False` (the service's cache still lacks the new
+  group: the condition 6.1 ran into), `list WITH Cache-Control: no-cache: ... oer-s65-mg in it: True`
+  and `Get-OERManagementGroup (this build): ... oer-s65-mg in it: True`. (c) as 6.1(b):
+  `rows of oer-s65-user1 AT oer-s65-mg: 1`. (d) the control again (record it), then the export: no
+  error; `scopeHierarchy.json: ... oer-s65-mg in it: True; the tenant root group in it: True`;
+  `entries of oer-s65-user1 at oer-s65-mg: 1`, reading
+  `scope /providers/Microsoft.Management/managementGroups/oer-s65-mg; role Reader; principalType User; memberType Direct; status Provisioned; endDateTime in <about 1> days`;
+  `entries of oer-s65-user1 in all: 2`; `the walk read the tenant root group: True`;
+  `roleEligibilitySchedules requests:` equal to `ScopesEnumerated` plus the pages after the first,
+  with one `atScope()` request per management group -- one more than 6.1's five, since `oer-s65-mg`
+  is now walked; `SkippedScopes 0; SkippedEligibilityScopes 0`. Record every number. (e) as 6.2:
+  `rows of oer-s65-user1 AT oer-s65-mg: 0`, `oer-s65-mg is gone: True`, `Disconnect-OER` run, no
+  role left active (record which you deactivated).
+  **Failure looks like:** the list WITHOUT the header already has `oer-s65-mg` in (b) and in (d) --
+  the cache did not lag this time, so the run proves the management-group-level READ (when (d) finds
+  the entry) but NOT the fix: record it exactly so, and mark the box `[~]` with that reason, not `[x]`;
+  the list WITH the header lacks `oer-s65-mg` after the -Name read found it -- the header does not
+  bypass the lag: run (b)'s `Show-S65MgLists` line again every minute for up to ten minutes and record
+  each, and do not run (d) until `Get-OERManagementGroup` lists the group; (d) `oer-s65-mg in it:
+  False` -- the fixed build's walk still missed it: record it; (d) `entries ... at oer-s65-mg: 0`
+  while `scopeHierarchy.json` HAS `oer-s65-mg` -- the management-group-level read is the defect: stop,
+  record it, and change nothing without a decision; a skipped scope, or an error.
+  **Result:**
+
 ---
 
 ### Teardown
 
-Back in the Claude window, after section 6. Sign in again first (`Connect-S65 -Arm`: a fresh
+Back in the Claude window, after section 6 and 6.1R -- never before 6.1R, which needs `oer-s65-user1`. Sign in again first (`Connect-S65 -Arm`: a fresh
 token, the identity lines once more, and the Azure session T.2 needs). The prerequisite script's
 teardown does the work, in the order Setup describes: the Azure eligibility removed, the resource
 group's Reader policy restored from its baseline and read again (or, with no baseline, only read),
