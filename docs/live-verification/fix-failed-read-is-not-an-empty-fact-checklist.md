@@ -932,7 +932,7 @@ STOPPED: AdministrativeUnitScopedRoleReadFailed,Get-OERAdministrativeUnit
 Record (2026-09-02): the Expect is MET. The module's own record -- the last of the nine, id
   `AdministrativeUnitScopedRoleReadFailed,Get-OERAdministrativeUnit` -- carries `Target` = the
   administrative unit's object id and a `Message` reading `Could not read scoped roles for
-  administrative unit `<id>`: Authorization_RequestDenied: Insufficient privileges to complete the
+  administrative unit `\<id>`: Authorization_RequestDenied: Insufficient privileges to complete the
   operation.. The ScopedRoles property is omitted rather than reported as empty. This box is
   ticked on that.
 
