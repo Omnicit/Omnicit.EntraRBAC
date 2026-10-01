@@ -88,6 +88,10 @@ function Invoke-OERArmRequest {
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
     $ProgressPreference = 'SilentlyContinue'
 
+    # The caller's extra headers, read by Invoke-ArmCall below for every request of this call (each
+    # page and retry included).
+    $ExtraHeaders = if ($Header) { $Header } else { @{} }
+
     # ARM host: from the cached resource url (so sovereign clouds work once that is configurable),
     # defaulting to public-cloud ARM.
     $ArmBaseUrl = if ($script:_OERAuthState -and $script:_OERAuthState.ArmResourceUrl) {
@@ -103,13 +107,11 @@ function Invoke-OERArmRequest {
 
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
-        # The caller's extra headers ($Header, from the enclosing call), never an Authorization one.
+        # The caller's extra headers ($ExtraHeaders, from the enclosing call), never an Authorization one.
         $RequestHeaders = @{}
-        if ($Header) {
-            foreach ($HeaderName in @($Header.Keys)) {
-                if ([string]$HeaderName -eq 'Authorization') { continue }
-                $RequestHeaders[[string]$HeaderName] = [string]$Header[$HeaderName]
-            }
+        foreach ($HeaderName in @($ExtraHeaders.Keys)) {
+            if ([string]$HeaderName -eq 'Authorization') { continue }
+            $RequestHeaders[[string]$HeaderName] = [string]$ExtraHeaders[$HeaderName]
         }
         $RequestHeaders['Authorization'] = "Bearer $Plain"
         $InvokeParams = @{
