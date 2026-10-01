@@ -38,9 +38,11 @@ BeforeAll {
     # record, and the sentence around it stops making sense. The check that keeps those out reads
     # Markdown only, and it reaches two files at the root that no other check here does:
     # README.md, the repository's front page, and CHANGELOG.md, whose [Unreleased] section is
-    # published verbatim as the PowerShell Gallery's ReleaseNotes. Adding the root files to the
-    # scope above instead would also put them under the object-id, address and credential rules,
-    # which is a separate decision this check does not take.
+    # published as the release notes: the PowerShell Gallery shows them as plain text, and the
+    # GitHub release body built from the same notes renders them as Markdown, where a tag
+    # vanishes. Adding the root files to the scope above instead would also put them under the
+    # object-id, address and credential rules, which is a separate decision this check does not
+    # take.
     # =====================================================================================
     $script:DocHygieneMarkdownScopePattern = '^((docs|specs)/.+\.md|README\.md|CHANGELOG\.md)$'
 
@@ -338,6 +340,14 @@ BeforeAll {
                   closer is literal text.
                 - A code span is replaced by spaces with its line breaks kept, so every character
                   left keeps its line and column.
+
+                KNOWN FALSE NEGATIVE, deliberately not handled, shared with Test-MdAngleBrackets.py:
+                CommonMark lets an open tag's attributes cross one line break, so a long stand-in
+                broken by the 100-column wrap -- '<management groups: the' ending one line and
+                'listing failed>' starting the next -- is hidden by GitHub but matched by neither
+                scanner, since the tag pattern stops at a line break. Zero such cases are in scope
+                today. Keep a redacted stand-in on one line; do not change the pattern to reach
+                across a break.
 
                 Lines holds the masked text, one entry per input line, with skipped lines empty.
                 CodeSpanCount is the number of code spans removed outside fenced blocks; the check
@@ -762,9 +772,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         # GitHub reads '<word>', '</word>', '<!...>' and '<?...>' outside code as markup and renders
         # nothing in its place. In a checklist that is a redacted stand-in vanishing from the
-        # record; in CHANGELOG.md it is the Gallery's ReleaseNotes losing a word. Fenced blocks and
-        # code spans are skipped by ConvertTo-DocHygieneMarkdownProse, a backslash before the
-        # bracket escapes it, and what is left must hold no tag.
+        # record; a word missing from CHANGELOG.md on GitHub and from the GitHub release body built
+        # from it. Fenced blocks and code spans are skipped by ConvertTo-DocHygieneMarkdownProse, a
+        # backslash before the bracket escapes it, and what is left must hold no tag.
         $Prose = @(
             foreach ($Entry in $script:DocHygieneMarkdownFiles) {
                 $Converted = ConvertTo-DocHygieneMarkdownProse -Line $Entry.Lines
@@ -794,7 +804,7 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         $InScope | Should -Contain 'README.md' -Because 'README.md must be in scope; if it is not, the check stopped reaching the root files'
 
-        $InScope | Should -Contain 'CHANGELOG.md' -Because 'CHANGELOG.md must be in scope; its [Unreleased] section is published as the Gallery ReleaseNotes'
+        $InScope | Should -Contain 'CHANGELOG.md' -Because 'CHANGELOG.md must be in scope; its [Unreleased] section also becomes the GitHub release body, which GitHub renders the same way'
 
         @($InScope | Where-Object { $_ -like 'docs/live-verification/*' }).Count |
             Should -BeGreaterThan 0 -Because 'the live-verification checklists must stay in this scope; zero means the scan narrowed away from the folder the check was written for'
@@ -829,6 +839,6 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
 
         @($Hits).Count |
-            Should -Be 0 -Because ('no tracked .md under docs/ or specs/, and neither README.md nor CHANGELOG.md, may hold an angle bracket outside code that GitHub would render as an HTML tag: it is shown as nothing, so a redacted stand-in vanishes from the record. Put the token inside backticks, or write it with a backslash before the bracket where a backtick would close a code span the line already has (see docs/live-verification/README.md). Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
+            Should -Be 0 -Because ('no tracked .md under docs/ or specs/, and neither README.md nor CHANGELOG.md, may hold an angle bracket outside code that GitHub would render as an HTML tag: it is shown as nothing, so a redacted stand-in vanishes from the record. Put the token inside backticks, or write it with a backslash before the bracket where a backtick would close a code span the line already has (see docs/live-verification/README.md). In CHANGELOG.md use backticks only -- the Gallery shows its notes as plain text, where a backslash would show instead of escaping anything. An autolink or deliberate HTML is refused the same way: write a bare URL, or put the markup in backticks. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
     }
 }

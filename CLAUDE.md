@@ -149,7 +149,9 @@ own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
 `Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
 tenant object ids, non-documentation email addresses and credentials out of every tracked file under
 `docs/`, `specs/`, `source/` and `tests/`, enumerating tracked files with `git ls-files` and reading
-their content from disk), and `docsync.tests.ps1` (binds `README.md` to the about topic).
+their content from disk, and also checks that tracked Markdown under `docs/`, `specs/`,
+`README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag), and
+`docsync.tests.ps1` (binds `README.md` to the about topic).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
 `specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
@@ -164,13 +166,22 @@ must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
 `Why: docs/development/rationale.md#bearer-scrub-tests`
 
 **`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
-under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket that
-looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code: GitHub renders it
-as nothing, so a redacted `<id>` stand-in vanishes from the record, and `CHANGELOG.md`'s
-`[Unreleased]` reaches the Gallery the same way. Write the token inside backticks, or as `\<id>`
-where a backtick would close a code span the line already has; quotes alone do not escape it.
-Fenced blocks and code spans are skipped with exactly the maintainer's `Test-MdAngleBrackets.py`
-algorithm, and the two must agree hit for hit -- change neither alone.
+under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket
+that looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code: GitHub
+renders it as nothing, so a redacted `<id>` stand-in vanishes from the record. `CHANGELOG.md`'s
+`[Unreleased]` also becomes the GitHub release body (the publish job's `gh release create
+--notes-file`), which GitHub renders the same way and hides the bracket too -- but the PowerShell
+Gallery shows those same notes as HTML-encoded plain text, where a bracket is SHOWN, not hidden,
+and a backslash escape would show there too, permanently. So in `CHANGELOG.md` use backticks only,
+never a backslash. Elsewhere, write the token inside backticks, or as `\<id>` where a backtick
+would close a code span the line already has; quotes alone do not escape it. An autolink
+(`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way, since the check is
+exactly the reference algorithm -- write a bare URL instead, or put the markup in backticks. Fenced
+blocks and code spans are skipped with the algorithm documented in
+`ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`:
+deliberately the maintainer's `Test-MdAngleBrackets.py` algorithm rather than CommonMark's, so the
+two agree hit for hit -- never "correct" it towards CommonMark, and never change one without the
+other.
 
 **`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
 its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned
