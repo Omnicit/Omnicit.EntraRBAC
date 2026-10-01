@@ -163,6 +163,15 @@ from the register in `docs/live-verification/README.md`, which also records the 
 must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
 `Why: docs/development/rationale.md#bearer-scrub-tests`
 
+**`dochygiene.tests.ps1` also reads Markdown the way GitHub renders it.** In every tracked `.md`
+under `docs/` and `specs/`, and in `README.md` and `CHANGELOG.md` at the root, no angle bracket that
+looks like a tag (`<word>`, `</word>`, `<!...>`, `<?...>`) may stand outside code: GitHub renders it
+as nothing, so a redacted `<id>` stand-in vanishes from the record, and `CHANGELOG.md`'s
+`[Unreleased]` reaches the Gallery the same way. Write the token inside backticks, or as `\<id>`
+where a backtick would close a code span the line already has; quotes alone do not escape it.
+Fenced blocks and code spans are skipped with exactly the maintainer's `Test-MdAngleBrackets.py`
+algorithm, and the two must agree hit for hit -- change neither alone.
+
 **`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
 its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned
 only in a Quick Start snippet passed while missing from the roster. This gate scopes the roster to
