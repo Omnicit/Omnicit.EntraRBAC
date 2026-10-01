@@ -153,8 +153,15 @@ the hashes change when the branch is rebased onto `main` before it merges.
   measured in 2.3 and 4.1) was read as "no management groups"; it is now named in SkippedScopes and
   SkippedEligibilityScopes, and the bundle is InventoryPartial. Philip's 6.1c missed a management
   group created minutes earlier because the LISTING lacked it (scopeHierarchy.json: 5 management
-  groups, the new one absent, the root present); Get-OERManagementGroup now sends
-  `Cache-Control: no-cache`, and 6.1R measures the listing with and without it.
+  groups, the new one absent, the root present); "fix: list management groups past the service
+  cache" made Get-OERManagementGroup send `Cache-Control: no-cache`, and 6.1R measured the listing
+  with and without it: the new group was missing from both, a few seconds and about a minute after
+  its create, while a read by name found it at once. The header was removed again ("revert: send no
+  Cache-Control header on the management group reads"), and the help now says that a management
+  group created in the last few minutes can be missing from the list and from an export run in that
+  window ("docs: say that a new management group can be missing from the list") -- a documented
+  limitation, not a fix. "docs: fix the variable check of 6.1R and say what it ran on"
+  repairs 6.1R's `every variable set` line, which printed code instead of True/False.
 
 **Every unit test on this branch mocks the transport.** They prove the module's decisions given the
 shapes the tests assume. They cannot prove the six things this file is for:
@@ -2257,6 +2264,12 @@ What your account needs:
   whether the list without the header lacks `oer-s65-mg` while the list with it has it, and that the
   export of the fixed build then reaches the eligibility at `oer-s65-mg`.
 
+  **Run once, as a measurement, on the head that sent the header (`eef9fd7`).** The header changed
+  nothing and was removed afterwards, so on a later build (a) prints
+  `this build sends Cache-Control: no-cache on the management-group list: False` and the control's
+  `WITH Cache-Control` list fails on the `-Header` parameter that no longer exists. Read this check
+  as the record of that measurement, not as one to run again.
+
   (a) In a NEW PowerShell 7 window of your own on the machine that holds the clone, paste the Setup variables block from `$Repo` down to `$StatePath` (the assignments only -- not the build lines), then this block. It brings the clone to the PR head, builds it in a process of its own, imports that build, defines the few helpers this check needs and signs you in; every variable it uses is set in it.
 
   ```powershell
@@ -2292,7 +2305,7 @@ What your account needs:
   "this build sends Cache-Control: no-cache on the management-group list: $([bool](Select-String -LiteralPath (Join-Path $M.ModuleBase 'Omnicit.EntraRBAC.psm1') -SimpleMatch "managementGroups?api-version=2020-05-01' -All -Header @{ 'Cache-Control' = 'no-cache' }" -Quiet))"
   $ST = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json -AsHashtable
   $IdUser1 = [string]$ST['users']['user1']['id']
-  "the state file names oer-s65-user1: $($IdUser1 -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'); every variable set: $(@($Repo, $TenantId, $Domain, $AppId, $NoPermAppId, $User1Upn, $IdUser1, $MgName) | ForEach-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Where-Object { -not $_ }).Count -eq 0)"
+  "the state file names oer-s65-user1: $($IdUser1 -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'); every variable set: $(@(@($Repo, $TenantId, $Domain, $AppId, $NoPermAppId, $User1Upn, $IdUser1, $MgName) | Where-Object { [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0)"
 
   # -- What this check prints: names and True/False, never an id or a tenant value. ---------------------
   function Format-S65Text {
