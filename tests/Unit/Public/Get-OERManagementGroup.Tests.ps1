@@ -28,6 +28,23 @@ Describe 'Get-OERManagementGroup' {
         }
     }
 
+    # Measured live 2026-10-01: a list read without the header left out a management group created
+    # minutes earlier. The Management Groups API documents 'Cache-Control: no-cache' to bypass its caches.
+    It 'sends Cache-Control: no-cache when listing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ value = @() } }
+        $null = Get-OERManagementGroup
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -like '/providers/Microsoft.Management/managementGroups?*' -and $Header['Cache-Control'] -eq 'no-cache'
+        }
+    }
+
+    It 'sends Cache-Control: no-cache when reading one management group by name' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-x'; name = 'mg-x'; properties = @{ displayName = 'MG X' } } }
+        $null = Get-OERManagementGroup -Name 'mg-x'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -like '/providers/Microsoft.Management/managementGroups/mg-x?*' -and $Header['Cache-Control'] -eq 'no-cache'
+        }
+    }
     It 'gets a single management group by name' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
             [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg1'; name = 'mg1'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG One' } }

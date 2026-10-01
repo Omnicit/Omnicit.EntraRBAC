@@ -41,6 +41,40 @@ Describe 'Invoke-OERArmRequest' {
         }
     }
 
+    It 'sends -Header with every request, and never lets it replace the bearer' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+            $null = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' `
+                -Header @{ 'Cache-Control' = 'no-cache'; Authorization = 'Bearer someone-else' }
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+                $Headers['Cache-Control'] -eq 'no-cache' -and $Headers.Authorization -eq 'Bearer fake-arm-token'
+            }
+        }
+    }
+
+    It 'sends no extra header without -Header' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+            $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly -ParameterFilter { @($Headers.Keys).Count -eq 1 -and $Headers.ContainsKey('Authorization') }
+        }
+    }
+
+    It 'sends -Header on every page of an -All walk' {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:ArmCallCount = 0
+            Mock Invoke-WebRequest {
+                $script:ArmCallCount++
+                if ($script:ArmCallCount -eq 1) {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"mg1"}],"@nextLink":"https://management.azure.com/providers/Microsoft.Management/managementGroups?api-version=2020-05-01&$skiptoken=t2"}' }
+                } else {
+                    [PSCustomObject]@{ StatusCode = 200; Content = '{"value":[{"id":"mg2"}],"@nextLink":null}' }
+                }
+            }
+            $null = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All -Header @{ 'Cache-Control' = 'no-cache' }
+            Should -Invoke Invoke-WebRequest -Times 2 -Exactly -ParameterFilter { $Headers['Cache-Control'] -eq 'no-cache' }
+        }
+    }
     It 'serializes -Body to a JSON payload with the json content type' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 201; Content = '{"id":"x"}' } }

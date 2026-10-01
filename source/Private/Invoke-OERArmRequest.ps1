@@ -56,6 +56,13 @@ function Invoke-OERArmRequest {
     Follow nextLink/@nextLink paging on GET list responses and return a single object whose value
     property contains all aggregated items.
 
+    .PARAMETER Header
+    Optional extra request headers, sent on every request of the call -- each page of an -All walk
+    and a retry included -- for example @{ 'Cache-Control' = 'no-cache' }, which
+    Get-OERManagementGroup sends so the Management Groups API answers past its cache. An
+    'Authorization' key is ignored: the bearer header is always the wrapper's own. Header values are
+    never written to any stream.
+
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value
     Lists all subscriptions across pages.
@@ -73,7 +80,9 @@ function Invoke-OERArmRequest {
 
         [hashtable]$Body,
 
-        [switch]$All
+        [switch]$All,
+
+        [hashtable]$Header
     )
 
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
@@ -94,10 +103,19 @@ function Invoke-OERArmRequest {
 
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
+        # The caller's extra headers ($Header, from the enclosing call), never an Authorization one.
+        $RequestHeaders = @{}
+        if ($Header) {
+            foreach ($HeaderName in @($Header.Keys)) {
+                if ([string]$HeaderName -eq 'Authorization') { continue }
+                $RequestHeaders[[string]$HeaderName] = [string]$Header[$HeaderName]
+            }
+        }
+        $RequestHeaders['Authorization'] = "Bearer $Plain"
         $InvokeParams = @{
             Method             = $CallMethod
             Uri                = "$BaseUrl$CallPath"
-            Headers            = @{ Authorization = "Bearer $Plain" }
+            Headers            = $RequestHeaders
             SkipHttpErrorCheck = $true
             ErrorAction        = 'Stop'
             Verbose            = $false

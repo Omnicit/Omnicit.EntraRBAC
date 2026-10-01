@@ -13,6 +13,12 @@ function Get-OERManagementGroup {
     they pipe into Get-OERSubscription and the RBAC cmdlets. Requires an ARM token; authentication
     is ensured at entry via Initialize-OERAuth -IncludeARM.
 
+    Both the list and the -Name read send 'Cache-Control: no-cache', which the Management Groups API
+    documents as the way to bypass its caches: a list read live without it (2026-10-01) left out a
+    management group created minutes earlier. Even so, a management group created moments ago can
+    be missing until Azure has updated its hierarchy -- read it again before relying on a list, or
+    an Export-OERInventory walk, that should include it.
+
     .PARAMETER Name
     The management group name (its id segment, not the display name). Also bindable as
     -ManagementGroup, the name every RBAC and PIM cmdlet uses for the same scope target, or as
@@ -58,7 +64,7 @@ function Get-OERManagementGroup {
             if ($Expand -or $Recurse) { $Path += '&$expand=children' }
             if ($Recurse) { $Path += '&$recurse=true' }
             try {
-                $Response = Invoke-OERArmRequest -Path $Path
+                $Response = Invoke-OERArmRequest -Path $Path -Header @{ 'Cache-Control' = 'no-cache' }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 # ARM returns 403 AuthorizationFailed (not 404) for a management group name that does
@@ -79,7 +85,7 @@ function Get-OERManagementGroup {
         }
 
         try {
-            $Response = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All
+            $Response = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All -Header @{ 'Cache-Control' = 'no-cache' }
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
