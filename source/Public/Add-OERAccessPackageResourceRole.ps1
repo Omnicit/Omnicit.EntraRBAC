@@ -227,7 +227,17 @@ function Add-OERAccessPackageResourceRole {
             }
         }
 
-        $Resource = try { Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $EffectiveOriginId -IncludeRoles } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        # A throw here is a failed read of the catalog's resources -- a 403, an exhausted 429, a 5xx --
+        # which is not evidence that the resource is absent: surface it as itself, never as the
+        # not-found below. Only a $null return (the resource is not in the catalog) reaches that.
+        $Resource = $null
+        try {
+            $Resource = Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $EffectiveOriginId -IncludeRoles
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
         if (-not $Resource) {
             Write-CmdletError `
                 -Message ([System.Exception]::new("Resource '$EffectiveOriginId' not found in catalog '$CatalogId'.")) `

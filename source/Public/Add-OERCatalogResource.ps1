@@ -18,8 +18,11 @@ function Add-OERCatalogResource {
     Groups onboard with originSystem AadGroup; applications with originSystem AadApplication (the resolved
     or supplied value is the service principal object id). The catalog is given by -Catalog (id or display
     name, resolved via Resolve-OERCatalogId). The command is idempotent: if a resource with the same origin
-    already exists in the catalog it is returned and nothing is created. Output is a tagged
-    Omnicit.EntraRBAC.CatalogResource object. Supports -WhatIf and -Confirm.
+    already exists in the catalog it is returned and nothing is created. If that check itself fails (a
+    permission error, throttling or a service error), the failure is reported as an error and nothing is
+    created. If the resource is created but cannot be read back, a warning says so and nothing is returned;
+    read it with Get-OERCatalogResource. Output is a tagged Omnicit.EntraRBAC.CatalogResource object.
+    Supports -WhatIf and -Confirm.
 
     .PARAMETER Catalog
     The catalog id or display name to add the resource to. Accepts pipeline input by property name:
@@ -190,7 +193,18 @@ function Add-OERCatalogResource {
             }
         }
 
-        $Existing = try { Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $OriginId } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        # The idempotency read. A throw here (a 403, an exhausted 429, a 5xx) is not evidence that the
+        # resource is absent, so it is surfaced as itself and the cmdlet returns BEFORE the POST: a
+        # failed check must never lead to an adminAdd. Only a $null return (not in the catalog yet)
+        # proceeds to create.
+        $Existing = $null
+        try {
+            $Existing = Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $OriginId
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
         if ($Existing) {
             Write-Verbose "[Add-OERCatalogResource] Resource '$OriginId' already in catalog '$CatalogId'; returning existing."
             ConvertTo-OERCatalogResource -InputObject $Existing -CatalogId $CatalogId
@@ -219,7 +233,15 @@ function Add-OERCatalogResource {
                 ConvertTo-OERCatalogResource -InputObject $Request.resource -CatalogId $CatalogId
             } else {
                 # Some tenants return the request without an inline resource; re-resolve.
-                $Created = try { Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $OriginId } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+                # The resource request has already succeeded, so a failed read-back is not a failure of
+                # this cmdlet: warn once (no error record, no output) and name the way to read it.
+                $Created = $null
+                try {
+                    $Created = Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $OriginId
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    Write-Warning ("Resource '$OriginId' was added to catalog '$CatalogId', but reading it back failed, so it is not returned: $($PSItem.Exception.Message) Read it with Get-OERCatalogResource -Catalog '$CatalogId'.")
+                }
                 if ($Created) { ConvertTo-OERCatalogResource -InputObject $Created -CatalogId $CatalogId }
             }
         }

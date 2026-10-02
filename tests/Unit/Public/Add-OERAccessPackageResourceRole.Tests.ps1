@@ -390,3 +390,78 @@ Describe 'Add-OERAccessPackageResourceRole -- a failed resolver read is not a no
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
     }
 }
+
+Describe 'Add-OERAccessPackageResourceRole -- a failed catalog resource read is not a not-found' {
+    BeforeEach {
+        InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Initialize-OERAuth {}
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogId { 'cat-1' }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Get-OERAccessPackageResourceRole { $null }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest {}
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogResource {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                'cat-1')
+        }
+    }
+
+    It 'surfaces a 403 out of Resolve-OERCatalogResource as itself, never as CatalogResourceNotFound, and binds nothing' {
+        $Err = $null
+        $Result = Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' `
+            -Role 'Member' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published
+        # it, so an unnarrowed match passes with the fix reverted (measured, issue #71 Describe above).
+        $Published = @($Err) | Where-Object {
+            $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+            $_.InvocationInfo.MyCommand.Name -eq 'Add-OERAccessPackageResourceRole'
+        }
+        $Result | Should -BeNullOrEmpty
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'CatalogResourceNotFound' -Because (
+            'a permission failure booked as a missing resource is the failed-read-as-an-empty-fact defect')
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogResource -Times 1 -Exactly
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'scrubs the failed Resolve-OERCatalogResource record before re-publishing it (bearer hygiene)' {
+        # The catch re-publishes the caught record with $PSCmdlet.WriteError($PSItem), so the same
+        # exception instance reaches $Error with or without the scrub and an $Error-based proof passes
+        # with the Remove-OERErrorRecord line deleted. The prescribed proof (rationale.md,
+        # #bearer-scrub-tests) guards the call directly: mock it and require exactly one call, filtered
+        # to THIS record so no other catch on the path can satisfy it. The filtered call is also the
+        # positive proof that this catch was reached.
+        Mock -ModuleName 'Omnicit.EntraRBAC' Remove-OERErrorRecord { }
+        $Err = $null
+        Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' `
+            -Role 'Member' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $Published = @($Err) | Where-Object {
+            $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+            $_.InvocationInfo.MyCommand.Name -eq 'Add-OERAccessPackageResourceRole'
+        }
+        @($Published).Count | Should -Be 1
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Authorization_RequestDenied: Insufficient privileges to complete the operation.'
+        }
+    }
+
+    It 'still reports CatalogResourceNotFound when the resource is simply not in the catalog (a null return)' {
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERCatalogResource { $null }
+        $Err = $null
+        Add-OERAccessPackageResourceRole -AccessPackage 'AP-Sales' -Catalog 'cat-1' -ResourceOriginId 'grp-guid' `
+            -Role 'Member' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+        $Published = @($Err) | Where-Object {
+            $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+            $_.InvocationInfo.MyCommand.Name -eq 'Add-OERAccessPackageResourceRole'
+        }
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Be 'CatalogResourceNotFound,Add-OERAccessPackageResourceRole'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+}
