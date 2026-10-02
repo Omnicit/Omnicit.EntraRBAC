@@ -96,9 +96,11 @@ When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collec
 refused, throttled or failed call -- the export never writes that collection as empty. The key is
 written as `null`, which `Invoke-OERStructure` reads as "leave untouched". Do not change such a
 `null` to `[]`: under `-Prune` an empty collection removes every live entry. `Export-OERInventory`
-ends with an `InventoryPartial` error naming every collection it could not read, these four and any
-other; the others are left out or written only as far as they were read, so their absence is not
-evidence the tenant has none.
+ends with an `InventoryPartial` error naming each collection it reports as unread, these four and
+any other; the others are left out or written only as far as they were read, so their absence is not
+evidence the tenant has none. A section that could not be read at all (the group list, the
+administrative unit list or the access review list) is reported by a warning and written empty,
+with no `InventoryPartial`, so an empty section is not evidence the tenant has none either.
 
 ## Next steps
 
