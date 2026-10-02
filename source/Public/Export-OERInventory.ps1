@@ -74,11 +74,14 @@ function Export-OERInventory {
     single run that lost three collections reports one entry listing all three, not three entries.
     Its Count is therefore the number of partial reports, not the number of unread collections; read
     the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
-    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. Such a collection is NOT written into
-    inventory.json as an empty one: a members, scopedRoles, resources or resourceRoles key it names
-    is an explicit null, which the apply engine reads as "leave untouched". Do not hand-edit that
-    null to [] -- under Invoke-OERStructure -Prune an empty declared collection deletes every live
-    member, binding or resource.
+    IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. A members,
+    scopedRoles, resources or resourceRoles collection that could not be read is NOT written into
+    inventory.json as an empty one: its key is an explicit null, which the apply engine reads as
+    "leave untouched". Do not hand-edit that null to [] -- under Invoke-OERStructure -Prune an
+    empty declared collection deletes every live member, binding or resource. Any other collection
+    IncompleteReads names is left out of the document or written only as far as it was read, as the
+    Get-OERInventory help describes; Invoke-OERStructure never removes a catalog, access package or
+    assignment policy that is absent from the document.
 
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named

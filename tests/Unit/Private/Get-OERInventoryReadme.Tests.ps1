@@ -78,7 +78,7 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
-    It 'warns that a collection the export could not read is written as null and must never be changed to []' {
+    It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme
             $Md | Should -Match '(?m)^## Unread collections\r?$'
@@ -88,8 +88,15 @@ Describe 'Get-OERInventoryReadme' {
             foreach ($Key in @('members', 'scopedRoles', 'resources', 'resourceRoles')) {
                 $Section | Should -Match ([regex]::Escape('`' + $Key + '`')) -Because "the section must name $Key"
             }
-            $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming each one'))
+            # The claim is about these four collections only: an unread owners or eligibility
+            # collection is omitted and an unread policy list is [], so a flat "the collection is
+            # never written as empty" would be false of them.
+            $Section | Should -Match ([regex]::Escape('When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collection fails'))
+            $Section | Should -Match ([regex]::Escape('the export never writes that collection as empty'))
+            $Section | Should -Not -Match ([regex]::Escape('the export never writes the collection as empty'))
+            $Section | Should -Match ([regex]::Escape('The key is written as `null`, which `Invoke-OERStructure` reads as "leave untouched".'))
             $Section | Should -Match ([regex]::Escape('Do not change such a `null` to `[]`: under `-Prune` an empty collection removes every live entry.'))
+            $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming every collection it could not read, these four and any other; the others are left out or written only as far as they were read'))
             # The section sits ahead of the numbered next steps it would otherwise be read after.
             $Md.IndexOf('## Unread collections') | Should -BeLessThan $Md.IndexOf('## Next steps')
         }

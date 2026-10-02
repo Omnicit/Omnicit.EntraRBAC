@@ -92,11 +92,13 @@ complete picture of the tenant:
 
 ## Unread collections
 
-When a read fails -- a refused, throttled or failed call -- the export never writes the collection as
-empty. `members`, `scopedRoles`, `resources` and `resourceRoles` are written as `null`, which
-`Invoke-OERStructure` reads as "leave untouched", and `Export-OERInventory` ends with an
-`InventoryPartial` error naming each one. Do not change such a `null` to `[]`: under `-Prune` an
-empty collection removes every live entry.
+When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collection fails -- a
+refused, throttled or failed call -- the export never writes that collection as empty. The key is
+written as `null`, which `Invoke-OERStructure` reads as "leave untouched". Do not change such a
+`null` to `[]`: under `-Prune` an empty collection removes every live entry. `Export-OERInventory`
+ends with an `InventoryPartial` error naming every collection it could not read, these four and any
+other; the others are left out or written only as far as they were read, so their absence is not
+evidence the tenant has none.
 
 ## Next steps
 

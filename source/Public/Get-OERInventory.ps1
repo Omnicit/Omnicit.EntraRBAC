@@ -50,11 +50,14 @@ function Get-OERInventory {
     instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
     Invoke-OERStructure -Prune acts on by deleting every live member, binding or resource. The
-    resource names an access package's bindings are written under, a catalog's access packages and
-    their assignment policies are reported through the same InventoryPartial error when their read
-    fails, and are written as far as they were read, since none of them is pruned from the
-    document: an absent catalog, access package or assignment policy is never removed by
-    Invoke-OERStructure.
+    catalog list itself, the resource names an access package's bindings are written under, a
+    catalog's access packages and their assignment policies are reported through the same
+    InventoryPartial error when their read fails, and are written as far as they were read: a
+    failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
+    list leaves a catalog with no access packages, a failed policy read leaves a package with no
+    assignment policies, and a failed name lookup leaves a binding under its scope's own display
+    name. Invoke-OERStructure never removes a catalog, access package or assignment policy that is
+    absent from the document.
     A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
