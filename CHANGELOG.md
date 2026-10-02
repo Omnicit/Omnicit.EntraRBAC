@@ -7,8 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.1.0. A preview published from this point differs from 1.1.0 only
-in documentation, tests or the build.
+`Get-OERInventory` and `Export-OERInventory` no longer write a collection they could not read as an
+empty one. When the read of an access package's resource role bindings or of a catalog's resources
+fails -- refused, throttled or otherwise failed -- the document carries `"resourceRoles": null` or
+`"resources": null`, which `Invoke-OERStructure` leaves untouched, and the `InventoryPartial` error
+names the package or catalog. Earlier versions wrote `[]`, and applying that export with `-Prune`
+removed every binding or resource of the package or catalog. A failed read of the catalogs, of a
+catalog's access packages, of their assignment policies or of the names their bindings are written
+under is now reported through `InventoryPartial` too, and `schema.json` accepts `null` for
+`resources` and `resourceRoles`.
 
 ## [1.1.0] - 2026-10-01
 
