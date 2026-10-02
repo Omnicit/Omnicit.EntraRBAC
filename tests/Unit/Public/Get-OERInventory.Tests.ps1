@@ -3336,21 +3336,34 @@ Describe 'Get-OERInventory' {
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
 
-        It 'still returns the document and the partial under a global ErrorActionPreference of Stop' {
+        It 'still emits the document before the partial stops the call under a global ErrorActionPreference of Stop' {
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
                 [CmdletBinding()] param($AccessPackage)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
             }
+            # No -ErrorAction on the call: any -ErrorAction sets the preference in Get-OERInventory's
+            # own scope and shadows the global Stop for everything beneath it, so the test would pass
+            # whether or not the global value is survived. -OutVariable keeps what was emitted before
+            # the trailing InventoryPartial becomes terminating under Stop.
+            $Caught = $null
             $Saved = $global:ErrorActionPreference
             try {
                 $global:ErrorActionPreference = 'Stop'
-                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+                try {
+                    $null = Get-OERInventory -Include AccessPackages -OutVariable Emitted
+                } catch { $Caught = $PSItem }
             } finally { $global:ErrorActionPreference = $Saved }
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
-            $null -eq @($Inv.AccessPackages)[0].PSObject.Properties['resourceRoles'].Value | Should -BeTrue
-            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 1
+            @($Emitted).Count | Should -Be 1 -Because 'the document is written before the partial stops the call, not lost to a termination mid-section'
+            $Ap = @(@($Emitted)[0].AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' | Should -BeTrue
+            $null -eq $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue
+            $Caught | Should -Not -BeNullOrEmpty -Because 'under a global Stop the trailing InventoryPartial is the one termination'
+            $Caught.FullyQualifiedErrorId | Should -BeLike 'InventoryPartial*'
+            [string]$Caught.TargetObject | Should -Match 'accessPackages/AP-Sales/resourceRoles'
         }
     }
 
