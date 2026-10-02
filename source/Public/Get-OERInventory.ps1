@@ -40,15 +40,22 @@ function Get-OERInventory {
     approvers in that case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
-    administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
-    prune when their key is merely omitted, so an unread one is emitted as an EXPLICIT null -- the
-    schema's documented "leave it untouched" signal. groups[].owners and groups[].eligibility are
-    never reconciled or pruned from an omitted key, so an unread one is simply left out. Either way
-    the gap is reported: after the inventory object is emitted, a non-terminating InventoryPartial
-    error names every affected section/displayName/key, so a caller using -ErrorAction Stop or a
-    try/catch finds out instead of treating a document with holes in it as a full tenant snapshot.
-    Do not hand-edit such a null to an empty array -- that turns "unknown" into "declared empty",
-    which Invoke-OERStructure -Prune acts on by deleting every live member. A dynamic group's membershipRuleProcessingState (On or Paused) is carried
+    administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
+    accessPackages[].resourceRoles still reconcile and still prune when their key is merely
+    omitted, so an unread one is emitted as an EXPLICIT null -- the schema's documented "leave it
+    untouched" signal. groups[].owners and groups[].eligibility are never reconciled or pruned
+    from an omitted key, so an unread one is simply left out. Either way the gap is reported:
+    after the inventory object is emitted, a non-terminating InventoryPartial error names every
+    affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
+    instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
+    such a null to an empty array -- that turns "unknown" into "declared empty", which
+    Invoke-OERStructure -Prune acts on by deleting every live member, binding or resource. The
+    resource names an access package's bindings are written under, a catalog's access packages and
+    their assignment policies are reported through the same InventoryPartial error when their read
+    fails, and are written as far as they were read, since none of them is pruned from the
+    document: an absent catalog, access package or assignment policy is never removed by
+    Invoke-OERStructure.
+    A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
     users does not silently re-create as internal-only. A Group or Application catalog resource, and
@@ -1665,7 +1672,7 @@ function Get-OERInventory {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document. " +
-                    "Unread: $($UnreadCollections -join ', '). A members or scopedRoles key reported here is an explicit null, which the apply engine reads as " +
+                    "Unread: $($UnreadCollections -join ', '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `

@@ -3316,6 +3316,18 @@ Describe 'Get-OERInventory' {
                 Should -Match 'accessPackages/AP-Sales/resourceRoles'
         }
 
+        It 'tells the operator in the InventoryPartial message that a resourceRoles key it names is an explicit null' {
+            # The message used to name only members and scopedRoles, so an operator reading the
+            # partial for an unread binding set was told nothing about the key it was looking at.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { throw 'Too many requests.' }
+            $null = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Msg = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })[0].Exception.Message
+            $Msg | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+            $Msg | Should -Match 'members, scopedRoles, resources or resourceRoles key reported here is an explicit null'
+            $Msg | Should -Match 'reads as leave untouched; do not hand-edit it to an empty array'
+        }
+
         It 'projects an empty resourceRoles array and no partial when the read succeeded with no bindings' {
             Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { }
             $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr

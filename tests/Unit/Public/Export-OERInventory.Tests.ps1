@@ -1447,6 +1447,19 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         }
     }
 
+    It 'tells the operator in the export InventoryPartial message that a resources or resourceRoles key it names is an explicit null' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b1msg') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+        @($Bundle.IncompleteReads)[0] | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        $Partial = @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        $Partial[0].Exception.Message | Should -Match 'members, scopedRoles, resources or resourceRoles key reported here is an explicit null'
+    }
+
     It 'writes a read that succeeded with nothing in it as [] and raises no partial' {
         Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith { }
         Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith { }

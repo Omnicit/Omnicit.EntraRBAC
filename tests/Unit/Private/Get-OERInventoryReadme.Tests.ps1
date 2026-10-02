@@ -78,6 +78,23 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'warns that a collection the export could not read is written as null and must never be changed to []' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme
+            $Md | Should -Match '(?m)^## Unread collections\r?$'
+            # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
+            $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
+            $Section | Should -Match ([regex]::Escape('`null`'))
+            foreach ($Key in @('members', 'scopedRoles', 'resources', 'resourceRoles')) {
+                $Section | Should -Match ([regex]::Escape('`' + $Key + '`')) -Because "the section must name $Key"
+            }
+            $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming each one'))
+            $Section | Should -Match ([regex]::Escape('Do not change such a `null` to `[]`: under `-Prune` an empty collection removes every live entry.'))
+            # The section sits ahead of the numbered next steps it would otherwise be read after.
+            $Md.IndexOf('## Unread collections') | Should -BeLessThan $Md.IndexOf('## Next steps')
+        }
+    }
+
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
             $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme))

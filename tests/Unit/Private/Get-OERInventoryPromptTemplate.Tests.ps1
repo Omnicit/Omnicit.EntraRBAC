@@ -198,6 +198,18 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'tells the model that a null in inventory.json means unknown, not empty, and never to turn it into []' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertion does not depend on where the line wraps.
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $Collapsed | Should -Match ([regex]::Escape('The inventory writes null for a collection it could not read (the export reports it as partial), so a null in inventory.json means unknown, not empty: keep it null in every proposal, and never turn it into [].'))
+            # The scalar paragraph used to say the inventory omits keys rather than emit null, flatly.
+            # That is no longer true of an unread child collection, so it must not be claimed.
+            $Collapsed | Should -Not -Match 'The inventory itself omits most keys rather than emit null'
+            $Collapsed | Should -Match 'to assert a list is genuinely empty you must hand-author an explicit \[\]'
+        }
+    }
+
     It 'documents pimPolicy approval fields and their precedence' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate

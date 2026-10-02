@@ -112,8 +112,9 @@ SAME thing -- leave the live value untouched. They are interchangeable; never wr
 to clear or disable something. An empty string "" clears a string field (for example description,
 or an ABAC condition -- see roleAssignments below). An empty array [] asserts that the list
 itself IS the value -- for example pimPolicy's activationEnablement: [] declares that no MFA,
-justification or ticket is required on activation. The inventory itself omits most keys rather
-than emit null, so to assert a list is genuinely empty you must hand-author an explicit [].
+justification or ticket is required on activation. Apart from a collection it could not read (see
+below), the inventory omits most keys rather than emit null, so to assert a list is genuinely
+empty you must hand-author an explicit [].
 
 A CHILD COLLECTION -- members (groups[] and administrativeUnits[]), scopedRoles
 (administrativeUnits[]), resources (catalogs[]), resourceRoles (accessPackages[]), and
@@ -125,7 +126,9 @@ trap if you apply the scalar rule to one of them:
   do NOT reconcile at all when omitted -- they are left completely untouched.
 - null: NONE of these collections reconcile, in either group. null -- not an omitted key -- is
   how you declare a group, administrative unit, catalog or access package WITHOUT touching one
-  of them.
+  of them. The inventory writes null for a collection it could not read (the export reports it as
+  partial), so a null in inventory.json means unknown, not empty: keep it null in every proposal,
+  and never turn it into [].
 - []: ALL of these collections reconcile to empty (every live entry is removed under -Prune, or
   reported Extra without it).
 

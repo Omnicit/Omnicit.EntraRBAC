@@ -75,9 +75,10 @@ function Export-OERInventory {
     Its Count is therefore the number of partial reports, not the number of unread collections; read
     the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
     IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. Such a collection is NOT written into
-    inventory.json as an empty one: a members or scopedRoles key it names is an explicit null, which
-    the apply engine reads as "leave untouched". Do not hand-edit that null to [] -- under
-    Invoke-OERStructure -Prune an empty declared collection deletes every live member.
+    inventory.json as an empty one: a members, scopedRoles, resources or resourceRoles key it names
+    is an explicit null, which the apply engine reads as "leave untouched". Do not hand-edit that
+    null to [] -- under Invoke-OERStructure -Prune an empty declared collection deletes every live
+    member, binding or resource.
 
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
@@ -645,7 +646,7 @@ function Export-OERInventory {
                 # message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read and are NOT stated as facts in inventory.json -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members or scopedRoles key reported here is an explicit null, which the apply engine reads as leave untouched")
+                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read and are NOT stated as facts in inventory.json -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched")
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
