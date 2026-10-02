@@ -147,7 +147,7 @@ Describe 'Invoke-OERAccessReviewInstanceDecision' {
         # definition (Graph does not enforce unique review names), and every other lookup failure still
         # arrives here as a throw. Neither is "not found". The refusal is published as itself, with the
         # candidate ids the operator needs to disambiguate; any other failure keeps
-        # AccessReviewDefinitionResolveFailed but now says WHY. Both stop before Graph is reached.
+        # AccessReviewDefinitionResolveFailed, as a ReadError that carries the cause. Both stop before Graph is reached.
         It 'publishes an ambiguous definition name as AmbiguousName with the candidate ids, not as AccessReviewDefinitionResolveFailed' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
             Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
@@ -198,6 +198,8 @@ Describe 'Invoke-OERAccessReviewInstanceDecision' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
             $Published.Count | Should -Be 1
             $Published[0].FullyQualifiedErrorId | Should -Be 'AccessReviewDefinitionResolveFailed,Invoke-OERAccessReviewInstanceDecision'
+            # A failed read is never a not-found: the category is ReadError, as RoleDefinitionReadFailed uses it.
+            $Published[0].CategoryInfo.Category | Should -Be 'ReadError'
             # The cause used to be dropped: the operator read "Failed to resolve" and nothing else.
             $Published[0].Exception.Message | Should -Be (
                 "Failed to resolve access review definition 'Q3': " +

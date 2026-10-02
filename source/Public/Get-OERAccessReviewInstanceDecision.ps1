@@ -66,7 +66,8 @@ function Get-OERAccessReviewInstanceDecision {
         # A display name that matches more than one definition (Graph does not enforce unique review
         # names) is published as itself, with the candidate ids the operator needs, and nothing is
         # read or acted on. Any other failure (a 403, an exhausted 429, a 5xx) keeps
-        # AccessReviewDefinitionResolveFailed but now says WHY, and chains the original exception.
+        # AccessReviewDefinitionResolveFailed, as a ReadError that carries the cause in its message
+        # and chains the original exception: a failed read is never a not-found.
         $DefId = try {
             Resolve-OERAccessReviewDefinitionId -DisplayName $Definition
         } catch {
@@ -80,7 +81,7 @@ function Get-OERAccessReviewInstanceDecision {
                     "Failed to resolve access review definition '$Definition': $($PSItem.Exception.Message)")) `
                 -InnerException $PSItem.Exception `
                 -ErrorId 'AccessReviewDefinitionResolveFailed' `
-                -Category ObjectNotFound `
+                -Category ReadError `
                 -TargetObject $Definition `
                 -Cmdlet $PSCmdlet
             return
