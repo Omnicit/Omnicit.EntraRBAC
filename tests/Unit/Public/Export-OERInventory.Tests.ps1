@@ -1662,8 +1662,15 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         @($ApRows | Where-Object { $_.Detail -match 'undeclared|would remove|would add' }).Count | Should -Be 0
 
         # A real run: -WhatIf never reaches the Remove cmdlet, so only this makes the zero a proof.
-        $null = Get-ApplyPlan -Path $DocumentPath -ForReal
+        # The run's own rows are kept so the zero is tied to the prune loop having SEEN the live
+        # binding and matched it: a run that stopped before the loop would also remove nothing.
+        $RealRows = Get-ApplyPlan -Path $DocumentPath -ForReal
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 2 -Exactly -ParameterFilter { $DisplayName -eq '11111111-1111-1111-1111-111111111111' }
+        $RealApRows = @($RealRows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' })
+        @($RealApRows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -like "resourceRole 'Member' on '11111111-1111-1111-1111-111111111111' already bound*" }).Count |
+            Should -Be 1 -Because 'the real run found and matched the live binding, so the prune loop was reached with that binding declared'
+        @($RealApRows | Where-Object { $_.Action -in 'Removed', 'Failed' }).Count | Should -Be 0
         Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
     }
 

@@ -3530,6 +3530,26 @@ Describe 'Get-OERInventory' {
             @($Inv.AccessPackages)[0].resourceRoles[0].resource | Should -Be 'role_sec_x'
         }
 
+        It 'keeps the reader-joined name, not the object id, for a group binding the READ names do not contain' {
+            # The object id is the fallback for an UNREAD map only. Here the catalog read SUCCEEDED
+            # and simply does not list the binding's group, so nothing is unread, no partial is
+            # raised, and the binding keeps the name it always had.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'role_sec_other'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'role_sec_recorded'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -Be 'role_sec_recorded' -Because 'a read map that lacks the binding is not an unread map'
+            $Ap.resourceRoles[0].role | Should -Be 'Member'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
         It 'writes a group binding under its current name, not its object id, when the names were read' {
             # The object id is the fallback for an UNREAD map only: a read map names the binding by
             # the group's current display name, exactly as the Catalogs section names its resource.
