@@ -3634,11 +3634,12 @@ Describe 'Get-OERInventory' {
             $Partial[0].Exception.Message | Should -Match 'Too many requests'
         }
 
-        It 'republishes a -Catalog filter that names no catalog as itself and reports nothing as unread' {
-            # The real Get-OERCatalog never writes CatalogNotFound; this exercises the retained
-            # CatalogNotFound arm, should a reader ever write it. A filter that names no catalog (or
-            # more than one) is a FACT about the caller's own filter, not a gap in the export, so
-            # that record is republished as itself and must not be counted as an unread collection.
+        It 'republishes Graph''s CatalogNotFound answer for a missing -Catalog id as itself and reports nothing as unread' {
+            # This exercises the arm Graph's own CatalogNotFound answer reaches: a live check
+            # (2026-10-02) measured that Graph answers a missing catalog id with that code, and
+            # Get-OERCatalog republishes it by id. A filter that names no catalog (or more than one)
+            # is a FACT about the caller's own filter, not a gap in the export, so that record is
+            # republished as itself and must not be counted as an unread collection.
             Mock -ModuleName $script:moduleName Get-OERCatalog {
                 [CmdletBinding()] param($Id, $DisplayName)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
@@ -3660,8 +3661,9 @@ Describe 'Get-OERInventory' {
         }
 
         It 'republishes a by-id 404 on the -Catalog filter as itself and reports nothing as unread' {
-            # The real Get-OERCatalog never writes CatalogNotFound: by id it republishes the raw Graph
-            # error, whose id is a Graph code. A missing catalog id is still a FACT about the caller's
+            # This covers the module's generic not-found codes on a by-id read as a defensive
+            # superset: Graph's own answer for a missing catalog id is CatalogNotFound (the test
+            # above), so these did not fire live. A missing catalog id is a FACT about the caller's
             # filter (spec G3: a 404 on an id is NotFound), so it is republished and counted as nothing.
             Mock -ModuleName $script:moduleName Get-OERCatalog {
                 [CmdletBinding()] param($Id, $DisplayName)

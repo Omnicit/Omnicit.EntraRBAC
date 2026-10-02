@@ -770,10 +770,11 @@ function Get-OERInventory {
             # document at all, and under Continue it left one stray record and no partial.
             # The one exception is a FACT about the caller's own -Catalog filter rather than a gap in
             # the export (spec G3: only a null from a name search, or a 404 on an id, is NotFound):
-            # a -Catalog GUID that Graph answers 404 for, and the two ids CatalogNotFound and
-            # AmbiguousCatalogName should a reader ever write them (Get-OERCatalog writes neither
-            # today; by id it republishes the raw Graph error, and by name a non-match returns
-            # nothing at all). Such a record is republished as itself and counted as nothing. A 404
+            # a missing catalog id is answered by Graph with CatalogNotFound (measured live,
+            # 2026-10-02), which Get-OERCatalog republishes by id, so that arm is the one that fires
+            # in production. It, AmbiguousCatalogName and the module's generic not-found codes on a
+            # by-id read are all facts about the caller's filter; by name a non-match returns
+            # nothing at all. Such a record is republished as itself and counted as nothing. A 404
             # on a NAME or on the unfiltered list is not a missing object, so it stays unread.
             try {
                 $ResolvedCatalogList = if ($Catalog) {
