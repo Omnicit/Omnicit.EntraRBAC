@@ -259,18 +259,18 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits fifteen
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits sixteen
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
         # access package resource role bindings, catalog resources, the catalog resource-name map,
-        # the catalog list, a catalog's package list), so fifteen admits one of each and a normal
-        # partial run is still reported in full; only a genuinely heterogeneous large-tenant failure
-        # is truncated, and the dropped count is stated rather than silently lost. Nothing is
-        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
-        # this with the shape count when a sixteenth read-failure message is added, or one shape
-        # starts crowding out another purely by ordering.
-        $UnreadCauseCap = 15
+        # the catalog list, a catalog's package list, an access package's assignment policies), so
+        # sixteen admits one of each and a normal partial run is still reported in full; only a
+        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
+        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
+        # verbose stream as it is seen. Raise this with the shape count when a seventeenth
+        # read-failure message is added, or one shape starts crowding out another purely by ordering.
+        $UnreadCauseCap = 16
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -954,7 +954,24 @@ function Get-OERInventory {
                     }
 
                     # D5: assignment policy internals -- full granular projection for round-trip fidelity.
-                    $Proj.assignmentPolicies = @(foreach ($P in @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap.Id)) {
+                    # A policy set that could not be read projects [] exactly as it always has:
+                    # Sync-OERStructureAccessPackage never removes an assignment policy (it reports an
+                    # undeclared one as still in force), so [] deletes nothing. An absent policy is not
+                    # a fact though, so the failure is reported through InventoryPartial. It used to have
+                    # no error handling: under a caller's Stop it ended the whole call with no document
+                    # at all, and under Continue it left one stray record and no partial.
+                    $ApPolicies = @()
+                    try {
+                        $ApPolicies = @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApPoliciesCause = "Could not read an access package's assignment policies: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApPoliciesCause"
+                        Add-UnreadCause -Cause $ApPoliciesCause -Target ([string]$Ap.Id)
+                        $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/assignmentPolicies")
+                        $ApPolicies = @()
+                    }
+                    $Proj.assignmentPolicies = @(foreach ($P in $ApPolicies) {
                         $PolProj = [ordered]@{ displayName = $P.DisplayName }
                         if ($P.Description) { $PolProj.description = $P.Description }
                         # requestorScope: always emit scope; emit users/groups only when non-empty.

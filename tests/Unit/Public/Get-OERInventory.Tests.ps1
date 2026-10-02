@@ -3167,22 +3167,22 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- fifteen of them since the catalog
-            # list and each catalog's package list added their own (group members, group owners,
-            # group PIM eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU
-            # scoped roles, directory role eligibility schedules, directory role assignment
-            # schedules, directory role policies, access package resource role bindings, catalog
-            # resources, the catalog resource-name map, the catalog list, a catalog's package list)
-            # -- and the remainder is counted rather than silently lost. Raise the numbers here and
-            # $UnreadCauseCap together, or a whole shape can be crowded out of the clause purely by
-            # the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- sixteen of them since the assignment
+            # policy set added its own (group members, group owners, group PIM eligibility, group
+            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+            # eligibility schedules, directory role assignment schedules, directory role policies,
+            # access package resource role bindings, catalog resources, the catalog resource-name
+            # map, the catalog list, a catalog's package list, an access package's assignment
+            # policies) -- and the remainder is counted rather than silently lost. Raise the numbers
+            # here and $UnreadCauseCap together, or a whole shape can be crowded out of the clause
+            # purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..16) {
+                foreach ($N in 1..17) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..16) {
+                foreach ($N in 1..17) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3199,10 +3199,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 15 -Because 'the clause names at most fifteen distinct causes, one per read-failure shape'
+                Should -Be 16 -Because 'the clause names at most sixteen distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All sixteen units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..16) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All seventeen units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..17) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3577,6 +3577,51 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -Match 'accessPackages/CAT-IT-Core/packages'
             $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
             $Partial[0].Exception.Message | Should -Match "Could not list a catalog's access packages"
+        }
+
+        It 'reports an unread assignment policy set and projects an empty list, as before (non-terminating)' {
+            # Sync-OERStructureAccessPackage never removes an assignment policy (it reports an
+            # undeclared one as still in force), so [] deletes nothing and the projection stays as it
+            # was -- but an absent policy is not a fact, so the gap is reported.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                [CmdletBinding()] param($AccessPackage)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name -contains 'assignmentPolicies' | Should -BeTrue
+            $null -ne $Ap.PSObject.Properties['assignmentPolicies'].Value | Should -BeTrue -Because 'the projection is unchanged: an empty list, not a null'
+            @($Ap.PSObject.Properties['assignmentPolicies'].Value).Count | Should -Be 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/AP-Sales/assignmentPolicies'
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
+            $Partial[0].Exception.Message | Should -Match "Could not read an access package's assignment policies"
+        }
+
+        It 'reports an unread assignment policy set when the read threw' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { throw 'Too many requests.' }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            @($Ap.PSObject.Properties['assignmentPolicies'].Value).Count | Should -Be 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/AP-Sales/assignmentPolicies'
+            $Partial[0].Exception.Message | Should -Match 'Too many requests'
+        }
+
+        It 'projects the policies and reports nothing when the assignment policy read succeeded' {
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+            @(@($Inv.AccessPackages)[0].assignmentPolicies).Count | Should -Be 1
+            @(@($Inv.AccessPackages)[0].assignmentPolicies)[0].displayName | Should -Be 'Default'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
     }
 
