@@ -1313,3 +1313,278 @@ Describe 'Export-OERInventory (directory role sections)' {
         $Formatted | Should -Match 'DirRoleAsgn'
     }
 }
+
+Describe 'Export-OERInventory (an unread collection is never applied as empty)' {
+    BeforeAll {
+        # The two NON-terminating failure shapes. A Write-Error mock body is never promoted by the
+        # product code's -ErrorAction Stop, so it would not reach the new catch; a mock with its own
+        # CmdletBinding that calls $PSCmdlet.WriteError is (measured in Task 1).
+        $script:FailBindingRead = {
+            [CmdletBinding()] param($AccessPackage)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+        $script:FailResourceRead = {
+            [CmdletBinding()] param($Catalog)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+
+        # The tenant the exported document is applied to: its catalog holds ONE resource and its
+        # package ONE binding. The ids differ from the ones the export saw on purpose (a document
+        # is portable, and it keeps every apply-side assertion apart from the export-side calls).
+        # Set AFTER the export, so the mocks the export read through are not the ones the apply sees.
+        function Set-ApplySideTenant {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage -MockWith {
+                [PSCustomObject]@{ Id = 'ap-apply-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; IsHidden = $false }
+            }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith {
+                [PSCustomObject]@{ Id = 'res-1'; OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            # Sync-OERStructureAccessPackage reads the current bindings with a raw resourceRoleScopes
+            # request, not through Get-OERAccessPackageResourceRole, so that is what holds the binding.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' } -MockWith {
+                [PSCustomObject]@{
+                    value = @([PSCustomObject]@{
+                            id    = 'rrs-1'
+                            role  = [PSCustomObject]@{ displayName = 'Member' }
+                            scope = [PSCustomObject]@{ originId = 'orig-x' }
+                        })
+                }
+            }
+        }
+
+        function Get-ApplyPlan {
+            param([string]$Path, [switch]$ForReal)
+            if ($ForReal) {
+                @(Invoke-OERStructure -Path $Path -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            } else {
+                @(Invoke-OERStructure -Path $Path -Prune -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        # The export reads through the REAL Get-OERInventory, so what is mocked is the readers it
+        # calls, healthy by default; a test swaps in the one reader it makes fail.
+        Mock -ModuleName $script:moduleName Get-OERCatalog {
+            [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+            [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; CatalogId = 'cat-1' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+            [PSCustomObject]@{ Id = 'res-1'; OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+            [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+        # Apply side: the handlers resolve the catalog and the declared group by name.
+        Mock -ModuleName $script:moduleName Resolve-OERCatalogId { 'cat-apply-1' }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'orig-x' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+        Mock -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole { }
+        Mock -ModuleName $script:moduleName Remove-OERCatalogResource { }
+    }
+
+    It 'writes an unread binding set as an explicit null on disk and names it in the one partial (non-terminating)' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b1') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -WarningVariable ExpWarn -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+        @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+        @($Bundle.IncompleteReads).Count | Should -Be 1
+        @($Bundle.IncompleteReads)[0] | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        @($ExpWarn | Where-Object { "$_" -match 'apply-schema' }).Count | Should -Be 0 -Because 'a document carrying the null still passes the apply schema'
+
+        foreach ($File in 'inventory.json', 'accessPackages.json') {
+            $Raw = Get-Content (Join-Path $Bundle.BundlePath $File) -Raw
+            $Raw | Should -Match '"resourceRoles":\s*null' -Because "$File must say the bindings are unknown, not empty"
+            $Raw | Should -Not -Match '"resourceRoles":\s*\['
+            $Parsed = $Raw | ConvertFrom-Json
+            $Ap = if ($File -eq 'inventory.json') { @($Parsed.accessPackages)[0] } else { @($Parsed)[0] }
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name | Should -Contain 'resourceRoles' -Because 'an omitted key still reconciles and prunes'
+            $null -eq $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue
+            $Ap.PSObject.Properties.Name | Should -Not -Contain 'id' -Because 'the id stamped for the roster join is stripped, the null is not'
+        }
+        # Only the collection that was not read is null: the catalog read succeeded and stays a fact.
+        $Catalog = @((Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json).catalogs)[0]
+        @($Catalog.resources).Count | Should -Be 1
+        $Catalog.resources[0].name | Should -Be 'role_sec_x'
+    }
+
+    It 'writes an unread catalog resource set as an explicit null on disk and names it in the one partial (non-terminating)' {
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b2') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -WarningVariable ExpWarn -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        # Once for the catalog's own resources, once to name its access packages' bindings.
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
+        @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+        @($Bundle.IncompleteReads).Count | Should -Be 1
+        @($Bundle.IncompleteReads)[0] | Should -Match 'catalogs/CAT-IT-Core/resources'
+        @($ExpWarn | Where-Object { "$_" -match 'apply-schema' }).Count | Should -Be 0
+
+        foreach ($File in 'inventory.json', 'catalogs.json') {
+            $Raw = Get-Content (Join-Path $Bundle.BundlePath $File) -Raw
+            $Raw | Should -Match '"resources":\s*null' -Because "$File must say the resources are unknown, not empty"
+            $Raw | Should -Not -Match '"resources":\s*\['
+            $Parsed = $Raw | ConvertFrom-Json
+            $Cat = if ($File -eq 'inventory.json') { @($Parsed.catalogs)[0] } else { @($Parsed)[0] }
+            $Cat.displayName | Should -Be 'CAT-IT-Core'
+            $Cat.PSObject.Properties.Name | Should -Contain 'resources' -Because 'an omitted key still reconciles and prunes'
+            $null -eq $Cat.PSObject.Properties['resources'].Value | Should -BeTrue
+            $Cat.PSObject.Properties.Name | Should -Not -Contain 'id'
+        }
+    }
+
+    It 'writes a read that succeeded with nothing in it as [] and raises no partial' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith { }
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith { }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b8') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly
+        @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        @($Bundle.IncompleteReads).Count | Should -Be 0
+        $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+        $Raw | Should -Match '"resourceRoles":\s*\[\s*\]'
+        $Raw | Should -Match '"resources":\s*\[\s*\]'
+        $Raw | Should -Not -Match '"(resourceRoles|resources)":\s*null'
+    }
+
+    It 'plans no binding removal from an export whose binding read failed, though the live package holds a binding' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b3') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Set-ApplySideTenant
+
+        $Rows = Get-ApplyPlan -Path (Join-Path $Bundle.BundlePath 'inventory.json')
+
+        # The handler reached the package and SAW the live binding, so the only thing standing
+        # between that binding and a removal row is the explicit null.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 1 -Exactly -ParameterFilter { $Id -eq 'ap-apply-1' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        $ApRows = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' })
+        $ApRows.Count | Should -BeGreaterThan 0 -Because 'the package was reconciled, not skipped before the prune decision'
+        @($ApRows | Where-Object { $_.Detail -match 'undeclared|remov' }).Count | Should -Be 0
+        @($ApRows | Where-Object { $_.Action -in 'Removed', 'Extra' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
+    }
+
+    It 'plans no resource removal from an export whose resource read failed, though the live catalog holds a resource' {
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        # No package in this document: the access package section is not what is under test here.
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage -MockWith { }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b4') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Set-ApplySideTenant
+
+        $Rows = Get-ApplyPlan -Path (Join-Path $Bundle.BundlePath 'inventory.json')
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq 'cat-apply-1' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-apply-1' }
+        $CatRows = @($Rows | Where-Object { $_.Section -eq 'catalogs' -and $_.Item -eq 'CAT-IT-Core' })
+        $CatRows.Count | Should -BeGreaterThan 0 -Because 'the catalog was reconciled, not skipped before the prune decision'
+        @($CatRows | Where-Object { $_.Detail -match 'undeclared|remov' }).Count | Should -Be 0
+        @($CatRows | Where-Object { $_.Action -in 'Removed', 'Extra' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERCatalogResource -Times 0
+    }
+
+    It 'contrast: the same document with an empty resourceRoles array DOES plan the binding removal' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b5') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+        $Declared = $Raw -replace '"resourceRoles":\s*null', '"resourceRoles": []'
+        $Declared | Should -Not -BeExactly $Raw -Because 'the exported document carried the null this test turns into a declared empty set'
+        $DeclaredPath = Join-Path $TestDrive 'declared-empty-resourceRoles.json'
+        Set-Content -Path $DeclaredPath -Value $Declared -Encoding utf8
+        Set-ApplySideTenant
+
+        $Rows = Get-ApplyPlan -Path $DeclaredPath
+
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        $Removal = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' -and $_.Detail -match 'undeclared' })
+        $Removal.Count | Should -Be 1
+        $Removal[0].Action | Should -Be 'Skipped'
+        $Removal[0].Detail | Should -BeLike "would remove undeclared resourceRole binding 'Member|orig-x'*"
+    }
+
+    It 'contrast: the same document with an empty resources array DOES plan the resource removal' {
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage -MockWith { }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b5c') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+        $Declared = $Raw -replace '"resources":\s*null', '"resources": []'
+        $Declared | Should -Not -BeExactly $Raw -Because 'the exported document carried the null this test turns into a declared empty set'
+        $DeclaredPath = Join-Path $TestDrive 'declared-empty-resources.json'
+        Set-Content -Path $DeclaredPath -Value $Declared -Encoding utf8
+        Set-ApplySideTenant
+
+        $Rows = Get-ApplyPlan -Path $DeclaredPath
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-apply-1' }
+        $Removal = @($Rows | Where-Object { $_.Section -eq 'catalogs' -and $_.Item -eq 'CAT-IT-Core' -and $_.Detail -match 'undeclared' })
+        $Removal.Count | Should -Be 1
+        $Removal[0].Action | Should -Be 'Skipped'
+        $Removal[0].Detail | Should -BeLike "would remove undeclared resource 'role_sec_x'*"
+    }
+
+    It 'removes no binding when the null document is applied for real, and removes it when the set is declared empty' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b6') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $DocumentPath = Join-Path $Bundle.BundlePath 'inventory.json'
+        $Raw = Get-Content $DocumentPath -Raw
+        $DeclaredPath = Join-Path $TestDrive 'declared-empty-resourceRoles-real.json'
+        Set-Content -Path $DeclaredPath -Value ($Raw -replace '"resourceRoles":\s*null', '"resourceRoles": []') -Encoding utf8
+        Set-ApplySideTenant
+
+        # -WhatIf never reaches the Remove cmdlet, so only a real run makes the zero a proof.
+        $NullRows = Get-ApplyPlan -Path $DocumentPath -ForReal
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        @($NullRows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' }).Count | Should -BeGreaterThan 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
+
+        $EmptyRows = Get-ApplyPlan -Path $DeclaredPath -ForReal
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter {
+            $AccessPackage -eq 'ap-apply-1' -and $ResourceRoleScopeId -eq 'rrs-1'
+        }
+        @($EmptyRows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Action -eq 'Removed' }).Count | Should -Be 1
+    }
+
+    It 'removes no resource when the null document is applied for real, and removes it when the set is declared empty' {
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage -MockWith { }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b7') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $DocumentPath = Join-Path $Bundle.BundlePath 'inventory.json'
+        $Raw = Get-Content $DocumentPath -Raw
+        $DeclaredPath = Join-Path $TestDrive 'declared-empty-resources-real.json'
+        Set-Content -Path $DeclaredPath -Value ($Raw -replace '"resources":\s*null', '"resources": []') -Encoding utf8
+        Set-ApplySideTenant
+
+        $NullRows = Get-ApplyPlan -Path $DocumentPath -ForReal
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'cat-apply-1' }
+        @($NullRows | Where-Object { $_.Section -eq 'catalogs' -and $_.Item -eq 'CAT-IT-Core' }).Count | Should -BeGreaterThan 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERCatalogResource -Times 0
+
+        $EmptyRows = Get-ApplyPlan -Path $DeclaredPath -ForReal
+        Should -Invoke -ModuleName $script:moduleName Remove-OERCatalogResource -Times 1 -Exactly -ParameterFilter {
+            $Catalog -eq 'cat-apply-1' -and $ResourceId -eq 'res-1'
+        }
+        @($EmptyRows | Where-Object { $_.Section -eq 'catalogs' -and $_.Action -eq 'Removed' }).Count | Should -Be 1
+    }
+}
