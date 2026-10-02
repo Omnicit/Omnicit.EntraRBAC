@@ -259,17 +259,18 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits thirteen
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits fifteen
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
-        # access package resource role bindings, catalog resources, the catalog resource-name map),
-        # so thirteen admits one of each and a normal partial run is still reported in full; only a
-        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
-        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
-        # verbose stream as it is seen. Raise this with the shape count when a fourteenth read-failure
-        # message is added, or one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 13
+        # access package resource role bindings, catalog resources, the catalog resource-name map,
+        # the catalog list, a catalog's package list), so fifteen admits one of each and a normal
+        # partial run is still reported in full; only a genuinely heterogeneous large-tenant failure
+        # is truncated, and the dropped count is stated rather than silently lost. Nothing is
+        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
+        # this with the shape count when a sixteenth read-failure message is added, or one shape
+        # starts crowding out another purely by ordering.
+        $UnreadCauseCap = 15
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -749,9 +750,34 @@ function Get-OERInventory {
             $CatalogResourceNames[$ForCatalogId]
         }
         if ($Include -contains 'Catalogs' -or $Include -contains 'AccessPackages') {
-            $ResolvedCatalogList = if ($Catalog) {
-                if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog) } else { @(Get-OERCatalog -DisplayName $Catalog) }
-            } else { @(Get-OERCatalog) }
+            # A catalog list that could not be read leaves BOTH sections empty, which is what the
+            # document has always said. No handler removes a catalog or an access package that is
+            # absent from the document ("Prune is child-scope only", Invoke-OERStructure), so the
+            # projection stays as it was -- but an absent entry is not a fact, so the failure is
+            # reported through InventoryPartial for every section that needed the list. Before this
+            # the read had no error handling: under a caller's Stop it ended the whole call with no
+            # document at all, and under Continue it left one stray record and no partial.
+            # The one exception is the caller's own -Catalog filter naming no catalog, or more than
+            # one (CatalogNotFound, AmbiguousCatalogName): that is a FACT about the filter, not a gap
+            # in the export, so it is republished as itself with the error id the caller has always
+            # seen and counted as nothing.
+            try {
+                $ResolvedCatalogList = if ($Catalog) {
+                    if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
+                } else { @(Get-OERCatalog -ErrorAction Stop) }
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*') {
+                    $PSCmdlet.WriteError($PSItem)
+                } else {
+                    $CatListCause = "Could not read the catalogs: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CatListCause"
+                    Add-UnreadCause -Cause $CatListCause -Target ([string]$Catalog)
+                    if ($Include -contains 'Catalogs') { $UnreadCollections.Add('catalogs') }
+                    if ($Include -contains 'AccessPackages') { $UnreadCollections.Add('accessPackages') }
+                }
+                $ResolvedCatalogList = @()
+            }
         }
 
         if ($Include -contains 'Catalogs') {
@@ -864,7 +890,24 @@ function Get-OERInventory {
                         [string]$Cr.DisplayName
                     }
                 }
-                foreach ($Ap in @(Get-OERAccessPackage -Catalog $ApCat.Id)) {
+                # A package list that could not be read projects the catalog with no packages, as it
+                # always has: no handler removes an access package that is absent from the document
+                # ("Prune is child-scope only", Invoke-OERStructure). An absent package is not a fact
+                # though, so the failure is reported through InventoryPartial against the catalog.
+                # It used to have no error handling: under a caller's Stop it ended the whole call
+                # with no document at all, and under Continue it left one stray record and no partial.
+                $ApList = @()
+                try {
+                    $ApList = @(Get-OERAccessPackage -Catalog $ApCat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ApListCause = "Could not list a catalog's access packages: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $ApListCause"
+                    Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
+                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/packages")
+                    $ApList = @()
+                }
+                foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
                         displayName = $Ap.DisplayName
                         catalog     = $ApCat.DisplayName
