@@ -97,12 +97,12 @@ Describe 'Get-OERInventoryReadme' {
             $Section | Should -Match ([regex]::Escape('The key is written as `null`, which `Invoke-OERStructure` reads as "leave untouched".'))
             $Section | Should -Match ([regex]::Escape('Do not change such a `null` to `[]`: under `-Prune` an empty collection removes every live entry.'))
             # The partial is promised only for what the export REPORTS as unread. A section that could
-            # not be read at all (the group, administrative unit or access review list) is a warning
-            # and an empty section with no partial, so a flat "every collection it could not read"
-            # would be false of it.
+            # not be read at all (the group, administrative unit or access review list, or the group
+            # roster) is a warning and an empty section with no partial, so a flat "every collection
+            # it could not read" would be false of it.
             $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming each collection it reports as unread, these four and any other; the others are left out or written only as far as they were read'))
             $Section | Should -Not -Match ([regex]::Escape('naming every collection it could not read, these four and any other')) -Because 'a section read as nothing at all is reported by a warning, not by the partial'
-            $Section | Should -Match ([regex]::Escape('A section that could not be read at all (the group list, the administrative unit list or the access review list) is reported by a warning and written empty, with no `InventoryPartial`'))
+            $Section | Should -Match ([regex]::Escape('A section that could not be read at all (the group list, the administrative unit list, the access review list or the group roster in `groupsRoster.json`) is reported by a warning and written empty, with no `InventoryPartial`'))
             # The section sits ahead of the numbered next steps it would otherwise be read after.
             $Md.IndexOf('## Unread collections') | Should -BeLessThan $Md.IndexOf('## Next steps')
         }

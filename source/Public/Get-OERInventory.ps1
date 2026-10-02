@@ -66,8 +66,8 @@ function Get-OERInventory {
     an access package resourceRoles entry on one, is written under the group's or application's
     CURRENT display name, looked up by the resource's originId (its object id when the lookup returns
     nothing) -- never under the name the catalog recorded when the resource was added, which Graph
-    keeps after a rename. Invoke-OERStructure identifies such a resource by the object id its name
-    resolves to.
+    keeps after a rename, except as described above when the names cannot be read.
+    Invoke-OERStructure identifies such a resource by the object id its name resolves to.
     Only access-package-scoped, single-stage review definitions are captured: a group, application,
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
