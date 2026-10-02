@@ -328,7 +328,8 @@ function Get-OERInventory {
         # introduced that was not already live.
         #
         # THE THREE OUTCOMES:
-        #   a name       -> the name
+        #   a name       -> the name; an answer with no name in it (null or blank) -> the id, and
+        #                   nothing is reported
         #   the marker   -> the id; a deleted package or policy is a fact about the review, so no
         #                   partial is added and no record is left
         #   a throw      -> the id; the record is scrubbed first, then the read is counted as unread
@@ -353,7 +354,13 @@ function Get-OERInventory {
                 return $Id
             }
             if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { return $Id }
-            return [string]$Response.displayName
+            # An answer that carries no name is no name: '' would be a DECLARED value, so it would
+            # pass the schema and fail only at apply, where the id (a safe reference) applies cleanly.
+            # Not a failed read either, so nothing is reported. Graph requires displayName, so this is
+            # a guard against an odd body, not an expected path.
+            $Name = [string]$Response.displayName
+            if ([string]::IsNullOrWhiteSpace($Name)) { return $Id }
+            return $Name
         }
 
         if ($Include -contains 'Groups') {

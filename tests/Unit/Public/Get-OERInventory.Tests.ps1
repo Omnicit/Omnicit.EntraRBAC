@@ -1858,6 +1858,23 @@ Describe 'Get-OERInventory' {
             @($InvErr).Count | Should -Be 0
         }
 
+        It 'writes the id and reports nothing when an answer carries no name' {
+            # A 200 without a displayName is neither a deleted target nor a failed read -- but it is no
+            # name either, and '' would count as a declared value: it would pass the schema and fail
+            # only at apply. The id is the safe reference. Null (package) and whitespace (policy) are
+            # both "no name"; the whitespace half is what separates IsNullOrWhiteSpace from IsNullOrEmpty.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '11111111-1111-1111-1111-111111111111' } } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '22222222-2222-2222-2222-222222222222'; displayName = '   ' } } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.displayName | Should -Be 'Q3 AP review'
+            $Ar.accessPackage | Should -Be $script:ArApId
+            $Ar.assignmentPolicy | Should -Be $script:ArPolId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:ArApUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:ArPolUri }
+            @($InvErr).Count | Should -Be 0 -Because 'an answer without a name is not a failed read, so nothing is reported'
+        }
+
         It 'writes the id and reports the access package name as unread when its read fails' {
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
@@ -1900,9 +1917,10 @@ Describe 'Get-OERInventory' {
             }
         }
 
-        It 'counts a not-found code that was not declared as a failure, never as a deleted target' {
-            # The wrapper softens only the codes the caller named. Anything else reaches the catch,
-            # and an undeclared "not found" spelling is a surprise to be reported, not assumed.
+        It 'counts any throw as a failed read, even one whose id reads like a not-found' {
+            # The catch must not classify by id: only the marker, which the wrapper returns for the
+            # codes the caller DECLARED, means "deleted". That an undeclared code really is raised by
+            # the wrapper is proved through the real transport below; this pins the catch's side.
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 throw (& $script:NewArFailure 'Resource not found (undeclared spelling).' 'Request_ResourceNotFound')
@@ -2031,6 +2049,20 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/accessPackage, accessReviews/Q3 AP review/assignmentPolicy'
             $Partial[0].Exception.Message | Should -Match 'Authorization_RequestDenied'
+        }
+
+        It 'raises a not-found code that was not declared and ends the run in InventoryPartial' {
+            # The wrapper softens only the codes the caller named. The stubbed SDK answers 404 with
+            # Request_ResourceNotFound, which is NOT declared for either read, so it must be raised and
+            # counted -- an undeclared not-found spelling is a surprise to report, never a deleted target.
+            $Run = & $script:ArRunTransport 'Request_ResourceNotFound' 'Request_ResourceNotFound'
+            $Run.AccessPackage | Should -Be $script:ArApId
+            $Run.AssignmentPolicy | Should -Be $script:ArPolId
+            @($Run.Calls).Count | Should -Be 2
+            $Partial = @(@($Run.Records) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/accessPackage, accessReviews/Q3 AP review/assignmentPolicy'
+            $Partial[0].Exception.Message | Should -Match 'Request_ResourceNotFound'
         }
     }
 
