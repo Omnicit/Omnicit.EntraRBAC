@@ -3167,20 +3167,20 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- eleven of them since the access
-            # package resource role bindings added their own (group members, group owners, group PIM
-            # eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles,
-            # directory role eligibility schedules, directory role assignment schedules, directory
-            # role policies, access package resource role bindings) -- and the remainder is counted
-            # rather than silently lost. Raise the numbers here and $UnreadCauseCap together, or a
-            # whole shape can be crowded out of the clause purely by the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- twelve of them since the catalog
+            # resources added their own (group members, group owners, group PIM eligibility, group
+            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+            # eligibility schedules, directory role assignment schedules, directory role policies,
+            # access package resource role bindings, catalog resources) -- and the remainder is
+            # counted rather than silently lost. Raise the numbers here and $UnreadCauseCap together,
+            # or a whole shape can be crowded out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..12) {
+                foreach ($N in 1..13) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..12) {
+                foreach ($N in 1..13) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3197,10 +3197,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 11 -Because 'the clause names at most eleven distinct causes, one per read-failure shape'
+                Should -Be 12 -Because 'the clause names at most twelve distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All twelve units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..12) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All thirteen units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..13) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3364,6 +3364,86 @@ Describe 'Get-OERInventory' {
             $Caught | Should -Not -BeNullOrEmpty -Because 'under a global Stop the trailing InventoryPartial is the one termination'
             $Caught.FullyQualifiedErrorId | Should -BeLike 'InventoryPartial*'
             [string]$Caught.TargetObject | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        }
+
+        It 'projects catalog resources as an explicit null when the resource read failed (non-terminating)' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [CmdletBinding()] param($Catalog)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            $Cat.displayName | Should -Be 'CAT-IT-Core'
+            $Cat.PSObject.Properties.Name -contains 'resources' |
+                Should -BeTrue -Because 'an omitted resources key still reconciles and prunes; only an explicit null is hands-off'
+            $null -eq $Cat.PSObject.Properties['resources'].Value | Should -BeTrue -Because 'an unread resource set is unknown, not empty'
+            InModuleScope $script:moduleName -Parameters @{ Node = $Cat } {
+                param($Node)
+                Test-OERDeclaredNull -Node $Node -Name 'resources' | Should -BeTrue -Because 'this is the gate the handler consults before its prune pass'
+            }
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'catalogs/CAT-IT-Core/resources'
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
+            $Partial[0].Exception.Message | Should -Match "Could not read a catalog's resources"
+        }
+
+        It 'projects catalog resources as an explicit null when the resource read threw' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { throw 'Too many requests.' }
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            $Cat.displayName | Should -Be 'CAT-IT-Core'
+            $Cat.PSObject.Properties.Name -contains 'resources' | Should -BeTrue
+            $null -eq $Cat.PSObject.Properties['resources'].Value | Should -BeTrue
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'catalogs/CAT-IT-Core/resources'
+        }
+
+        It 'projects an empty resources array and no partial when the read succeeded with no resources' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource { }
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            $Cat.displayName | Should -Be 'CAT-IT-Core'
+            $Cat.PSObject.Properties.Name -contains 'resources' | Should -BeTrue
+            $null -ne $Cat.PSObject.Properties['resources'].Value | Should -BeTrue -Because 'a successful read of no resources is a declared empty set'
+            @($Cat.PSObject.Properties['resources'].Value).Count | Should -Be 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'does not cache an empty name map for the access package section when the catalog read failed' {
+            # The catalog read fails on its FIRST call only; the access package section reads the
+            # same catalog again and succeeds. The group has been renamed since the catalog recorded
+            # 'role_sec_x', and the directory now answers 'role_sec_new'. A failed catalog read that
+            # still primed the shared name map with an empty one would make the package section skip
+            # the lookup and write the stale recorded name.
+            $script:CatResCalls = 0
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [CmdletBinding()] param($Catalog)
+                $script:CatResCalls++
+                if ($script:CatResCalls -eq 1) {
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+                } else {
+                    [PSCustomObject]@{ OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_new' }; $M }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly
+            $script:CatResCalls | Should -Be 2 -Because 'the catalog section and the access package section each read the catalog once'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            $Cat.PSObject.Properties.Name -contains 'resources' | Should -BeTrue
+            $null -eq $Cat.PSObject.Properties['resources'].Value | Should -BeTrue
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.resourceRoles[0].resource | Should -Be 'role_sec_new' -Because 'a failed catalog read must not leave an empty name map cached for the package section'
         }
     }
 

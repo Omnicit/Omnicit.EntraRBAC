@@ -259,17 +259,17 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits eleven
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits twelve
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
-        # access package resource role bindings), so eleven admits one of each and a normal partial
-        # run is still reported in full; only a genuinely heterogeneous large-tenant failure is
-        # truncated, and the dropped count is stated rather than silently lost. Nothing is discarded
-        # either way -- every cause is written to the verbose stream as it is seen. Raise this with
-        # the shape count when a twelfth read-failure message is added, or one shape starts crowding
-        # out another purely by ordering.
-        $UnreadCauseCap = 11
+        # access package resource role bindings, catalog resources), so twelve admits one of each and
+        # a normal partial run is still reported in full; only a genuinely heterogeneous large-tenant
+        # failure is truncated, and the dropped count is stated rather than silently lost. Nothing is
+        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
+        # this with the shape count when a thirteenth read-failure message is added, or one shape
+        # starts crowding out another purely by ordering.
+        $UnreadCauseCap = 12
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -765,36 +765,57 @@ function Get-OERInventory {
                     externallyVisible = [bool]$Cat.ExternallyVisible
                 }
                 if ($IncludeId) { $Proj.id = $Cat.Id }
-                $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id)
-                $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
-                $Proj.resources = @(foreach ($R in $CatRes) {
-                    # Map the resource type to the schema enum from the stable originSystem (the raw
-                    # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
-                    # schema/apply do not accept). Falls back to the raw value for unknown systems.
-                    $ResType = switch ($R.OriginSystem) {
-                        'AadGroup'         { 'Group' }
-                        'AadApplication'   { 'Application' }
-                        'SharePointOnline' { 'SharePointSite' }
-                        default            { $R.ResourceType }
-                    }
-                    # A SharePoint Online site is onboarded by its URL, which Graph stores as the
-                    # resource originId -- the display name is only the site title and cannot be fed
-                    # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
-                    # 'url' field so the apply engine has the real identifier while the human-readable
-                    # name is preserved. A Group or Application resource is written under the group's
-                    # or application's CURRENT name (looked up by originId, the id when it cannot be),
-                    # never the name the catalog recorded when it was added.
-                    $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
-                        $CurrentNames[[string]$R.OriginId]
-                    } else {
-                        $R.DisplayName
-                    }
-                    $ResProj = [ordered]@{ type = $ResType; name = $ResName }
-                    if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
-                        $ResProj.url = [string]$R.OriginId
-                    }
-                    [PSCustomObject]$ResProj
-                })
+                # A FAILED read is never projected as []: under -Prune an empty declared resource set
+                # removes every resource of the catalog, and an omitted key still reconciles the same
+                # way. An explicit null is the documented "leave the resources untouched" signal.
+                # Before this, the read had no error handling at all: its record reached the caller's
+                # stream, but the document still said "resources": [] and no InventoryPartial named it.
+                # The shared name map is consulted only for a catalog that WAS read, so a failure never
+                # caches an empty map for the access package section to reuse (see below).
+                $CatRes = $null
+                try {
+                    $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $CatResCause = "Could not read a catalog's resources: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CatResCause"
+                    Add-UnreadCause -Cause $CatResCause -Target ([string]$Cat.Id)
+                    $UnreadCollections.Add("catalogs/$($Cat.DisplayName)/resources")
+                    $CatRes = $null
+                }
+                if ($null -eq $CatRes) {
+                    $Proj.resources = $null
+                } else {
+                    $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
+                    $Proj.resources = @(foreach ($R in $CatRes) {
+                        # Map the resource type to the schema enum from the stable originSystem (the raw
+                        # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
+                        # schema/apply do not accept). Falls back to the raw value for unknown systems.
+                        $ResType = switch ($R.OriginSystem) {
+                            'AadGroup'         { 'Group' }
+                            'AadApplication'   { 'Application' }
+                            'SharePointOnline' { 'SharePointSite' }
+                            default            { $R.ResourceType }
+                        }
+                        # A SharePoint Online site is onboarded by its URL, which Graph stores as the
+                        # resource originId -- the display name is only the site title and cannot be fed
+                        # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
+                        # 'url' field so the apply engine has the real identifier while the human-readable
+                        # name is preserved. A Group or Application resource is written under the group's
+                        # or application's CURRENT name (looked up by originId, the id when it cannot be),
+                        # never the name the catalog recorded when it was added.
+                        $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
+                            $CurrentNames[[string]$R.OriginId]
+                        } else {
+                            $R.DisplayName
+                        }
+                        $ResProj = [ordered]@{ type = $ResType; name = $ResName }
+                        if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
+                            $ResProj.url = [string]$R.OriginId
+                        }
+                        [PSCustomObject]$ResProj
+                    })
+                }
                 $Catalogs.Add([PSCustomObject]$Proj)
             }
         }
