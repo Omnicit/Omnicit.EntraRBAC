@@ -333,7 +333,7 @@ function Set-OERGroupPimPolicy {
         }
         Write-Verbose "[Set-OERGroupPimPolicy] Resolved group to '$GroupId'."
 
-        # A FAILED LOOKUP IS NOT AN ABSENT POLICY -- same split as Get-OERGroupPimPolicy.ps1:96-115.
+        # A FAILED LOOKUP IS NOT AN ABSENT POLICY -- same split as Get-OERGroupPimPolicy.
         # A refused read (403, 429, ...) means "I could not tell", never "there is none", so it gets
         # its own PimPolicyReadFailed id and nothing is changed; only a genuinely absent policy is
         # PimPolicyNotFound.

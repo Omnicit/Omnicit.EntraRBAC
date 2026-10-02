@@ -9,10 +9,11 @@ function Resolve-OERReviewerScope {
     ./manager with queryRoot decisions, and -SelfReview (or no reviewer inputs) leaves the reviewers
     collection empty (a self-review). Authentication is lazy: Initialize-OERAuth is called only when at
     least one non-GUID name is present, so a pure-GUID or switch-only input performs no auth and no
-    Graph call. Resolution stops at the first value that cannot be resolved. Returns a hashtable with
-    keys Reviewers, FallbackReviewers (the resolved scope objects), FailedKind ('User', 'Group', or
-    $null) and FailedValue (the offending value, or $null). The caller routes a non-null FailedValue as
-    a non-terminating error.
+    Graph call. Resolution stops at the first value that does not resolve or whose lookup fails.
+    Returns a hashtable with keys Reviewers, FallbackReviewers (the resolved scope objects), FailedKind
+    ('User', 'Group', or $null), FailedValue (the offending value, or $null) and the three optional
+    companions FailedErrorId, FailedMessage and FailedRecord, described below. The caller routes a
+    non-null FailedValue as a non-terminating error.
 
     FailedErrorId and FailedMessage are optional companions to FailedKind/FailedValue, mirroring the
     channel Resolve-OERAccessReviewScopeTarget already exposes. They are $null for a plain not-found,

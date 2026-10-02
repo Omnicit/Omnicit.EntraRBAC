@@ -19,7 +19,7 @@ Describe 'Remove-OERAccessReviewDefinition' {
     }
 
     It 'warns before deleting and still issues the DELETE' {
-        # CLAUDE.md SECURITY rule #4: audit PR9 Task 7 sweep -- Remove-OERAccessReviewDefinition.ps1:60
+        # CLAUDE.md SECURITY rule #4: audit PR9 Task 7 sweep -- Remove-OERAccessReviewDefinition
         # emits an operator warning before the destructive DELETE, but no It captured it.
         $Warnings = @()
         Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
@@ -130,8 +130,8 @@ Describe 'Remove-OERAccessReviewDefinition' {
     }
 
     It 'surfaces a Graph DELETE failure as a non-terminating error and emits nothing' {
-        # Targets the DELETE catch at Remove-OERAccessReviewDefinition.ps1:65 -- distinct from the
-        # resolver-throw test above, which never reaches Invoke-OERGraphRequest at all. Guards two
+        # Targets the catch around the Graph DELETE call -- distinct from the resolver-throw tests
+        # above, which never reach Invoke-OERGraphRequest at all. Guards two
         # things the cmdlet must do on a Graph failure: call Remove-OERErrorRecord (the mandatory
         # bearer-token-hygiene line -- asserted via Should -Invoke, since a deleted line would
         # otherwise pass unnoticed) and write its OWN non-terminating record. Match the

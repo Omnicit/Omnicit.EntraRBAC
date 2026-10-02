@@ -54,13 +54,16 @@ function Get-OERPimGroupPolicyId {
     $Uri = Get-OERPimGroupsGraphPath -Path "policies/roleManagementPolicyAssignments?`$filter=scopeId eq '$Escaped' and scopeType eq 'Group'"
     # 400 ResourceTypeNotSupported ("Resource type not supported for onboarding") is an answer this
     # function reports as $null. Declaring it at the REQUEST is what keeps it out of the caller's
-    # -ErrorVariable: every caller already wraps this call in
-    # try { } catch { Remove-OERErrorRecord; $null }, which turned the throw back into the same
-    # $null only AFTER the engine had recorded it -- and -ErrorVariable is filled by the engine, so
-    # no catch could ever reach those records. Every other failure (403, 429, 500) still throws and
-    # those catches still handle it. -NotFoundAsUnlisted declares ResourceNotFound the same way, for
-    # the same reason: a wait that caught a thrown 404 would hand the caller its records even when
-    # the policy was listed on the next look.
+    # -ErrorVariable, which the engine fills as the record is raised: a caller that caught the throw
+    # and turned it back into the same $null would do so only AFTER the engine had recorded it, and
+    # no catch could ever reach those records. Every other failure (403, 429, 500) still throws, and
+    # each caller's catch scrubs the record first and then does what that caller's own rule says:
+    # Get-OERGroupPermanentEligibilityState rethrows it, Get-OERGroupPimPolicy and
+    # Set-OERGroupPimPolicy report PimPolicyReadFailed, and Get-OERInventory and
+    # Sync-OERStructureGroup read the policy directly. None of them takes it for "no policy is
+    # listed". -NotFoundAsUnlisted declares ResourceNotFound the same way, for the same reason: a
+    # wait that caught a thrown 404 would hand the caller its records even when the policy was
+    # listed on the next look.
     $Expected = @('ResourceTypeNotSupported')
     if ($NotFoundAsUnlisted) { $Expected += 'ResourceNotFound' }
     $Response = Invoke-OERGraphRequest -Uri $Uri -ExpectedErrorCode $Expected

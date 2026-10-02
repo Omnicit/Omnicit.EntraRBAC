@@ -8,8 +8,9 @@ function Remove-OERGroupMember {
     members collection (default) or the owners collection when -AccessType owner is set. Each
     principal is removed through the group's members/{id}/$ref or owners/{id}/$ref navigation
     endpoint. A principal that is not present surfaces a Graph error that is reported per-principal
-    without stopping the remaining removals. A group that cannot be resolved produces a
-    non-terminating GroupNotFound error. Supports -WhatIf and -Confirm.
+    without stopping the remaining removals. A group name that matches nothing produces a
+    non-terminating GroupNotFound error; a group lookup that itself fails (a refused, throttled or
+    failed read) is reported as that failure, never as GroupNotFound. Supports -WhatIf and -Confirm.
 
     Principals may be given as raw object ids with -PrincipalId or by name with -User (user
     principal name), -GroupPrincipal (group display name) and -ServicePrincipal (service principal

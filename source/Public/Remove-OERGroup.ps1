@@ -8,8 +8,10 @@ function Remove-OERGroup {
     Deleting a group is a high-impact, hard-to-reverse operation, so the command declares
     ConfirmImpact = High (it prompts unless -Confirm:$false is passed) and emits an explicit warning
     before the delete. The warning is written BEFORE the confirmation prompt, so it also appears under
-    -WhatIf and under -Confirm:$false. A group that cannot be resolved produces a non-terminating
-    GroupNotFound error. Supports -WhatIf and -Confirm.
+    -WhatIf and under -Confirm:$false. A group name that matches nothing produces a non-terminating
+    GroupNotFound error; a group lookup that itself fails (a refused, throttled or failed read) is
+    reported as that failure, never as GroupNotFound, and nothing is deleted. Supports -WhatIf and
+    -Confirm.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same

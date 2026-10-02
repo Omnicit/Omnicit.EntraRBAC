@@ -10,9 +10,11 @@ function Add-OERCatalogResource {
     - -GroupId / -ApplicationId take an object id directly (no lookup).
     - -Group / -Application take a display name and resolve it to an object id (groups via
       Resolve-OERGroupId, enterprise applications via Resolve-OERApplicationId, which queries
-      servicePrincipals). A name that does not resolve produces a non-terminating GroupNotFound or
-      ApplicationNotFound error, and a name that matches more than one group or service principal is
-      refused with AmbiguousGroupName or AmbiguousApplicationName, naming the candidate ids.
+      servicePrincipals). A name that matches nothing produces a non-terminating GroupNotFound or
+      ApplicationNotFound error, a name that matches more than one group or service principal is
+      refused with AmbiguousGroupName or AmbiguousApplicationName, naming the candidate ids, and a
+      lookup that itself fails (a refused, throttled or failed read) is reported as that failure,
+      never as GroupNotFound or ApplicationNotFound.
     - -SharePointSite takes a site URL (originSystem SharePointOnline).
 
     Groups onboard with originSystem AadGroup; applications with originSystem AadApplication (the resolved

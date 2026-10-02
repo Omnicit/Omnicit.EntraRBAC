@@ -8,8 +8,9 @@ function Add-OERGroupMember {
     (default) or as an owner when -AccessType owner is set. Each principal is added through the
     group's members/$ref or owners/$ref navigation endpoint. A principal that is already present
     surfaces a Graph error that is reported per-principal without stopping the remaining additions.
-    A group that cannot be resolved produces a non-terminating GroupNotFound error. Supports
-    -WhatIf and -Confirm.
+    A group name that matches nothing produces a non-terminating GroupNotFound error; a group lookup
+    that itself fails (a refused, throttled or failed read) is reported as that failure, never as
+    GroupNotFound. Supports -WhatIf and -Confirm.
 
     Principals may be given as raw object ids with -PrincipalId or by name with -User (user
     principal name), -GroupPrincipal (group display name) and -ServicePrincipal (service principal
