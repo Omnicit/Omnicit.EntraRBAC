@@ -209,6 +209,13 @@ That second rule is about SHAPE, not a list of approved values, and that is deli
 satisfied by adding an entry to something. The three pinned exceptions named in the register above
 are the whole of the list and do not grow.
 
+**A stand-in in angle brackets is written as code.** GitHub reads `<id>`, `<oer-live-cc>` or any
+other `<word>` outside code as an HTML tag and renders nothing, so the redaction disappears from the
+page and the sentence around it stops making sense. Put the stand-in inside backticks, or write it as
+`\<id>` where a backtick would close a code span the line already has; quotes alone do not help. The
+same gate fails on such a bracket in any tracked `.md` under `docs/` or `specs/`, and in `README.md`
+and `CHANGELOG.md`. Fenced blocks and code spans are skipped.
+
 The gate is a backstop, not a substitute for redacting as you write. It cannot see the one failure
 the register above exists to prevent -- a placeholder that means two different things -- because
 every value involved is already a valid placeholder.

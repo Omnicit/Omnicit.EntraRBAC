@@ -1045,7 +1045,7 @@ sign-in block again.
   `rules differing from the baseline`: an earlier run did not finish its teardown, or someone changed
   the role's settings. Stop -- no check may write to the policy before this is understood; a leftover
   baseline file is restored with the script's `-Teardown`. A warning that the Reader policy "allows
-  <n> activation hour(s), not 8" (no record yet), or "differs from its record" and was not restored,
+  `<n>` activation hour(s), not 8" (no record yet), or "differs from its record" and was not restored,
   or that "the Reader record names another policy": the Azure test policy does not start where this
   file assumes -- stop, and let the script's `-Teardown` restore it from the record, or move a foreign
   record aside, before section 5. A refusal naming a directory role that is not one of the two, or a

@@ -1648,7 +1648,7 @@ baseline files say, and the Teardown restores exactly what those files hold.
   script. A third request in any call: the exact-case name did not match in one request -- record
   it.
   **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
-  Pass. Two requests per call; Message Center Reader Active holds <oer-live-cc> and <oer-s64-ccrag>, both Assigned, Direct, afterDateTime, 2 days; no inherited row for oer-live-cc (direct 1, other 0); the baseline diff only-live [oer-live-cc, oer-s64-ccrag]; both raw reads one row.
+  Pass. Two requests per call; Message Center Reader Active holds `<oer-live-cc>` and `<oer-s64-ccrag>`, both Assigned, Direct, afterDateTime, 2 days; no inherited row for oer-live-cc (direct 1, other 0); the baseline diff only-live [oer-live-cc, oer-s64-ccrag]; both raw reads one row.
 
   ```text
   identity check: session app id is oer-live-cc: True
@@ -2070,7 +2070,7 @@ list what it has just accepted.
   failure where it should read "not a group": record the raw code); `GroupNotRoleAssignable`; a
   `users` request.
   **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
-  Pass. groups/<oer-s64-user2> answered 404 Request_ResourceNotFound; no "Could not check" line; Provisioned; a window of 2 days.
+  Pass. groups/`<oer-s64-user2>` answered 404 Request_ResourceNotFound; no "Could not check" line; Provisioned; a window of 2 days.
 
   ```text
   identity check: session app id is oer-live-cc: True
@@ -3520,7 +3520,7 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   `prune withheld: the signed-in identity's object id is unknown` -- 0.4 should have caught it;
   the `oer-s64-rag` row `Updated` -- 2.7's window did not converge; any row naming Reports Reader.
   **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
-  Pass. Three rows: <oer-live-cc> Skipped (own), <oer-s64-ccrag> Skipped with the group guard's Detail verbatim, oer-s64-rag Unchanged; Skipped=2, Unchanged=1; 0 targets; the real run the same; both raw rows still there (Direct).
+  Pass. Three rows: `<oer-live-cc>` Skipped (own), `<oer-s64-ccrag>` Skipped with the group guard's Detail verbatim, oer-s64-rag Unchanged; Skipped=2, Unchanged=1; 0 targets; the real run the same; both raw rows still there (Direct).
 
   ```text
   identity check: session app id is oer-live-cc: True
@@ -3734,7 +3734,7 @@ $Doc4 = New-S64Doc -Policy $Pol3 -Assignment $E1, $E2, $E3Id, $E4
   there is the permission question Setup names (`Directory.Read.All` for the `directoryObjects`
   form): name it, and never finish the check with another sign-in.
   **Result:** (CC as oer-live-cc, 2026-09-29, redacted per docs/live-verification/README.md)
-  Pass -- the group guard, live. Raw: getMemberGroups of oer-live-cc status 200, 1 group, holds oer-s64-ccrag True, holds oer-s64-rag False (the untyped member read prints [] for oer-s64-ccrag as in 0.5; read as servicePrincipal: [oer-live-cc]). The plan, in Graph's order: oer-s64-rag would remove, <oer-live-cc> Skipped (own), <oer-s64-ccrag> Skipped (group guard, Detail verbatim), oer-s64-user1 would create; Skipped=4; every gate line True. 4.5c: 7 requests, exactly one POST v1.0/directoryObjects/<oer-live-cc>/getMemberGroups, errors 0. 4.5d: Removed=1 (oer-s64-rag), Skipped=2, Created=1, no error; raw: oer-s64-ccrag 1 row, own 1 Direct row, oer-s64-rag 0, oer-s64-user1 1 row (1 day).
+  Pass -- the group guard, live. Raw: getMemberGroups of oer-live-cc status 200, 1 group, holds oer-s64-ccrag True, holds oer-s64-rag False (the untyped member read prints [] for oer-s64-ccrag as in 0.5; read as servicePrincipal: [oer-live-cc]). The plan, in Graph's order: oer-s64-rag would remove, `<oer-live-cc>` Skipped (own), `<oer-s64-ccrag>` Skipped (group guard, Detail verbatim), oer-s64-user1 would create; Skipped=4; every gate line True. 4.5c: 7 requests, exactly one POST v1.0/directoryObjects/`<oer-live-cc>`/getMemberGroups, errors 0. 4.5d: Removed=1 (oer-s64-rag), Skipped=2, Created=1, no error; raw: oer-s64-ccrag 1 row, own 1 Direct row, oer-s64-rag 0, oer-s64-user1 1 row (1 day).
 
   ```text
   identity check: session app id is oer-live-cc: True
@@ -4157,7 +4157,7 @@ the own-assignment guard held.
   you are a member of `oer-s64-rag` after all: stop and record it.
   **Result:**
 
-  Pass (the operator as himself, 2026-09-30; checked by CC against Expect). All four identity lines True and the user lookup True; the first attempt, made before 0.5 had run, was stopped by the gate (every target <not a test object>, every one allowed: False) and wrote nothing. 6.1b: 4 targets, all oer-s64 test objects, every one allowed True; 6.1c Removed=4, <Me> (Eligible) Created, oer-s64-user1 (Active) Updated (permanent to one day -- no refusal, since its eligible assignment had just been removed and the active one was hours old); the raw read one row for <Me>, a window of 1 day. 6.1d: one row <Me> (User) Activated; Direct. 6.1e: Unchanged=2, 0 targets, no row naming <Me> in the (Reports Reader, Active) pair: the Activated filter held. 6.1f and the count line were not run: 6.1e's plan held 0 targets, so the apply would have changed nothing.
+  Pass (the operator as himself, 2026-09-30; checked by CC against Expect). All four identity lines True and the user lookup True; the first attempt, made before 0.5 had run, was stopped by the gate (every target `<not a test object>`, every one allowed: False) and wrote nothing. 6.1b: 4 targets, all oer-s64 test objects, every one allowed True; 6.1c Removed=4, `<Me>` (Eligible) Created, oer-s64-user1 (Active) Updated (permanent to one day -- no refusal, since its eligible assignment had just been removed and the active one was hours old); the raw read one row for `<Me>`, a window of 1 day. 6.1d: one row `<Me>` (User) Activated; Direct. 6.1e: Unchanged=2, 0 targets, no row naming `<Me>` in the (Reports Reader, Active) pair: the Activated filter held. 6.1f and the count line were not run: 6.1e's plan held 0 targets, so the apply would have changed nothing.
 
   ```text
   --- identity check ---
@@ -4330,7 +4330,7 @@ Azure object to restore or delete (R17).
   same. `rows left` above 0 after a minute: read again; Graph lists removals a moment late.
   **Result:**
 
-  Pass after one wait (CC as oer-live-cc, 2026-09-30, redacted per docs/live-verification/README.md). Seven direct oer-s64 rows (the 3.3 re-run had re-created four on Reports Reader). The first run, 3.7 minutes after those four started: every Reports Reader removal refused with ActiveDurationTooShort (the five-minute rule of 3.3), oer-s64-user2's Message Center Reader eligible removed, and the Message Center Reader active removals of oer-s64-user1 and oer-s64-ccrag answered RoleAssignmentDoesNotExist while Graph lists both adminRemove requests Revoked and the rows are gone. The second run, 8 minutes after: both eligible removals accepted; the two active removals again answered RoleAssignmentDoesNotExist with the requests Revoked and the rows gone (recorded as a finding: a successful active removal reported as an error). direct oer-s64 rows left: 0; Message Center Reader Active held only <oer-live-cc>.
+  Pass after one wait (CC as oer-live-cc, 2026-09-30, redacted per docs/live-verification/README.md). Seven direct oer-s64 rows (the 3.3 re-run had re-created four on Reports Reader). The first run, 3.7 minutes after those four started: every Reports Reader removal refused with ActiveDurationTooShort (the five-minute rule of 3.3), oer-s64-user2's Message Center Reader eligible removed, and the Message Center Reader active removals of oer-s64-user1 and oer-s64-ccrag answered RoleAssignmentDoesNotExist while Graph lists both adminRemove requests Revoked and the rows are gone. The second run, 8 minutes after: both eligible removals accepted; the two active removals again answered RoleAssignmentDoesNotExist with the requests Revoked and the rows gone (recorded as a finding: a successful active removal reported as an error). direct oer-s64 rows left: 0; Message Center Reader Active held only `<oer-live-cc>`.
 
   ```text
   identity check: session app id is oer-live-cc: True

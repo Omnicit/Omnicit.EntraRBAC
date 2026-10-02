@@ -31,6 +31,22 @@ BeforeAll {
     $script:DocHygieneScopePattern = '^(docs|specs|source|tests)/'
 
     # =====================================================================================
+    # MARKDOWN SCOPE: every tracked .md under docs/ or specs/, plus README.md and CHANGELOG.md.
+    #
+    # GitHub reads a '<word>' written outside code as an HTML tag and renders nothing in its
+    # place, so a redacted stand-in such as '<id>' silently vanishes from the page that is the
+    # record, and the sentence around it stops making sense. The check that keeps those out reads
+    # Markdown only, and it reaches two files at the root that no other check here does:
+    # README.md, the repository's front page, and CHANGELOG.md, whose [Unreleased] section is
+    # published as the release notes: the PowerShell Gallery shows them as plain text, and the
+    # GitHub release body built from the same notes renders them as Markdown, where a tag
+    # vanishes. Adding the root files to the scope above instead would also put them under the
+    # object-id, address and credential rules, which is a separate decision this check does not
+    # take.
+    # =====================================================================================
+    $script:DocHygieneMarkdownScopePattern = '^((docs|specs)/.+\.md|README\.md|CHANGELOG\.md)$'
+
+    # =====================================================================================
     # PROSE SCOPE vs CODE SCOPE -- why the object-id rule is not the same in both.
     #
     # Under docs/ and specs/ every GUID is PROSE. It got there by being pasted out of a console, so
@@ -126,13 +142,16 @@ BeforeAll {
     # =====================================================================================
     $script:DocHygieneSkipReason = $null
     $script:DocHygieneFiles = @()
+    $script:DocHygieneMarkdownFiles = @()
 
     if (-not (Get-Command -Name 'git' -CommandType Application -ErrorAction SilentlyContinue)) {
         $script:DocHygieneSkipReason =
         'git was not found on PATH, and this gate enumerates TRACKED files with git ls-files. It measured nothing -- install git, or run it inside a clone, then re-run.'
     }
     else {
-        $TrackedPaths = @(& git -C $script:ProjectPath -c core.quotePath=false ls-files -- 'docs' 'specs' 'source' 'tests' 2>$null)
+        # README.md and CHANGELOG.md are listed for the Markdown scope only; the scope pattern
+        # keeps them out of $script:DocHygieneFiles and so out of every other check here.
+        $TrackedPaths = @(& git -C $script:ProjectPath -c core.quotePath=false ls-files -- 'docs' 'specs' 'source' 'tests' 'README.md' 'CHANGELOG.md' 2>$null)
 
         if (0 -ne $LASTEXITCODE) {
             $script:DocHygieneSkipReason =
@@ -153,6 +172,21 @@ BeforeAll {
                     [PSCustomObject]@{
                         RelativePath = $RelativePath
                         IsCode       = $RelativePath -match $script:DocHygieneCodeScopePattern
+                        Lines        = [System.IO.File]::ReadAllLines($FullPath)
+                    }
+                }
+            )
+
+            $script:DocHygieneMarkdownFiles = @(
+                foreach ($RelativePath in ($TrackedPaths | Where-Object { $_ -match $script:DocHygieneMarkdownScopePattern })) {
+                    $FullPath = Join-Path -Path $script:ProjectPath -ChildPath $RelativePath
+
+                    if (-not (Test-Path -LiteralPath $FullPath -PathType Leaf)) {
+                        continue
+                    }
+
+                    [PSCustomObject]@{
+                        RelativePath = $RelativePath
                         Lines        = [System.IO.File]::ReadAllLines($FullPath)
                     }
                 }
@@ -282,6 +316,144 @@ BeforeAll {
         $Bare = $Value -replace '-', ''
 
         return ($Bare[12] -eq '4' -and $Bare[16] -match '[89abAB]')
+    }
+
+    function ConvertTo-DocHygieneMarkdownProse {
+        <#
+            .SYNOPSIS
+                Returns a Markdown file's lines with fenced blocks and code spans blanked out.
+
+            .DESCRIPTION
+                The algorithm is exactly the one in Test-MdAngleBrackets.py, the maintainer's
+                checker for the live-verification notes kept outside this repository, and the two
+                must agree hit for hit on the same tree. It is close to CommonMark but not the same,
+                and where they differ the script is what this follows:
+
+                - A line that opens with optional whitespace and then three or more backticks or
+                  tildes opens a fenced block. The block runs to the next such line of the same
+                  character whose run is at least as long, or to the end of the file. The whole
+                  block is skipped, both fence lines included.
+                - The remaining lines are grouped into paragraphs at blank lines and at fences.
+                - Within a paragraph, a run of N backticks opens a code span that the next run of
+                  exactly N closes, across a line break too. A candidate closer FOLLOWED by another
+                  backtick is skipped; only the character after it is checked. A run with no
+                  closer is literal text.
+                - A code span is replaced by spaces with its line breaks kept, so every character
+                  left keeps its line and column.
+
+                KNOWN FALSE NEGATIVE, deliberately not handled, shared with Test-MdAngleBrackets.py:
+                CommonMark lets an open tag's attributes cross one line break, so a long stand-in
+                broken by the 100-column wrap -- '<management groups: the' ending one line and
+                'listing failed>' starting the next -- is hidden by GitHub but matched by neither
+                scanner, since the tag pattern stops at a line break. Zero such cases are in scope
+                today. Keep a redacted stand-in on one line; do not change the pattern to reach
+                across a break.
+
+                Lines holds the masked text, one entry per input line, with skipped lines empty.
+                CodeSpanCount is the number of code spans removed outside fenced blocks; the check
+                uses it to prove that it reached any prose at all.
+        #>
+        [OutputType([PSCustomObject])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [AllowEmptyString()]
+            [string[]]$Line
+        )
+
+        $FencePattern = [regex]'^\s*(`{3,}|~{3,})'
+        $Tick = [char]'`'
+
+        # Pass 1: which lines are prose, grouped into paragraphs of line indexes.
+        $Paragraphs = [System.Collections.Generic.List[int[]]]::new()
+        $Current = [System.Collections.Generic.List[int]]::new()
+        $Fence = $null
+
+        for ($Index = 0; $Index -lt $Line.Count; $Index++) {
+            $FenceMatch = $FencePattern.Match($Line[$Index])
+
+            if ($Fence) {
+                if ($FenceMatch.Success -and $FenceMatch.Groups[1].Value[0] -eq $Fence[0] -and $FenceMatch.Groups[1].Value.Length -ge $Fence.Length) {
+                    $Fence = $null
+                }
+
+                continue
+            }
+
+            if ($FenceMatch.Success -or [string]::IsNullOrWhiteSpace($Line[$Index])) {
+                if ($Current.Count -gt 0) {
+                    $Paragraphs.Add($Current.ToArray())
+                    $Current.Clear()
+                }
+
+                if ($FenceMatch.Success) {
+                    $Fence = $FenceMatch.Groups[1].Value
+                }
+
+                continue
+            }
+
+            $Current.Add($Index)
+        }
+
+        if ($Current.Count -gt 0) {
+            $Paragraphs.Add($Current.ToArray())
+        }
+
+        # Pass 2: blank every code span in each paragraph, keeping its line breaks.
+        [string[]]$Masked = @('') * $Line.Count
+        $CodeSpanCount = 0
+
+        foreach ($Indices in $Paragraphs) {
+            $Text = [string]::Join("`n", [string[]]@(foreach ($Member in $Indices) { $Line[$Member] }))
+            $Builder = [System.Text.StringBuilder]::new($Text.Length)
+            $Position = 0
+
+            while ($Position -lt $Text.Length) {
+                $RunStart = $Text.IndexOf($Tick, $Position)
+
+                if ($RunStart -lt 0) {
+                    $null = $Builder.Append($Text, $Position, $Text.Length - $Position)
+                    break
+                }
+
+                $null = $Builder.Append($Text, $Position, $RunStart - $Position)
+
+                $RunEnd = $RunStart
+                while ($RunEnd -lt $Text.Length -and $Text[$RunEnd] -eq $Tick) {
+                    $RunEnd++
+                }
+
+                $Run = $Text.Substring($RunStart, $RunEnd - $RunStart)
+                $Close = $Text.IndexOf($Run, $RunEnd, [System.StringComparison]::Ordinal)
+
+                while ($Close -ge 0 -and ($Close + $Run.Length) -lt $Text.Length -and $Text[$Close + $Run.Length] -eq $Tick) {
+                    $Close = $Text.IndexOf($Run, $Close + $Run.Length + 1, [System.StringComparison]::Ordinal)
+                }
+
+                if ($Close -ge 0) {
+                    $SpanEnd = $Close + $Run.Length
+                    $null = $Builder.Append(($Text.Substring($RunStart, $SpanEnd - $RunStart) -replace '[^\n]', ' '))
+                    $CodeSpanCount++
+                    $Position = $SpanEnd
+                    continue
+                }
+
+                $null = $Builder.Append($Run)
+                $Position = $RunEnd
+            }
+
+            $MaskedParagraph = $Builder.ToString().Split("`n")
+
+            for ($Offset = 0; $Offset -lt $Indices.Count; $Offset++) {
+                $Masked[$Indices[$Offset]] = $MaskedParagraph[$Offset]
+            }
+        }
+
+        [PSCustomObject]@{
+            Lines         = $Masked
+            CodeSpanCount = $CodeSpanCount
+        }
     }
 }
 
@@ -590,5 +762,83 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         # this value grants access rather than merely naming an object.
         @($Hits).Count |
             Should -Be 0 -Because ('no tracked file under docs/, specs/, source/ or tests/ may contain a credential -- a JWT, an Authorization header with a value, or a client secret (see docs/live-verification/README.md). A credential that reached a tracked file is ROTATED, not just redacted. A test fixture that must be token-shaped says so in the value, with NOT-A-REAL-TOKEN. Locations, values deliberately not shown: {0}' -f (@($Hits | Sort-Object -Unique) -join ', '))
+    }
+
+    It 'Should carry no angle bracket that renders as an HTML tag outside code in any tracked Markdown file in scope' {
+        if ($script:DocHygieneSkipReason) {
+            Set-ItResult -Skipped -Because $script:DocHygieneSkipReason
+            return
+        }
+
+        # GitHub reads '<word>', '</word>', '<!...>' and '<?...>' outside code as markup and renders
+        # nothing in its place. In a checklist that is a redacted stand-in vanishing from the
+        # record; a word missing from CHANGELOG.md on GitHub and from the GitHub release body built
+        # from it. Fenced blocks and code spans are skipped by ConvertTo-DocHygieneMarkdownProse, a
+        # backslash before the bracket escapes it, and what is left must hold no tag.
+        $Prose = @(
+            foreach ($Entry in $script:DocHygieneMarkdownFiles) {
+                $Converted = ConvertTo-DocHygieneMarkdownProse -Line $Entry.Lines
+
+                [PSCustomObject]@{
+                    RelativePath  = $Entry.RelativePath
+                    Lines         = $Converted.Lines
+                    CodeSpanCount = $Converted.CodeSpanCount
+                }
+            }
+        )
+
+        $TagPattern = [regex]'(?<!\\)<(?=[A-Za-z/!?])[^<>\n]*>'
+        $IsNeverAllowed = {
+            param ($Value, $Entry)
+
+            $false
+        }
+
+        # Emptiness guard. Zero files means the enumeration broke, not that the prose is clean.
+        $Prose.Count |
+            Should -BeGreaterThan 0 -Because 'this check must read at least one tracked Markdown file; zero files means the enumeration failed and the check ran on nothing'
+
+        # Narrowing guards. A scope pattern that loses the root files, or the checklists this check
+        # was written for, still enumerates files and still passes on them.
+        $InScope = @($Prose | ForEach-Object { $_.RelativePath })
+
+        $InScope | Should -Contain 'README.md' -Because 'README.md must be in scope; if it is not, the check stopped reaching the root files'
+
+        $InScope | Should -Contain 'CHANGELOG.md' -Because 'CHANGELOG.md must be in scope; its [Unreleased] section also becomes the GitHub release body, which GitHub renders the same way'
+
+        @($InScope | Where-Object { $_ -like 'docs/live-verification/*' }).Count |
+            Should -BeGreaterThan 0 -Because 'the live-verification checklists must stay in this scope; zero means the scan narrowed away from the folder the check was written for'
+
+        # Reach guard. The files in scope hold thousands of code spans between them, so a scan that
+        # removed none reached no prose at all -- every line taken for a fenced block, or the
+        # code-span pass never run -- and a check that sees no prose passes on nothing.
+        $CodeSpanTotal = 0
+        foreach ($Entry in $Prose) {
+            $CodeSpanTotal += $Entry.CodeSpanCount
+        }
+
+        $CodeSpanTotal |
+            Should -BeGreaterThan 0 -Because 'the scan must have removed at least one code span; zero means it reached no prose at all and the check ran on nothing'
+
+        # Known answer. A tag pattern edited into one that never matches leaves every guard above
+        # green and this check green on every file, so a fixed sample proves the scan still finds
+        # what it is for: the bare tag on line 1 is the ONE hit, while the code span, the escaped
+        # form and the fenced block are all skipped.
+        $Sample = ConvertTo-DocHygieneMarkdownProse -Line @(
+            'A bare <hidden> tag, a `<coded>` one and an escaped \<shown> one.'
+            ''
+            '```text'
+            'A <fenced> one.'
+            '```'
+        )
+        $SampleHits = @(Get-DocHygieneMatchLocation -File @([PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample.Lines }) -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
+
+        ($SampleHits -join ', ') |
+            Should -Be 'sample:1' -Because 'the known-answer sample must yield exactly its one bare tag; anything else means the scan stopped finding tags, or stopped skipping code'
+
+        $Hits = @(Get-DocHygieneMatchLocation -File $Prose -Pattern $TagPattern -IsAllowed $IsNeverAllowed)
+
+        @($Hits).Count |
+            Should -Be 0 -Because ('no tracked .md under docs/ or specs/, and neither README.md nor CHANGELOG.md, may hold an angle bracket outside code that GitHub would render as an HTML tag: it is shown as nothing, so a redacted stand-in vanishes from the record. Put the token inside backticks, or write it with a backslash before the bracket where a backtick would close a code span the line already has (see docs/live-verification/README.md). In CHANGELOG.md use backticks only -- the Gallery shows its notes as plain text, where a backslash would show instead of escaping anything. An autolink or deliberate HTML is refused the same way: write a bare URL, or put the markup in backticks. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
     }
 }

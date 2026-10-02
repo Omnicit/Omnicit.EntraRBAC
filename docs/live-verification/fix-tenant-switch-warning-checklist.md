@@ -2422,7 +2422,7 @@ LastRequestTenantId : organizations
 
   Written after the run and executed as its own runbook, in a FRESH job. This is the check that would
   prove the post-call warning's own consequence sentence, which opens "every call in this session acts
-  on '<granted>' while reporting '<named>'" and goes on to name Azure Resource Manager calls, including
+  on '`<granted>`' while reporting '`<named>`'" and goes on to name Azure Resource Manager calls, including
   the ones that write role assignments, alongside Microsoft Graph ones -- and which until this run had
   shipped unmeasured.
 

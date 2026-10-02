@@ -114,7 +114,7 @@ the hashes change when the branch is rebased onto `main` before it merges.
   name after a rename", "fix: fail a rename that neither name resolves instead of creating a group").
   A `groups[]` entry declares its new name as `displayName` and its current name (or object id) as
   `previousDisplayName`. Only the previous name resolving: the rename is folded into the property
-  update and reported `Updated` "renamed group '<previous>' to '<new>'". Both resolving to DIFFERENT
+  update and reported `Updated` "renamed group '`<previous>`' to '`<new>`'". Both resolving to DIFFERENT
   groups: one `Failed` row and a `GroupRenameConflict` error, and nothing written -- the document never
   merges two groups. NEITHER resolving -- as right after a rename, while Graph's name lookup has not
   caught up -- one `Failed` row and a `GroupRenameNotFound` error, and nothing created: a document
@@ -1773,7 +1773,7 @@ active group assignment, so it is not run live ("What this file does not check")
   with a `Could not determine whether group ...` cause is the defect the fix "treat a group PIM for
   Groups cannot manage as not using it" exists for: Graph answered the dynamic group's listing with a
   code the criterion does not declare -- record it with 1.5's raw answer.
-  **Result:** PASS. untouched: pimPolicy absent, 1 eligibility read, 1 criterion listing, 0 policy-assignment listings, 0 rule reads, verbose reason as 1.2. policy: pimPolicy present (member activationMaxHours 4), 1/1/4/2. elig: pimPolicy present (member activationMaxHours 8), 1/0/4/2 -- its eligibility decides without a listing. dynamic: pimPolicy absent, 1/1/0/0, verbose "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". Rule reads in all 4; the per-group split works (policy ids read Group_<group id>_<id>). No warning, no error, no InventoryPartial.
+  **Result:** PASS. untouched: pimPolicy absent, 1 eligibility read, 1 criterion listing, 0 policy-assignment listings, 0 rule reads, verbose reason as 1.2. policy: pimPolicy present (member activationMaxHours 4), 1/1/4/2. elig: pimPolicy present (member activationMaxHours 8), 1/0/4/2 -- its eligibility decides without a listing. dynamic: pimPolicy absent, 1/1/0/0, verbose "PIM for Groups cannot manage the group (ResourceTypeNotSupported)". Rule reads in all 4; the per-group split works (policy ids read Group_`<group id>`_`<id>`). No warning, no error, no InventoryPartial.
   ```text
   === 1.3 the four oer-s65-pim groups -- Get-OERInventory
   --- requests, in the order sent: 29 (GET=28, POST=1)
@@ -2662,7 +2662,7 @@ group level.
   `azurePimEligibility.json`, and the design (R4) must change.** Record it as that finding, not as a
   flake, and do not tick this box. The subscription in `SkippedEligibilityScopes` -- the read was
   refused (a missing permission, Stop conditions) and the measurement was not made: `[~]`.
-  **Result:** PASS -- R4 HOLDS. THE MEASUREMENT: True -- the UNFILTERED subscription read (GET /subscriptions/<SubId>/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01) returned oer-s65-user1's Reader eligibility AT oer-s65-rg: scope /subscriptions/<SubId>/resourceGroups/oer-s65-rg, role Reader, principal OER S65 User1, User, Direct, Provisioned, endDateTime in 30 days. File entries 2, at a scope below a subscription 1. No error published by the cmdlet; the 5 other records collected are the refused management-group listing (R14; see 2.3 finding b).
+  **Result:** PASS -- R4 HOLDS. THE MEASUREMENT: True -- the UNFILTERED subscription read (GET /subscriptions/`<SubId>`/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01) returned oer-s65-user1's Reader eligibility AT oer-s65-rg: scope /subscriptions/`<SubId>`/resourceGroups/oer-s65-rg, role Reader, principal OER S65 User1, User, Direct, Provisioned, endDateTime in 30 days. File entries 2, at a scope below a subscription 1. No error published by the cmdlet; the 5 other records collected are the refused management-group listing (R14; see 2.3 finding b).
   ```text
   === 4.1 the default scope walk, RoleAssignments only -- Export-OERInventory
   --- requests, in the order sent: 12 (GET=10, POST=2)
@@ -2730,7 +2730,7 @@ group level.
   AzurePimEligibility equals the file's entries: True
   ```
 
-  **Re-run:** (CC, 2026-10-01, fd8bc11, with 4.1 re-run in the same process.) PASS with the fixed build: 1 roleEligibilitySchedules request = ScopesEnumerated 1 + 0 pages, ARM requests 10; the refused management-group listing is now REPORTED -- SkippedScopes and SkippedEligibilityScopes both [<management groups: the listing failed>], one InventoryPartial error ("1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked ...") and the warning "Could not list the management groups ... AuthorizationFailed"; scopeHierarchy management groups 0, subscriptions 1; AzurePimEligibility 2 = the file. 4.1 again: THE MEASUREMENT True.
+  **Re-run:** (CC, 2026-10-01, fd8bc11, with 4.1 re-run in the same process.) PASS with the fixed build: 1 roleEligibilitySchedules request = ScopesEnumerated 1 + 0 pages, ARM requests 10; the refused management-group listing is now REPORTED -- SkippedScopes and SkippedEligibilityScopes both [`<management groups: the listing failed>`], one InventoryPartial error ("1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked ...") and the warning "Could not list the management groups ... AuthorizationFailed"; scopeHierarchy management groups 0, subscriptions 1; AzurePimEligibility 2 = the file. 4.1 again: THE MEASUREMENT True.
   ```text
   === 4.1 the default scope walk, RoleAssignments only -- Export-OERInventory
   --- requests, in the order sent: 12 (GET=10, POST=2)
@@ -2773,7 +2773,7 @@ group level.
   AzurePimEligibility equals the file's entries: True
   ```
 
-  **Re-run:** (CC, 2026-10-01, eef9fd7.) Identical to the fd8bc11 re-run: 1 eligibility request = ScopesEnumerated 1 + 0 pages; ARM 10; both skipped lists [<management groups: the listing failed>]; one InventoryPartial; 4.1 THE MEASUREMENT True.
+  **Re-run:** (CC, 2026-10-01, eef9fd7.) Identical to the fd8bc11 re-run: 1 eligibility request = ScopesEnumerated 1 + 0 pages; ARM 10; both skipped lists [`<management groups: the listing failed>`]; one InventoryPartial; 4.1 THE MEASUREMENT True.
 
 - [x] **4.3 An independent read of the resource group agrees with the file.** Read-only.
 
@@ -2793,7 +2793,7 @@ group level.
   `the file's entries at the resource group equal the direct read's: True`.
   **Failure looks like:** the row here but not in 4.1 -- the finding 4.1 describes (R4 must change);
   a value that differs -- the projection changes what it reads: record both.
-  **Result:** PASS. One request, GET /subscriptions/<SubId>/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01; no error; rows AT the resource group 1 (and 1 inherited from above, not printed), the same values as 4.1; the file's entries at the resource group equal the direct read's: True.
+  **Result:** PASS. One request, GET /subscriptions/`<SubId>`/resourceGroups/oer-s65-rg/providers/Microsoft.Authorization/roleEligibilitySchedules?api-version=2020-10-01; no error; rows AT the resource group 1 (and 1 inherited from above, not printed), the same values as 4.1; the file's entries at the resource group equal the direct read's: True.
   ```text
   === 4.3 the resource group read directly -- Get-OEREligibleRoleAssignment
   --- requests, in the order sent: 1 (GET=1)
@@ -3103,7 +3103,7 @@ teardown finds it by that id.
   **Failure looks like:** 5.3a or 5.3b `GroupNotFound` -- Graph's name filter has not caught up with
   5.1 yet: wait a minute and run the plan again; a request in 5.3c -- the property check runs after
   the lookup; a read-back with another name.
-  **Result:** PASS, with the same read-after-write delay as 5.1. 5.3a: one lookup GET, What if "Update group properties" on the id of oer-s65-rename-group, 0 objects. 5.3b: the lookup, PATCH v1.0/groups/<oer-s65-rename-group>, GET of it; no error; one object -- returned DisplayName 'oer-s65-rename-direct', the same group True. 5.3b-after, a raw read by id right after, still read 'oer-s65-rename-new'; a re-read a minute later reads 'oer-s65-rename-direct' / 's65 renamed'. 5.3c: NO request, one NothingToUpdate error naming -NewDisplayName, 0 objects.
+  **Result:** PASS, with the same read-after-write delay as 5.1. 5.3a: one lookup GET, What if "Update group properties" on the id of oer-s65-rename-group, 0 objects. 5.3b: the lookup, PATCH v1.0/groups/`<oer-s65-rename-group>`, GET of it; no error; one object -- returned DisplayName 'oer-s65-rename-direct', the same group True. 5.3b-after, a raw read by id right after, still read 'oer-s65-rename-new'; a re-read a minute later reads 'oer-s65-rename-direct' / 's65 renamed'. 5.3c: NO request, one NothingToUpdate error naming -NewDisplayName, 0 objects.
   ```text
   What if: Performing the operation "Update group properties" on target "00000000-0000-0000-0000-000000000013".
   === 5.3a plan -- Set-OERGroup
@@ -3258,7 +3258,7 @@ teardown finds it by that id.
   compared with which recorded name or id; the result line says `[ ]`, never `[x]` or `[~]`, until a
   decision; 5.5a `Failed` (`GroupRenameNotFound`) -- the old name did not resolve: stop and look at
   the group; a write in any plan (`Created`, `Updated`, `Removed`).
-  **Result:** STOP -- NOT PASSED; a decision is needed, nothing was changed. 5.5d (the NEW name in the document, -Prune -WhatIf) PLANS A REMOVAL: [catalogs] oer-s65-catalog | Skipped | would remove undeclared resource 'oer-s65-catres-old' (and would add Group resource 'oer-s65-catres-new'). What was matched against what: after the rename Graph still records the catalog resource as 'oer-s65-catres-old' (5.5-after; the catalog does not refresh the name on the group's rename -- measured). The catalogs handler compares the declared resources[].name 'oer-s65-catres-new' with the resource's recorded displayName 'oer-s65-catres-old' (no) and with its originId <oer-s65-catres-group> (a group's identifier there is the declared NAME, so no), finds it absent, plans an add, and its prune pass then finds the recorded 'oer-s65-catres-old' undeclared. The accessPackages handler is safe: 'oer-s65-catres-new' is not a recorded catalog name, its fallback Resolve-OERGroupId gives <oer-s65-catres-group>, the key 'Member|<oer-s65-catres-group>' matches the live binding: Unchanged, no removal. With the OLD name (5.5c, and the control before the rename): 0 planned removals in both sections. 5.5a/5.5b as expected (rename Updated; the name filter caught up at 10 s).
+  **Result:** STOP -- NOT PASSED; a decision is needed, nothing was changed. 5.5d (the NEW name in the document, -Prune -WhatIf) PLANS A REMOVAL: [catalogs] oer-s65-catalog | Skipped | would remove undeclared resource 'oer-s65-catres-old' (and would add Group resource 'oer-s65-catres-new'). What was matched against what: after the rename Graph still records the catalog resource as 'oer-s65-catres-old' (5.5-after; the catalog does not refresh the name on the group's rename -- measured). The catalogs handler compares the declared resources[].name 'oer-s65-catres-new' with the resource's recorded displayName 'oer-s65-catres-old' (no) and with its originId `<oer-s65-catres-group>` (a group's identifier there is the declared NAME, so no), finds it absent, plans an add, and its prune pass then finds the recorded 'oer-s65-catres-old' undeclared. The accessPackages handler is safe: 'oer-s65-catres-new' is not a recorded catalog name, its fallback Resolve-OERGroupId gives `<oer-s65-catres-group>`, the key 'Member|`<oer-s65-catres-group>`' matches the live binding: Unchanged, no removal. With the OLD name (5.5c, and the control before the rename): 0 planned removals in both sections. 5.5a/5.5b as expected (rename Updated; the name filter caught up at 10 s).
   ```text
   --- 5.5-before: <oer-s65-catalog> resources: status 200 ; 1
       resource: recorded displayName 'oer-s65-catres-old'; originSystem AadGroup; originId <oer-s65-catres-group>
