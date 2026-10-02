@@ -2889,3 +2889,372 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
         }
     }
 }
+
+# Decision D2 (2026-10-02). Access review definition display names are not unique in Microsoft Graph,
+# and the apply engine used to take the FIRST definition whose name matched and then update it by its
+# GUID through Set-OERAccessReviewDefinition -- so a document naming a review that several definitions
+# share silently rewrote an arbitrary one. It now refuses, the same way Resolve-OERAccessReviewDefinitionId
+# does for the cmdlets (decision D1): one Failed row, one published AmbiguousName record naming every
+# candidate id, and nothing created, updated or read further for that entry.
+#
+# The definitions are returned by a mocked Get-OERAccessReviewDefinition, so every id below is the id the
+# handler would otherwise have acted on. Where a fall-through must be able to write, each definition
+# carries the full live shape the update diff reads: a handler that wrongly took the first match then
+# reaches Set-OERAccessReviewDefinition (the drifted durationInDays is the write) instead of failing for
+# an unrelated reason.
+Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name (decision D2)' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    It 'creates, updates and reads nothing further for the entry when two definitions share the declared name' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                foreach ($DefId in @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222')) {
+                    [PSCustomObject]@{
+                        Id                 = $DefId
+                        DisplayName        = 'Q3 AP review'
+                        AccessPackageId    = 'ap-1'
+                        AssignmentPolicyId = 'pol-1'
+                        Reviewers          = @(@{ query = '/users/usr-1' })
+                        FallbackReviewers  = @()
+                        DurationInDays     = 14
+                        Recurrence         = @{
+                            pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                            range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                        }
+                        Settings           = @{ instanceDurationInDays = 14 }
+                    }
+                }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Resolve-OERStructurePrincipal { 'usr-1' }
+            Mock Invoke-OERGraphRequest { }
+            Mock Initialize-OERAuth {}
+
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                displayName      = 'Q3 AP review'
+                accessPackage    = 'AP-Sales'
+                assignmentPolicy = 'Standard'
+                durationInDays   = 21
+                reviewers        = @('rev@contoso.com')
+            }))
+
+            # Positive proof first: the definitions were read, once, and the entry was reported Failed.
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            @($r.Action) | Should -Contain 'Failed'
+
+            # Nothing is created, updated or read further for the entry, and no transport call is made.
+            Should -Invoke Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+            Should -Invoke Resolve-OERStructurePrincipal -Times 0
+            Should -Invoke Invoke-OERGraphRequest -Times 0
+        }
+    }
+
+    It 'reports one Failed row naming the name, the count and both ids when two definitions share the declared name' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Q3 AP review' }
+                [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Q3 AP review' }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Initialize-OERAuth {}
+
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                displayName      = 'Q3 AP review'
+                accessPackage    = 'AP-Sales'
+                assignmentPolicy = 'Standard'
+                durationInDays   = 21
+            }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Count | Should -Be 1 -Because 'exactly one row is reported for the ambiguous entry'
+            $r[0].Action | Should -Be 'Failed'
+            $r[0].Section | Should -Be 'accessReviews'
+            $r[0].Item | Should -Be 'Q3 AP review'
+            $r[0].Detail | Should -BeLike "2 access review definitions are named 'Q3 AP review'*"
+            $r[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+            $r[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+            $r[0].Detail | Should -BeLike '*nothing was written*'
+        }
+    }
+
+    It 'publishes exactly one AmbiguousName record carrying the name and both ids, and attaches it to the row' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Q3 AP review' }
+                [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Q3 AP review' }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Initialize-OERAuth {}
+
+            $Published = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Published -Item ([PSCustomObject]@{
+                    displayName      = 'Q3 AP review'
+                    accessPackage    = 'AP-Sales'
+                    assignmentPolicy = 'Standard'
+                    durationInDays   = 21
+                }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $Records.Count | Should -Be 1 -Because 'one error is published for the ambiguous entry, no more'
+            $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+            $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Records[0].TargetObject | Should -Be 'Q3 AP review'
+            $Records[0].Exception.Message | Should -BeLike "Access review definition display name 'Q3 AP review' matches 2 definitions (*"
+            $Records[0].Exception.Message | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+            $Records[0].Exception.Message | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+            $Records[0].Exception.Message | Should -BeLike '*Access reviews do not enforce unique definition display names*'
+            $Records[0].Exception.Message | Should -BeLike '*Rename one of them*'
+            # The document cannot name a definition by id, so the message must not advise doing so.
+            $Records[0].Exception.Message | Should -Not -BeLike '*definition id instead*'
+
+            # The Failed row carries the very record that was published.
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Failed'
+            $r[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+            $r[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+        }
+    }
+
+    It 'names every candidate and the right count when three definitions share the name' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Q3 AP review' }
+                [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Q3 AP review' }
+                [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Q3 AP review' }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Initialize-OERAuth {}
+
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                displayName      = 'Q3 AP review'
+                accessPackage    = 'AP-Sales'
+                assignmentPolicy = 'Standard'
+            }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Failed'
+            $r[0].Detail | Should -BeLike "3 access review definitions are named 'Q3 AP review'*"
+            $r[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+            $r[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+            $r[0].Detail | Should -BeLike '*33333333-3333-3333-3333-333333333333*'
+            $r[0].Error.Exception.Message | Should -BeLike '*matches 3 definitions (*33333333-3333-3333-3333-333333333333*'
+            Should -Invoke Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+        }
+    }
+
+    It 'refuses under -WhatIf as well, since refusing is not a write and ShouldProcess is never reached' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Q3 AP review' }
+                [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Q3 AP review' }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Initialize-OERAuth {}
+
+            $r = @(Invoke-SyncArViaCaller -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                displayName      = 'Q3 AP review'
+                accessPackage    = 'AP-Sales'
+                assignmentPolicy = 'Standard'
+                durationInDays   = 21
+            }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Failed' -Because 'an ambiguous name is refused outright, not downgraded to a Skipped would-update row'
+            Should -Invoke Set-OERAccessReviewDefinition -Times 0
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+        }
+    }
+
+    It 'counts only definitions whose display name equals the declared one and reconciles the single exact match' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            # The server-side filter is an equality test, but the handler re-checks the name on the
+            # client; a returned definition with a different name must not make the entry ambiguous.
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id                 = '11111111-1111-1111-1111-111111111111'
+                    DisplayName        = 'Q3 AP review'
+                    AccessPackageId    = 'ap-1'
+                    AssignmentPolicyId = 'pol-1'
+                    Reviewers          = @(@{ query = '/users/usr-1' })
+                    FallbackReviewers  = @()
+                    DurationInDays     = 14
+                    Recurrence         = @{
+                        pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                    }
+                    Settings           = @{ instanceDurationInDays = 14 }
+                }
+                [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Q3 AP review (copy)' }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id                 = '11111111-1111-1111-1111-111111111111'
+                    DisplayName        = 'Q3 AP review'
+                    Status             = 'InProgress'
+                    AccessPackageId    = 'ap-1'
+                    AssignmentPolicyId = 'pol-1'
+                    Reviewers          = @(@{ query = '/users/usr-1' })
+                    FallbackReviewers  = @()
+                    DurationInDays     = 21
+                    Settings           = @{ instanceDurationInDays = 21 }
+                }
+            }
+            Mock Initialize-OERAuth {}
+
+            $Published = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Published -Item ([PSCustomObject]@{
+                    displayName      = 'Q3 AP review'
+                    accessPackage    = 'AP-Sales'
+                    assignmentPolicy = 'Standard'
+                    durationInDays   = 21
+                }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Action | Should -Contain 'Updated'
+            $r.Action | Should -Not -Contain 'Failed'
+            Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $Id -eq '11111111-1111-1111-1111-111111111111' -and $DurationInDays -eq 21
+            }
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+            @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'AmbiguousName*' }).Count |
+                Should -Be 0
+        }
+    }
+
+    It 'reconciles a single existing definition exactly as before and publishes no error' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id                 = '11111111-1111-1111-1111-111111111111'
+                    DisplayName        = 'Q3 AP review'
+                    AccessPackageId    = 'ap-1'
+                    AssignmentPolicyId = 'pol-1'
+                    Reviewers          = @(@{ query = '/users/usr-1' })
+                    FallbackReviewers  = @()
+                    DurationInDays     = 14
+                    Recurrence         = @{
+                        pattern = @{ type = 'absoluteMonthly'; interval = 3; dayOfMonth = 1 }
+                        range   = @{ type = 'noEnd'; startDate = '2026-07-01' }
+                    }
+                    Settings           = @{ instanceDurationInDays = 14 }
+                }
+            }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new' } }
+            Mock Set-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id                 = '11111111-1111-1111-1111-111111111111'
+                    DisplayName        = 'Q3 AP review'
+                    Status             = 'InProgress'
+                    AccessPackageId    = 'ap-1'
+                    AssignmentPolicyId = 'pol-1'
+                    Reviewers          = @(@{ query = '/users/usr-1' })
+                    FallbackReviewers  = @()
+                    DurationInDays     = 21
+                    Settings           = @{ instanceDurationInDays = 21 }
+                }
+            }
+            Mock Initialize-OERAuth {}
+
+            $Published = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Published -Item ([PSCustomObject]@{
+                    displayName      = 'Q3 AP review'
+                    accessPackage    = 'AP-Sales'
+                    assignmentPolicy = 'Standard'
+                    durationInDays   = 21
+                }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Action | Should -Contain 'Updated'
+            $r.Action | Should -Not -Contain 'Failed'
+            Should -Invoke Set-OERAccessReviewDefinition -Times 1 -Exactly -ParameterFilter {
+                $Id -eq '11111111-1111-1111-1111-111111111111' -and $DurationInDays -eq 21
+            }
+            Should -Invoke New-OERAccessReviewDefinition -Times 0
+            @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+        }
+    }
+
+    It 'creates the definition when none carries the declared name, exactly as before' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition { @() }
+            Mock New-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-new'; DisplayName = 'Q3 AP review' } }
+            Mock Set-OERAccessReviewDefinition { [PSCustomObject]@{ Id = 'ar-set' } }
+            Mock Initialize-OERAuth {}
+
+            $Published = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Published -Item ([PSCustomObject]@{
+                    displayName       = 'Q3 AP review'
+                    accessPackage     = 'AP-Sales'
+                    assignmentPolicy  = 'Standard'
+                    reviewers         = @('manager')
+                    fallbackReviewers = @('fallback@contoso.com')
+                    recurrence        = 'Quarterly'
+                }))
+
+            Should -Invoke Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $r.Action | Should -Contain 'Created'
+            $r.Action | Should -Not -Contain 'Failed'
+            Should -Invoke New-OERAccessReviewDefinition -Times 1 -Exactly
+            Should -Invoke Set-OERAccessReviewDefinition -Times 0
+            @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+        }
+    }
+}
