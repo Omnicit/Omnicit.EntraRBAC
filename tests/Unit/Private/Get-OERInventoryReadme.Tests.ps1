@@ -78,6 +78,36 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'warns that an unread members, scopedRoles, resources or resourceRoles collection is written as null and must never be changed to []' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme
+            $Md | Should -Match '(?m)^## Unread collections\r?$'
+            # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
+            $Section = (($Md -split '(?m)^## Unread collections\r?$')[1] -split '(?m)^## ')[0] -replace '\s+', ' '
+            $Section | Should -Match ([regex]::Escape('`null`'))
+            foreach ($Key in @('members', 'scopedRoles', 'resources', 'resourceRoles')) {
+                $Section | Should -Match ([regex]::Escape('`' + $Key + '`')) -Because "the section must name $Key"
+            }
+            # The claim is about these four collections only: an unread owners or eligibility
+            # collection is omitted and an unread policy list is [], so a flat "the collection is
+            # never written as empty" would be false of them.
+            $Section | Should -Match ([regex]::Escape('When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collection fails'))
+            $Section | Should -Match ([regex]::Escape('the export never writes that collection as empty'))
+            $Section | Should -Not -Match ([regex]::Escape('the export never writes the collection as empty'))
+            $Section | Should -Match ([regex]::Escape('The key is written as `null`, which `Invoke-OERStructure` reads as "leave untouched".'))
+            $Section | Should -Match ([regex]::Escape('Do not change such a `null` to `[]`: under `-Prune` an empty collection removes every live entry.'))
+            # The partial is promised only for what the export REPORTS as unread. A section that could
+            # not be read at all (the group, administrative unit or access review list, or the group
+            # roster) is a warning and an empty section with no partial, so a flat "every collection
+            # it could not read" would be false of it.
+            $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming each collection it reports as unread, these four and any other; the others are left out or written only as far as they were read'))
+            $Section | Should -Not -Match ([regex]::Escape('naming every collection it could not read, these four and any other')) -Because 'a section read as nothing at all is reported by a warning, not by the partial'
+            $Section | Should -Match ([regex]::Escape('A section that could not be read at all (the group list, the administrative unit list, the access review list or the group roster in `groupsRoster.json`) is reported by a warning and written empty, with no `InventoryPartial`'))
+            # The section sits ahead of the numbered next steps it would otherwise be read after.
+            $Md.IndexOf('## Unread collections') | Should -BeLessThan $Md.IndexOf('## Next steps')
+        }
+    }
+
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
             $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme))

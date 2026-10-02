@@ -69,13 +69,13 @@ function Get-OERStructureSchemaJson {
     what the apply engine does with it: the group found only under previousDisplayName is renamed, an
     entry whose two names match different groups fails without merging them, and an entry neither
     name matches fails and creates nothing. Get-OERInventory never exports it.
-    Exactly three keys are typed [ "array", "null" ] rather than "array": groups[].members,
-    administrativeUnits[].members and administrativeUnits[].scopedRoles. For those three an omitted
-    key still reconciles and still PRUNES, so an explicit null is the only way a document can say
-    "leave this collection alone" -- and it is what Get-OERInventory emits when the live read failed
-    (issue #76). owners and eligibility are deliberately NOT widened: an omitted key is already
-    hands-off for them, so nothing in the module produces a null there and a nullable type would be
-    surface with no producer.
+    Exactly five keys are typed [ "array", "null" ] rather than "array": groups[].members,
+    administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
+    accessPackages[].resourceRoles. For those five an omitted key still reconciles and still PRUNES,
+    so an explicit null is the only way a document can say "leave this collection alone" -- and it
+    is what Get-OERInventory emits when the live read failed (issue #76). owners and eligibility
+    are deliberately NOT widened: an omitted key is already hands-off for them, so nothing in the
+    module produces a null there and a nullable type would be surface with no producer.
     accessReviews[].recurrence is nullable for the same reason on the scalar side: Test-OERStructureSchema
     treats an explicit null as undeclared and applies the OneTime default, so the schema must not reject
     what the module accepts. draft-07 applies "type" and "enum" INDEPENDENTLY -- both assert against the
@@ -270,8 +270,8 @@ function Get-OERStructureSchemaJson {
             "description": "Whether the catalog's access packages are requestable by users outside the directory (connected-organization users)."
           },
           "resources": {
-            "type": "array",
-            "description": "An omitted key still reconciles: existing resources it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves resources untouched entirely -- null, not an omitted key, is how a catalog is declared without touching its resources. [] reconciles to no declared resources.",
+            "type": [ "array", "null" ],
+            "description": "An omitted key still reconciles: existing resources it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves resources untouched entirely -- null, not an omitted key, is how a catalog is declared without touching its resources. [] reconciles to no declared resources. Get-OERInventory emits null here when the live read failed.",
             "items": {
               "type": "object",
               "required": [ "name" ],
@@ -300,8 +300,8 @@ function Get-OERStructureSchemaJson {
           "description": { "type": [ "string", "null" ] },
           "hidden": { "type": "boolean" },
           "resourceRoles": {
-            "type": "array",
-            "description": "An omitted key still reconciles: existing bindings it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves bindings untouched entirely -- null, not an omitted key, is how a package is declared without touching its resource role bindings. [] reconciles to no declared bindings.",
+            "type": [ "array", "null" ],
+            "description": "An omitted key still reconciles: existing bindings it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves bindings untouched entirely -- null, not an omitted key, is how a package is declared without touching its resource role bindings. [] reconciles to no declared bindings. Get-OERInventory emits null here when the live read failed.",
             "items": {
               "type": "object",
               "required": [ "resource", "role" ],

@@ -90,6 +90,19 @@ complete picture of the tenant:
   is skipped entirely and never appears in `accessReviews.json` or `inventory.json` -- again, its
   absence here is not evidence the tenant has none.
 
+## Unread collections
+
+When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collection fails -- a
+refused, throttled or failed call -- the export never writes that collection as empty. The key is
+written as `null`, which `Invoke-OERStructure` reads as "leave untouched". Do not change such a
+`null` to `[]`: under `-Prune` an empty collection removes every live entry. `Export-OERInventory`
+ends with an `InventoryPartial` error naming each collection it reports as unread, these four and
+any other; the others are left out or written only as far as they were read, so their absence is not
+evidence the tenant has none. A section that could not be read at all (the group list, the
+administrative unit list, the access review list or the group roster in `groupsRoster.json`) is
+reported by a warning and written empty, with no `InventoryPartial`, so an empty section is not
+evidence the tenant has none either.
+
 ## Next steps
 
 1. Open `rbac-architect-prompt.md`. Leave the USER PREFERENCES block untouched for best-practice

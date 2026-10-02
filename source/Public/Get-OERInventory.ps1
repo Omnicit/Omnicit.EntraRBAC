@@ -40,23 +40,34 @@ function Get-OERInventory {
     approvers in that case and the offline validator would otherwise warn on every exported document.
     A collection whose LIVE READ FAILED is never stated as a fact. How that is expressed depends on
     what an omitted key means to the apply engine, which is not uniform: groups[].members,
-    administrativeUnits[].members and administrativeUnits[].scopedRoles still reconcile and still
-    prune when their key is merely omitted, so an unread one is emitted as an EXPLICIT null -- the
-    schema's documented "leave it untouched" signal. groups[].owners and groups[].eligibility are
-    never reconciled or pruned from an omitted key, so an unread one is simply left out. Either way
-    the gap is reported: after the inventory object is emitted, a non-terminating InventoryPartial
-    error names every affected section/displayName/key, so a caller using -ErrorAction Stop or a
-    try/catch finds out instead of treating a document with holes in it as a full tenant snapshot.
-    Do not hand-edit such a null to an empty array -- that turns "unknown" into "declared empty",
-    which Invoke-OERStructure -Prune acts on by deleting every live member. A dynamic group's membershipRuleProcessingState (On or Paused) is carried
+    administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
+    accessPackages[].resourceRoles still reconcile and still prune when their key is merely
+    omitted, so an unread one is emitted as an EXPLICIT null -- the schema's documented "leave it
+    untouched" signal. groups[].owners and groups[].eligibility are never reconciled or pruned
+    from an omitted key, so an unread one is simply left out. Either way the gap is reported:
+    after the inventory object is emitted, a non-terminating InventoryPartial error names every
+    affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
+    instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
+    such a null to an empty array -- that turns "unknown" into "declared empty", which
+    Invoke-OERStructure -Prune acts on by deleting every live member, binding or resource. The
+    catalog list itself, the resource names an access package's bindings are written under, a
+    catalog's access packages and their assignment policies are reported through the same
+    InventoryPartial error when their read fails, and are written as far as they were read: a
+    failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
+    list leaves a catalog with no access packages, a failed policy read leaves a package with no
+    assignment policies, and when the names cannot be read a group's binding is written under the
+    group's object id and any other binding under the name the access package reader could join
+    (the name the catalog recorded, or none). Invoke-OERStructure never removes a catalog, access
+    package or assignment policy that is absent from the document.
+    A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
     users does not silently re-create as internal-only. A Group or Application catalog resource, and
     an access package resourceRoles entry on one, is written under the group's or application's
     CURRENT display name, looked up by the resource's originId (its object id when the lookup returns
     nothing) -- never under the name the catalog recorded when the resource was added, which Graph
-    keeps after a rename. Invoke-OERStructure identifies such a resource by the object id its name
-    resolves to.
+    keeps after a rename, except as described above when the names cannot be read.
+    Invoke-OERStructure identifies such a resource by the object id its name resolves to.
     Only access-package-scoped, single-stage review definitions are captured: a group, application,
     directory-role or multi-stage review is skipped, with an aggregate warning naming how many were
     skipped. The AccessReviews projection carries accessPackage, assignmentPolicy, reviewers and
@@ -259,16 +270,18 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits ten
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits sixteen
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-        # eligibility schedules, directory role assignment schedules, directory role policies), so
-        # ten admits one of each and a normal partial run is still reported in full; only a
+        # eligibility schedules, directory role assignment schedules, directory role policies,
+        # access package resource role bindings, catalog resources, the catalog resource-name map,
+        # the catalog list, a catalog's package list, an access package's assignment policies), so
+        # sixteen admits one of each and a normal partial run is still reported in full; only a
         # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
         # rather than silently lost. Nothing is discarded either way -- every cause is written to the
-        # verbose stream as it is seen. Raise this with the shape count when an eleventh
+        # verbose stream as it is seen. Raise this with the shape count when a seventeenth
         # read-failure message is added, or one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 10
+        $UnreadCauseCap = 16
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -748,9 +761,44 @@ function Get-OERInventory {
             $CatalogResourceNames[$ForCatalogId]
         }
         if ($Include -contains 'Catalogs' -or $Include -contains 'AccessPackages') {
-            $ResolvedCatalogList = if ($Catalog) {
-                if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog) } else { @(Get-OERCatalog -DisplayName $Catalog) }
-            } else { @(Get-OERCatalog) }
+            # A catalog list that could not be read leaves BOTH sections empty, which is what the
+            # document has always said. No handler removes a catalog or an access package that is
+            # absent from the document ("Prune is child-scope only", Invoke-OERStructure), so the
+            # projection stays as it was -- but an absent entry is not a fact, so the failure is
+            # reported through InventoryPartial for every section that needed the list. Before this
+            # the read had no error handling: under a caller's Stop it ended the whole call with no
+            # document at all, and under Continue it left one stray record and no partial.
+            # The one exception is a FACT about the caller's own -Catalog filter rather than a gap in
+            # the export (spec G3: only a null from a name search, or a 404 on an id, is NotFound):
+            # a missing catalog id is answered by Graph with CatalogNotFound (measured live,
+            # 2026-10-02), which Get-OERCatalog republishes by id, so that arm is the one that fires
+            # in production. It, AmbiguousCatalogName and the module's generic not-found codes on a
+            # by-id read are all facts about the caller's filter; by name a non-match returns
+            # nothing at all. Such a record is republished as itself and counted as nothing. A 404
+            # on a NAME or on the unfiltered list is not a missing object, so it stays unread.
+            try {
+                $ResolvedCatalogList = if ($Catalog) {
+                    if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
+                } else { @(Get-OERCatalog -ErrorAction Stop) }
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                # The module's own not-found vocabulary (Get-OERAccessReviewInstance). Every comma
+                # separated segment of the id is compared WHOLE, never as a prefix, since a composed
+                # id ('ResourceNotFound,Get-OERCatalog') can carry the code outside the first slot.
+                $CatListIdSegment = @(([string]$PSItem.FullyQualifiedErrorId) -split ',' | ForEach-Object { $_.Trim() })
+                $CatListByIdNotFound = $Catalog -and ($null -ne ($Catalog -as [guid])) -and
+                    (@($CatListIdSegment | Where-Object { $_ -in @('ResourceNotFound', 'Request_ResourceNotFound', 'ItemNotFound', 'NotFound') }).Count -gt 0)
+                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*' -or $CatListByIdNotFound) {
+                    $PSCmdlet.WriteError($PSItem)
+                } else {
+                    $CatListCause = "Could not read the catalogs: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CatListCause"
+                    Add-UnreadCause -Cause $CatListCause -Target ([string]$Catalog)
+                    if ($Include -contains 'Catalogs') { $UnreadCollections.Add('catalogs') }
+                    if ($Include -contains 'AccessPackages') { $UnreadCollections.Add('accessPackages') }
+                }
+                $ResolvedCatalogList = @()
+            }
         }
 
         if ($Include -contains 'Catalogs') {
@@ -764,36 +812,57 @@ function Get-OERInventory {
                     externallyVisible = [bool]$Cat.ExternallyVisible
                 }
                 if ($IncludeId) { $Proj.id = $Cat.Id }
-                $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id)
-                $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
-                $Proj.resources = @(foreach ($R in $CatRes) {
-                    # Map the resource type to the schema enum from the stable originSystem (the raw
-                    # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
-                    # schema/apply do not accept). Falls back to the raw value for unknown systems.
-                    $ResType = switch ($R.OriginSystem) {
-                        'AadGroup'         { 'Group' }
-                        'AadApplication'   { 'Application' }
-                        'SharePointOnline' { 'SharePointSite' }
-                        default            { $R.ResourceType }
-                    }
-                    # A SharePoint Online site is onboarded by its URL, which Graph stores as the
-                    # resource originId -- the display name is only the site title and cannot be fed
-                    # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
-                    # 'url' field so the apply engine has the real identifier while the human-readable
-                    # name is preserved. A Group or Application resource is written under the group's
-                    # or application's CURRENT name (looked up by originId, the id when it cannot be),
-                    # never the name the catalog recorded when it was added.
-                    $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
-                        $CurrentNames[[string]$R.OriginId]
-                    } else {
-                        $R.DisplayName
-                    }
-                    $ResProj = [ordered]@{ type = $ResType; name = $ResName }
-                    if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
-                        $ResProj.url = [string]$R.OriginId
-                    }
-                    [PSCustomObject]$ResProj
-                })
+                # A FAILED read is never projected as []: under -Prune an empty declared resource set
+                # removes every resource of the catalog, and an omitted key still reconciles the same
+                # way. An explicit null is the documented "leave the resources untouched" signal.
+                # Before this, the read had no error handling at all: its record reached the caller's
+                # stream, but the document still said "resources": [] and no InventoryPartial named it.
+                # The shared name map is consulted only for a catalog that WAS read, so a failure never
+                # caches an empty map for the access package section to reuse (see below).
+                $CatRes = $null
+                try {
+                    $CatRes = @(Get-OERCatalogResource -Catalog $Cat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $CatResCause = "Could not read a catalog's resources: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $CatResCause"
+                    Add-UnreadCause -Cause $CatResCause -Target ([string]$Cat.Id)
+                    $UnreadCollections.Add("catalogs/$($Cat.DisplayName)/resources")
+                    $CatRes = $null
+                }
+                if ($null -eq $CatRes) {
+                    $Proj.resources = $null
+                } else {
+                    $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
+                    $Proj.resources = @(foreach ($R in $CatRes) {
+                        # Map the resource type to the schema enum from the stable originSystem (the raw
+                        # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
+                        # schema/apply do not accept). Falls back to the raw value for unknown systems.
+                        $ResType = switch ($R.OriginSystem) {
+                            'AadGroup'         { 'Group' }
+                            'AadApplication'   { 'Application' }
+                            'SharePointOnline' { 'SharePointSite' }
+                            default            { $R.ResourceType }
+                        }
+                        # A SharePoint Online site is onboarded by its URL, which Graph stores as the
+                        # resource originId -- the display name is only the site title and cannot be fed
+                        # back into Add-OERCatalogResource -SharePointSite. Emit the URL as a distinct
+                        # 'url' field so the apply engine has the real identifier while the human-readable
+                        # name is preserved. A Group or Application resource is written under the group's
+                        # or application's CURRENT name (looked up by originId, the id when it cannot be),
+                        # never the name the catalog recorded when it was added.
+                        $ResName = if ([string]$R.OriginSystem -in @('AadGroup', 'AadApplication') -and $R.OriginId -and $CurrentNames.ContainsKey([string]$R.OriginId)) {
+                            $CurrentNames[[string]$R.OriginId]
+                        } else {
+                            $R.DisplayName
+                        }
+                        $ResProj = [ordered]@{ type = $ResType; name = $ResName }
+                        if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
+                            $ResProj.url = [string]$R.OriginId
+                        }
+                        [PSCustomObject]$ResProj
+                    })
+                }
                 $Catalogs.Add([PSCustomObject]$Proj)
             }
         }
@@ -815,7 +884,28 @@ function Get-OERInventory {
                 # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
                 # section names it, so a binding resolves to the same object id on apply.
                 $ApCatResMap = @{}
-                $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)
+                # This read only NAMES the bindings below, and the failure is reported through
+                # InventoryPartial like any other unread collection. When it cannot be read the map
+                # stays empty and $ApCatResRead is $false, which changes what a binding falls back to
+                # (see the projection below): the name a binding carries then is the one the catalog
+                # RECORDED when the resource was added, Graph keeps that after a rename, and the apply
+                # engine resolves a declared name FIRST as a group name -- so after a rename that name
+                # can resolve to ANOTHER group that now carries it, binding the wrong group and, under
+                # -Prune, removing the real binding. A group's object id cannot name another group.
+                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
+                $ApCatResRead = $true
+                $ApCatRes = @()
+                try {
+                    $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ApCatResRead = $false
+                    $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $ApCatResCause"
+                    Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
+                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/catalogResourceNames")
+                    $ApCatRes = @()
+                }
                 $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
                 foreach ($Cr in $ApCatRes) {
                     if (-not $Cr.OriginId) { continue }
@@ -825,7 +915,24 @@ function Get-OERInventory {
                         [string]$Cr.DisplayName
                     }
                 }
-                foreach ($Ap in @(Get-OERAccessPackage -Catalog $ApCat.Id)) {
+                # A package list that could not be read projects the catalog with no packages, as it
+                # always has: no handler removes an access package that is absent from the document
+                # ("Prune is child-scope only", Invoke-OERStructure). An absent package is not a fact
+                # though, so the failure is reported through InventoryPartial against the catalog.
+                # It used to have no error handling: under a caller's Stop it ended the whole call
+                # with no document at all, and under Continue it left one stray record and no partial.
+                $ApList = @()
+                try {
+                    $ApList = @(Get-OERAccessPackage -Catalog $ApCat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ApListCause = "Could not list a catalog's access packages: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $ApListCause"
+                    Add-UnreadCause -Cause $ApListCause -Target ([string]$ApCat.Id)
+                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/packages")
+                    $ApList = @()
+                }
+                foreach ($Ap in $ApList) {
                     $Proj = [ordered]@{
                         displayName = $Ap.DisplayName
                         catalog     = $ApCat.DisplayName
@@ -838,18 +945,65 @@ function Get-OERInventory {
 
                     # D4: resource role bindings via M1. Recover the resource's real display name by
                     # joining the binding OriginId to the catalog resource map (the apply engine matches
-                    # on that name); fall back to the raw scope display name when no resource matches.
-                    $Proj.resourceRoles = @(foreach ($Rr in @(Get-OERAccessPackageResourceRole -AccessPackage $Ap.Id -ErrorAction SilentlyContinue)) {
-                        $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
-                            $ApCatResMap[[string]$Rr.OriginId]
-                        } else {
-                            $Rr.ResourceDisplayName
-                        }
-                        [PSCustomObject]@{ resource = $ResName; role = $Rr.RoleName }
-                    })
+                    # on that name). When the map was NOT read, a group binding is written under its
+                    # OriginId instead -- the group's object id, which the apply engine resolves
+                    # verbatim -- since the only name left is the one the catalog recorded, and that
+                    # can name another group after a rename. Any other binding (an application or a
+                    # SharePoint one, or a group with no OriginId) falls back to the name the access
+                    # package reader could join, which is the name the catalog recorded or none.
+                    # A FAILED read is never projected as []: under -Prune an empty declared binding set
+                    # removes every binding of the package, and an omitted key still reconciles the
+                    # same way. An explicit null is the documented "leave the bindings untouched"
+                    # signal, so that is what an unread set is, and the gap is reported through
+                    # InventoryPartial like the group and administrative-unit collections above.
+                    # -ErrorAction Stop inside try/catch, the shape the directory-role sections below
+                    # use: one reader per package, so a failure is attributed to exactly this package,
+                    # and a record a reader swallowed internally (a retried 429) never counts as one.
+                    $ApRoles = $null
+                    try {
+                        $ApRoles = @(Get-OERAccessPackageResourceRole -AccessPackage $Ap.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApRolesCause = "Could not read an access package's resource role bindings: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApRolesCause"
+                        Add-UnreadCause -Cause $ApRolesCause -Target ([string]$Ap.Id)
+                        $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/resourceRoles")
+                        $ApRoles = $null
+                    }
+                    if ($null -eq $ApRoles) {
+                        $Proj.resourceRoles = $null
+                    } else {
+                        $Proj.resourceRoles = @(foreach ($Rr in $ApRoles) {
+                            $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
+                                $ApCatResMap[[string]$Rr.OriginId]
+                            } elseif (-not $ApCatResRead -and [string]$Rr.OriginSystem -eq 'AadGroup' -and $Rr.OriginId) {
+                                [string]$Rr.OriginId
+                            } else {
+                                $Rr.ResourceDisplayName
+                            }
+                            [PSCustomObject]@{ resource = $ResName; role = $Rr.RoleName }
+                        })
+                    }
 
                     # D5: assignment policy internals -- full granular projection for round-trip fidelity.
-                    $Proj.assignmentPolicies = @(foreach ($P in @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap.Id)) {
+                    # A policy set that could not be read projects [] exactly as it always has:
+                    # Sync-OERStructureAccessPackage never removes an assignment policy (it reports an
+                    # undeclared one as still in force), so [] deletes nothing. An absent policy is not
+                    # a fact though, so the failure is reported through InventoryPartial. It used to have
+                    # no error handling: under a caller's Stop it ended the whole call with no document
+                    # at all, and under Continue it left one stray record and no partial.
+                    $ApPolicies = @()
+                    try {
+                        $ApPolicies = @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApPoliciesCause = "Could not read an access package's assignment policies: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApPoliciesCause"
+                        Add-UnreadCause -Cause $ApPoliciesCause -Target ([string]$Ap.Id)
+                        $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/assignmentPolicies")
+                        $ApPolicies = @()
+                    }
+                    $Proj.assignmentPolicies = @(foreach ($P in $ApPolicies) {
                         $PolProj = [ordered]@{ displayName = $P.DisplayName }
                         if ($P.Description) { $PolProj.description = $P.Description }
                         # requestorScope: always emit scope; emit users/groups only when non-empty.
@@ -1534,7 +1688,7 @@ function Get-OERInventory {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document. " +
-                    "Unread: $($UnreadCollections -join ', '). A members or scopedRoles key reported here is an explicit null, which the apply engine reads as " +
+                    "Unread: $($UnreadCollections -join ', '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `
