@@ -58,11 +58,18 @@ function Remove-OERAccessReviewDefinition {
         Initialize-OERAuth @AuthParams
     }
     process {
-        $DefinitionId = try {
-            if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERAccessReviewDefinitionId -DisplayName $DisplayName }
-            else { $Id }
+        # A lookup that FAILS (a 403, an exhausted 429, a 5xx) is not evidence that no such definition
+        # exists: publish the record as itself and delete nothing, whatever the resolver threw. Only a
+        # $null answer from the lookup is "not found".
+        $DefinitionId = $Id
+        if ($PSCmdlet.ParameterSetName -eq 'ByName') {
+            try { $DefinitionId = Resolve-OERAccessReviewDefinitionId -DisplayName $DisplayName }
+            catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
         }
-        catch { Remove-OERErrorRecord -Record $PSItem; $null }
         if (-not $DefinitionId) {
             Write-CmdletError `
                 -Message ([System.Exception]::new('Access review definition not found.')) `

@@ -7,13 +7,16 @@ function Get-OERGroupPermanentEligibilityState {
     Resolves the roleManagementPolicy governing a group's PIM-for-groups access (member or owner) via
     the private Get-OERPimGroupPolicyId and inspects its Expiration_Admin_Eligibility rule. A lookup
     that returns null (Microsoft Graph lists no policy for that access type, in practice for a group
-    created moments ago) or throws is reported as no policy (the throw is removed from $Error). A group
-    that was never used with PIM for Groups is not such a case: Graph lists its policies before the
+    created moments ago) is reported as no policy. A lookup that THROWS is not: a refused or failed
+    read (a 403, an exhausted 429, a 5xx) says nothing about whether a policy is listed, so it is
+    rethrown after the scrub, exactly as a failed rules read is, and the caller decides what to do
+    (Add-OERGroupEligibility proceeds and lets Microsoft Graph enforce the policy). A group that was
+    never used with PIM for Groups is not a no-policy case either: Graph lists its policies before the
     group is onboarded. The result reports HasPolicy (whether a policy is listed), the PolicyId, and
     PermanentAllowed (true only when the eligibility rule does NOT require expiration; a missing rule
     yields true so no unjustified policy write is attempted). This is a pure read used by the permanent
-    self-heal in Add-OERGroupEligibility. The rules read is guarded: Invoke-OERGraphRequest already
-    converts any non-recoverable failure into a sanitized ErrorRecord before throwing it, so the catch
+    self-heal in Add-OERGroupEligibility. Both reads are guarded: Invoke-OERGraphRequest already
+    converts any non-recoverable failure into a sanitized ErrorRecord before throwing it, so each catch
     here only scrubs that record from $global:Error and rethrows it unchanged, preserving the real
     Graph error code for the caller instead of destroying it with a second conversion pass.
 
@@ -37,7 +40,17 @@ function Get-OERGroupPermanentEligibilityState {
         [string]$AccessType = 'member'
     )
 
-    $PolicyId = try { Get-OERPimGroupPolicyId -GroupId $GroupId -AccessType $AccessType } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+    # A throw here is a FAILED read (Get-OERPimGroupPolicyId returns $null for every "no policy listed"
+    # answer, including the 400 ResourceTypeNotSupported it declares to the transport), so it is
+    # rethrown, never folded into HasPolicy = $false: that would tell Add-OERGroupEligibility the
+    # group is not onboarded (GroupNotOnboarded) when it was merely unreadable. Same scrub-then-bare-
+    # rethrow as the rules read below.
+    $PolicyId = try {
+        Get-OERPimGroupPolicyId -GroupId $GroupId -AccessType $AccessType
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        throw
+    }
     if (-not $PolicyId) {
         return [PSCustomObject]@{ HasPolicy = $false; PolicyId = $null; PermanentAllowed = $false }
     }

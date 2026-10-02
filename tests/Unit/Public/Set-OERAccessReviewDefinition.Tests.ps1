@@ -247,6 +247,64 @@ Describe 'Set-OERAccessReviewDefinition accepts a display name (Task 4b)' {
             Should -Be 1
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
     }
+
+    It 'publishes a failed definition lookup (a 403) as itself, never as AccessReviewDefinitionNotFound, and reads and writes nothing' {
+        # The throw counterpart of the $null It above. A resolver that THROWS (a 403, an exhausted 429,
+        # a 5xx) used to fold into the same AccessReviewDefinitionNotFound, telling the operator the
+        # definition did not exist when the lookup had merely been refused. Only a $null answer is "not
+        # found"; a throw is published as the record it is, and no GET or PUT follows it.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied-def')
+        }
+        $Err = $null
+        $Out = Set-OERAccessReviewDefinition -Id 'denied-def' -DisplayName 'New' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Set-OERAccessReviewDefinition'
+            })
+        # The positive half: the lookup was reached, once, so the no-read assertion below is not a
+        # cmdlet that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly -ParameterFilter {
+            $DisplayName -eq 'denied-def'
+        }
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'scrubs the failed definition lookup record before publishing it (bearer hygiene)' {
+        # The catch hands the record on with WriteError, so an $Error-count proof would stay green with
+        # the Remove-OERErrorRecord call deleted. The proof is the mocked call: exactly one, for THIS
+        # record, beside a positive assertion that the catch was reached and the record published.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: definition lookup scrub marker.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied-def')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+        $Err = $null
+        Set-OERAccessReviewDefinition -Id 'denied-def' -DisplayName 'New' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Set-OERAccessReviewDefinition'
+            })
+        $Published.Count | Should -Be 1
+        $Published[0].Exception.Message | Should -Be 'Authorization_RequestDenied: definition lookup scrub marker.'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Authorization_RequestDenied: definition lookup scrub marker.'
+        }
+    }
 }
 
 Describe 'Set-OERAccessReviewDefinition self-review mixing guard (Task 4c)' {

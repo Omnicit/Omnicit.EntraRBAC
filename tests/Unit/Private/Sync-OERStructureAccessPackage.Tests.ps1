@@ -342,6 +342,60 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 
+    It 'approver-default fallback: a Tenant Profile that cannot be read -> Failed carries the profile error, not "no PrimaryApprovers default"' {
+        # Resolve-OERStructureDefault used to turn a failed profile read (a profile that cannot be
+        # parsed, declares no TenantId, or names an unsupported Environment) into $null, and this
+        # handler then reported "no Tenant Profile PrimaryApprovers default" -- sending the operator to
+        # add a default to a profile that already holds one but cannot be read. The helper now rethrows,
+        # and the throw lands in this handler's existing try/catch around the policy build, whose Failed
+        # row carries the real error. NO handler change is needed or made: this pins that the pair
+        # works end to end, with the REAL Resolve-OERStructureDefault and only the profile read mocked.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncApViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+            Mock Get-OERAccessPackageAssignmentPolicy { @() }
+            # A CMDLET failure mock, never Write-Error: Resolve-OERStructureDefault calls the profile
+            # read with -ErrorAction Stop, and only the cmdlet's own WriteError is promoted by it.
+            Mock Get-OERConfiguration {
+                [CmdletBinding()] param([string]$TenantAlias, [string]$BasePath)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Tenant Profile 'test' at 'profile-path' could not be parsed and was skipped: profile read marker."),
+                        'TenantProfileMalformed', [System.Management.Automation.ErrorCategory]::InvalidData, 'profile-path'))
+            }
+            Mock New-OERAccessPackageAssignmentPolicy {}
+            Mock Initialize-OERAuth {}
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP-Sales'
+                catalog            = 'CAT-IT'
+                assignmentPolicies = @(
+                    [PSCustomObject]@{
+                        displayName    = 'Default'
+                        approvalStages = @(
+                            [PSCustomObject]@{ durationDays = 7 }
+                        )
+                    }
+                )
+            }
+            $r = @(Invoke-SyncApViaCaller -Item $Item -TenantAlias 'test' -ErrorAction SilentlyContinue)
+            # The positive half: the profile was read, once, through the real helper.
+            Should -Invoke Get-OERConfiguration -Times 1 -Exactly -ParameterFilter { $TenantAlias -eq 'test' }
+            $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to build assignmentPolicy 'Default':*"
+            $Failed[0].Detail | Should -Match 'profile read marker'
+            $Failed[0].Detail | Should -Not -Match 'no Tenant Profile PrimaryApprovers default'
+            $Failed[0].Error | Should -Not -BeNullOrEmpty
+            $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^TenantProfileMalformed'
+            Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0 -Exactly
+        }
+    }
+
     It 'with -Prune removes an undeclared resourceRole binding via -ResourceRoleScopeId and reports Removed' {
         InModuleScope $script:moduleName {
             function Invoke-SyncApViaCaller {

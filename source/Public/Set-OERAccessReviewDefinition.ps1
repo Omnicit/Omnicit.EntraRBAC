@@ -258,16 +258,18 @@ function Set-OERAccessReviewDefinition {
 
         # Resolve -Id to the definition id before the read-modify-write GET. A GUID is returned
         # verbatim with no Graph call (Resolve-OERAccessReviewDefinitionId), so a GUID caller stays
-        # byte-identical to the pre-Task-4b behaviour. Any resolve failure (Graph throttling, auth,
-        # or a genuine no-match) collapses into the SAME AccessReviewDefinitionNotFound error this
-        # cmdlet already emitted for a definition that vanished between the resolve and the GET --
-        # mirroring Remove-OERAccessReviewDefinition's fold of the two failure modes into one outcome.
-        $DefId = try {
-            Resolve-OERAccessReviewDefinitionId -DisplayName $Id
+        # byte-identical to the pre-Task-4b behaviour. A resolve that FAILS (Graph throttling, auth,
+        # a 5xx) is not evidence that no such definition exists: the record is published as itself
+        # and nothing is read or written after it, whatever the resolver threw. Only a $null answer (a
+        # genuine no-match) is AccessReviewDefinitionNotFound -- the same error this cmdlet emits for a
+        # definition that vanished between the resolve and the GET below.
+        try {
+            $DefId = Resolve-OERAccessReviewDefinitionId -DisplayName $Id
         }
         catch {
             Remove-OERErrorRecord -Record $PSItem
-            $null
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $DefId) {
             Write-CmdletError `
