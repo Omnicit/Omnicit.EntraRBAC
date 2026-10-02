@@ -19,6 +19,23 @@ under is now reported through `InventoryPartial` too, and `schema.json` accepts 
 cannot be read, a group's binding is written under the group's object id instead of the name the
 catalog recorded, which can name another group after a rename.
 
+A lookup that fails is now reported as that failure, never as a missing object: when the read behind
+a group, catalog, application or catalog resource name is refused, throttled or answered with a
+server error, the cmdlets that resolve one no longer report `GroupNotFound`, `CatalogNotFound`,
+`ApplicationNotFound` or `CatalogResourceNotFound`. Only a name that matches nothing is not found.
+The same holds for the user, group, catalog and policy lookups behind the approval, requestor and
+review cmdlets, for `Add-OERGroupEligibility` (it no longer says a group is not onboarded when its
+policy could not be read) and for an unreadable Tenant Profile in `Invoke-OERStructure`, and
+`Add-OERCatalogResource` no longer adds a resource when its check for an existing one fails. The
+five access review instance cmdlets keep `AccessReviewDefinitionResolveFailed` for a failed
+definition lookup, now a `ReadError` (was `ObjectNotFound`) whose message carries the cause. An
+access review definition name that several definitions share is now refused with `AmbiguousName`
+naming their ids, where earlier versions acted on the first match:
+`Remove-OERAccessReviewDefinition -DisplayName` could delete, and `Set-OERAccessReviewDefinition`
+overwrite, a definition other than the one meant. `Invoke-OERStructure` reports such a name in
+`accessReviews` as `Failed`, naming the candidates. `Get-OERInventory` writes an access review whose package or policy cannot be read with
+its id and names it in `InventoryPartial`, and leaves no stray error records for a deleted one.
+
 ## [1.1.0] - 2026-10-01
 
 `Invoke-OERStructure -Prune` no longer removes anything because a lookup failed: a declared entry
