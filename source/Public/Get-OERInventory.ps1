@@ -259,17 +259,17 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits twelve
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits thirteen
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
-        # access package resource role bindings, catalog resources), so twelve admits one of each and
-        # a normal partial run is still reported in full; only a genuinely heterogeneous large-tenant
-        # failure is truncated, and the dropped count is stated rather than silently lost. Nothing is
-        # discarded either way -- every cause is written to the verbose stream as it is seen. Raise
-        # this with the shape count when a thirteenth read-failure message is added, or one shape
-        # starts crowding out another purely by ordering.
-        $UnreadCauseCap = 12
+        # access package resource role bindings, catalog resources, the catalog resource-name map),
+        # so thirteen admits one of each and a normal partial run is still reported in full; only a
+        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
+        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
+        # verbose stream as it is seen. Raise this with the shape count when a fourteenth read-failure
+        # message is added, or one shape starts crowding out another purely by ordering.
+        $UnreadCauseCap = 13
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -837,7 +837,24 @@ function Get-OERInventory {
                 # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
                 # section names it, so a binding resolves to the same object id on apply.
                 $ApCatResMap = @{}
-                $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction SilentlyContinue)
+                # This read only NAMES the bindings below. A binding whose resource cannot be joined
+                # keeps the scope label (ResourceDisplayName) as its resource, which the apply engine
+                # reports as an unresolved entry and withholds the package's binding prune for, so
+                # nothing is removed -- but the document is then not a full snapshot, so the failure
+                # is reported through InventoryPartial like any other unread collection. The
+                # projection stays exactly as it was: an empty map, and every binding on its label.
+                # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
+                $ApCatRes = @()
+                try {
+                    $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
+                    Write-Verbose "Get-OERInventory: $ApCatResCause"
+                    Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
+                    $UnreadCollections.Add("accessPackages/$($ApCat.DisplayName)/catalogResourceNames")
+                    $ApCatRes = @()
+                }
                 $ApCurrentNames = & $GetCatalogResourceNames ([string]$ApCat.Id) $ApCatRes
                 foreach ($Cr in $ApCatRes) {
                     if (-not $Cr.OriginId) { continue }

@@ -3167,20 +3167,21 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- twelve of them since the catalog
-            # resources added their own (group members, group owners, group PIM eligibility, group
-            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-            # eligibility schedules, directory role assignment schedules, directory role policies,
-            # access package resource role bindings, catalog resources) -- and the remainder is
-            # counted rather than silently lost. Raise the numbers here and $UnreadCauseCap together,
-            # or a whole shape can be crowded out of the clause purely by the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- thirteen of them since the catalog
+            # resource-name map added its own (group members, group owners, group PIM eligibility,
+            # group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory
+            # role eligibility schedules, directory role assignment schedules, directory role
+            # policies, access package resource role bindings, catalog resources, the catalog
+            # resource-name map) -- and the remainder is counted rather than silently lost. Raise
+            # the numbers here and $UnreadCauseCap together, or a whole shape can be crowded out of
+            # the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..13) {
+                foreach ($N in 1..14) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..13) {
+                foreach ($N in 1..14) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3197,10 +3198,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 12 -Because 'the clause names at most twelve distinct causes, one per read-failure shape'
+                Should -Be 13 -Because 'the clause names at most thirteen distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All thirteen units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..13) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All fourteen units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..14) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3444,6 +3445,29 @@ Describe 'Get-OERInventory' {
             $null -eq $Cat.PSObject.Properties['resources'].Value | Should -BeTrue
             $Ap = @($Inv.AccessPackages)[0]
             $Ap.resourceRoles[0].resource | Should -Be 'role_sec_new' -Because 'a failed catalog read must not leave an empty name map cached for the package section'
+        }
+
+        It 'reports an unread resource-name map and keeps the binding on its scope label (non-terminating)' {
+            # The map only NAMES bindings. A binding whose name cannot be joined keeps the fallback
+            # (ResourceDisplayName), which is today's projection and is left unchanged -- the gap is
+            # reported, not turned into a different document.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [CmdletBinding()] param($Catalog)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.resourceRoles[0].resource | Should -Be 'Root' -Because 'an unnamed binding falls back to the scope label, exactly as before'
+            $Ap.resourceRoles[0].role | Should -Be 'Member'
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/CAT-IT-Core/catalogResourceNames'
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
+            $Partial[0].Exception.Message | Should -Match "Could not read a catalog's resources to name its access packages' bindings"
         }
     }
 
