@@ -3615,9 +3615,10 @@ Describe 'Get-OERInventory' {
         }
 
         It 'republishes a -Catalog filter that names no catalog as itself and reports nothing as unread' {
-            # The caller's own filter naming no catalog (or more than one) is a FACT about the filter,
-            # not a gap in the export, so it keeps the error id it has always surfaced with and must
-            # not be counted as an unread collection.
+            # The real Get-OERCatalog never writes CatalogNotFound; this exercises the retained
+            # CatalogNotFound arm, should a reader ever write it. A filter that names no catalog (or
+            # more than one) is a FACT about the caller's own filter, not a gap in the export, so
+            # that record is republished as itself and must not be counted as an unread collection.
             Mock -ModuleName $script:moduleName Get-OERCatalog {
                 [CmdletBinding()] param($Id, $DisplayName)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
@@ -3633,7 +3634,7 @@ Describe 'Get-OERInventory' {
             @(@($InvErr) | Where-Object {
                     $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'CatalogNotFound*' -and
                     $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
-                }).Count | Should -Be 1 -Because 'the caller sees the same error id as before'
+                }).Count | Should -Be 1 -Because 'the retained arm republishes the record under its own id'
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
                 Should -Be 0 -Because 'a filter that names no catalog is a fact about the filter, not an unread collection'
         }

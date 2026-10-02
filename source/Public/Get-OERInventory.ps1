@@ -55,9 +55,10 @@ function Get-OERInventory {
     InventoryPartial error when their read fails, and are written as far as they were read: a
     failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
     list leaves a catalog with no access packages, a failed policy read leaves a package with no
-    assignment policies, and a failed name lookup leaves a binding under its scope's own display
-    name. Invoke-OERStructure never removes a catalog, access package or assignment policy that is
-    absent from the document.
+    assignment policies, and when the names cannot be read a group's binding is written under the
+    group's object id and any other binding under the name the access package reader could join
+    (the name the catalog recorded, or none). Invoke-OERStructure never removes a catalog, access
+    package or assignment policy that is absent from the document.
     A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
