@@ -882,18 +882,22 @@ function Get-OERInventory {
                 # A Group or Application resource is named by its CURRENT name, exactly as the Catalogs
                 # section names it, so a binding resolves to the same object id on apply.
                 $ApCatResMap = @{}
-                # This read only NAMES the bindings below. A binding whose resource cannot be joined
-                # keeps the scope label (ResourceDisplayName) as its resource, which the apply engine
-                # reports as an unresolved entry and withholds the package's binding prune for, so
-                # nothing is removed -- but the document is then not a full snapshot, so the failure
-                # is reported through InventoryPartial like any other unread collection. The
-                # projection stays exactly as it was: an empty map, and every binding on its label.
+                # This read only NAMES the bindings below, and the failure is reported through
+                # InventoryPartial like any other unread collection. When it cannot be read the map
+                # stays empty and $ApCatResRead is $false, which changes what a binding falls back to
+                # (see the projection below): the name a binding carries then is the one the catalog
+                # RECORDED when the resource was added, Graph keeps that after a rename, and the apply
+                # engine resolves a declared name FIRST as a group name -- so after a rename that name
+                # can resolve to ANOTHER group that now carries it, binding the wrong group and, under
+                # -Prune, removing the real binding. A group's object id cannot name another group.
                 # It used to be -ErrorAction SilentlyContinue, which hid the failure from every caller.
+                $ApCatResRead = $true
                 $ApCatRes = @()
                 try {
                     $ApCatRes = @(Get-OERCatalogResource -Catalog $ApCat.Id -ErrorAction Stop)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    $ApCatResRead = $false
                     $ApCatResCause = "Could not read a catalog's resources to name its access packages' bindings: $($PSItem.Exception.Message)"
                     Write-Verbose "Get-OERInventory: $ApCatResCause"
                     Add-UnreadCause -Cause $ApCatResCause -Target ([string]$ApCat.Id)
@@ -939,7 +943,12 @@ function Get-OERInventory {
 
                     # D4: resource role bindings via M1. Recover the resource's real display name by
                     # joining the binding OriginId to the catalog resource map (the apply engine matches
-                    # on that name); fall back to the raw scope display name when no resource matches.
+                    # on that name). When the map was NOT read, a group binding is written under its
+                    # OriginId instead -- the group's object id, which the apply engine resolves
+                    # verbatim -- since the only name left is the one the catalog recorded, and that
+                    # can name another group after a rename. Any other binding (an application or a
+                    # SharePoint one, or a group with no OriginId) falls back to the name the access
+                    # package reader could join, which is the name the catalog recorded or none.
                     # A FAILED read is never projected as []: under -Prune an empty declared binding set
                     # removes every binding of the package, and an omitted key still reconciles the
                     # same way. An explicit null is the documented "leave the bindings untouched"
@@ -965,6 +974,8 @@ function Get-OERInventory {
                         $Proj.resourceRoles = @(foreach ($Rr in $ApRoles) {
                             $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
                                 $ApCatResMap[[string]$Rr.OriginId]
+                            } elseif (-not $ApCatResRead -and [string]$Rr.OriginSystem -eq 'AadGroup' -and $Rr.OriginId) {
+                                [string]$Rr.OriginId
                             } else {
                                 $Rr.ResourceDisplayName
                             }

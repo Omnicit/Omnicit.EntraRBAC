@@ -3460,27 +3460,91 @@ Describe 'Get-OERInventory' {
             $Ap.resourceRoles[0].resource | Should -Be 'role_sec_new' -Because 'a failed catalog read must not leave an empty name map cached for the package section'
         }
 
-        It 'reports an unread resource-name map and keeps the binding on its scope label (non-terminating)' {
-            # The map only NAMES bindings. A binding whose name cannot be joined keeps the fallback
-            # (ResourceDisplayName), which is today's projection and is left unchanged -- the gap is
-            # reported, not turned into a different document.
+        It 'reports an unread resource-name map and writes a group binding under its object id (non-terminating)' {
+            # The map only NAMES bindings. With it unread, the only name left for a group binding is
+            # the one the catalog RECORDED, which Graph keeps after a rename and which can name
+            # ANOTHER group today, so the binding is written under the group's object id instead.
+            # The fixture is what the real reader returns for a group: the scope label is NOT in
+            # ResourceDisplayName, which holds the recorded name, and OriginSystem is AadGroup.
             Mock -ModuleName $script:moduleName Get-OERCatalogResource {
                 [CmdletBinding()] param($Catalog)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
                         [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
             }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'role_sec_x'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadGroup' }
+            }
             $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
             $Ap = @($Inv.AccessPackages)[0]
             $Ap.displayName | Should -Be 'AP-Sales'
-            $Ap.resourceRoles[0].resource | Should -Be 'Root' -Because 'an unnamed binding falls back to the scope label, exactly as before'
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -Be '11111111-1111-1111-1111-111111111111' -Because 'the recorded name can name another group after a rename; the object id cannot'
             $Ap.resourceRoles[0].role | Should -Be 'Member'
             $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -Match 'accessPackages/CAT-IT-Core/catalogResourceNames'
             $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
             $Partial[0].Exception.Message | Should -Match "Could not read a catalog's resources to name its access packages' bindings"
+        }
+
+        It 'keeps the name the access package reader joined for a non-group binding when the names are unread (non-terminating)' {
+            # Only a group can be written under an object id the apply engine resolves verbatim; an
+            # application or a SharePoint binding keeps the fallback it always had.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [CmdletBinding()] param($Catalog)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'app_x'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadApplication' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.resourceRoles[0].resource | Should -Be 'app_x' -Because 'an application binding keeps the name the reader joined, as before'
+            $Ap.resourceRoles[0].role | Should -Be 'Member'
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/CAT-IT-Core/catalogResourceNames'
+        }
+
+        It 'keeps the reader-joined name for a group binding that carries no OriginId when the names are unread (non-terminating)' {
+            # With no OriginId there is no object id to write; the fallback is all that is left.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [CmdletBinding()] param($Catalog)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'role_sec_x'; RoleName = 'Member'; OriginId = $null; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            @($Inv.AccessPackages)[0].resourceRoles[0].resource | Should -Be 'role_sec_x'
+        }
+
+        It 'writes a group binding under its current name, not its object id, when the names were read' {
+            # The object id is the fallback for an UNREAD map only: a read map names the binding by
+            # the group's current display name, exactly as the Catalogs section names its resource.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'role_sec_recorded'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_current' }; $M }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'role_sec_recorded'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERPrincipalName -Times 1 -Exactly
+            @($Inv.AccessPackages)[0].resourceRoles[0].resource | Should -Be 'role_sec_current'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
         }
 
         It 'reports an unread catalog list for every section that needs it and projects both as empty (non-terminating)' {

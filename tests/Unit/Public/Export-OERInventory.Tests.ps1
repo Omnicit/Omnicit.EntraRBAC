@@ -1356,6 +1356,35 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
             }
         }
 
+        # The tenant a RENAMED group lives in. The catalog holds two group resources that both RECORD
+        # the name 'role_sec_x': the group 1111... that was renamed since (the one the package is
+        # bound to) and a NEW group 2222... created under the old name. The directory therefore
+        # answers the name 'role_sec_x' with the new group, and an object id with itself -- the two
+        # documented behaviours of Resolve-OERGroupId that the module relies on.
+        function Set-RenamedGroupApplySideTenant {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage -MockWith {
+                [PSCustomObject]@{ Id = 'ap-apply-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; IsHidden = $false }
+            }
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith {
+                [PSCustomObject]@{ Id = 'res-1'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+                [PSCustomObject]@{ Id = 'res-2'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -MockWith {
+                [CmdletBinding()] param([string]$Id, [string]$DisplayName)
+                if ($DisplayName -eq '11111111-1111-1111-1111-111111111111') { return $DisplayName }
+                if ($DisplayName -eq 'role_sec_x') { return '22222222-2222-2222-2222-222222222222' }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' } -MockWith {
+                [PSCustomObject]@{
+                    value = @([PSCustomObject]@{
+                            id    = 'rrs-1'
+                            role  = [PSCustomObject]@{ displayName = 'Member' }
+                            scope = [PSCustomObject]@{ originId = '11111111-1111-1111-1111-111111111111' }
+                        })
+                }
+            }
+        }
+
         function Get-ApplyPlan {
             param([string]$Path, [switch]$ForReal)
             if ($ForReal) {
@@ -1599,5 +1628,67 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
             $Catalog -eq 'cat-apply-1' -and $ResourceId -eq 'res-1'
         }
         @($EmptyRows | Where-Object { $_.Section -eq 'catalogs' -and $_.Action -eq 'Removed' }).Count | Should -Be 1
+    }
+
+    It 'exports a group binding under its object id when the names are unread, so a renamed group is not swapped for the one now carrying its old name' {
+        # The package is bound to the group 1111..., which the catalog RECORDED as 'role_sec_x' and
+        # which was renamed since; a NEW group 2222... now carries that name. Written under the
+        # recorded name the binding would resolve to the new group on apply, so the real binding
+        # would be read as undeclared and removed under -Prune. The object id cannot name another.
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith {
+            [PSCustomObject]@{ ResourceDisplayName = 'role_sec_x'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadGroup' }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b9') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        # Reach proofs for the export: the name-map read ran and failed, the binding read ran.
+        Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 2 -Exactly -ParameterFilter { $Catalog -eq 'cat-1' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+        @($Bundle.IncompleteReads | Where-Object { $_ -match 'accessPackages/CAT-IT-Core/catalogResourceNames' }).Count | Should -Be 1
+        $DocumentPath = Join-Path $Bundle.BundlePath 'inventory.json'
+        $Written = @((Get-Content $DocumentPath -Raw | ConvertFrom-Json).accessPackages)[0]
+        @($Written.resourceRoles).Count | Should -Be 1
+        $Written.resourceRoles[0].resource | Should -Be '11111111-1111-1111-1111-111111111111'
+        Set-RenamedGroupApplySideTenant
+
+        # WhatIf plan: the binding is matched, nothing is planned for removal.
+        $Rows = Get-ApplyPlan -Path $DocumentPath
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq '11111111-1111-1111-1111-111111111111' }
+        $ApRows = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' })
+        @($ApRows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -like "resourceRole 'Member' on '11111111-1111-1111-1111-111111111111' already bound*" }).Count |
+            Should -Be 1 -Because 'the live binding was found and matched, which is what makes the absence of a removal row a proof'
+        @($ApRows | Where-Object { $_.Detail -match 'undeclared|would remove|would add' }).Count | Should -Be 0
+
+        # A real run: -WhatIf never reaches the Remove cmdlet, so only this makes the zero a proof.
+        $null = Get-ApplyPlan -Path $DocumentPath -ForReal
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAccessPackageResourceRole -Times 0
+    }
+
+    It 'contrast: the same document written under the recorded name DOES plan the removal of the real binding' {
+        # Proves the fixture can see the defect: with the binding under the name the catalog
+        # recorded, the apply resolves it to the NEW group and plans to remove the real binding.
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith {
+            [PSCustomObject]@{ ResourceDisplayName = 'role_sec_x'; RoleName = 'Member'; OriginId = '11111111-1111-1111-1111-111111111111'; OriginSystem = 'AadGroup' }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b10') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Raw = Get-Content (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+        $Recorded = $Raw -replace '"resource":\s*"[^"]*"', '"resource": "role_sec_x"'
+        $Recorded | Should -Match '"resource":\s*"role_sec_x"' -Because 'the document under test names the binding by the name the catalog recorded'
+        $RecordedPath = Join-Path $TestDrive 'recorded-name-resourceRoles.json'
+        Set-Content -Path $RecordedPath -Value $Recorded -Encoding utf8
+        Set-RenamedGroupApplySideTenant
+
+        $Rows = Get-ApplyPlan -Path $RecordedPath
+
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-apply-1/resourceRoleScopes*' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'role_sec_x' }
+        $Removal = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' -and $_.Detail -match 'undeclared' })
+        $Removal.Count | Should -Be 1
+        $Removal[0].Detail | Should -BeLike "would remove undeclared resourceRole binding 'Member|11111111-1111-1111-1111-111111111111'*"
     }
 }
