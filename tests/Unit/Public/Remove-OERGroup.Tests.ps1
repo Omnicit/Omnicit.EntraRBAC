@@ -142,9 +142,11 @@ Describe 'Remove-OERGroup' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousGroupName,Remove-OERGroup' }).Count | Should -Be 0
     }
 
-    It 'still reports GroupNotFound when the resolver throws something other than an ambiguity' {
-        # The guard must NOT broaden D-au-resolve-catch-null-masks-failures: a transport failure keeps
-        # today's fall-through to GroupNotFound, which is deliberately out of scope for this change.
+    It 'surfaces a resolver failure other than an ambiguity as itself, never as GroupNotFound' {
+        # Supersedes 'still reports GroupNotFound when the resolver throws something other than an
+        # ambiguity', which pinned the old fall-through: a throttled or forbidden lookup is not
+        # evidence that no such group exists, so it is reported as the failure it is. Only a $null
+        # return still reaches GroupNotFound (the test above).
         Mock -ModuleName $script:moduleName Resolve-OERGroupId {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new('Request throttled.'), 'TooManyRequests',
@@ -153,8 +155,17 @@ Describe 'Remove-OERGroup' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
         $Err = $null
         Remove-OERGroup -Group 'Dup' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
-        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupNotFound,Remove-OERGroup' }).Count | Should -Be 1
+        # Narrowed on the record this cmdlet itself published: -ErrorVariable also holds the engine's
+        # capture of the inner throw, which carries the same id whether or not the cmdlet re-published it.
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Remove-OERGroup'
+            })
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^TooManyRequests'
+        $Published[0].Exception.Message | Should -Match 'Request throttled'
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'GroupNotFound*' }).Count | Should -Be 0
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousGroupName,Remove-OERGroup' }).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
     }
 
     Context 'unified -Group target (audit PR6)' {

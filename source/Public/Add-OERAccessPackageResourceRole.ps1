@@ -117,7 +117,8 @@ function Add-OERAccessPackageResourceRole {
             return
         }
 
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $CatalogId = $null
         try {
             $CatalogId = Resolve-OERCatalogId -DisplayName $Catalog
@@ -130,6 +131,10 @@ function Add-OERAccessPackageResourceRole {
                     -TargetObject $Catalog -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such catalog exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $CatalogId) {
             Write-CmdletError `
@@ -162,7 +167,8 @@ function Add-OERAccessPackageResourceRole {
         # `$ResourceOriginId = $null` below would itself throw ValidationMetadataException.
         $EffectiveOriginId = $ResourceOriginId
         if ($PSBoundParameters.ContainsKey('Group')) {
-            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+            # $null return (a display name that matched nothing) reaches the not-found branch.
             $EffectiveOriginId = $null
             try {
                 $EffectiveOriginId = Resolve-OERGroupId -DisplayName $Group
@@ -175,6 +181,10 @@ function Add-OERAccessPackageResourceRole {
                         -TargetObject $Group -Cmdlet $PSCmdlet
                     return
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+                # no such group exists: surface it as itself, never as the not-found below.
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
             if (-not $EffectiveOriginId) {
                 Write-CmdletError `
@@ -189,7 +199,8 @@ function Add-OERAccessPackageResourceRole {
             # nothing and misleadingly reporting ApplicationNotFound. Test-OERGuid is the module's
             # single GUID predicate; this makes -Application's help claim ("display name or object
             # id") symmetric with -Group's, which is already true.
-            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+            # $null return (a display name that matched nothing) reaches the not-found branch.
             $EffectiveOriginId = $null
             try {
                 $EffectiveOriginId = if (Test-OERGuid -Value $Application) { Resolve-OERApplicationId -Id $Application }
@@ -203,6 +214,10 @@ function Add-OERAccessPackageResourceRole {
                         -TargetObject $Application -Cmdlet $PSCmdlet
                     return
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+                # no such application exists: surface it as itself, never as the not-found below.
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
             if (-not $EffectiveOriginId) {
                 Write-CmdletError `

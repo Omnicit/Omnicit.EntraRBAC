@@ -78,7 +78,8 @@ function Get-OERGroupMember {
             return
         }
 
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $GroupId = $null
         try {
             $GroupId = Resolve-OERGroupId -DisplayName $Group
@@ -91,6 +92,10 @@ function Get-OERGroupMember {
                     -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such group exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $GroupId) {
             Write-CmdletError `

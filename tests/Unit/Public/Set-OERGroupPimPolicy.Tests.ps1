@@ -222,13 +222,18 @@ Describe 'Set-OERGroupPimPolicy' {
         $Text | Should -Match 'object id'
     }
 
-    It 'leaves no record in $Error when the group resolver fails' {
+    It 'leaves no DUPLICATE record in $Error when the group resolver fails, and never reports GroupNotFound' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth { }
         Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'transport failure' }
         $Error.Clear()
         Set-OERGroupPimPolicy -Group 'grp' -ActivationMaxHours 4 -ErrorAction SilentlyContinue | Out-Null
-        # Only the cmdlet's own GroupNotFound record may remain; the swallowed resolver throw must not.
-        @($Error).Exception.Message -join ';' | Should -Not -Match 'transport failure'
+        # Supersedes 'leaves no record in $Error when the group resolver fails', which pinned the old
+        # swallow-then-GroupNotFound path. The failure is now reported as itself: the raw record the
+        # engine captured for the resolver throw is scrubbed (the catch's Remove-OERErrorRecord) and the
+        # cmdlet re-publishes it once, so exactly one record remains -- the failure, not a GroupNotFound.
+        @($Error).Count | Should -Be 1
+        $Error[0].Exception.Message | Should -Match 'transport failure'
+        $Error[0].FullyQualifiedErrorId | Should -Not -Match 'GroupNotFound'
     }
 
     It 'leaves no DUPLICATE record in $Error when the policy resolver fails' {
