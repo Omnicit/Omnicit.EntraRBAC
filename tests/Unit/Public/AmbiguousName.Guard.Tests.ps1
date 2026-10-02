@@ -389,7 +389,8 @@ Describe 'A failed resolver lookup is reported as itself at every swept call sit
     # The other half of the contract above. A resolver that THROWS something other than an ambiguous
     # name -- a 403, an exhausted 429, a 5xx -- has not shown that nothing by that name exists, so no
     # call site may book it as <Noun>NotFound. Only a $null return (a display name that matched
-    # nothing) reaches the not-found branch, and the unit test of each cmdlet already covers that.
+    # nothing) reaches the not-found branch. This Describe does not exercise that branch -- it covers
+    # the failure side only, and makes no claim about which cmdlets' own unit tests cover the $null side.
     It '<Cmdlet> reports a 403 out of <Resolver> as a failure, never as *NotFound' -ForEach $script:GuardCases {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
