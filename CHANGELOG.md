@@ -15,7 +15,9 @@ names the package or catalog. Earlier versions wrote `[]`, and applying that exp
 removed every binding or resource of the package or catalog. A failed read of the catalogs, of a
 catalog's access packages, of their assignment policies or of the names their bindings are written
 under is now reported through `InventoryPartial` too, and `schema.json` accepts `null` for
-`resources` and `resourceRoles`.
+`resources` and `resourceRoles`. When the names an access package's bindings are written under
+cannot be read, a group's binding is written under the group's object id instead of the name the
+catalog recorded, which can name another group after a rename.
 
 ## [1.1.0] - 2026-10-01
 
