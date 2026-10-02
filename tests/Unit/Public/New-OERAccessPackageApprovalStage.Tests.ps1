@@ -168,3 +168,74 @@ Describe 'New-OERAccessPackageApprovalStage ambiguous approver group' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupNotFound,New-OERAccessPackageApprovalStage' })[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
     }
 }
+
+Describe 'New-OERAccessPackageApprovalStage -- a failed approver lookup is not a not-found' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+        # Only the named value is refused; every other lookup succeeds, so each case reaches exactly the
+        # approver slot (primary, alternate or fallback) it is about.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId {
+            param([string]$Id, [string]$UserPrincipalName)
+            if ($UserPrincipalName -eq 'denied@contoso.com') {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $UserPrincipalName)
+            }
+            'uid-ok'
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId {
+            param([string]$DisplayName)
+            if ($DisplayName -eq 'Denied Group') {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, $DisplayName)
+            }
+            'gid-ok'
+        }
+    }
+
+    It 'publishes a 403 on the <Slot> as itself, never as a not-found, and builds no stage' -ForEach @(
+        @{
+            Slot = 'primary approver user'; Resolver = 'Resolve-OERUserId'
+            Params = @{ DurationDays = 7; User = 'denied@contoso.com' }
+        }
+        @{
+            Slot = 'primary approver group'; Resolver = 'Resolve-OERGroupId'
+            Params = @{ DurationDays = 7; Group = 'Denied Group' }
+        }
+        @{
+            Slot = 'escalation (alternate) approver user'; Resolver = 'Resolve-OERUserId'
+            Params = @{ DurationDays = 7; Manager = $true; AlternateUser = 'denied@contoso.com' }
+        }
+        @{
+            Slot = 'fallback approver user'; Resolver = 'Resolve-OERUserId'
+            Params = @{ DurationDays = 7; Manager = $true; FallbackUser = 'denied@contoso.com' }
+        }
+        @{
+            Slot = 'fallback approver group'; Resolver = 'Resolve-OERGroupId'
+            Params = @{ DurationDays = 7; Manager = $true; FallbackGroup = 'Denied Group' }
+        }
+    ) {
+        $Err = $null
+        $Out = New-OERAccessPackageApprovalStage @Params -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessPackageApprovalStage'
+            })
+        # The positive half: the lookup was attempted and refused, so the zeros below are not a cmdlet
+        # that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC -CommandName $Resolver -Times 1 -Exactly
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+}

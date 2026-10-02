@@ -136,6 +136,12 @@ function New-OERAccessPackageApprovalStage {
 
         $PrimaryResolved = Resolve-OERTargetList -User $User -Group $Group @AuthParams
         if ($PrimaryResolved.FailedValue) {
+            # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user or
+            # group exists: re-publish the caught record as itself, never as "<Kind> '<Value>' not found."
+            if ($PrimaryResolved.FailedRecord) {
+                $PSCmdlet.WriteError($PrimaryResolved.FailedRecord)
+                return
+            }
             # A resolver that supplies its own ErrorId/message knows more about the failure than the
             # generic "<Kind> '<Value>' not found." construction can express -- prefer it when present.
             $ErrId = if ($PrimaryResolved.FailedErrorId) { $PrimaryResolved.FailedErrorId }
@@ -158,6 +164,11 @@ function New-OERAccessPackageApprovalStage {
 
         $EscalationResolved = Resolve-OERTargetList -User $AlternateUser -Group $AlternateGroup @AuthParams
         if ($EscalationResolved.FailedValue) {
+            # A failed lookup is re-published as itself, never as a not-found (see the primary block).
+            if ($EscalationResolved.FailedRecord) {
+                $PSCmdlet.WriteError($EscalationResolved.FailedRecord)
+                return
+            }
             # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
             $ErrId = if ($EscalationResolved.FailedErrorId) { $EscalationResolved.FailedErrorId }
             elseif ($EscalationResolved.FailedKind -eq 'User') { 'UserNotFound' } else { 'GroupNotFound' }
@@ -173,6 +184,11 @@ function New-OERAccessPackageApprovalStage {
 
         $FallbackResolved = Resolve-OERTargetList -User $FallbackUser -Group $FallbackGroup @AuthParams
         if ($FallbackResolved.FailedValue) {
+            # A failed lookup is re-published as itself, never as a not-found (see the primary block).
+            if ($FallbackResolved.FailedRecord) {
+                $PSCmdlet.WriteError($FallbackResolved.FailedRecord)
+                return
+            }
             # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
             $ErrId = if ($FallbackResolved.FailedErrorId) { $FallbackResolved.FailedErrorId }
             elseif ($FallbackResolved.FailedKind -eq 'User') { 'UserNotFound' } else { 'GroupNotFound' }

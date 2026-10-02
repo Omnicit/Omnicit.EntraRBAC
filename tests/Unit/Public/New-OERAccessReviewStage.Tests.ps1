@@ -199,3 +199,48 @@ Describe 'New-OERAccessReviewStage ambiguous reviewer group' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'GroupNotFound,New-OERAccessReviewStage' })[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
     }
 }
+
+Describe 'New-OERAccessReviewStage -- a failed reviewer lookup is not a not-found' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied@contoso.com')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Group')
+        }
+    }
+
+    It 'publishes a 403 on a <Slot> as itself, never as a not-found, and builds no stage' -ForEach @(
+        @{ Slot = 'reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ Reviewer = 'denied@contoso.com' } }
+        @{ Slot = 'reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ ReviewerGroup = 'Denied Group' } }
+        @{ Slot = 'fallback reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ Manager = $true; FallbackReviewer = 'denied@contoso.com' } }
+        @{ Slot = 'fallback reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ Manager = $true; FallbackReviewerGroup = 'Denied Group' } }
+    ) {
+        $Err = $null
+        $Out = New-OERAccessReviewStage -StageId '1' -DurationInDays 7 @Params -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewStage'
+            })
+        # The positive half: the lookup was attempted and refused, so the zeros below are not a cmdlet
+        # that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC -CommandName $Resolver -Times 1 -Exactly
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+}

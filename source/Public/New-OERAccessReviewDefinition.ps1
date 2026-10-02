@@ -235,6 +235,14 @@ function New-OERAccessReviewDefinition {
         if ($Catalog) { $ScopeParams.Catalog = $Catalog }
         $Target = Resolve-OERAccessReviewScopeTarget @ScopeParams
         if ($Target.FailedValue) {
+            # A catalog or assignment policy read that FAILED (a 403, an exhausted 429, a 5xx) is not
+            # evidence that no such catalog or policy exists: re-publish the caught record as itself,
+            # never as "<Kind> '<Value>' not found." The access package branch reports its own failures
+            # through FailedErrorId/FailedCategory below, and sets no FailedRecord.
+            if ($Target.FailedRecord) {
+                $PSCmdlet.WriteError($Target.FailedRecord)
+                return
+            }
             # A resolver that supplies its own ErrorId/message knows more about the failure than the
             # generic "<Kind> '<Value>' not found." construction can express -- prefer it when present.
             $ScopeErrorId = if ($Target.FailedErrorId) { $Target.FailedErrorId } else { "$($Target.FailedKind)NotFound" }
@@ -334,6 +342,13 @@ function New-OERAccessReviewDefinition {
 
             $Resolved = Resolve-OERReviewerScope @ReviewerParams
             if ($Resolved.FailedValue) {
+                # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user
+                # or group exists: re-publish the caught record as itself, never as
+                # "<Kind> '<Value>' not found."
+                if ($Resolved.FailedRecord) {
+                    $PSCmdlet.WriteError($Resolved.FailedRecord)
+                    return
+                }
                 # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
                 $ReviewerErrorId = if ($Resolved.FailedErrorId) { $Resolved.FailedErrorId } else { "$($Resolved.FailedKind)NotFound" }
                 $ReviewerMessage = if ($Resolved.FailedMessage) { $Resolved.FailedMessage } else { "$($Resolved.FailedKind) '$($Resolved.FailedValue)' not found." }

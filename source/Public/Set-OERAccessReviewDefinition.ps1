@@ -384,6 +384,13 @@ function Set-OERAccessReviewDefinition {
 
             $Resolved = Resolve-OERReviewerScope @ReviewerParams
             if ($Resolved.FailedValue) {
+                # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user
+                # or group exists: re-publish the caught record as itself, never as
+                # "<Kind> '<Value>' not found."
+                if ($Resolved.FailedRecord) {
+                    $PSCmdlet.WriteError($Resolved.FailedRecord)
+                    return
+                }
                 # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
                 $ReviewerErrorId = if ($Resolved.FailedErrorId) { $Resolved.FailedErrorId } else { "$($Resolved.FailedKind)NotFound" }
                 $ReviewerMessage = if ($Resolved.FailedMessage) { $Resolved.FailedMessage } else { "$($Resolved.FailedKind) '$($Resolved.FailedValue)' not found." }

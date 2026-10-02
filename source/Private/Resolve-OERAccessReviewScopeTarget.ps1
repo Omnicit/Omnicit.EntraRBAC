@@ -29,6 +29,17 @@ function Resolve-OERAccessReviewScopeTarget {
     assignment policy. A caller that has a FailedCategory uses it; a caller that does not keeps its
     own ErrorId-based derivation.
 
+    FailedRecord is the one carrier shared with Resolve-OERReviewerScope and Resolve-OERTargetList for
+    a lookup that FAILED rather than found nothing. It holds the caught ErrorRecord when an explicit
+    -Catalog name's Resolve-OERCatalogId throws anything other than an ambiguity, or when the
+    assignment policy listing throws -- a 403, an exhausted 429, a 5xx -- and is $null on every other
+    descriptor, success included, so a caller can test it without a property check. A refused read is
+    not evidence that no such catalog or policy exists, so FailedKind/FailedValue still name the
+    lookup, FailedErrorId, FailedMessage and FailedCategory stay $null, and the caller re-publishes
+    FailedRecord as itself instead of "<Kind> '<Value>' not found." The access package branch keeps
+    its own FailedErrorId/FailedMessage/FailedCategory triple, and CatalogDerivationFailed (the
+    package read behind a derived catalog) is already a failure id, so neither sets FailedRecord.
+
     .PARAMETER AccessPackage
     The access package display name or id.
 
@@ -50,7 +61,7 @@ function Resolve-OERAccessReviewScopeTarget {
         [string]$Catalog
     )
     $Fail = {
-        param($Kind, $Value, $ErrId, $Msg, $Cat)
+        param($Kind, $Value, $ErrId, $Msg, $Cat, $Rec)
         @{
             AccessPackageId = $null; AssignmentPolicyId = $null; CatalogId = $null
             FailedKind = $Kind; FailedValue = $Value
@@ -65,6 +76,11 @@ function Resolve-OERAccessReviewScopeTarget {
             # $null on every Fail that does not come out of that catch: the plain no-match, both
             # catalog paths, and the assignment policy.
             FailedCategory = $Cat
+            # Optional sixth field, the carrier shared with Resolve-OERReviewerScope and
+            # Resolve-OERTargetList: the caught ErrorRecord of a lookup that THREW on the explicit
+            # -Catalog path or the assignment policy listing, for the caller to re-publish as itself.
+            # $null on every other Fail, so a caller tests it without a property check.
+            FailedRecord = $Rec
         }
     }
 
@@ -106,6 +122,9 @@ function Resolve-OERAccessReviewScopeTarget {
                 if (Test-OERAmbiguousNameError -Record $PSItem) {
                     return (& $Fail 'Catalog' $Catalog 'AmbiguousCatalogName' $PSItem.Exception.Message)
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence
+                # that no such catalog exists: carry it out in FailedRecord, never as the not-found below.
+                return (& $Fail 'Catalog' $Catalog $null $null $null $PSItem)
             }
         }
         if (-not $CatId) { return (& $Fail 'Catalog' $Catalog) }
@@ -130,11 +149,20 @@ function Resolve-OERAccessReviewScopeTarget {
         $PolId = $AssignmentPolicy
     }
     else {
-        $Resp = try { Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $ApId) } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        # A listing that THROWS has not shown that the package has no such policy: carry the record out
+        # in FailedRecord, never as the not-found below. Only a listing that returned and held no policy
+        # of that name is a not-found.
+        $Resp = $null
+        try {
+            $Resp = Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/assignmentPolicies?`$filter=accessPackage/id eq '{0}'" -f $ApId)
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            return (& $Fail 'AssignmentPolicy' $AssignmentPolicy $null $null $null $PSItem)
+        }
         $Match = @($Resp.value) | Where-Object { $_.displayName -eq $AssignmentPolicy } | Select-Object -First 1
         $PolId = [string]$Match.id
         if (-not $PolId) { return (& $Fail 'AssignmentPolicy' $AssignmentPolicy) }
     }
 
-    return @{ AccessPackageId = $ApId; AssignmentPolicyId = $PolId; CatalogId = $CatId; FailedKind = $null; FailedValue = $null }
+    return @{ AccessPackageId = $ApId; AssignmentPolicyId = $PolId; CatalogId = $CatId; FailedKind = $null; FailedValue = $null; FailedRecord = $null }
 }

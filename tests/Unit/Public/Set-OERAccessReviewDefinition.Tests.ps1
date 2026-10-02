@@ -565,3 +565,62 @@ Describe 'Set-OERAccessReviewDefinition ambiguous reviewer group' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'PUT' } -Times 0
     }
 }
+
+Describe 'Set-OERAccessReviewDefinition -- a failed reviewer lookup is not a not-found' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { param($DisplayName) $DisplayName }
+        Mock -ModuleName Omnicit.EntraRBAC ConvertTo-OERAccessReviewDefinition { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            return @{
+                id                      = 'd1'
+                displayName             = 'Old'
+                descriptionForAdmins    = 'oa'
+                descriptionForReviewers = 'or'
+                scope                   = @{ query = 'q' }
+                settings                = @{ instanceDurationInDays = 14 }
+                reviewers               = @(@{ query = '/users/u1'; queryType = 'MicrosoftGraph' })
+            }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied@contoso.com')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Group')
+        }
+    }
+
+    It 'publishes a 403 on a <Slot> as itself, never as a not-found, and PUTs nothing' -ForEach @(
+        @{ Slot = 'reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ Reviewer = 'denied@contoso.com' } }
+        @{ Slot = 'reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ ReviewerGroup = 'Denied Group' } }
+        @{ Slot = 'fallback reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ FallbackReviewer = 'denied@contoso.com' } }
+        @{ Slot = 'fallback reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ FallbackReviewerGroup = 'Denied Group' } }
+    ) {
+        $Err = $null
+        $Out = Set-OERAccessReviewDefinition -Id 'd1' @Params -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Set-OERAccessReviewDefinition'
+            })
+        # The positive half: the read-modify-write read happened and the lookup was refused, so the
+        # PUT assertion below is not a cmdlet that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -ne 'PUT' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC -CommandName $Resolver -Times 1 -Exactly
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+    }
+}

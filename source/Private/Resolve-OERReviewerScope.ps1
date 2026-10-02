@@ -22,6 +22,16 @@ function Resolve-OERReviewerScope {
     an ambiguity is reported through the descriptor rather than thrown: a bare throw out of this helper
     would terminate the calling public cmdlet and defeat -ErrorAction SilentlyContinue.
 
+    FailedRecord is the carrier for a lookup that FAILED rather than found nothing. It holds the caught
+    ErrorRecord when Resolve-OERUserId or Resolve-OERGroupId throws anything other than an ambiguous
+    group display name -- a 403, an exhausted 429, a 5xx -- and is $null on every other descriptor,
+    success included, so a caller can test it without a property check. A refused read is not evidence
+    that no such user or group exists, so FailedKind/FailedValue still name the lookup but the caller
+    re-publishes FailedRecord as itself instead of "<Kind> '<Value>' not found." FailedErrorId and
+    FailedMessage stay $null on that path on purpose: a caller reads the mere presence of FailedErrorId
+    as a bad argument, which would label a refused read InvalidArgument. Only a $null return (a name
+    that matched nothing) is a not-found.
+
     .PARAMETER Reviewer
     Zero or more primary reviewer user principal names or user object ids (GUIDs).
 
@@ -69,9 +79,10 @@ function Resolve-OERReviewerScope {
     }
 
     # Same failure-descriptor shape as Resolve-OERAccessReviewScopeTarget: the optional ErrId/Msg
-    # companions let a caller report what actually failed instead of its generic not-found text.
+    # companions let a caller report what actually failed instead of its generic not-found text, and
+    # Rec carries the caught ErrorRecord of a lookup that threw (see FailedRecord in the help).
     $Fail = {
-        param($Kind, $Value, $ErrId, $Msg)
+        param($Kind, $Value, $ErrId, $Msg, $Rec)
         @{
             Reviewers         = @()
             FallbackReviewers = @()
@@ -79,6 +90,7 @@ function Resolve-OERReviewerScope {
             FailedValue       = $Value
             FailedErrorId     = $ErrId
             FailedMessage     = $Msg
+            FailedRecord      = $Rec
         }
     }
 
@@ -87,9 +99,17 @@ function Resolve-OERReviewerScope {
         $Scopes = @()
         foreach ($U in @($Users)) {
             if (-not $U) { continue }
-            $Uid = try { Resolve-OERUserId -UserPrincipalName $U } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+            # A lookup that THROWS has not shown that no such user exists: hand the record out in
+            # FailedRecord for the caller to re-publish as itself. Only a $null return is a not-found.
+            $Uid = $null
+            try {
+                $Uid = Resolve-OERUserId -UserPrincipalName $U
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                return @{ Scopes = @(); FailedKind = 'User'; FailedValue = $U; FailedErrorId = $null; FailedMessage = $null; FailedRecord = $PSItem }
+            }
             if (-not $Uid) {
-                return @{ Scopes = @(); FailedKind = 'User'; FailedValue = $U; FailedErrorId = $null; FailedMessage = $null }
+                return @{ Scopes = @(); FailedKind = 'User'; FailedValue = $U; FailedErrorId = $null; FailedMessage = $null; FailedRecord = $null }
             }
             $Scopes += @{ query = "/users/$Uid"; queryType = 'MicrosoftGraph' }
         }
@@ -97,7 +117,8 @@ function Resolve-OERReviewerScope {
             if (-not $G) { continue }
             # An ambiguous display name travels through the descriptor's ErrorId/message companions so
             # the calling cmdlet reports it as a non-terminating error naming the candidate ids, rather
-            # than flattening it into the misleading "Group '<name>' not found.".
+            # than flattening it into the misleading "Group '<name>' not found.". Any other throw -- a
+            # 403, an exhausted 429, a 5xx -- travels in FailedRecord, never as the not-found below.
             $Gid = $null
             try {
                 $Gid = Resolve-OERGroupId -DisplayName $G
@@ -110,27 +131,29 @@ function Resolve-OERReviewerScope {
                         FailedValue   = $G
                         FailedErrorId = 'AmbiguousGroupName'
                         FailedMessage = $PSItem.Exception.Message
+                        FailedRecord  = $null
                     }
                 }
+                return @{ Scopes = @(); FailedKind = 'Group'; FailedValue = $G; FailedErrorId = $null; FailedMessage = $null; FailedRecord = $PSItem }
             }
             if (-not $Gid) {
-                return @{ Scopes = @(); FailedKind = 'Group'; FailedValue = $G; FailedErrorId = $null; FailedMessage = $null }
+                return @{ Scopes = @(); FailedKind = 'Group'; FailedValue = $G; FailedErrorId = $null; FailedMessage = $null; FailedRecord = $null }
             }
             $Scopes += @{ query = "/groups/$Gid/transitiveMembers"; queryType = 'MicrosoftGraph' }
         }
-        return @{ Scopes = @($Scopes); FailedKind = $null; FailedValue = $null; FailedErrorId = $null; FailedMessage = $null }
+        return @{ Scopes = @($Scopes); FailedKind = $null; FailedValue = $null; FailedErrorId = $null; FailedMessage = $null; FailedRecord = $null }
     }
 
     $Primary = Resolve-One -Users $Reviewer -Groups $ReviewerGroup
     if ($Primary.FailedValue) {
-        return (& $Fail $Primary.FailedKind $Primary.FailedValue $Primary.FailedErrorId $Primary.FailedMessage)
+        return (& $Fail $Primary.FailedKind $Primary.FailedValue $Primary.FailedErrorId $Primary.FailedMessage $Primary.FailedRecord)
     }
     $Reviewers = @($Primary.Scopes)
     if ($Manager) { $Reviewers += @{ query = './manager'; queryType = 'MicrosoftGraph'; queryRoot = 'decisions' } }
 
     $Fallback = Resolve-One -Users $FallbackReviewer -Groups $FallbackReviewerGroup
     if ($Fallback.FailedValue) {
-        return (& $Fail $Fallback.FailedKind $Fallback.FailedValue $Fallback.FailedErrorId $Fallback.FailedMessage)
+        return (& $Fail $Fallback.FailedKind $Fallback.FailedValue $Fallback.FailedErrorId $Fallback.FailedMessage $Fallback.FailedRecord)
     }
 
     return @{
@@ -140,5 +163,6 @@ function Resolve-OERReviewerScope {
         FailedValue       = $null
         FailedErrorId     = $null
         FailedMessage     = $null
+        FailedRecord      = $null
     }
 }

@@ -124,3 +124,127 @@ Describe 'Resolve-OERTargetList ambiguity handling' {
         }
     }
 }
+
+Describe 'Resolve-OERTargetList -- a failed lookup is not a not-found' {
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord {}
+    }
+
+    # A 403, an exhausted 429 or a 5xx out of a user or group lookup says nothing about whether the
+    # object exists. The descriptor carries the caught record in FailedRecord, so the calling cmdlet can
+    # re-publish it as itself; FailedErrorId stays $null on that path, since a caller reads the mere
+    # PRESENCE of FailedErrorId as "bad argument" and would label a refused read InvalidArgument.
+
+    It 'carries a 403 out of Resolve-OERUserId in FailedRecord and leaves the not-found companions null' {
+        Mock -ModuleName $script:moduleName Resolve-OERUserId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied@contoso.com')
+        }
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList -User 'denied@contoso.com'
+            $R.FailedRecord                       | Should -Not -BeNullOrEmpty
+            $R.FailedRecord.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $R.FailedRecord.CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $R.FailedKind                         | Should -Be 'User'
+            $R.FailedValue                        | Should -Be 'denied@contoso.com'
+            $R.FailedErrorId                      | Should -BeNullOrEmpty
+            $R.FailedMessage                      | Should -BeNullOrEmpty
+            @($R.Approvers).Count                 | Should -Be 0
+        }
+    }
+
+    It 'carries a 403 out of Resolve-OERGroupId in FailedRecord and leaves the ambiguity companions null' {
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Group')
+        }
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList -Group 'Denied Group'
+            $R.FailedRecord                       | Should -Not -BeNullOrEmpty
+            $R.FailedRecord.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $R.FailedKind                         | Should -Be 'Group'
+            $R.FailedValue                        | Should -Be 'Denied Group'
+            $R.FailedErrorId                      | Should -BeNullOrEmpty
+            $R.FailedMessage                      | Should -BeNullOrEmpty
+            @($R.Approvers).Count                 | Should -Be 0
+        }
+    }
+
+    It 'leaves FailedRecord null for a $null user or group lookup, and the not-found shape is unchanged' {
+        Mock -ModuleName $script:moduleName Resolve-OERUserId { $null }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+        InModuleScope $script:moduleName {
+            $U = Resolve-OERTargetList -User 'nobody@contoso.com'
+            $U.FailedKind    | Should -Be 'User'
+            $U.FailedValue   | Should -Be 'nobody@contoso.com'
+            $U.FailedErrorId | Should -BeNullOrEmpty
+            $U.FailedRecord  | Should -BeNullOrEmpty
+            $U.ContainsKey('FailedRecord') | Should -BeTrue
+            $G = Resolve-OERTargetList -Group 'no-such-group'
+            $G.FailedKind    | Should -Be 'Group'
+            $G.FailedValue   | Should -Be 'no-such-group'
+            $G.FailedErrorId | Should -BeNullOrEmpty
+            $G.FailedRecord  | Should -BeNullOrEmpty
+            $G.ContainsKey('FailedRecord') | Should -BeTrue
+        }
+    }
+
+    It 'leaves FailedRecord null for an ambiguous group name' {
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new("Group display name 'Dup' matches 2 groups (aaa-1, bbb-2)."),
+                'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup')
+        }
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList -Group 'Dup'
+            $R.FailedErrorId | Should -Be 'AmbiguousGroupName'
+            $R.FailedRecord  | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'carries a FailedRecord key, null, on a successful descriptor' {
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList
+            $R.ContainsKey('FailedRecord') | Should -BeTrue
+            $R.FailedRecord                | Should -BeNullOrEmpty
+            $R.FailedValue                 | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'scrubs the failed Resolve-OERUserId record before carrying it out (bearer hygiene)' {
+        # The catch hands the record on instead of discarding it, so an $Error-count proof stays green with
+        # the scrub deleted. Guard the call itself (rationale.md, #bearer-scrub-tests); the FailedRecord
+        # assertion beside it is the positive proof that this catch was reached.
+        Mock -ModuleName $script:moduleName Resolve-OERUserId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: user lookup scrub marker.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied@contoso.com')
+        }
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList -User 'denied@contoso.com'
+            $R.FailedRecord.Exception.Message | Should -Be 'Authorization_RequestDenied: user lookup scrub marker.'
+        }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Authorization_RequestDenied: user lookup scrub marker.'
+        }
+    }
+
+    It 'scrubs the failed Resolve-OERGroupId record before carrying it out (bearer hygiene)' {
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: group lookup scrub marker.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Group')
+        }
+        InModuleScope $script:moduleName {
+            $R = Resolve-OERTargetList -Group 'Denied Group'
+            $R.FailedRecord.Exception.Message | Should -Be 'Authorization_RequestDenied: group lookup scrub marker.'
+        }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Authorization_RequestDenied: group lookup scrub marker.'
+        }
+    }
+}

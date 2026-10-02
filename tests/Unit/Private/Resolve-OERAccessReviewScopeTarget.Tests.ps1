@@ -201,6 +201,195 @@ Describe 'Resolve-OERAccessReviewScopeTarget -- a failed resolver read is not a 
     }
 }
 
+Describe 'Resolve-OERAccessReviewScopeTarget -- a failed catalog or policy read is not a not-found' {
+    BeforeEach { InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null } }
+
+    # The access package branch already carries a failure out through FailedErrorId/FailedMessage/
+    # FailedCategory. The explicit -Catalog branch and the assignment policy listing used to swallow
+    # a failed read into the plain not-found shape; they now hand the caught record out in FailedRecord,
+    # the ONE carrier all three descriptor resolvers share, and leave the three companions null.
+
+    It 'carries a 403 out of Resolve-OERCatalogId for an explicit -Catalog name in FailedRecord' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Invoke-OERGraphRequest { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Resolve-OERCatalogId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Catalog')
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' -Catalog 'Denied Catalog'
+            $R.FailedRecord                       | Should -Not -BeNullOrEmpty
+            $R.FailedRecord.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $R.FailedRecord.CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $R.FailedKind                         | Should -Be 'Catalog'
+            $R.FailedValue                        | Should -Be 'Denied Catalog'
+            $R.FailedErrorId                      | Should -BeNullOrEmpty
+            $R.FailedMessage                      | Should -BeNullOrEmpty
+            $R.FailedCategory                     | Should -BeNullOrEmpty
+            Should -Invoke Invoke-OERGraphRequest -Times 0
+        }
+    }
+
+    It 'carries a 403 out of the assignment policy listing in FailedRecord' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.FailedRecord                       | Should -Not -BeNullOrEmpty
+            $R.FailedRecord.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $R.FailedRecord.CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $R.FailedKind                         | Should -Be 'AssignmentPolicy'
+            $R.FailedValue                        | Should -Be 'Standard'
+            $R.FailedErrorId                      | Should -BeNullOrEmpty
+            $R.FailedMessage                      | Should -BeNullOrEmpty
+            $R.FailedCategory                     | Should -BeNullOrEmpty
+            # The listing was reached: the descriptor is a failure of that read, not of an earlier step.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        }
+    }
+
+    It 'still reports a policy name that matched nothing as a plain not-found, with no FailedRecord' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') { return @{ value = @(@{ id = 'pol-1'; displayName = 'Other' }) } }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.FailedKind    | Should -Be 'AssignmentPolicy'
+            $R.FailedValue   | Should -Be 'Standard'
+            $R.FailedErrorId | Should -BeNullOrEmpty
+            $R.FailedRecord  | Should -BeNullOrEmpty
+            $R.ContainsKey('FailedRecord') | Should -BeTrue
+        }
+    }
+
+    It 'still reports an explicit catalog name that matched nothing as a plain not-found, with no FailedRecord' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Resolve-OERCatalogId { $null }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' -Catalog 'Ghost'
+            $R.FailedKind    | Should -Be 'Catalog'
+            $R.FailedValue   | Should -Be 'Ghost'
+            $R.FailedErrorId | Should -BeNullOrEmpty
+            $R.FailedRecord  | Should -BeNullOrEmpty
+            $R.ContainsKey('FailedRecord') | Should -BeTrue
+        }
+    }
+
+    It 'leaves FailedRecord null on the ambiguity and access package paths, which keep their own companions' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Resolve-OERCatalogId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Catalog display name 'Dup' matches 2 catalogs (ccc-1, ddd-2)."),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup')
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard' -Catalog 'Dup'
+            $R.FailedErrorId | Should -Be 'AmbiguousCatalogName'
+            $R.FailedRecord  | Should -BeNullOrEmpty
+
+            Mock Resolve-OERAccessPackageId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'AP')
+            }
+            $P = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP' -AssignmentPolicy 'Standard'
+            $P.FailedErrorId  | Should -Be 'Authorization_RequestDenied'
+            $P.FailedCategory | Should -Be 'PermissionDenied'
+            $P.FailedRecord   | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'keeps CatalogDerivationFailed, with no FailedRecord, when the derived-catalog read of the package throws' {
+        # A failure id already, so it is deliberately left as it was (Ruling S3 / task brief).
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.FailedKind    | Should -Be 'Catalog'
+            $R.FailedErrorId | Should -Be 'CatalogDerivationFailed'
+            $R.FailedRecord  | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'carries a FailedRecord key, null, on a successful descriptor' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') { return @{ value = @(@{ id = 'pol-1'; displayName = 'Standard' }) } }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.AssignmentPolicyId          | Should -Be 'pol-1'
+            $R.ContainsKey('FailedRecord') | Should -BeTrue
+            $R.FailedRecord                | Should -BeNullOrEmpty
+            $R.FailedValue                 | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'scrubs the failed Resolve-OERCatalogId record before carrying it out (bearer hygiene)' {
+        # The catch hands the record on instead of discarding it, so an $Error-count proof stays green with
+        # the scrub deleted. Guard the call itself (rationale.md, #bearer-scrub-tests); the FailedRecord
+        # assertion beside it is the positive proof that this catch was reached.
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Invoke-OERGraphRequest { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Resolve-OERCatalogId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: catalog lookup scrub marker.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Catalog')
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' -Catalog 'Denied Catalog'
+            $R.FailedRecord.Exception.Message | Should -Be 'Authorization_RequestDenied: catalog lookup scrub marker.'
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Authorization_RequestDenied: catalog lookup scrub marker.'
+            }
+        }
+    }
+
+    It 'scrubs the failed assignment policy listing record before carrying it out (bearer hygiene)' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: policy listing scrub marker.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.FailedRecord.Exception.Message | Should -Be 'Authorization_RequestDenied: policy listing scrub marker.'
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Authorization_RequestDenied: policy listing scrub marker.'
+            }
+        }
+    }
+}
+
 Describe 'New-OERAccessReviewDefinition -- a failed scope resolve is not a not-found (issue #71, fix round 1)' {
     BeforeEach {
         InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null }
