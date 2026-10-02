@@ -682,3 +682,89 @@ Describe 'Set-OERAccessReviewDefinition -- a failed reviewer lookup is not a not
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
     }
 }
+
+Describe 'Set-OERAccessReviewDefinition refuses an ambiguous display name (decision D1)' {
+    # Graph does not enforce unique access review definition display names, so an -Id given as a name
+    # used to overwrite whichever of several same-named definitions the lookup listed first. These Its
+    # leave the resolver REAL and mock only the Graph boundary, so they prove the refusal end to end:
+    # the lookup finds two definitions, the resolver refuses the name, and nothing is read or written
+    # after it. A mocked resolver could not show that -- it would stay green with the resolver's count
+    # check deleted.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC ConvertTo-OERAccessReviewDefinition { }
+    }
+
+    It 'publishes AmbiguousName with both candidate ids and neither reads nor writes a definition when two share the name' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            if ($Uri -like '*accessReviews/definitions?*displayName eq*') {
+                return @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup' },
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup' }) }
+            }
+            return @{
+                id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup'
+                descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }; settings = @{ instanceDurationInDays = 14 }
+            }
+        }
+        $Err = $null
+        $Out = Set-OERAccessReviewDefinition -Id 'Dup' -DisplayName 'Renamed' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'AmbiguousName' whether or not this cmdlet re-published it, so an
+        # unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Set-OERAccessReviewDefinition'
+            })
+        # The positive half: the real resolver ran its lookup, once, so the no-write assertion below
+        # is not a cmdlet that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like "*accessReviews/definitions?*displayName eq 'Dup'*"
+        }
+        # The point of the refusal, asserted FIRST so that a resolver which picks a definition anyway
+        # fails on the PUT it then issues: neither same-named definition is overwritten...
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter {
+            $Method -eq 'PUT'
+        }
+        # ...and the lookup is the ONLY Graph call -- the read-modify-write GET did not happen either.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Set-OERAccessReviewDefinition'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Published[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+        $Published[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        $Published[0].Exception.Message | Should -Match 'Re-run with the definition id instead of the display name'
+        $Out | Should -BeNullOrEmpty
+    }
+
+    It 'still updates the one definition a display name matches (the real resolver, one match)' {
+        # The positive counterpart of the It above: the refusal is for AMBIGUITY, not for names. One
+        # match is resolved, read and PUT as before, so the no-write proof above cannot be a cmdlet
+        # that refuses every display name.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'PUT') { return $null }
+            if ($Uri -like '*accessReviews/definitions?*displayName eq*') {
+                return @{ value = @(@{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'Solo' }) }
+            }
+            return @{
+                id = '33333333-3333-3333-3333-333333333333'; displayName = 'Solo'
+                descriptionForAdmins = 'oa'; descriptionForReviewers = 'or'
+                scope = @{ query = 'q' }; settings = @{ instanceDurationInDays = 14 }
+            }
+        }
+        $Err = $null
+        Set-OERAccessReviewDefinition -Id 'Solo' -DisplayName 'Renamed' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'PUT' -and
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/33333333-3333-3333-3333-333333333333' -and
+            $Body.displayName -eq 'Renamed'
+        }
+    }
+}

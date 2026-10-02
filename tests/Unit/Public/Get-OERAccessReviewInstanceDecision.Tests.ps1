@@ -126,4 +126,117 @@ Describe 'Get-OERAccessReviewInstanceDecision' {
             }
         }
     }
+
+    Context 'a definition lookup that cannot name one definition (decision D1)' {
+        # Resolve-OERAccessReviewDefinitionId now refuses a display name that matches more than one
+        # definition (Graph does not enforce unique review names), and every other lookup failure still
+        # arrives here as a throw. Neither is "not found". The refusal is published as itself, with the
+        # candidate ids the operator needs to disambiguate; any other failure keeps
+        # AccessReviewDefinitionResolveFailed but now says WHY. Both stop before Graph is reached.
+        It 'publishes an ambiguous definition name as AmbiguousName with the candidate ids, not as AccessReviewDefinitionResolveFailed' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Access review definition display name 'Dup' matches 2 definitions " +
+                        '(11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222).'),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup')
+            }
+            $Err = $null
+            $Result = Get-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+            # whose id is the bare 'AmbiguousName' whether or not this cmdlet re-published it, so an
+            # unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+            # Add-OERAccessPackageResourceRole.Tests.ps1). Exactly one record this cmdlet itself
+            # published is also what rules out a fall-through that adds a second one.
+            $Published = @(@($Err) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAccessReviewInstanceDecision'
+                })
+            # The positive half: the lookup was reached, once, so the no-Graph assertion below is not a
+            # cmdlet that never got that far.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+            $Published.Count | Should -Be 1
+            $Published[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Get-OERAccessReviewInstanceDecision'
+            $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Published[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+            $Published[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'keeps AccessReviewDefinitionResolveFailed for any other lookup failure, now carrying the cause in the message and chaining it' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Q3')
+            }
+            $Err = $null
+            $Result = Get-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Published = @(@($Err) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAccessReviewInstanceDecision'
+                })
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+            $Published.Count | Should -Be 1
+            $Published[0].FullyQualifiedErrorId | Should -Be 'AccessReviewDefinitionResolveFailed,Get-OERAccessReviewInstanceDecision'
+            # The cause used to be dropped: the operator read "Failed to resolve" and nothing else.
+            $Published[0].Exception.Message | Should -Be (
+                "Failed to resolve access review definition 'Q3': " +
+                'Authorization_RequestDenied: Insufficient privileges to complete the operation.')
+            $Published[0].Exception.InnerException | Should -Not -BeNullOrEmpty
+            $Published[0].Exception.InnerException.Message | Should -Be 'Authorization_RequestDenied: Insufficient privileges to complete the operation.'
+            $Result | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'scrubs the lookup record before publishing it, on the failure path and on the ambiguity path (bearer hygiene)' {
+            # Both paths publish the record, so an $Error-count proof would stay green with the
+            # Remove-OERErrorRecord call deleted. The proof is the mocked call: exactly one per record,
+            # for THIS record, beside a positive assertion that the catch was reached and a record
+            # published. The ambiguity path is driven as well as the failure path, since a scrub that
+            # sat below the ambiguity branch's return would leave that record unscrubbed.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: definition lookup scrub marker.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Q3')
+            }
+            $Err = $null
+            Get-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Published = @(@($Err) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAccessReviewInstanceDecision'
+                })
+            $Published.Count | Should -Be 1
+            $Published[0].FullyQualifiedErrorId | Should -Be 'AccessReviewDefinitionResolveFailed,Get-OERAccessReviewInstanceDecision'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Authorization_RequestDenied: definition lookup scrub marker.'
+            }
+
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Access review definition display name ''Dup'' ambiguity scrub marker.'),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Dup')
+            }
+            $Err = $null
+            Get-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Published = @(@($Err) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAccessReviewInstanceDecision'
+                })
+            $Published.Count | Should -Be 1
+            $Published[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Get-OERAccessReviewInstanceDecision'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Access review definition display name ''Dup'' ambiguity scrub marker.'
+            }
+        }
+    }
 }

@@ -22,7 +22,9 @@ function Get-OERAccessReviewInstance {
 
     .PARAMETER Definition
     The access review definition id or display name whose instances to retrieve. Accepts pipeline input
-    by property name via the AccessReviewDefinitionId alias.
+    by property name via the AccessReviewDefinitionId alias. A display name that more than one
+    definition carries is refused with an AmbiguousName error that lists the candidate ids; pass the
+    definition id instead.
 
     .PARAMETER Instance
     The access review instance id to read. Omit it to list every instance of the definition. Named
@@ -72,12 +74,23 @@ function Get-OERAccessReviewInstance {
         Initialize-OERAuth @AuthParams
     }
     process {
+        # A lookup that cannot name ONE definition is not "not found", and what it was is not dropped.
+        # A display name that matches more than one definition (Graph does not enforce unique review
+        # names) is published as itself, with the candidate ids the operator needs, and nothing is
+        # read or acted on. Any other failure (a 403, an exhausted 429, a 5xx) keeps
+        # AccessReviewDefinitionResolveFailed but now says WHY, and chains the original exception.
         $DefId = try {
             Resolve-OERAccessReviewDefinitionId -DisplayName $Definition
         } catch {
             Remove-OERErrorRecord -Record $PSItem
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                $PSCmdlet.WriteError($PSItem)
+                return
+            }
             Write-CmdletError `
-                -Message ([System.Exception]::new("Failed to resolve access review definition '$Definition'.")) `
+                -Message ([System.Exception]::new(
+                    "Failed to resolve access review definition '$Definition': $($PSItem.Exception.Message)")) `
+                -InnerException $PSItem.Exception `
                 -ErrorId 'AccessReviewDefinitionResolveFailed' `
                 -Category ObjectNotFound `
                 -TargetObject $Definition `

@@ -5,8 +5,13 @@ BeforeDiscovery {
     # Pre = resolvers that must SUCCEED before the one under test is reached.
     # FailureId = only on a case whose cmdlet reports a failed lookup under an id of its OWN instead of
     # re-publishing the resolver's record. Today that is the eight directory role cmdlets, which go
-    # through Resolve-OERDirectoryRoleInput and report RoleDefinitionReadFailed; the second Describe
-    # expects it there and expects the resolver's own id (Authorization_RequestDenied) everywhere else.
+    # through Resolve-OERDirectoryRoleInput and report RoleDefinitionReadFailed, and the five access
+    # review cmdlets that read a definition by name or id (Get-OERAccessReviewInstance,
+    # Get-OERAccessReviewInstanceDecision, Invoke-OERAccessReviewInstanceDecision,
+    # Send-OERAccessReviewReminder, Stop-OERAccessReviewInstance), which report
+    # AccessReviewDefinitionResolveFailed with the cause in the message. The second Describe expects
+    # that id there and expects the resolver's own id (Authorization_RequestDenied) everywhere else --
+    # Remove-OERAccessReviewDefinition and Set-OERAccessReviewDefinition re-publish the record as is.
     $script:GuardCases = @(
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERAccessPackageId'
@@ -119,6 +124,23 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Get-OERAccessReviewInstance'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
+            Invoke = {
+                Get-OERAccessReviewInstance -Definition 'Dup' -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Get-OERAccessReviewInstanceDecision'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
+            Invoke = {
+                Get-OERAccessReviewInstanceDecision -Definition 'Dup' -Instance 'inst-1' `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Get-OERCatalogResource'; Resolver = 'Resolve-OERCatalogId'
             ErrorId = 'AmbiguousCatalogName'; Pre = @{}
             Invoke = {
@@ -175,6 +197,15 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Invoke-OERAccessReviewInstanceDecision'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
+            Invoke = {
+                Invoke-OERAccessReviewInstanceDecision -Definition 'Dup' -Instance 'inst-1' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'New-OERAccessPackageAssignment'; Resolver = 'Resolve-OERAccessPackageId'
             ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
             Invoke = {
@@ -227,6 +258,15 @@ BeforeDiscovery {
             Invoke = {
                 Remove-OERAccessPackageResourceRole -AccessPackage 'Dup' -ResourceRoleScopeId 'scope-1' `
                     -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Remove-OERAccessReviewDefinition'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Remove-OERAccessReviewDefinition -DisplayName 'Dup' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
         }
@@ -292,10 +332,28 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Send-OERAccessReviewReminder'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
+            Invoke = {
+                Send-OERAccessReviewReminder -Definition 'Dup' -Instance 'inst-1' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Set-OERAccessPackage'; Resolver = 'Resolve-OERAccessPackageId'
             ErrorId = 'AmbiguousAccessPackageName'; Pre = @{}
             Invoke = {
                 Set-OERAccessPackage -DisplayName 'Dup' -NewDisplayName 'Renamed' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Set-OERAccessReviewDefinition'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; Pre = @{}
+            Invoke = {
+                Set-OERAccessReviewDefinition -Id 'Dup' -DisplayName 'Renamed' -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
@@ -332,6 +390,15 @@ BeforeDiscovery {
             ErrorId = 'AmbiguousGroupName'; Pre = @{}
             Invoke = {
                 Set-OERGroupPimPolicy -Group 'Dup' -ActivationMaxHours 8 -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Stop-OERAccessReviewInstance'; Resolver = 'Resolve-OERAccessReviewDefinitionId'
+            ErrorId = 'AmbiguousName'; FailureId = 'AccessReviewDefinitionResolveFailed'; Pre = @{}
+            Invoke = {
+                Stop-OERAccessReviewInstance -Definition 'Dup' -Instance 'inst-1' -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }

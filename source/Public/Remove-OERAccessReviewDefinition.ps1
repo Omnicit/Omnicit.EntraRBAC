@@ -5,9 +5,11 @@ function Remove-OERAccessReviewDefinition {
 
     .DESCRIPTION
     Deletes an access review schedule definition through Microsoft Graph. Accepts the definition by -Id
-    or -DisplayName (resolved via Resolve-OERAccessReviewDefinitionId). High-impact: emits an explicit
-    warning and defaults to ConfirmImpact High. Deleting a definition with active instances will stop
-    those instances; remove or stop all instances first if needed. Supports -WhatIf and -Confirm.
+    or -DisplayName (resolved via Resolve-OERAccessReviewDefinitionId). A -DisplayName that more than
+    one definition carries is refused with an AmbiguousName error that lists the candidate ids, and
+    nothing is deleted. High-impact: emits an explicit warning and defaults to ConfirmImpact High.
+    Deleting a definition with active instances will stop those instances; remove or stop all
+    instances first if needed. Supports -WhatIf and -Confirm.
 
     Before the delete, the definition is read once so a definition whose scope targets an access
     package's assignments can be called out. That scope cannot tell an assignment policy's own
@@ -27,7 +29,10 @@ function Remove-OERAccessReviewDefinition {
     The access review definition id (GUID) to delete.
 
     .PARAMETER DisplayName
-    The access review definition display name to resolve and delete.
+    The access review definition display name to resolve and delete. Microsoft Graph does not enforce
+    unique access review definition display names, so a name that more than one definition carries is
+    refused with an AmbiguousName error that lists the candidate ids, and nothing is deleted. Re-run
+    with -Id to delete one of them.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -59,8 +64,10 @@ function Remove-OERAccessReviewDefinition {
     }
     process {
         # A lookup that FAILS (a 403, an exhausted 429, a 5xx) is not evidence that no such definition
-        # exists: publish the record as itself and delete nothing, whatever the resolver threw. Only a
-        # $null answer from the lookup is "not found".
+        # exists: publish the record as itself and delete nothing, whatever the resolver threw. That
+        # includes a display name that more than one definition carries (AmbiguousName, with the
+        # candidate ids): Graph does not enforce unique review names, so the delete is refused rather
+        # than aimed at an arbitrary one of them. Only a $null answer from the lookup is "not found".
         $DefinitionId = $Id
         if ($PSCmdlet.ParameterSetName -eq 'ByName') {
             try { $DefinitionId = Resolve-OERAccessReviewDefinitionId -DisplayName $DisplayName }
