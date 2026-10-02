@@ -1145,6 +1145,21 @@ Describe 'Get-OERInventory' {
     }
 
     Context 'AccessReviews and RoleManagementPolicies sections' {
+        BeforeEach {
+            # A review's access package and assignment policy names are read through the transport,
+            # by the same by-id URIs Get-OERAccessPackage -Id and Get-OERAccessPackageAssignmentPolicy
+            # -Id send. Every fixture below points at ap-1 / pol-1, so one pair of answers serves them
+            # all; an It that needs another answer mocks it itself. The catch-all FIRST makes any other
+            # request a loud failure instead of letting the real wrapper run.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-1'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/ap-1?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
+        }
+
         It 'projects a round-trippable access review (names, reviewers, recurrence)' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{
@@ -1157,8 +1172,6 @@ Describe 'Get-OERInventory' {
                     Recurrence = [PSCustomObject]@{ pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }; range = [PSCustomObject]@{ startDate = '2026-07-01' } }
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter "startswith(displayName,'Q')").AccessReviews[0]
             $ar.displayName | Should -Be 'Quarterly'
@@ -1179,8 +1192,6 @@ Describe 'Get-OERInventory' {
                     Reviewers = @(); Recurrence = $null; DurationInDays = 14
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter "x").AccessReviews[0]
             $ar.reviewers | Should -Contain 'self'
@@ -1198,8 +1209,6 @@ Describe 'Get-OERInventory' {
                     Reviewers = @(); Recurrence = $null; StageCount = 2
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable Warned -WarningAction SilentlyContinue
             @($Inv.AccessReviews).Count | Should -Be 0
@@ -1216,8 +1225,6 @@ Describe 'Get-OERInventory' {
                     Reviewers = @(); Recurrence = $null; StageCount = 0
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x'
             @($Inv.AccessReviews).Count | Should -Be 1
@@ -1239,32 +1246,16 @@ Describe 'Get-OERInventory' {
                     }
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable Warned -WarningAction SilentlyContinue
             $Inv.AccessReviews[0].recurrence | Should -Be 'Monthly'
             ($Warned -join ' ') | Should -Match 'interval 6'
         }
 
-        It 'falls back to the id when the access package name cannot be read' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{ Id = 'ar-3'; DisplayName = 'Q'; AccessPackageId = 'ap-x'; AssignmentPolicyId = 'pol-x'; Reviewers = @(); Recurrence = $null }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { throw 'not found' }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { throw 'not found' }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter "x" -WarningAction SilentlyContinue).AccessReviews[0]
-            $ar.accessPackage | Should -Be 'ap-x'
-            $ar.assignmentPolicy | Should -Be 'pol-x'
-        }
-
         It 'uses -All (list-all) when no AccessReviewFilter is given' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'All'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $inv = Get-OERInventory -Include AccessReviews
             @($inv.AccessReviews).Count | Should -Be 1
@@ -1276,8 +1267,6 @@ Describe 'Get-OERInventory' {
                 [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
                 [PSCustomObject]@{ Id = 'ar-role'; DisplayName = 'Directory Role Review'; AccessPackageId = $null; AssignmentPolicyId = $null; Reviewers = @(); Recurrence = $null }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $inv = Get-OERInventory -Include AccessReviews
             @($inv.AccessReviews).Count | Should -Be 1
@@ -1338,6 +1327,267 @@ Describe 'Get-OERInventory' {
                 Should -BeGreaterThan 0 -Because 'a read that never answered must still be reported, and named by its real cause'
         }
 
+        It 'still projects definitions the real read cmdlet returns' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{
+                    value = @(
+                        @{
+                            id                = 'ar-real'
+                            displayName       = 'Real Review'
+                            scope             = @{ query = "accessPackage/id eq 'ap-1' and assignmentPolicy/id eq 'pol-1'" }
+                            reviewers         = @()
+                            fallbackReviewers = @()
+                            settings          = @{ instanceDurationInDays = 14 }
+                        }
+                    )
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'Real*' -WarningAction SilentlyContinue
+            @($inv.AccessReviews).Count | Should -Be 1
+            $inv.AccessReviews[0].displayName | Should -Be 'Real Review'
+        }
+
+        It 'projects role management policies for each role given' {
+            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+                [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; RoleName = 'Contributor'; AllowPermanentEligibility = $false; ActivationMaxHours = 8 }
+            }
+            $Result = Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM
+            @($Result.RoleManagementPolicies).Count | Should -Be 1
+            $Result.RoleManagementPolicies[0].role | Should -Be 'Contributor'
+            $Result.RoleManagementPolicies[0].allowPermanentEligibility | Should -Be $false
+        }
+
+        It 'warns and skips RoleManagementPolicies when no role is given' {
+            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {}
+            Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -IncludeARM -WarningVariable warned -WarningAction SilentlyContinue | Out-Null
+            $warned | Should -Not -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
+        }
+
+        It 'adds an id to access reviews only with -IncludeId' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $Filter = "startswith(displayName,'Q')"
+            (Get-OERInventory -Include AccessReviews -AccessReviewFilter $Filter).AccessReviews[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+            (Get-OERInventory -Include AccessReviews -AccessReviewFilter $Filter -IncludeId).AccessReviews[0].id | Should -Be 'ar-1'
+        }
+
+        It 'adds an id to role management policies only with -IncludeId' {
+            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
+                [PSCustomObject]@{
+                    Scope = '/subscriptions/sub-1'; RoleName = 'Contributor'
+                    AllowPermanentEligibility = $false; ActivationMaxHours = 8
+                    PolicyId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
+                }
+            }
+            (Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM).RoleManagementPolicies[0].PSObject.Properties.Name | Should -Not -Contain 'id'
+            (Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM -IncludeId).RoleManagementPolicies[0].id | Should -Be '/subscriptions/sub-1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
+        }
+
+        It 'projects every settings field the apply schema declares' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $null
+                    MailNotificationsEnabled     = $true
+                    ReminderNotificationsEnabled = $false
+                    JustificationRequired        = $true
+                    RecommendationsEnabled       = $true
+                    AutoApplyDecisionsEnabled    = $false
+                    DefaultDecision               = 'Approve'
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.mailNotification       | Should -Be $true
+            $ar.reminderNotification   | Should -Be $false
+            $ar.requireJustification   | Should -Be $true
+            $ar.recommendationsEnabled | Should -Be $true
+            $ar.autoApplyDecisions     | Should -Be $false
+            $ar.defaultDecision        | Should -BeExactly 'Approve'
+        }
+
+        It 'projects an endDate range' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @()
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                        range   = [PSCustomObject]@{ type = 'endDate'; startDate = '2026-01-01'; endDate = '2026-12-31' }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.endDate | Should -Be '2026-12-31'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
+        }
+
+        It 'projects a numbered range' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @()
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                        range   = [PSCustomObject]@{ type = 'numbered'; startDate = '2026-01-01'; numberOfOccurrences = 4 }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.occurrences | Should -Be 4
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
+        }
+
+        It 'emits neither range key for a noEnd series' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @()
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
+        }
+
+        It 'emits neither range key for a OneTime review even if the range carries one' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @()
+                    Recurrence = [PSCustomObject]@{
+                        pattern = $null
+                        range   = [PSCustomObject]@{ type = 'endDate'; startDate = '2026-01-01'; endDate = '2026-12-31' }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.recurrence | Should -Be 'OneTime'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
+        }
+
+        It 'emits no occurrences for a numbered range reporting zero occurrences' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @()
+                    Recurrence = [PSCustomObject]@{
+                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
+                        range   = [PSCustomObject]@{ type = 'numbered'; startDate = '2026-01-01'; endDate = '2026-06-01'; numberOfOccurrences = 0 }
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
+        }
+
+        It 'emits no durationInDays when Graph reports a zero instance duration' {
+            # Live regression. Graph returns "instanceDurationInDays": 0 for a review whose duration is
+            # not driven by that field -- Microsoft's own list-definitions example response carries
+            # exactly that value -- and the apply schema requires an integer 1-365. A bare '$null -ne'
+            # guard cannot catch it, because the value is a real 0 rather than a missing key, so every
+            # exported bundle holding such a review failed the schema.json written beside it with
+            # "'durationInDays' at accessReviews[0] must be an integer between 1 and 365".
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-zero'; DisplayName = 'Zero Duration Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 0
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
+            # Prove the projection produced the review BEFORE measuring what it omitted: a $null $ar
+            # makes the Should -Not -Contain below pass vacuously.
+            $ar.displayName | Should -Be 'Zero Duration Review'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
+        }
+
+        It 'warns and emits no durationInDays for a live duration above the schema maximum' {
+            # Unlike the 0 sentinel above, a positive out-of-band duration is real configuration being
+            # dropped, so it has to be visible rather than silently absent from the bundle.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-long'; DisplayName = 'Long Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 400
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArDurationWarning -WarningAction SilentlyContinue).AccessReviews[0]
+            $ar.displayName | Should -Be 'Long Review'
+            $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
+            @($ArDurationWarning) | Should -Not -BeNullOrEmpty
+            (@($ArDurationWarning) -join ' ') | Should -Match 'Long Review'
+            (@($ArDurationWarning) -join ' ') | Should -Match '400'
+        }
+
+        It 'warns when live reviewer scopes project to nothing instead of exporting a silent self review' {
+            # './owners' is a documented reviewer scope (Learn: "Configure access reviewers using access
+            # reviews APIs", example 4) that none of the three query forms this module emits matches.
+            # The raw collection is non-empty, so the 'self' default does not fire and the projection
+            # emits reviewers: [] -- which Learn defines as a self review. Same fabrication class as the
+            # multi-stage skip above, so it must not be silent.
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-owners'; DisplayName = 'Owner Review'
+                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
+                    Reviewers = @([PSCustomObject]@{ query = './owners' })
+                    Recurrence = $null; DurationInDays = 14
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArReviewerWarning -WarningAction SilentlyContinue).AccessReviews[0]
+            $ar.displayName | Should -Be 'Owner Review'
+            $ar.PSObject.Properties.Name | Should -Contain 'reviewers'
+            # @($null).Count is 1, so this only passes on a genuinely empty array, never on a missing one.
+            @($ar.reviewers).Count | Should -Be 0
+            @($ArReviewerWarning) | Should -Not -BeNullOrEmpty
+            (@($ArReviewerWarning) -join ' ') | Should -Match 'self review'
+            (@($ArReviewerWarning) -join ' ') | Should -Match '\./owners'
+        }
+
+        It 'warns once with a count when access reviews were skipped as not access-package-scoped' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
+                [PSCustomObject]@{ Id = 'ar-role'; DisplayName = 'Directory Role Review'; AccessPackageId = $null; AssignmentPolicyId = $null; Reviewers = @(); Recurrence = $null }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue
+            @($inv.AccessReviews).Count | Should -Be 1
+            @($warned).Count | Should -Be 1
+            $warned | Should -Match '1 access review'
+        }
+
+        It 'writes no skip warning when every review is access-package-scoped' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue
+            @($inv.AccessReviews).Count | Should -Be 1
+            @($warned).Count | Should -Be 0
+        }
+    }
+
+    Context 'access review list read through the real transport' {
+        # Moved out of 'AccessReviews and RoleManagementPolicies sections', unchanged. That Context now
+        # mocks Invoke-OERGraphRequest for every review's by-id name read, and this test needs the
+        # REAL wrapper (it mocks only the SDK cmdlet underneath), which a mocked wrapper hides.
         It 'does not warn when the access review read was throttled, retried and then answered' {
             # THE MUTATION TARGET for the publisher-membership clause in the section loop above.
             # -ErrorVariable is filled by the ENGINE, and it also collects records raised inside
@@ -1383,288 +1633,6 @@ Describe 'Get-OERInventory' {
                 'and retried, and none of them was published by the read cmdlet. Warned: ' +
                 (@($ArNoise | ForEach-Object { [string]$_ }) -join ' | '))
         }
-
-        It 'still projects definitions the real read cmdlet returns' {
-            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
-                @{
-                    value = @(
-                        @{
-                            id                = 'ar-real'
-                            displayName       = 'Real Review'
-                            scope             = @{ query = "accessPackage/id eq 'ap-1' and assignmentPolicy/id eq 'pol-1'" }
-                            reviewers         = @()
-                            fallbackReviewers = @()
-                            settings          = @{ instanceDurationInDays = 14 }
-                        }
-                    )
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'Real*' -WarningAction SilentlyContinue
-            @($inv.AccessReviews).Count | Should -Be 1
-            $inv.AccessReviews[0].displayName | Should -Be 'Real Review'
-        }
-
-        It 'projects role management policies for each role given' {
-            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
-                [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; RoleName = 'Contributor'; AllowPermanentEligibility = $false; ActivationMaxHours = 8 }
-            }
-            $Result = Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM
-            @($Result.RoleManagementPolicies).Count | Should -Be 1
-            $Result.RoleManagementPolicies[0].role | Should -Be 'Contributor'
-            $Result.RoleManagementPolicies[0].allowPermanentEligibility | Should -Be $false
-        }
-
-        It 'warns and skips RoleManagementPolicies when no role is given' {
-            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {}
-            Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -IncludeARM -WarningVariable warned -WarningAction SilentlyContinue | Out-Null
-            $warned | Should -Not -BeNullOrEmpty
-            Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 0
-        }
-
-        It 'adds an id to access reviews only with -IncludeId' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{ Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $Filter = "startswith(displayName,'Q')"
-            (Get-OERInventory -Include AccessReviews -AccessReviewFilter $Filter).AccessReviews[0].PSObject.Properties.Name | Should -Not -Contain 'id'
-            (Get-OERInventory -Include AccessReviews -AccessReviewFilter $Filter -IncludeId).AccessReviews[0].id | Should -Be 'ar-1'
-        }
-
-        It 'adds an id to role management policies only with -IncludeId' {
-            Mock -ModuleName $script:moduleName Get-OERRoleManagementPolicy {
-                [PSCustomObject]@{
-                    Scope = '/subscriptions/sub-1'; RoleName = 'Contributor'
-                    AllowPermanentEligibility = $false; ActivationMaxHours = 8
-                    PolicyId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
-                }
-            }
-            (Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM).RoleManagementPolicies[0].PSObject.Properties.Name | Should -Not -Contain 'id'
-            (Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -Role 'Contributor' -IncludeARM -IncludeId).RoleManagementPolicies[0].id | Should -Be '/subscriptions/sub-1/providers/Microsoft.Authorization/roleManagementPolicies/pol-1'
-        }
-
-        It 'projects every settings field the apply schema declares' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @(); Recurrence = $null
-                    MailNotificationsEnabled     = $true
-                    ReminderNotificationsEnabled = $false
-                    JustificationRequired        = $true
-                    RecommendationsEnabled       = $true
-                    AutoApplyDecisionsEnabled    = $false
-                    DefaultDecision               = 'Approve'
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.mailNotification       | Should -Be $true
-            $ar.reminderNotification   | Should -Be $false
-            $ar.requireJustification   | Should -Be $true
-            $ar.recommendationsEnabled | Should -Be $true
-            $ar.autoApplyDecisions     | Should -Be $false
-            $ar.defaultDecision        | Should -BeExactly 'Approve'
-        }
-
-        It 'projects an endDate range' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @()
-                    Recurrence = [PSCustomObject]@{
-                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
-                        range   = [PSCustomObject]@{ type = 'endDate'; startDate = '2026-01-01'; endDate = '2026-12-31' }
-                    }
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.endDate | Should -Be '2026-12-31'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
-        }
-
-        It 'projects a numbered range' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @()
-                    Recurrence = [PSCustomObject]@{
-                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
-                        range   = [PSCustomObject]@{ type = 'numbered'; startDate = '2026-01-01'; numberOfOccurrences = 4 }
-                    }
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.occurrences | Should -Be 4
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
-        }
-
-        It 'emits neither range key for a noEnd series' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @()
-                    Recurrence = [PSCustomObject]@{
-                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
-                        range   = [PSCustomObject]@{ type = 'noEnd'; startDate = '2026-01-01' }
-                    }
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
-        }
-
-        It 'emits neither range key for a OneTime review even if the range carries one' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @()
-                    Recurrence = [PSCustomObject]@{
-                        pattern = $null
-                        range   = [PSCustomObject]@{ type = 'endDate'; startDate = '2026-01-01'; endDate = '2026-12-31' }
-                    }
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.recurrence | Should -Be 'OneTime'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'endDate'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
-        }
-
-        It 'emits no occurrences for a numbered range reporting zero occurrences' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-1'; DisplayName = 'Quarterly'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @()
-                    Recurrence = [PSCustomObject]@{
-                        pattern = [PSCustomObject]@{ type = 'absoluteMonthly'; interval = 3 }
-                        range   = [PSCustomObject]@{ type = 'numbered'; startDate = '2026-01-01'; endDate = '2026-06-01'; numberOfOccurrences = 0 }
-                    }
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'occurrences'
-        }
-
-        It 'emits no durationInDays when Graph reports a zero instance duration' {
-            # Live regression. Graph returns "instanceDurationInDays": 0 for a review whose duration is
-            # not driven by that field -- Microsoft's own list-definitions example response carries
-            # exactly that value -- and the apply schema requires an integer 1-365. A bare '$null -ne'
-            # guard cannot catch it, because the value is a real 0 rather than a missing key, so every
-            # exported bundle holding such a review failed the schema.json written beside it with
-            # "'durationInDays' at accessReviews[0] must be an integer between 1 and 365".
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-zero'; DisplayName = 'Zero Duration Review'
-                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @(); Recurrence = $null; DurationInDays = 0
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x').AccessReviews[0]
-            # Prove the projection produced the review BEFORE measuring what it omitted: a $null $ar
-            # makes the Should -Not -Contain below pass vacuously.
-            $ar.displayName | Should -Be 'Zero Duration Review'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
-        }
-
-        It 'warns and emits no durationInDays for a live duration above the schema maximum' {
-            # Unlike the 0 sentinel above, a positive out-of-band duration is real configuration being
-            # dropped, so it has to be visible rather than silently absent from the bundle.
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-long'; DisplayName = 'Long Review'
-                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @(); Recurrence = $null; DurationInDays = 400
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArDurationWarning -WarningAction SilentlyContinue).AccessReviews[0]
-            $ar.displayName | Should -Be 'Long Review'
-            $ar.PSObject.Properties.Name | Should -Not -Contain 'durationInDays'
-            @($ArDurationWarning) | Should -Not -BeNullOrEmpty
-            (@($ArDurationWarning) -join ' ') | Should -Match 'Long Review'
-            (@($ArDurationWarning) -join ' ') | Should -Match '400'
-        }
-
-        It 'warns when live reviewer scopes project to nothing instead of exporting a silent self review' {
-            # './owners' is a documented reviewer scope (Learn: "Configure access reviewers using access
-            # reviews APIs", example 4) that none of the three query forms this module emits matches.
-            # The raw collection is non-empty, so the 'self' default does not fire and the projection
-            # emits reviewers: [] -- which Learn defines as a self review. Same fabrication class as the
-            # multi-stage skip above, so it must not be silent.
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{
-                    Id = 'ar-owners'; DisplayName = 'Owner Review'
-                    AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'
-                    Reviewers = @([PSCustomObject]@{ query = './owners' })
-                    Recurrence = $null; DurationInDays = 14
-                }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $ar = (Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable ArReviewerWarning -WarningAction SilentlyContinue).AccessReviews[0]
-            $ar.displayName | Should -Be 'Owner Review'
-            $ar.PSObject.Properties.Name | Should -Contain 'reviewers'
-            # @($null).Count is 1, so this only passes on a genuinely empty array, never on a missing one.
-            @($ar.reviewers).Count | Should -Be 0
-            @($ArReviewerWarning) | Should -Not -BeNullOrEmpty
-            (@($ArReviewerWarning) -join ' ') | Should -Match 'self review'
-            (@($ArReviewerWarning) -join ' ') | Should -Match '\./owners'
-        }
-
-        It 'warns once with a count when access reviews were skipped as not access-package-scoped' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
-                [PSCustomObject]@{ Id = 'ar-role'; DisplayName = 'Directory Role Review'; AccessPackageId = $null; AssignmentPolicyId = $null; Reviewers = @(); Recurrence = $null }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue
-            @($inv.AccessReviews).Count | Should -Be 1
-            @($warned).Count | Should -Be 1
-            $warned | Should -Match '1 access review'
-        }
-
-        It 'writes no skip warning when every review is access-package-scoped' {
-            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
-                [PSCustomObject]@{ Id = 'ar-ap'; DisplayName = 'AP Review'; AccessPackageId = 'ap-1'; AssignmentPolicyId = 'pol-1'; Reviewers = @(); Recurrence = $null }
-            }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
-            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
-            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue
-            @($inv.AccessReviews).Count | Should -Be 1
-            @($warned).Count | Should -Be 0
-        }
     }
 
     Context 'reviewer scope queries carrying the API version prefix Graph adds on read' {
@@ -1675,8 +1643,13 @@ Describe 'Get-OERInventory' {
         # reads as a self review. The ids below are the live strings from the tenant export that
         # exposed the defect, deliberately not sanitized.
         BeforeEach {
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-1'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/ap-1?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName {
                 @{
                     '00000000-0000-0000-0000-000000000049' = 'anna@contoso.com'
@@ -1795,6 +1768,269 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'x' -WarningVariable SelfWarning -WarningAction SilentlyContinue
             $Inv.AccessReviews[0].reviewers | Should -Contain 'self'
             @($SelfWarning).Count | Should -Be 0
+        }
+    }
+
+    Context 'access review name lookups: a failed read is reported, a deleted target is written by id' {
+        # A review points at its access package and assignment policy by id. The inventory writes the
+        # NAMES (the form that round-trips) and falls back to the id. Each name is read through the
+        # transport with the not-found codes declared, so a deleted package or policy is an ANSWER --
+        # the id is written and nothing is reported -- while any other failure (403, an exhausted
+        # 429, a 5xx, a not-found code that was not declared) is counted as an unread collection and
+        # the run ends in InventoryPartial. The id is written either way: it is a safe reference.
+        BeforeAll {
+            $script:ArApId = '11111111-1111-1111-1111-111111111111'
+            $script:ArPolId = '22222222-2222-2222-2222-222222222222'
+            # The by-id URIs Get-OERAccessPackage -Id and Get-OERAccessPackageAssignmentPolicy -Id
+            # send, so the inventory introduces no request shape that was not already proven live.
+            $script:ArApUri = 'v1.0/identityGovernance/entitlementManagement/accessPackages/11111111-1111-1111-1111-111111111111?$expand=catalog'
+            $script:ArPolUri = 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/22222222-2222-2222-2222-222222222222?$expand=accessPackage'
+            # What Invoke-OERGraphRequest returns INSTEAD of raising when the caller declared the
+            # answering code (Get-ExpectedGraphErrorResult builds the same shape).
+            $script:NewArMarker = {
+                param([string]$Code)
+                $Marker = [PSCustomObject]@{ ExpectedErrorCode = $Code; StatusCode = 404; Message = "${Code}: not found"; Uri = 'x' }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+            $script:NewArFailure = {
+                param([string]$Message, [string]$Id)
+                [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new($Message), $Id,
+                    [System.Management.Automation.ErrorCategory]::NotSpecified, $null)
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = '11111111-1111-1111-1111-111111111111'
+                    AssignmentPolicyId = '22222222-2222-2222-2222-222222222222'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            # The two readers this section used to call. Mocked only to prove they are not consulted.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage { }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+        }
+
+        It 'writes the names the by-id reads return, each read declaring its own not-found codes' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Sales' } } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Default' } } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -Be 'AP-Sales'
+            $Ar.assignmentPolicy | Should -Be 'Default'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq $script:ArApUri -and (@($ExpectedErrorCode) -join ',') -eq 'AccessPackageNotFound,NotFound'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq $script:ArPolUri -and (@($ExpectedErrorCode) -join ',') -eq 'PolicyNotFound,NotFound'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackage -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'writes both ids and reports nothing when the package and the policy no longer exist' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'AccessPackageNotFound' } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'PolicyNotFound' } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.displayName | Should -Be 'Q3 AP review'
+            $Ar.accessPackage | Should -Be $script:ArApId
+            $Ar.assignmentPolicy | Should -Be $script:ArPolId
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:ArApUri }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq $script:ArPolUri }
+            @($InvErr).Count | Should -Be 0 -Because 'a deleted package or policy is a fact about the review, not a failed read'
+        }
+
+        It 'writes the id for a deleted policy and the name for a package that still exists, reporting nothing' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Sales' } } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { & $script:NewArMarker 'PolicyNotFound' } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -Be 'AP-Sales'
+            $Ar.assignmentPolicy | Should -Be $script:ArPolId
+            @($InvErr).Count | Should -Be 0
+        }
+
+        It 'writes the id and reports the access package name as unread when its read fails' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw (& $script:NewArFailure 'Insufficient privileges to complete the operation (access package).' 'Authorization_RequestDenied')
+            } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Default' } } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -Be $script:ArApId
+            $Ar.assignmentPolicy | Should -Be 'Default'
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/accessPackage'
+            $Partial[0].Exception.Message | Should -Match "Could not read an access review's access package name"
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges to complete the operation \(access package\)'
+            # The catch was reached (the partial above) and the record it caught was scrubbed. An
+            # $Error count cannot prove the scrub for a catch that does not re-throw.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Insufficient privileges to complete the operation (access package).'
+            }
+        }
+
+        It 'writes the id and reports the assignment policy name as unread when its read fails' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AP-Sales' } } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw (& $script:NewArFailure 'Too many requests (assignment policy).' 'TooManyRequests')
+            } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            $Ar = @($Inv.AccessReviews)[0]
+            $Ar.accessPackage | Should -Be 'AP-Sales'
+            $Ar.assignmentPolicy | Should -Be $script:ArPolId
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/assignmentPolicy'
+            $Partial[0].Exception.Message | Should -Match "Could not read an access review's assignment policy name"
+            $Partial[0].Exception.Message | Should -Match 'Too many requests \(assignment policy\)'
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Too many requests (assignment policy).'
+            }
+        }
+
+        It 'counts a not-found code that was not declared as a failure, never as a deleted target' {
+            # The wrapper softens only the codes the caller named. Anything else reaches the catch,
+            # and an undeclared "not found" spelling is a surprise to be reported, not assumed.
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw (& $script:NewArFailure 'Resource not found (undeclared spelling).' 'Request_ResourceNotFound')
+            } -ParameterFilter { $Uri -eq $script:ArApUri }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Default' } } -ParameterFilter { $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews)[0].accessPackage | Should -Be $script:ArApId
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/accessPackage'
+        }
+
+        It 'names every failed collection of every review once, and states a repeated cause once' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                foreach ($Name in 'Q3 AP review', 'Q4 AP review') {
+                    [PSCustomObject]@{
+                        Id = "ar-$Name"; DisplayName = $Name
+                        AccessPackageId = '11111111-1111-1111-1111-111111111111'
+                        AssignmentPolicyId = '22222222-2222-2222-2222-222222222222'
+                        Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                    }
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw (& $script:NewArFailure 'Insufficient privileges to complete the operation.' 'Authorization_RequestDenied')
+            } -ParameterFilter { $Uri -eq $script:ArApUri -or $Uri -eq $script:ArPolUri }
+            $Inv = Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.AccessReviews).Count | Should -Be 2
+            @(@($Inv.AccessReviews).accessPackage | Where-Object { $_ -eq $script:ArApId }).Count | Should -Be 2 -Because 'a failed name read still writes the id'
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be ('accessReviews/Q3 AP review/accessPackage, accessReviews/Q3 AP review/assignmentPolicy, ' +
+                'accessReviews/Q4 AP review/accessPackage, accessReviews/Q4 AP review/assignmentPolicy')
+            $Causes = ($Partial[0].Exception.Message -split 'Causes: ')[1]
+            @([regex]::Matches($Causes, "Could not read an access review's access package name")).Count | Should -Be 1
+            @([regex]::Matches($Causes, "Could not read an access review's assignment policy name")).Count | Should -Be 1
+        }
+    }
+
+    Context 'access review name lookups through the real transport' {
+        # The unit tests above mock Invoke-OERGraphRequest, which can never show what lands in the
+        # caller's -ErrorVariable: that collection is filled by the ENGINE, so a swallowed throw
+        # still leaves its records (measured: 10 per lookup through Get-OERAccessPackage and
+        # Get-OERAccessPackageAssignmentPolicy, identical for a 404 and a 403). Only a read that never
+        # raises leaves none, so these drive the REAL wrapper and stub only the SDK cmdlet, as a plain
+        # function declared inside InModuleScope (the pattern Invoke-OERGraphRequest.Tests.ps1
+        # explains: -StatusCodeVariable is set one frame up, where a Pester mock body cannot reach).
+        BeforeAll {
+            $script:ArApId = '11111111-1111-1111-1111-111111111111'
+            $script:ArPolId = '22222222-2222-2222-2222-222222222222'
+            $script:ArRunTransport = {
+                param([string]$ApCode, [string]$PolCode)
+                InModuleScope $script:moduleName -Parameters @{ ApCode = $ApCode; PolCode = $PolCode } {
+                    param($ApCode, $PolCode)
+                    $script:ArProbeCalls = [System.Collections.Generic.List[string]]::new()
+                    $script:ArProbeApCode = $ApCode
+                    $script:ArProbePolCode = $PolCode
+                    try {
+                        function Invoke-MgGraphRequest {
+                            [CmdletBinding()]
+                            param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+                                [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+                            $script:ArProbeCalls.Add("$Method $Uri")
+                            $Code = if ($Uri -like '*/accessPackages/*') { $script:ArProbeApCode } elseif ($Uri -like '*/assignmentPolicies/*') { $script:ArProbePolCode } else { 'Unexpected' }
+                            $Status = if ($Code -eq 'Authorization_RequestDenied') { 403 } else { 404 }
+                            $Json = '{"error":{"code":"' + $Code + '","message":"stub ' + $Code + '"}}'
+                            if ($SkipHttpErrorCheck) {
+                                Set-Variable -Name $StatusCodeVariable -Value $Status -Scope 1
+                                return ($Json | ConvertFrom-Json -AsHashtable)
+                            }
+                            $Http = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$Status)
+                            $Http.Content = [System.Net.Http.StringContent]::new($Json)
+                            $Ex = [System.Exception]::new("Response status code does not indicate success: $Status.")
+                            $Ex | Add-Member -NotePropertyName Response -NotePropertyValue $Http -Force
+                            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new(
+                                    $Ex, 'InvokeGraphHttpResponseException', [System.Management.Automation.ErrorCategory]::InvalidOperation, $null))
+                        }
+                        $Ev = $null
+                        $Out = @(Get-OERInventory -Include AccessReviews -ErrorAction SilentlyContinue -ErrorVariable Ev -WarningAction SilentlyContinue)
+                        $Inv = $Out | Where-Object { $_.PSObject.TypeNames -contains 'Omnicit.EntraRBAC.Inventory' } | Select-Object -First 1
+                        [ordered]@{
+                            Calls = @($script:ArProbeCalls)
+                            Records = @($Ev | Where-Object { $null -ne $_ })
+                            AccessPackage = [string]@($Inv.AccessReviews)[0].accessPackage
+                            AssignmentPolicy = [string]@($Inv.AccessReviews)[0].assignmentPolicy
+                        }
+                    } finally {
+                        Remove-Item 'function:Invoke-MgGraphRequest' -ErrorAction SilentlyContinue
+                        Remove-Variable -Name ArProbeCalls, ArProbeApCode, ArProbePolCode -Scope Script -ErrorAction SilentlyContinue
+                    }
+                }
+            }
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
+                [PSCustomObject]@{
+                    Id = 'ar-1'; DisplayName = 'Q3 AP review'
+                    AccessPackageId = '11111111-1111-1111-1111-111111111111'
+                    AssignmentPolicyId = '22222222-2222-2222-2222-222222222222'
+                    Reviewers = @(); Recurrence = $null; DurationInDays = 14
+                }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+        }
+
+        It 'leaves the caller error stream EMPTY for a review whose package and policy were deleted' {
+            $Run = & $script:ArRunTransport 'AccessPackageNotFound' 'PolicyNotFound'
+            # The positive half first: the id is what a deleted target is written as, and both reads
+            # really went through the wrapper to the stubbed SDK cmdlet.
+            $Run.AccessPackage | Should -Be $script:ArApId
+            $Run.AssignmentPolicy | Should -Be $script:ArPolId
+            @($Run.Calls).Count | Should -Be 2
+            $Run.Calls | Should -Contain ('GET ' + 'v1.0/identityGovernance/entitlementManagement/accessPackages/11111111-1111-1111-1111-111111111111?$expand=catalog')
+            $Run.Calls | Should -Contain ('GET ' + 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/22222222-2222-2222-2222-222222222222?$expand=accessPackage')
+            @($Run.Records).Count | Should -Be 0 -Because ('a deleted target must deposit nothing in the operator error stream; left behind: ' +
+                (@($Run.Records | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '))
+        }
+
+        It 'raises a refused read through the same transport and ends the run in InventoryPartial' {
+            $Run = & $script:ArRunTransport 'Authorization_RequestDenied' 'Authorization_RequestDenied'
+            $Run.AccessPackage | Should -Be $script:ArApId
+            $Run.AssignmentPolicy | Should -Be $script:ArPolId
+            @($Run.Calls).Count | Should -Be 2
+            $Partial = @(@($Run.Records) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'accessReviews/Q3 AP review/accessPackage, accessReviews/Q3 AP review/assignmentPolicy'
+            $Partial[0].Exception.Message | Should -Match 'Authorization_RequestDenied'
         }
     }
 
@@ -2192,8 +2428,13 @@ Describe 'Get-OERInventory' {
                     DefaultDecision               = 'Approve'
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-1'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/ap-1?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews
             $Doc = $Inv | ConvertTo-Json -Depth 12 | ConvertFrom-Json
@@ -2221,8 +2462,13 @@ Describe 'Get-OERInventory' {
                     Recurrence = $null
                 }
             }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales' } }
-            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { [PSCustomObject]@{ Id = 'pol-1'; DisplayName = 'Default' } }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "Unexpected Graph request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'ap-1'; displayName = 'AP-Sales' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/accessPackages/ap-1?$expand=catalog'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'pol-1'; displayName = 'Default' } } -ParameterFilter {
+                $Uri -eq 'v1.0/identityGovernance/entitlementManagement/assignmentPolicies/pol-1?$expand=accessPackage'
+            }
             Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
             $Inv = Get-OERInventory -Include AccessReviews
             $Doc = $Inv | ConvertTo-Json -Depth 12 | ConvertFrom-Json
@@ -3167,22 +3413,23 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- sixteen of them since the assignment
-            # policy set added its own (group members, group owners, group PIM eligibility, group
-            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-            # eligibility schedules, directory role assignment schedules, directory role policies,
-            # access package resource role bindings, catalog resources, the catalog resource-name
-            # map, the catalog list, a catalog's package list, an access package's assignment
-            # policies) -- and the remainder is counted rather than silently lost. Raise the numbers
-            # here and $UnreadCauseCap together, or a whole shape can be crowded out of the clause
-            # purely by the order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- eighteen of them since an access
+            # review's two name reads added theirs (group members, group owners, group PIM
+            # eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles,
+            # directory role eligibility schedules, directory role assignment schedules, directory
+            # role policies, access package resource role bindings, catalog resources, the catalog
+            # resource-name map, the catalog list, a catalog's package list, an access package's
+            # assignment policies, an access review's access package name, an access review's
+            # assignment policy name) -- and the remainder is counted rather than silently lost.
+            # Raise the numbers here and $UnreadCauseCap together, or a whole shape can be crowded
+            # out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..17) {
+                foreach ($N in 1..19) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..17) {
+                foreach ($N in 1..19) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3199,10 +3446,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 16 -Because 'the clause names at most sixteen distinct causes, one per read-failure shape'
+                Should -Be 18 -Because 'the clause names at most eighteen distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All seventeen units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..17) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All nineteen units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..19) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
