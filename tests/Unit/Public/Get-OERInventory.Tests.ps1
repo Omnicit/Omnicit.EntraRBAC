@@ -3465,6 +3465,25 @@ Describe 'Get-OERInventory' {
             @($GroupProps.eligibility.type) | Should -Not -Contain 'null'
         }
 
+        It 'types catalogs resources and accessPackages resourceRoles as array or null' {
+            $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
+            @($Schema.properties.catalogs.items.properties.resources.type) | Should -Contain 'null'
+            @($Schema.properties.catalogs.items.properties.resources.type) | Should -Contain 'array'
+            @($Schema.properties.accessPackages.items.properties.resourceRoles.type) | Should -Contain 'null'
+            @($Schema.properties.accessPackages.items.properties.resourceRoles.type) | Should -Contain 'array'
+        }
+
+        It 'validates a catalog and an access package whose resources and resourceRoles are explicit nulls' {
+            $Doc = @{
+                version        = '1.0'
+                catalogs       = @(@{ displayName = 'CAT-One'; resources = $null })
+                accessPackages = @(@{ displayName = 'AP-One'; catalog = 'CAT-One'; resourceRoles = $null })
+            } | ConvertTo-Json -Depth 10
+            $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson }
+            Test-Json -Json $Doc -Schema $Schema -ErrorAction SilentlyContinue |
+                Should -BeTrue -Because 'the schema written beside a bundle must accept the document that bundle contains'
+        }
+
         It 'validates a group document whose members key is an explicit null' {
             $Doc = @{
                 version = '1.0'
