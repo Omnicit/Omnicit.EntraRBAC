@@ -259,16 +259,17 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits ten
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits eleven
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-        # eligibility schedules, directory role assignment schedules, directory role policies), so
-        # ten admits one of each and a normal partial run is still reported in full; only a
-        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
-        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
-        # verbose stream as it is seen. Raise this with the shape count when an eleventh
-        # read-failure message is added, or one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 10
+        # eligibility schedules, directory role assignment schedules, directory role policies,
+        # access package resource role bindings), so eleven admits one of each and a normal partial
+        # run is still reported in full; only a genuinely heterogeneous large-tenant failure is
+        # truncated, and the dropped count is stated rather than silently lost. Nothing is discarded
+        # either way -- every cause is written to the verbose stream as it is seen. Raise this with
+        # the shape count when a twelfth read-failure message is added, or one shape starts crowding
+        # out another purely by ordering.
+        $UnreadCauseCap = 11
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -839,14 +840,37 @@ function Get-OERInventory {
                     # D4: resource role bindings via M1. Recover the resource's real display name by
                     # joining the binding OriginId to the catalog resource map (the apply engine matches
                     # on that name); fall back to the raw scope display name when no resource matches.
-                    $Proj.resourceRoles = @(foreach ($Rr in @(Get-OERAccessPackageResourceRole -AccessPackage $Ap.Id -ErrorAction SilentlyContinue)) {
-                        $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
-                            $ApCatResMap[[string]$Rr.OriginId]
-                        } else {
-                            $Rr.ResourceDisplayName
-                        }
-                        [PSCustomObject]@{ resource = $ResName; role = $Rr.RoleName }
-                    })
+                    # A FAILED read is never projected as []: under -Prune an empty declared binding set
+                    # removes every binding of the package, and an omitted key still reconciles the
+                    # same way. An explicit null is the documented "leave the bindings untouched"
+                    # signal, so that is what an unread set is, and the gap is reported through
+                    # InventoryPartial like the group and administrative-unit collections above.
+                    # -ErrorAction Stop inside try/catch, the shape the directory-role sections below
+                    # use: one reader per package, so a failure is attributed to exactly this package,
+                    # and a record a reader swallowed internally (a retried 429) never counts as one.
+                    $ApRoles = $null
+                    try {
+                        $ApRoles = @(Get-OERAccessPackageResourceRole -AccessPackage $Ap.Id -ErrorAction Stop)
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $ApRolesCause = "Could not read an access package's resource role bindings: $($PSItem.Exception.Message)"
+                        Write-Verbose "Get-OERInventory: $ApRolesCause"
+                        Add-UnreadCause -Cause $ApRolesCause -Target ([string]$Ap.Id)
+                        $UnreadCollections.Add("accessPackages/$($Ap.DisplayName)/resourceRoles")
+                        $ApRoles = $null
+                    }
+                    if ($null -eq $ApRoles) {
+                        $Proj.resourceRoles = $null
+                    } else {
+                        $Proj.resourceRoles = @(foreach ($Rr in $ApRoles) {
+                            $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
+                                $ApCatResMap[[string]$Rr.OriginId]
+                            } else {
+                                $Rr.ResourceDisplayName
+                            }
+                            [PSCustomObject]@{ resource = $ResName; role = $Rr.RoleName }
+                        })
+                    }
 
                     # D5: assignment policy internals -- full granular projection for round-trip fidelity.
                     $Proj.assignmentPolicies = @(foreach ($P in @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap.Id)) {

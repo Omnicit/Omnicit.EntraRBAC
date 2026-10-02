@@ -3167,20 +3167,20 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER READ-FAILURE SHAPE the module can emit -- ten of them since the PIM-in-use
-            # criterion added its own (group members, group owners, group PIM eligibility, group
-            # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
-            # eligibility schedules, directory role assignment schedules, directory role policies) --
-            # and the remainder is counted rather than silently lost. Raise the numbers here and
-            # $UnreadCauseCap together, or a whole shape can be crowded out of the clause purely by the
-            # order the sections run in.
+            # ONE PER READ-FAILURE SHAPE the module can emit -- eleven of them since the access
+            # package resource role bindings added their own (group members, group owners, group PIM
+            # eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles,
+            # directory role eligibility schedules, directory role assignment schedules, directory
+            # role policies, access package resource role bindings) -- and the remainder is counted
+            # rather than silently lost. Raise the numbers here and $UnreadCauseCap together, or a
+            # whole shape can be crowded out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
-                foreach ($N in 1..11) {
+                foreach ($N in 1..12) {
                     Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
                         -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
                         -TargetObject "au-$N" -ErrorAction Continue
                 }
-                foreach ($N in 1..11) {
+                foreach ($N in 1..12) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3197,10 +3197,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 10 -Because 'the clause names at most ten distinct causes, one per read-failure shape'
+                Should -Be 11 -Because 'the clause names at most eleven distinct causes, one per read-failure shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All eleven units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..11) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All twelve units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..12) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -3247,6 +3247,110 @@ Describe 'Get-OERInventory' {
                 Test-OERDeclaredNull -Node $Node -Name 'members' | Should -BeTrue
                 Test-OERDeclaredProperty -Node $Node -Name 'scopedRoles' | Should -BeFalse
             }
+        }
+    }
+
+    Context 'an unread access package or catalog collection is never stated as a fact' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; CatalogId = 'cat-1' }
+            }
+            # The catalog resource carries the real display name keyed by OriginId; the binding's scope
+            # display name (ResourceDisplayName) is only the scope label (e.g. 'Root').
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            # The group's current name, looked up by originId, equals the recorded one here.
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy {
+                [PSCustomObject]@{
+                    DisplayName    = 'Default'
+                    RequestorScope = [PSCustomObject]@{ scope = 'AllMemberUsers' }
+                    ApprovalStages = @([PSCustomObject]@{ durationDays = 7; manager = $true })
+                    DurationInDays = 30
+                }
+            }
+        }
+
+        It 'projects resourceRoles as an explicit null when the binding read failed (non-terminating)' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [CmdletBinding()] param($AccessPackage)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' |
+                Should -BeTrue -Because 'an omitted resourceRoles key still reconciles and prunes; only an explicit null is hands-off'
+            $null -eq $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue -Because 'an unread binding set is unknown, not empty'
+            InModuleScope $script:moduleName -Parameters @{ Node = $Ap } {
+                param($Node)
+                Test-OERDeclaredNull -Node $Node -Name 'resourceRoles' | Should -BeTrue -Because 'this is the gate the handler consults before its prune pass'
+            }
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
+        }
+
+        It 'projects resourceRoles as an explicit null when the binding read threw' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { throw 'Too many requests.' }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' | Should -BeTrue
+            $null -eq $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue
+            [string](@(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })[0].TargetObject) |
+                Should -Match 'accessPackages/AP-Sales/resourceRoles'
+        }
+
+        It 'projects an empty resourceRoles array and no partial when the read succeeded with no bindings' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole { }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' | Should -BeTrue
+            $null -ne $Ap.PSObject.Properties['resourceRoles'].Value | Should -BeTrue -Because 'a successful read of no bindings is a declared empty set'
+            @($Ap.PSObject.Properties['resourceRoles'].Value).Count | Should -Be 0
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'treats a successful read that left a swallowed record behind as read' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                try { Write-Error -Message 'Too many requests.' -ErrorId 'TooManyRequests' -ErrorAction Stop } catch { $null = $_ }
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            @($Inv.AccessPackages)[0].resourceRoles[0].role | Should -Be 'Member'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+
+        It 'still returns the document and the partial under a global ErrorActionPreference of Stop' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [CmdletBinding()] param($AccessPackage)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+            }
+            $Saved = $global:ErrorActionPreference
+            try {
+                $global:ErrorActionPreference = 'Stop'
+                $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            } finally { $global:ErrorActionPreference = $Saved }
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $null -eq @($Inv.AccessPackages)[0].PSObject.Properties['resourceRoles'].Value | Should -BeTrue
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 1
         }
     }
 
