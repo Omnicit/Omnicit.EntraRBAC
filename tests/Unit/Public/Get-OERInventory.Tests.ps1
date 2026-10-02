@@ -3562,6 +3562,74 @@ Describe 'Get-OERInventory' {
                 Should -Be 0 -Because 'a filter that names no catalog is a fact about the filter, not an unread collection'
         }
 
+        It 'republishes a by-id 404 on the -Catalog filter as itself and reports nothing as unread' {
+            # The real Get-OERCatalog never writes CatalogNotFound: by id it republishes the raw Graph
+            # error, whose id is a Graph code. A missing catalog id is still a FACT about the caller's
+            # filter (spec G3: a 404 on an id is NotFound), so it is republished and counted as nothing.
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [CmdletBinding()] param($Id, $DisplayName)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Resource '$Id' does not exist."), 'ResourceNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Id))
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -Catalog '22222222-2222-2222-2222-222222222222' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq '22222222-2222-2222-2222-222222222222' }
+            @($Inv.Catalogs).Count | Should -Be 0
+            @($Inv.AccessPackages).Count | Should -Be 0
+            @(@($InvErr) | Where-Object {
+                    $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'ResourceNotFound*' -and
+                    $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+                }).Count | Should -Be 1 -Because 'the caller sees the not-found record itself'
+            @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+                Should -Be 0 -Because 'a catalog id that does not exist is a fact about the filter, not an unread collection'
+        }
+
+        It 'still counts a 404 on a -Catalog NAME as unread, since a list read has no id to be missing' {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [CmdletBinding()] param($Id, $DisplayName)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Resource not found for the segment.'), 'ResourceNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $DisplayName))
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -Catalog 'CAT-IT-Core' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'CAT-IT-Core' }
+            @($Inv.Catalogs).Count | Should -Be 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'catalogs, accessPackages'
+        }
+
+        It 'still counts a 404 on the unfiltered catalog list as unread' {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [CmdletBinding()] param($Id, $DisplayName)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Resource not found for the segment.'), 'ResourceNotFound',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null))
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly
+            @($Inv.Catalogs).Count | Should -Be 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'catalogs, accessPackages'
+        }
+
+        It 'still counts a by-id failure that is not a not-found as unread' {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [CmdletBinding()] param($Id, $DisplayName)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $Id))
+            }
+            $Inv = Get-OERInventory -Include Catalogs, AccessPackages -Catalog '22222222-2222-2222-2222-222222222222' -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalog -Times 1 -Exactly -ParameterFilter { $Id -eq '22222222-2222-2222-2222-222222222222' }
+            @($Inv.Catalogs).Count | Should -Be 0
+            $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -Be 'catalogs, accessPackages'
+            $Partial[0].Exception.Message | Should -Match 'Insufficient privileges'
+        }
+
         It 'reports an unread package list for the catalog it belongs to and projects no packages (non-terminating)' {
             Mock -ModuleName $script:moduleName Get-OERAccessPackage {
                 [CmdletBinding()] param($Catalog)

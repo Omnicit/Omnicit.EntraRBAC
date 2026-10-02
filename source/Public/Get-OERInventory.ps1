@@ -757,17 +757,26 @@ function Get-OERInventory {
             # reported through InventoryPartial for every section that needed the list. Before this
             # the read had no error handling: under a caller's Stop it ended the whole call with no
             # document at all, and under Continue it left one stray record and no partial.
-            # The one exception is the caller's own -Catalog filter naming no catalog, or more than
-            # one (CatalogNotFound, AmbiguousCatalogName): that is a FACT about the filter, not a gap
-            # in the export, so it is republished as itself with the error id the caller has always
-            # seen and counted as nothing.
+            # The one exception is a FACT about the caller's own -Catalog filter rather than a gap in
+            # the export (spec G3: only a null from a name search, or a 404 on an id, is NotFound):
+            # a -Catalog GUID that Graph answers 404 for, and the two ids CatalogNotFound and
+            # AmbiguousCatalogName should a reader ever write them (Get-OERCatalog writes neither
+            # today; by id it republishes the raw Graph error, and by name a non-match returns
+            # nothing at all). Such a record is republished as itself and counted as nothing. A 404
+            # on a NAME or on the unfiltered list is not a missing object, so it stays unread.
             try {
                 $ResolvedCatalogList = if ($Catalog) {
                     if ($Catalog -as [guid]) { @(Get-OERCatalog -Id $Catalog -ErrorAction Stop) } else { @(Get-OERCatalog -DisplayName $Catalog -ErrorAction Stop) }
                 } else { @(Get-OERCatalog -ErrorAction Stop) }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*') {
+                # The module's own not-found vocabulary (Get-OERAccessReviewInstance). Every comma
+                # separated segment of the id is compared WHOLE, never as a prefix, since a composed
+                # id ('ResourceNotFound,Get-OERCatalog') can carry the code outside the first slot.
+                $CatListIdSegment = @(([string]$PSItem.FullyQualifiedErrorId) -split ',' | ForEach-Object { $_.Trim() })
+                $CatListByIdNotFound = $Catalog -and ($null -ne ($Catalog -as [guid])) -and
+                    (@($CatListIdSegment | Where-Object { $_ -in @('ResourceNotFound', 'Request_ResourceNotFound', 'ItemNotFound', 'NotFound') }).Count -gt 0)
+                if ($PSItem.FullyQualifiedErrorId -like 'CatalogNotFound*' -or $PSItem.FullyQualifiedErrorId -like 'AmbiguousCatalogName*' -or $CatListByIdNotFound) {
                     $PSCmdlet.WriteError($PSItem)
                 } else {
                     $CatListCause = "Could not read the catalogs: $($PSItem.Exception.Message)"
