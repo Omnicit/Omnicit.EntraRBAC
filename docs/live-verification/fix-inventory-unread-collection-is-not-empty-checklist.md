@@ -66,7 +66,8 @@ onto `main` before it merges.
   as far as they were read -- no handler removes an absent catalog, package or policy -- but a failed
   read of any of them is now named in `InventoryPartial`. A `-Catalog` id that Graph answers with a
   not-found code is reported as that error, not as unread ("fix: report a by-id 404 on the catalog
-  filter as itself"); which code Graph uses for a missing catalog id was not known, and 1.3 measures it.
+  filter as itself"). Graph answers a missing catalog id with `CatalogNotFound`, which
+  `Get-OERCatalog` republishes (measured in 1.3).
 - **E. A group binding is never written under a stale name** ("fix: write a group binding under its
   object id when the names cannot be read"). When the read that names a package's bindings fails, a
   group's binding used to fall back to the name the catalog recorded when the group was added, which
@@ -123,7 +124,7 @@ and should a handler ever write despite `-WhatIf`, the write is refused instead 
 
 ### S.1. Point the clone at this branch and build it
 
-- [ ] **S.1** The clone OerLive loads from holds this branch's build.
+- [x] **S.1** The clone OerLive loads from holds this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -148,13 +149,21 @@ branch's fix: True`.
 exit code other than 0; `False` -- the clone did not get this branch, and every check below would
 measure `main`.
 
-Result:
+Result: 2026-10-02 11:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. 0 tracked changes in the clone; the clone at the branch head 77fe1db; build exit 0; the built module carries the fix: True.
+
+[oer-s71] Tracked changes in the clone before the switch: 0
+[oer-s71] Clone at: 77fe1db docs: add the live-verification checklist for the unread-collection fix
+[oer-s71] Build exit code: 0; the built module carries this branch's fix: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, Graph and the module session
 
-- [ ] **0.1** Both sign-ins pass the identity check, and the module is this branch's build.
+- [x] **0.1** Both sign-ins pass the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -177,11 +186,34 @@ belongs to the test tenant and is Enabled), each sign-in ending `identity check 
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-02 11:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the Graph sign-in and the module session (app-only, app id, app name, test tenant, service principal named oer-live-cc and, for the module session, the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the subscription belongs to the test tenant and is Enabled); the module is the clone's build.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s71] The module is the clone's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, the module session
 
-- [ ] **0.2** The no-permission identity signs in to a module session.
+- [x] **0.2** The no-permission identity signs in to a module session.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -198,11 +230,23 @@ session is `oer-live-cc-noperm`: `True`, the test tenant `True`, the ARM token f
 nothing.
 **Failure looks like:** any `False` -- STOP; section 3 needs this session.
 
-Result:
+Result: 2026-10-02 11:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. oer-live-cc-noperm: app-only with its app id, app name oer-live-cc-noperm, test tenant, ARM token from the certificate: all True; identity check passed.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+```
 
 ### 0.3. The prerequisite script's plan
 
-- [ ] **0.3** `-WhatIf` plans only `oer-s71-` objects in the tenant.
+- [x] **0.3** `-WhatIf` plans only `oer-s71-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -227,11 +271,40 @@ code `0`.
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
-Result:
+Result: 2026-10-02 11:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; the sweep read all six collections and found no oer-s71- object; 7 What-if targets: 2 local files under raw\s71\ (the transcript and the baseline) and 5 in the tenant (oer-s71-res, oer-s71-catalog, oer-s71-catalog: resource oer-s71-res, oer-s71-ap, oer-s71-ap: Member role of oer-s71-res), every tenant target with the prefix; nothing written; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s71\prereq-20261002-113234Z.log".
+[oer-s71] Mode: CREATE or complete. Prefix 'oer-s71-'. Objects (fixed): oer-s71-res, oer-s71-catalog, oer-s71-ap. OerLive 1.0.2.
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Residue: raw\residue.json holds no rows.
+[oer-s71] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s71-' is left.
+[oer-s71] Found: oer-s71-res exists: False; oer-s71-catalog exists: False; oer-s71-ap exists: False.
+[oer-s71] No baseline yet: it is written now, before the first write to the tenant (catalogs 5, access packages 6).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s71\baseline-s71.json".
+What if: Performing the operation "Create a security group, not role-assignable, no members (Graph v1.0 POST groups)" on target "oer-s71-res".
+What if: Performing the operation "Create a catalog, not externally visible (Graph v1.0 POST catalogs)" on target "oer-s71-catalog".
+What if: Performing the operation "Add the group as a catalog resource (Graph v1.0 POST resourceRequests, adminAdd)" on target "oer-s71-catalog: resource oer-s71-res".
+What if: Performing the operation "Create a HIDDEN access package in oer-s71-catalog (Graph v1.0 POST accessPackages)" on target "oer-s71-ap".
+What if: Performing the operation "Bind the resource role (Graph v1.0 POST resourceRoleScopes)" on target "oer-s71-ap: Member role of oer-s71-res".
+[oer-s71] Summary: oer-s71-res absent, oer-s71-catalog absent, resource absent, oer-s71-ap absent, binding absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s71] WhatIf: nothing was created, removed or written.
+[oer-s71] Done.
+[oer-s71] What-if targets: 7; in the tenant: 5; every tenant target starts with oer-s71-: True; exit code: 0
+```
 
 ### 0.4. The prerequisite script, for real
 
-- [ ] **0.4** The test objects exist, bound as planned.
+- [x] **0.4** The test objects exist, bound as planned.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -252,13 +325,47 @@ and the package listing one binding; the summary with everything `present`; exit
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.4 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-02 11:33 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Baseline written and read back before the first write (catalogs 5, access packages 6). Group 201, catalog 201, the resource request 201 after 3 attempts (two 400 ResourceNotFoundInOriginSystem answers while the new group replicated, retried as likely replication delay), the catalog listing the group and its Member role on the first read, the hidden package 201, the binding 201, the package listing one binding; summary all present; exit code 0.
+
+[oer-s71] Transcript (redacted): raw\s71\prereq-20261002-113250Z.log; OerLive 1.0.2.
+[oer-s71] Mode: CREATE or complete. Prefix 'oer-s71-'. Objects (fixed): oer-s71-res, oer-s71-catalog, oer-s71-ap. OerLive 1.0.2.
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s71] Residue: raw\residue.json holds no rows.
+[oer-s71] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s71-' is left.
+[oer-s71] Found: oer-s71-res exists: False; oer-s71-catalog exists: False; oer-s71-ap exists: False.
+[oer-s71] No baseline yet: it is written now, before the first write to the tenant (catalogs 5, access packages 6).
+[oer-s71] Wrote the baseline raw\s71\baseline-s71.json and read it back.
+[oer-s71] Created group oer-s71-res: 201.
+[oer-s71] Created catalog oer-s71-catalog: 201.
+[oer-s71] Adding oer-s71-res to oer-s71-catalog answered 400 ResourceNotFoundInOriginSystem (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s71] Adding oer-s71-res to oer-s71-catalog answered 400 ResourceNotFoundInOriginSystem (attempt 2 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s71] Requested oer-s71-res as a resource of oer-s71-catalog: 201  after 3 attempt(s).
+[oer-s71] oer-s71-catalog lists oer-s71-res as a resource: converged after 1 read(s), 0.3 s.
+[oer-s71] oer-s71-catalog lists the Member role of oer-s71-res: converged after 1 read(s), 2.7 s.
+[oer-s71] Created access package oer-s71-ap (hidden): 201 after 1 attempt(s).
+[oer-s71] Bound the Member role of oer-s71-res to oer-s71-ap: 201 after 1 attempt(s).
+[oer-s71] oer-s71-ap lists one binding: converged after 1 read(s), 0.1 s.
+[oer-s71] Summary: oer-s71-res present, oer-s71-catalog present, resource present, oer-s71-ap present, binding present; written to the tenant: True.
+[oer-s71] Done.
+[oer-s71] Exit code: 0
+```
 
 ### 1. The export, read as oer-live-cc
 
 ### 1.1. The default export: the test package and catalog with their binding and resource
 
-- [ ] **1.1** The export carries `oer-s71-ap` with its binding and `oer-s71-catalog` with its resource, and its partial signal names exactly what it could not read.
+- [x] **1.1** The export carries `oer-s71-ap` with its binding and `oer-s71-catalog` with its resource, and its partial signal names exactly what it could not read.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -315,11 +422,89 @@ the package or catalog missing, a `null` or `[]` on either, or a binding or reso
 `oer-s71-res`'s Member role -- the success path changed; an `IncompleteReads` entry naming an
 `oer-s71-` object.
 
-Result:
+Result: 2026-10-02 11:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 450 requests, 11 not a GET (getByIds/getMemberGroups), refused 0. oer-s71-ap: 1 entry, catalog oer-s71-catalog, hidden true, resourceRoles [{resource oer-s71-res, role Member}], assignmentPolicies []; oer-s71-catalog: 1 entry, resources [{type Group, name oer-s71-res}]; no null on either. IncompleteReads 0. The one InventoryPartial (Export-OERInventory) names exactly what could not be read, with its cause: the management-group listing (AuthorizationFailed, app-only; SkippedScopes and SkippedEligibilityScopes). The other error records in -ErrorVariable are nested records of the access-review section (AccessPackageNotFound, PolicyNotFound, 404) for reviews that point at deleted packages and policies (Get-OERInventory :1076/:1083, the known leak parked for step 2); none is an oer-s71- object and none reached the document as a fact.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Fence: requests 450, not a GET 11, refused 0
+[oer-s71] Summary: groups 10, administrative units 1, catalogs 6, access packages 7, access reviews 5, directory role policies 22, directory role assignments 52, role assignments 13; scopes enumerated 1, read 1
+[oer-s71] SkippedScopes: 1 [<management groups: the listing failed>]
+[oer-s71] SkippedEligibilityScopes: 1 [<management groups: the listing failed>]
+[oer-s71] IncompleteReads: 0 []
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound,Get-OERAccessPackage -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound,Get-OERAccessPackageAssignmentPolicy -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound,Get-OERAccessPackage -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound,Get-OERAccessPackageAssignmentPolicy -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: AccessPackageNotFound,Get-OERAccessPackage -- AccessPackageNotFound: The access package was not found.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: NotFound (Not Found).
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: PolicyNotFound,Get-OERAccessPackageAssignmentPolicy -- PolicyNotFound: The policy was not found.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed,Get-OERManagementGroup -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed,Get-OERManagementGroup -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: InventoryPartial,Export-OERInventory -- This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json. Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it. Skipped: <management groups: the listing failed>. Do not treat it as a full tenant snapshot.
+[oer-s71] Warning: Get-OERInventory: skipped 1 access review definition(s) that are not access-package-scoped. Only access-package reviews round-trip through Invoke-OERStructure; group, application and directory-role reviews are not captured.
+[oer-s71] Warning: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000006' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] oer-s71-ap entries: 1; {"displayName":"oer-s71-ap","catalog":"oer-s71-catalog","description":"Omnicit.EntraRBAC live verification (oer-s71): an unread collection is never exported as empty.","hidden":true,"resourceRoles":[{"resource":"oer-s71-res","role":"Member"}],"assignmentPolicies":[]}
+[oer-s71] oer-s71-catalog entries: 1; {"displayName":"oer-s71-catalog","description":"Omnicit.EntraRBAC live verification (oer-s71): an unread collection is never exported as empty.","externallyVisible":false,"resources":[{"type":"Group","name":"oer-s71-res"}]}
+```
 
 ### 1.2. The bundle's nulls agree with its partial signal, and it validates
 
-- [ ] **1.2** Every `null` collection in `inventory.json` is named in `IncompleteReads`, and the document passes both the module's validator and the bundle's own `schema.json`.
+- [x] **1.2** Every `null` collection in `inventory.json` is named in `IncompleteReads`, and the document passes both the module's validator and the bundle's own `schema.json`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -353,11 +538,29 @@ the bundle's schema.json: True`.
 unread collection without the signal; `Valid False`, or `Test-Json` `False` -- the bundle's own schema
 rejects its document.
 
-Result:
+Result: 2026-10-02 11:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Null collections in inventory.json: 0, which agrees with 1.1 (IncompleteReads 0); Test-OERStructure Valid True, findings 0, warnings 0; Test-Json against the bundle's own schema.json: True.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Null collections in inventory.json: 0
+[oer-s71] Test-OERStructure: Valid True, findings 0, warnings 0
+[oer-s71] Test-Json against the bundle's schema.json: True
+```
 
 ### 1.3. A catalog id that does not exist: the error Graph gives, reported as itself
 
-- [ ] **1.3** `-Catalog` with an id no catalog has is reported as Graph's not-found error, not as an unread collection.
+- [x] **1.3** `-Catalog` with an id no catalog has is reported as Graph's not-found error, not as an unread collection.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -373,21 +576,39 @@ Write-OerLiveStep "Catalogs in the document: $(@($Inv.Catalogs).Count); Inventor
 Disconnect-OerLive
 ```
 
-**Expect:** one error published by `Get-OERInventory` whose id starts with one of `ResourceNotFound`,
-`Request_ResourceNotFound`, `ItemNotFound` or `NotFound`, the not-found codes the module recognises;
-`Catalogs in the document: 0; InventoryPartial: 0`. Record the error id as it is: it is the first
-measurement of what Graph answers for a missing catalog id.
+**Expect:** one error published by `Get-OERInventory` whose id starts with `CatalogNotFound` --
+Graph's own answer for a missing catalog id, which `Get-OERCatalog` republishes (measured in the
+first run of this check) -- or with one of the generic not-found codes the module also accepts
+(`ResourceNotFound`, `Request_ResourceNotFound`, `ItemNotFound`, `NotFound`);
+`Catalogs in the document: 0; InventoryPartial: 0`. Record the error id as it is.
 **Failure looks like:** `InventoryPartial: 1` naming `catalogs` -- Graph answers a missing catalog id
 with a code outside that set, so the id filter's not-found is reported as unread; record the code,
 it is the one the set must learn.
 
-Result:
+Result: 2026-10-02 11:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the behaviour, with a measurement that corrects the premise. A missing catalog id is answered by Graph with the code CatalogNotFound, which Get-OERCatalog republishes and Get-OERInventory reports as itself (CatalogNotFound,Get-OERInventory); Catalogs in the document 0, InventoryPartial 0, so spec G3 holds. The Expect line guessed one of the generic not-found codes: it is the retained CatalogNotFound arm that fires, not the generic set, and the source and test comments that say Get-OERCatalog never yields CatalogNotFound are wrong (corrected in a correction round).
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Published by Get-OERInventory: CatalogNotFound,Get-OERInventory -- CatalogNotFound: The catalog was not found.
+[oer-s71] Catalogs in the document: 0; InventoryPartial: 0
+```
 
 ### 2. The unchanged export applied with -Prune -WhatIf
 
 ### 2.1. The whole tenant's catalogs and access packages: no removal planned
 
-- [ ] **2.1** Applying 1.1's `inventory.json` to `catalogs` and `accessPackages` with `-Prune -WhatIf` plans no removal anywhere, and the test objects are `Unchanged`.
+- [x] **2.1** Applying 1.1's `inventory.json` to `catalogs` and `accessPackages` with `-Prune -WhatIf` plans no removal anywhere, and the test objects are `Unchanged`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -441,11 +662,35 @@ round-trip on this tenant: record it with its section and detail, it is the defe
 is about; a test-object row that is not `Unchanged`; the fence refusing a request -- an apply path
 wrote under `-WhatIf`.
 
-Result:
+Result: 2026-10-02 11:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Document: catalogs 6, access packages 7 (the whole tenant). Fence: 81 requests, 0 not a GET, refused 0. Rows: catalogs Unchanged 12, accessPackages Unchanged 17 -- every row Unchanged; rows that would remove 0, warnings that would remove 0; the test objects oer-s71-catalog (properties, resource oer-s71-res already present) and oer-s71-ap (properties, Member on oer-s71-res already bound) all Unchanged; no error, no warning.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Document: catalogs 6, access packages 7
+[oer-s71] Fence: requests 81, not a GET 0, refused 0
+[oer-s71] Rows: accessPackages, Unchanged = 17
+[oer-s71] Rows: catalogs, Unchanged = 12
+[oer-s71] Rows that would remove: 0; warnings that would remove: 0
+[oer-s71] Test object: [catalogs] oer-s71-catalog | Unchanged | catalog properties match
+[oer-s71] Test object: [catalogs] oer-s71-catalog | Unchanged | resource 'oer-s71-res' already present
+[oer-s71] Test object: [accessPackages] oer-s71-ap | Unchanged | access package properties match
+[oer-s71] Test object: [accessPackages] oer-s71-ap | Unchanged | resourceRole 'Member' on 'oer-s71-res' already bound
+```
 
 ### 2.2. The test objects are as they were
 
-- [ ] **2.2** After 2.1 the package still binds one role and the catalog still holds one resource.
+- [x] **2.2** After 2.1 the package still binds one role and the catalog still holds one resource.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -467,13 +712,28 @@ Disconnect-OerLive
 **Expect:** `oer-s71-ap bindings: 1 (Member)`; `oer-s71-catalog resources: 1 (oer-s71-res)`.
 **Failure looks like:** 0 of either -- something removed it; record what 2.1 printed.
 
-Result:
+Result: 2026-10-02 11:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. After 2.1: oer-s71-ap bindings 1 (Member); oer-s71-catalog resources 1 (oer-s71-res) -- as before.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] oer-s71-ap bindings: 1 (Member)
+[oer-s71] oer-s71-catalog resources: 1 (oer-s71-res)
+```
 
 ### 3. The export, read as oer-live-cc-noperm
 
 ### 3.1. Every read refused: the outcome as it is, and no `[]` from a failed read
 
-- [ ] **3.1** The no-permission export reports what it could not read, and its document, if written, states no failed read as an empty collection.
+- [x] **3.1** The no-permission export reports what it could not read, and its document, if written, states no failed read as an empty collection.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -529,13 +789,139 @@ expected answer, not a stop: this identity holds no permission.
 stated as a fact; a catalog list refusal that `IncompleteReads` does not name; the fence refusing a
 request.
 
-Result:
+Result: 2026-10-02 11:39 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, the outcome as it is. Fence: 8 requests, 0 not a GET, refused 0. Every read refused (403, the expected answer for this identity): section warnings for groups, administrative units, access reviews and the group roster; the catalog list refused, so IncompleteReads names catalogs and accessPackages (fix D, seen live) with the directory sections; the Azure walk skipped at the management-group listing; one InventoryPartial from Get-OERInventory and one from Export-OERInventory; summary all 0; Empty resources or resourceRoles in inventory.json: 0 -- no failed read stated as an empty collection.
+
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s71] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+Get-OERInventory: This inventory is PARTIAL: 5 collection(s) could not be read and are not stated as facts in the document. Unread:
+catalogs, accessPackages, directoryRoleAssignments/Eligible, directoryRoleAssignments/Active,
+directoryRoleManagementPolicies. A members, scopedRoles, resources or resourceRoles key reported here is an explicit
+null, which the apply engine reads as leave untouched; do not hand-edit it to an empty array, and do not treat this
+document as a full tenant snapshot. Causes: Could not read the catalogs: UnAuthorized: User is not authorized to
+perform the operation. Reason: Unauthorized; Could not read the Microsoft Entra directory role eligibility schedules:
+UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope
+RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,Ro
+leManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}; Could not read the Microsoft Entra
+directory role assignment schedules: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization
+failed due to missing permission scope
+RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,Role
+Management.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}; Could not read the Microsoft Entra
+directory role management policies: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization
+failed due to missing permission scope
+RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleMana
+gement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}.
+[oer-s71] Fence: requests 8, not a GET 0, refused 0
+[oer-s71] Summary: groups 0, administrative units 0, catalogs 0, access packages 0, access reviews 0, directory role policies 0, directory role assignments 0, role assignments 0
+[oer-s71] IncompleteReads: 1 [catalogs, accessPackages, directoryRoleAssignments/Eligible, directoryRoleAssignments/Active, directoryRoleManagementPolicies]
+[oer-s71] SkippedScopes: 1 [<management groups: the listing failed>]
+[oer-s71] Empty resources or resourceRoles in inventory.json: 0
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied,Get-OERAdministrativeUnit -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized,Get-OERCatalog -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized,Get-OERCatalog -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: UnAuthorized,Get-OERCatalog -- UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError,Get-OEREligibleDirectoryRoleAssignment -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError,Get-OEREligibleDirectoryRoleAssignment -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError,Get-OERActiveDirectoryRoleAssignment -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError,Get-OERActiveDirectoryRoleAssignment -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: UnknownError -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: PolicyReadFailed,Get-OERDirectoryRoleManagementPolicy -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: PolicyReadFailed,Get-OERDirectoryRoleManagementPolicy -- UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}
+[oer-s71] Error: InventoryPartial,Get-OERInventory -- This inventory is PARTIAL: 5 collection(s) could not be read and are not stated as facts in the document. Unread: catalogs, accessPackages, directoryRoleAssignments/Eligible, directoryRoleAssignments/Active, directoryRoleManagementPolicies. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. Causes: Could not read the catalogs: UnAuthorized: User is not authorized to perform the operation. Reason: Unauthorized; Could not read the Microsoft Entra directory role eligibility schedules: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleEligibilitySchedule.Read.Directory,RoleEligibilitySchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}; Could not read the Microsoft Entra directory role assignment schedules: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleAssignmentSchedule.Read.Directory,RoleAssignmentSchedule.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}; Could not read the Microsoft Entra directory role management policies: UnknownError: {"errorCode":"PermissionScopeNotGranted","message":"Authorization failed due to missing permission scope RoleManagementPolicy.Read.Directory,RoleManagementPolicy.ReadWrite.Directory,RoleManagement.ReadWrite.Directory,RoleManagement.Read.Directory,RoleManagement.Read.All.","instanceAnnotations":[]}.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed,Get-OERManagementGroup -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: AuthorizationFailed,Get-OERManagementGroup -- AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Error: InventoryPartial,Export-OERInventory -- This inventory bundle is PARTIAL: 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked, and the missing data is absent from roleAssignments.json and roleManagementPolicies.json. Skipped: <management groups: the listing failed>. 1 level(s) of the Azure scope tree could not be listed, so none of their scopes was walked for azurePimEligibility.json, and their eligible assignments are absent from it. Skipped: <management groups: the listing failed>. 1 partial Entra ID read report(s) name collections that could not be read and are NOT stated as facts in inventory.json -- one report can name several collections, so read the entries rather than this count: catalogs, accessPackages, directoryRoleAssignments/Eligible, directoryRoleAssignments/Active, directoryRoleManagementPolicies. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. Do not treat it as a full tenant snapshot.
+[oer-s71] Warning: Could not read groups: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Warning: Could not read administrative units: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s71] Warning: Could not read access reviews: Forbidden: Attempted to perform an unauthorized operation.
+[oer-s71] Warning: Could not list the management groups, so no management group is walked: AuthorizationFailed: The client '00000000-0000-0000-0000-000000000007' with object id '00000000-0000-0000-0000-000000000008' does not have authorization to perform action 'Microsoft.Management/managementGroups/read' over scope '/providers/Microsoft.Management' or the scope is invalid. If access was recently granted, please refresh your credentials.
+[oer-s71] Warning: Could not read the group roster: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans the removal of only `oer-s71-` objects.
+- [x] **T.1** `-Teardown -WhatIf` plans the removal of only `oer-s71-` objects.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -546,20 +932,54 @@ $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS71Prereq.ps1
 $Code = $LASTEXITCODE
 Write-OerLiveRaw -InputObject ($Out -join "`n")
 $Targets = @($Out | ForEach-Object { if ($_ -match '^What if: Performing the operation ".*" on target "(.*)"\.$') { $Matches[1] } })
-Write-OerLiveStep "What-if targets: $($Targets.Count); every target starts with oer-s71-: $(@($Targets | Where-Object { -not $_.StartsWith('oer-s71-') }).Count -eq 0); exit code: $Code"
+$Tenant = @($Targets | Where-Object { $_ -notmatch '^raw\\s71\\' })
+Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.Count); every tenant target starts with oer-s71-: $(@($Tenant | Where-Object { -not $_.StartsWith('oer-s71-') }).Count -eq 0); exit code: $Code"
 ```
 
-**Expect:** the teardown of `oer-s71-`: users 0, groups 1, access packages 1, catalogs 1; targets in
-the library's order -- the binding of `oer-s71-ap`, the package, the catalog's resource
-`oer-s71-res`, the catalog, the group -- every one starting with `oer-s71-`; `removed 0, residue 0,
-unreadable 0 (WhatIf: nothing was removed)`; exit code `0`.
+**Expect:** the teardown of `oer-s71-`: users 0, groups 1, access packages 1, catalogs 1; the
+transcript file under `raw\s71\` and, in the tenant and in the library's order, the binding of
+`oer-s71-ap`, the package, the catalog's resource `oer-s71-res`, the catalog, the group -- every
+tenant target starting with `oer-s71-`; `removed 0, residue 0, unreadable 0 (WhatIf: nothing was
+removed)`; exit code `0`.
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-02 11:39 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the plan. 6 What-if targets: 1 local file (the transcript under raw\s71\) and 5 in the tenant, in the library's order -- oer-s71-ap: resource role binding Member, oer-s71-ap, oer-s71-catalog: resource oer-s71-res, oer-s71-catalog, oer-s71-res -- every tenant target with the prefix; removed 0, residue 0, unreadable 0 (WhatIf); exit code 0. The block's own summary line printed False only because, unlike 0.3, it did not set the local transcript file aside; the block is corrected in the checklist.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s71\teardown-20261002-113903Z.log".
+[oer-s71] Mode: REMOVE. Prefix 'oer-s71-'. Objects (fixed): oer-s71-res, oer-s71-catalog, oer-s71-ap. OerLive 1.0.2.
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Residue: raw\residue.json holds no rows.
+[oer-s71] Teardown of 'oer-s71-': users 0, groups 1, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s71] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s71] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s71] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+What if: Performing the operation "Remove (Graph v1.0 DELETE resourceRoleScopes)" on target "oer-s71-ap: resource role binding 'Member'".
+What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s71-ap".
+What if: Performing the operation "Remove (Graph v1.0 resourceRequests, adminRemove)" on target "oer-s71-catalog: resource 'oer-s71-res'".
+What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s71-catalog".
+[oer-s71] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s71] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s71-res".
+[oer-s71] Teardown 6/6: the prefixed users.
+[oer-s71] Teardown of 'oer-s71-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s71] WhatIf: nothing was created, removed or written.
+[oer-s71] Done.
+[oer-s71] What-if targets: 6; every target starts with oer-s71-: False; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Every `oer-s71-` object is removed, and the tenant's counts are back at the baseline.
+- [x] **T.2** Every `oer-s71-` object is removed, and the tenant's counts are back at the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -580,11 +1000,46 @@ baseline; exit code `0`.
 **Failure looks like:** exit code `3` -- residue: read the `RESIDUE` lines and run T.2 again later
 (the script retries residue first); exit code `1` -- a stop line, read it.
 
-Result:
+Result: 2026-10-02 11:39 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The binding removed (200), the package deleted (204, 1 attempt), the catalog resource removed (201), the catalog deleted (204, 1 attempt), the group deleted (204); removed 5, residue 0, unreadable 0; both counts equal the baseline (catalogs 5, access packages 6); exit code 0. The sweep run seconds after the group's 204 still listed oer-s71-res (replication delay of the deleted group in the listing); T.3 reads back.
+
+[oer-s71] Transcript (redacted): raw\s71\teardown-20261002-113926Z.log; OerLive 1.0.2.
+[oer-s71] Mode: REMOVE. Prefix 'oer-s71-'. Objects (fixed): oer-s71-res, oer-s71-catalog, oer-s71-ap. OerLive 1.0.2.
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s71] Residue: raw\residue.json holds no rows.
+[oer-s71] Teardown of 'oer-s71-': users 0, groups 1, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s71] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s71] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s71] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s71] Removed: oer-s71-ap: resource role binding 'Member' (200).
+[oer-s71] Deleted: access package oer-s71-ap (204, 1 attempt(s)).
+[oer-s71] Removed: oer-s71-catalog: resource 'oer-s71-res' (201).
+[oer-s71] Deleted: catalog oer-s71-catalog (204, 1 attempt(s)).
+[oer-s71] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s71] Teardown 5/6: the prefixed groups.
+[oer-s71] Deleted: group oer-s71-res (204).
+[oer-s71] Teardown 6/6: the prefixed users.
+[oer-s71] Teardown of 'oer-s71-': removed 5, residue 0, unreadable 0.
+[oer-s71] Sweep: group 'oer-s71-res' (00000000-0000-0000-0000-000000000003) carries the prefix.
+[oer-s71] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s71] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s71] Done.
+[oer-s71] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** Nothing with the prefix is left, no residue, and the raw folder and the redaction map are deleted.
+- [x] **T.3** Nothing with the prefix is left, no residue, and the raw folder and the redaction map are deleted.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -607,4 +1062,26 @@ baseline; `Read-back clean: True`; `raw\s71 removed: True`.
 **Failure looks like:** anything left -- leave `raw\s71` and the map in place and record what is
 left; never delete residue by hand.
 
-Result:
+Result: 2026-10-02 11:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; the sweep finds no user, group, administrative unit, catalog, access package or app registration starting with oer-s71- (the group T.2 deleted is gone from the listing); both counts equal the baseline; prefixed objects left 0, unread collections 0, residue rows 0; raw\s71 and the redaction map deleted.
+
+[oer-s71] Transcript (redacted): raw\s71\readback-20261002-113953Z.log; OerLive 1.0.2.
+[oer-s71] Mode: READ BACK. Prefix 'oer-s71-'. Objects (fixed): oer-s71-res, oer-s71-catalog, oer-s71-ap. OerLive 1.0.2.
+[oer-s71] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s71] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s71] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s71-' is left.
+[oer-s71] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s71] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s71] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s71] Done.
+[oer-s71] Read-back clean: True
+[oer-s71] raw\s71 removed: True; redaction map removed: True
+```
