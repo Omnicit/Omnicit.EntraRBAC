@@ -3426,4 +3426,369 @@ Describe 'Sync-OERStructureAccessPackage' {
             }
         }
     }
+
+    # Decision D3 (Philip, 2026-10-03): the handler picked the FIRST of several assignment policies of
+    # one access package that share the declared display name, then diffed and updated that policy
+    # (requestor scope, approval) -- a silent write to an arbitrary policy. Graph does not enforce
+    # unique policy display names within a package. It now refuses, the way the access review
+    # handler does for definitions (decision D2): one Failed row, one published AmbiguousName record
+    # naming every candidate id, and nothing created or updated for THAT policy. The package's other
+    # declared policies are processed as before.
+    #
+    # Every ambiguous fixture below carries a live shape that DRIFTS from the declaration
+    # (durationInDays 10 live, 30 declared), so a handler that wrongly took the first match reaches
+    # Set-OERAccessPackageAssignmentPolicy -- the zero-call assertions then fail for the right reason
+    # instead of passing because the diff found nothing to do.
+    Context 'an ambiguous assignment policy name is refused (decision D3)' {
+
+        It 'creates and updates nothing for a policy whose name two live policies share' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: the live policies were read, once, and the policy was reported
+                # Failed -- so the zero-call assertions below are a refusal, not a handler that never
+                # got as far as the policies.
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 1
+
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'reports one Failed row naming the package, the policy name, the count and both ids' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Section | Should -Be 'accessPackages'
+                $Failed[0].Item | Should -Be 'AP-Sales'
+                $Failed[0].Detail | Should -BeLike "2 assignment policies of 'AP-Sales' are named 'Standard' (*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*nothing was written for it*'
+            }
+        }
+
+        It 'publishes exactly one AmbiguousName record carrying the name, the package and both ids, and attaches it to the row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Records.Count | Should -Be 1 -Because 'one error is published for the ambiguous policy, no more'
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Records[0].TargetObject | Should -Be 'Standard'
+                $Records[0].Exception.Message | Should -BeLike "Assignment policy display name 'Standard' matches 2 policies (*) in access package 'AP-Sales'.*"
+                $Records[0].Exception.Message | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Records[0].Exception.Message | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Records[0].Exception.Message | Should -BeLike '*Access packages do not enforce unique policy display names*'
+                $Records[0].Exception.Message | Should -BeLike '*Rename one of them so the display name is unique.'
+                # The document cannot name a policy by id, so the message must not advise doing so.
+                $Records[0].Exception.Message | Should -Not -BeLike '*policy id instead*'
+
+                # The Failed row carries the very record that was published.
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Failed[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+            }
+        }
+
+        It 'names every candidate and the right count when three policies share the name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "3 assignment policies of 'AP-Sales' are named 'Standard'*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*33333333-3333-3333-3333-333333333333*'
+                $Failed[0].Error.Exception.Message | Should -BeLike '*matches 3 policies (*33333333-3333-3333-3333-333333333333*'
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'refuses under -WhatIf as well, since refusing is not a write and ShouldProcess is never reached' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "2 assignment policies of 'AP-Sales' are named 'Standard'*"
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "*assignmentPolicy 'Standard'*" }).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'still processes the package''s other declared policies when one declared policy is ambiguous' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                # 'Standard' is shared by two live policies; 'Single' exists once and drifts; 'Fresh'
+                # does not exist at all. The ambiguous policy is declared FIRST, so a refusal that did
+                # not move on to the next declared policy would starve the other two.
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Single'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @(
+                        [PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 }
+                        [PSCustomObject]@{ displayName = 'Single'; durationInDays = 30 }
+                        [PSCustomObject]@{ displayName = 'Fresh'; durationInDays = 30 }
+                    )
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The ambiguous policy: refused, and touched by neither write.
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "*named 'Standard'*" }).Count | Should -Be 1
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $Id -in @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222') }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $DisplayName -eq 'Standard' }
+
+                # The others: the single match is updated by ITS id, the absent one is created.
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $Id -eq '33333333-3333-3333-3333-333333333333' -and $DisplayName -eq 'Single' }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Fresh' }
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like "*assignmentPolicy 'Single'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -like "*assignmentPolicy 'Fresh'*" }).Count | Should -Be 1
+            }
+        }
+
+        It 'leaves a single matching policy alone, even when other live policies carry other names (no AmbiguousName)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Other'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 10 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "assignmentPolicy 'Standard' matches" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -like "*'Other'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'updates a single matching policy by its own id, with no AmbiguousName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @([PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 })
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $Id -eq '11111111-1111-1111-1111-111111111111' }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            }
+        }
+
+        It 'creates a declared policy no live policy carries, with no AmbiguousName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Standard' }
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -like "*assignmentPolicy 'Standard'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            }
+        }
+    }
 }

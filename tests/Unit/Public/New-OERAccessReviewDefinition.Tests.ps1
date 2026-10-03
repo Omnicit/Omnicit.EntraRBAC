@@ -553,3 +553,70 @@ Describe 'New-OERAccessReviewDefinition -- a failed catalog or policy read is no
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
     }
 }
+
+# Decision D3 (Philip, 2026-10-03): an assignment policy display name that two policies of the package
+# share used to scope the new review to whichever policy Graph listed first. Resolve-OERAccessReviewScopeTarget
+# now answers with an AmbiguousName descriptor and the cmdlet publishes it, naming every candidate id,
+# before any POST. The resolver is NOT mocked here: the policy listing is the Graph call, so the whole
+# path from the listing to the published record is exercised.
+Describe 'New-OERAccessReviewDefinition -- an ambiguous assignment policy name is refused (decision D3)' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri, $Method)
+            if ($Uri -like '*assignmentPolicies*') {
+                return @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Standard' }
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Standard' }
+                    ) }
+            }
+            if ($Method -eq 'POST') { return @{ id = 'new-def'; displayName = 'Q3'; status = 'NotStarted' } }
+            return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+        }
+    }
+
+    It 'publishes AmbiguousName naming both policy ids as itself, and POSTs nothing' {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of any inner throw, so
+        # an unnarrowed match can pass with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        # The positive half: the policy listing was reached, once, so the zero POSTs below are a refusal
+        # of THIS lookup and not a cmdlet that stopped for another reason.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^AmbiguousName'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Published[0].TargetObject | Should -Be 'Standard'
+        $Published[0].Exception.Message | Should -BeLike "Assignment policy display name 'Standard' matches 2 policies (*) in access package 'AP-Sales'.*"
+        $Published[0].Exception.Message | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+        $Published[0].Exception.Message | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+        $Published[0].Exception.Message | Should -BeLike '*Re-run with the assignment policy id instead of the display name.'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'still accepts the policy id as the way out of the ambiguity, skipping the listing and POSTing the review' {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP-Sales' -AssignmentPolicy '22222222-2222-2222-2222-222222222222' -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err).Count | Should -Be 0
+        $Out | Should -Not -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Body.scope.query -like "*assignmentPolicy/id eq '22222222-2222-2222-2222-222222222222'*"
+        }
+    }
+}

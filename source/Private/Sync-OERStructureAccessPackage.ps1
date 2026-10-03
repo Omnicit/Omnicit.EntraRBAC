@@ -66,6 +66,11 @@ function Sync-OERStructureAccessPackage {
        approvers, and no PrimaryApprovers default emits Failed for that policy and is skipped. A
        live policy whose displayName is not declared is reported as Extra and is NEVER removed by
        this handler, regardless of -Prune -- use Remove-OERAccessPackageAssignmentPolicy directly.
+       A displayName that SEVERAL live policies of the package share is refused rather than resolved
+       to the first of them (Microsoft Graph does not enforce unique policy names within a package):
+       that declared policy gets one Failed row and one AmbiguousName error naming every candidate id,
+       nothing is created or updated for it, and the package's other declared policies are processed
+       as before. Rename one of the duplicates in the tenant to clear it.
 
     When -Prune is set, current resource role bindings whose (role.displayName, scope.originId)
     pair is not declared are removed (with Write-Warning) after a ShouldProcess gate. Without
@@ -796,7 +801,40 @@ function Sync-OERStructureAccessPackage {
             foreach ($PolEntry in @($Item.assignmentPolicies)) {
                 $PolName = $PolEntry.displayName
                 $DeclaredPolicyNames.Add(([string]$PolName).ToLowerInvariant())
-                $ExistingPol = $CurrentPolicies | Where-Object { $_.DisplayName -eq $PolName } | Select-Object -First 1
+
+                # Every match is kept, never just the first (decision D3). Assignment policy display
+                # names are NOT unique within an access package in Microsoft Graph, and the reconcile
+                # below writes by the matched policy's id (requestor scope, approval), so taking the
+                # first of several would silently update an arbitrary one. More than one match
+                # refuses this policy and moves on to the next declared one: nothing is created or
+                # updated for it, and the package's other declared policies are processed as before
+                # (its resource role bindings were reconciled in an earlier step). One match and no
+                # match are exactly what they were. The refusal sits BEFORE the policy parts are
+                # built, so a policy that will not be touched raises no approver-default warnings.
+                $MatchingPolicies = @($CurrentPolicies | Where-Object { $_.DisplayName -eq $PolName })
+                if ($MatchingPolicies.Count -gt 1) {
+                    # The message follows the text Resolve-OERAccessReviewScopeTarget publishes for the
+                    # review scope (decision D3) and Sync-OERStructureAccessReview for a definition
+                    # (decision D2), with ONE deliberate difference: its last sentence. A document cannot
+                    # name an assignment policy by id -- an assignmentPolicies entry has no id key and
+                    # displayName is its match key -- so this one says to rename a policy instead of
+                    # re-running with an id. Keep the texts in step by hand.
+                    $AmbiguousIds = ($MatchingPolicies | ForEach-Object { [string]$_.Id }) -join ', '
+                    $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new(
+                            "Assignment policy display name '$PolName' matches $($MatchingPolicies.Count) policies ($AmbiguousIds) in access package '$Name'. " +
+                            'Access packages do not enforce unique policy display names, so this name ' +
+                            'cannot identify a single policy. Rename one of them so the display name is unique.'),
+                        'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $PolName)
+                    $Caller.WriteError($AmbiguousRecord)
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "$($MatchingPolicies.Count) assignment policies of '$Name' are named '$PolName' ($AmbiguousIds); nothing was written for it" `
+                        -ErrorRecord $AmbiguousRecord
+                    continue
+                }
+                $ExistingPol = $MatchingPolicies | Select-Object -First 1
 
                 # Build the desired parts once (used by the diff and by the Set/New call).
                 $Parts = Build-OERPolicyParts -PolicyEntry $PolEntry -PolicyName $PolName -Alias $TenantAlias

@@ -425,3 +425,119 @@ Describe 'New-OERAccessReviewDefinition -- a failed scope resolve is not a not-f
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 }
+
+# Decision D3 (Philip, 2026-10-03): the assignment policy listing used to be cut down with
+# Select-Object -First 1 on the display name, so a package whose policies share a name had its review
+# scoped to whichever policy Graph listed first. Graph does not enforce unique policy display names
+# within a package. The descriptor now says so, through the same FailedErrorId/FailedMessage/
+# FailedCategory triple the access package branch already uses, and carries no ids at all.
+Describe 'Resolve-OERAccessReviewScopeTarget -- an ambiguous assignment policy name is refused (decision D3)' {
+    BeforeEach { InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null } }
+
+    It 'returns the AmbiguousName descriptor naming every candidate id, and resolves no policy id' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    return @{ value = @(
+                            @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Standard' }
+                            @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Standard' }
+                        ) }
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+
+            # Positive proof first: the listing was reached, once, so the descriptor below is the
+            # answer to that listing and not to an earlier step.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+
+            $R.FailedKind     | Should -Be 'AssignmentPolicy'
+            $R.FailedValue    | Should -Be 'Standard'
+            $R.FailedErrorId  | Should -Be 'AmbiguousName'
+            $R.FailedCategory | Should -Be 'InvalidArgument'
+            $R.FailedRecord   | Should -BeNullOrEmpty
+            $R.AssignmentPolicyId | Should -BeNullOrEmpty
+            $R.AccessPackageId    | Should -BeNullOrEmpty
+            $R.CatalogId          | Should -BeNullOrEmpty
+            $R.FailedMessage | Should -BeLike "Assignment policy display name 'Standard' matches 2 policies (*) in access package 'AP-Sales'.*"
+            $R.FailedMessage | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+            $R.FailedMessage | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+            $R.FailedMessage | Should -BeLike '*Access packages do not enforce unique policy display names, so this name cannot identify a single policy.*'
+            # A GUID -AssignmentPolicy skips the listing, so here the id IS the way out.
+            $R.FailedMessage | Should -BeLike '*Re-run with the assignment policy id instead of the display name.'
+        }
+    }
+
+    It 'names every candidate and the right count when three policies share the name' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    return @{ value = @(
+                            @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Standard' }
+                            @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Standard' }
+                            @{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'Standard' }
+                        ) }
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+            $R.FailedErrorId | Should -Be 'AmbiguousName'
+            $R.FailedMessage | Should -BeLike "*matches 3 policies (*33333333-3333-3333-3333-333333333333*) in access package 'AP-Sales'.*"
+            $R.FailedMessage | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+            $R.FailedMessage | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+        }
+    }
+
+    It 'resolves a single matching policy even when the package holds policies of other names (no ambiguity)' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    return @{ value = @(
+                            @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Standard' }
+                            @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Other' }
+                        ) }
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+            $R.AssignmentPolicyId | Should -Be '11111111-1111-1111-1111-111111111111'
+            $R.FailedKind         | Should -BeNullOrEmpty
+            $R.FailedErrorId      | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'does not list the policies at all when -AssignmentPolicy is a GUID, so the id is the way out of the ambiguity' {
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*assignmentPolicies*') {
+                    throw 'Unexpected assignment policy listing for a GUID -AssignmentPolicy.'
+                }
+                return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy '22222222-2222-2222-2222-222222222222'
+
+            # Positive proof first: the package read was reached, so the descriptor is a success and not
+            # a lookup that stopped early.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+            $R.AssignmentPolicyId | Should -Be '22222222-2222-2222-2222-222222222222'
+            $R.FailedErrorId      | Should -BeNullOrEmpty
+        }
+    }
+}

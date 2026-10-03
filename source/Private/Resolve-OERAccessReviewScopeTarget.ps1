@@ -16,18 +16,23 @@ function Resolve-OERAccessReviewScopeTarget {
     populated for a catalog that could not be DERIVED from the access package, since that failure is
     not truthfully described as "Catalog '<name>' not found" (the name is the access package's, not a
     catalog's), and for an AMBIGUOUS access package or catalog display name, where the resolver's own
-    message naming the candidate ids is far more actionable than a not-found. They are populated for
+    message naming the candidate ids is far more actionable than a not-found. They are populated too
+    for an AMBIGUOUS assignment policy display name -- two or more policies of the package carry it,
+    Microsoft Graph does not enforce unique policy names within a package -- with FailedErrorId
+    'AmbiguousName' and a message naming every candidate id; the first of them is never taken, and
+    the way out for the caller is to pass the policy id, which skips the listing. They are populated for
     EVERY throw out of Resolve-OERAccessPackageId as well, ambiguity or not: its own
     AccessPackageNotFound names the id and why it may be wrong, and a 403 or an exhausted 429 from
     its existence read is not a not-found at all. A third optional companion, FailedCategory, is
     populated on that same EVERY-throw basis, not only on the 403/throttle case: 'InvalidArgument'
     on the ambiguity path, and the caught record's own ErrorCategory on every other throw --
     'PermissionDenied' for a 403, and 'ObjectNotFound' for the resolver's own AccessPackageNotFound,
-    which is a category the caller would have derived identically on its own. It is $null on every
+    which is a category the caller would have derived identically on its own. The ambiguous
+    assignment policy display name carries 'InvalidArgument' as well. It is $null on every
     path that does NOT come out of that catch: an access package display name that simply matched
     nothing, both catalog paths (AmbiguousCatalogName and CatalogDerivationFailed included), and the
-    assignment policy. A caller that has a FailedCategory uses it; a caller that does not keeps its
-    own ErrorId-based derivation.
+    assignment policy other than the ambiguity above. A caller that has a FailedCategory uses it; a
+    caller that does not keeps its own ErrorId-based derivation.
 
     FailedRecord is the one carrier shared with Resolve-OERReviewerScope and Resolve-OERTargetList for
     a lookup that FAILED rather than found nothing. It holds the caught ErrorRecord when an explicit
@@ -74,7 +79,8 @@ function Resolve-OERAccessReviewScopeTarget {
             # ErrorId alone cannot reveal those; the rest ride the same channel rather than being
             # filtered out, so this field is NOT "only where the ErrorId is insufficient". It is
             # $null on every Fail that does not come out of that catch: the plain no-match, both
-            # catalog paths, and the assignment policy.
+            # catalog paths, and the assignment policy -- except that an AMBIGUOUS assignment policy
+            # display name (decision D3) supplies 'InvalidArgument' here too.
             FailedCategory = $Cat
             # Optional sixth field, the carrier shared with Resolve-OERReviewerScope and
             # Resolve-OERTargetList: the caught ErrorRecord of a lookup that THREW on the explicit
@@ -159,8 +165,21 @@ function Resolve-OERAccessReviewScopeTarget {
             Remove-OERErrorRecord -Record $PSItem
             return (& $Fail 'AssignmentPolicy' $AssignmentPolicy $null $null $null $PSItem)
         }
-        $Match = @($Resp.value) | Where-Object { $_.displayName -eq $AssignmentPolicy } | Select-Object -First 1
-        $PolId = [string]$Match.id
+        # Every match is kept, never just the first (decision D3). Assignment policy display names are
+        # NOT unique within an access package in Microsoft Graph, and the review is scoped by the id
+        # this resolves, so taking the first of several would silently scope it to an arbitrary policy.
+        # More than one match is reported through the same FailedErrorId/FailedMessage/FailedCategory
+        # triple the access package branch uses, naming every candidate id. A GUID -AssignmentPolicy
+        # skips this listing altogether, so for a caller the id IS the way out of the ambiguity.
+        $PolicyMatches = @(@($Resp.value) | Where-Object { $_.displayName -eq $AssignmentPolicy })
+        if ($PolicyMatches.Count -gt 1) {
+            $AmbiguousIds = ($PolicyMatches | ForEach-Object { [string]$_.id }) -join ', '
+            return (& $Fail 'AssignmentPolicy' $AssignmentPolicy 'AmbiguousName' (
+                    "Assignment policy display name '$AssignmentPolicy' matches $($PolicyMatches.Count) policies ($AmbiguousIds) in access package '$AccessPackage'. " +
+                    'Access packages do not enforce unique policy display names, so this name ' +
+                    'cannot identify a single policy. Re-run with the assignment policy id instead of the display name.') 'InvalidArgument')
+        }
+        $PolId = [string]($PolicyMatches | Select-Object -First 1).id
         if (-not $PolId) { return (& $Fail 'AssignmentPolicy' $AssignmentPolicy) }
     }
 
