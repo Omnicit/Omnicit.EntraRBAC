@@ -38,10 +38,11 @@ earlier versions acted on the first match: an access review definition
 (`Remove-OERAccessReviewDefinition -DisplayName` could delete, and `Set-OERAccessReviewDefinition`
 overwrite, a definition other than the one meant), an assignment policy of an access package, a
 resource role of a catalog resource (`Add-OERAccessPackageResourceRole`), and a subscription or
-management group display name in the Azure cmdlets (reported as `InvalidScope`, as a name that does
-not exist already is). `Invoke-OERStructure` reports such an entry `Failed` and writes nothing for
-it; a binding whose resource name can identify more than one catalog resource is `Failed` too, and
-the package's binding prune is withheld.
+management group display name in the Azure cmdlets (reported as `InvalidScope`, or
+`ManagementGroupNotFound` by `Get-OERSubscription`, as a name that does not exist already is).
+`Invoke-OERStructure` reports such an entry `Failed` and writes nothing for it; a binding whose
+resource name can identify more than one resource, or only a group outside the catalog, is `Failed`
+too, and the package's binding prune is withheld.
 
 An administrative unit's scoped roles are no longer removed under `-Prune` when the directory role
 names cannot be read: the unit is `Failed` and nothing is removed, where earlier versions removed
@@ -51,8 +52,8 @@ longer exists is written by id with nothing reported and no stray error records.
 unit whose directory role names cannot be read is exported with `"scopedRoles": null` and named in
 `InventoryPartial`.
 
-Lookups of principals, approvers and Azure role definitions still report a failed read as not
-found (`PrincipalNotFound`, `ApproverNotFound`, `RoleDefinitionNotFound`).
+Lookups of principals, PIM policy approvers and Azure role definitions still report a failed read
+as not found (`PrincipalNotFound`, `ApproverNotFound`, `RoleDefinitionNotFound`).
 
 ## [1.1.0] - 2026-10-01
 
