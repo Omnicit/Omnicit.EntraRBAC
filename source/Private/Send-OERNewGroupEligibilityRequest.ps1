@@ -18,9 +18,9 @@ function Send-OERNewGroupEligibilityRequest {
     three records in the outer variable). Add-OERGroupEligibility cannot declare the code without a
     new public parameter, so a time-bound write on a new group goes through this helper instead; a
     group that already existed keeps the cmdlet, and a 404 there stays a failure.
-    The same code with any status other than 404 is thrown, and so is every other failure (403, 429,
-    500), for the caller to handle as a refusal. This helper never waits and never retries; the caller
-    owns the budget.
+    The same code with any status other than 404 is thrown, and so is every other failure -- a refusal
+    (403), a throttle that outlasted the transport's own retries, or a server error -- for the caller
+    to handle as a refusal. This helper never waits and never retries; the caller owns the budget.
 
     .PARAMETER GroupId
     The object id of the group the eligibility is requested for.
