@@ -47,13 +47,12 @@ declared by name. Such a unit exports as `"scopedRoles": null`, named in `Invent
 assignment.
 
 `Invoke-OERStructure` now applies a PIM for Groups eligibility declared for a group the same run
-creates. Until PIM for Groups knows a new group, Graph can answer its first eligibility request
-with 404 `ResourceNotFound`, where earlier versions could fail with many error records until a
-re-run, or accept the request and fail it. The engine waits both out within the same 30-second
-budget per group it spends on the group's PIM policy, so the wait itself leaves no error records;
-once the budget is spent the row is `Failed`, saying a re-run usually applies it. A permanent
-eligibility first waits likewise until the group's policy is listed and readable; an existing group
-never waits.
+creates. Until PIM for Groups knows a new group, Graph can answer its eligibility request with 404
+`ResourceNotFound`, or accept the request and fail it; on the 404, earlier versions could fail with
+many error records until a re-run. The engine waits both out within the same 30-second budget per
+group it spends on the group's PIM policy, so the wait itself leaves no error records; once the
+budget is spent the row is `Failed`, saying a re-run usually applies it. A permanent eligibility
+first waits likewise until the group's policy is listed and readable; an existing group never waits.
 
 ## [1.1.0] - 2026-10-01
 
