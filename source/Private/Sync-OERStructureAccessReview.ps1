@@ -15,6 +15,11 @@ function Sync-OERStructureAccessReview {
     (a read-modify-write PUT, so undeclared properties are preserved). Reviewer tokens are resolved to
     object ids before the diff, so a display-name change in the tenant is not mistaken for drift.
     Renaming a review through the document is not possible -- displayName is the match key.
+    Access review definition display names are not unique in Microsoft Graph, and the update writes
+    by the matched definition's id, so a name that more than one definition carries is REFUSED rather
+    than resolved to the first match: the entry is reported Failed with an AmbiguousName error naming
+    every candidate id, and nothing is created, updated or read further for it. A document cannot
+    name a definition by id, so the way out is to rename one of the definitions in the tenant.
     The update is a FULL-OBJECT PUT: Set-OERAccessReviewDefinition carries the live values of every
     writable top-level property forward by name (including instanceEnumerationScope and
     additionalNotificationRecipients, neither of which the document models). A writable property added
@@ -167,15 +172,28 @@ function Sync-OERStructureAccessReview {
         # a failed read is still a failed read. Same idiom, same reasoning, as the group and
         # administrative-unit reads in Get-OERInventory.
         $Existing = $null
+        $Ambiguous = @()
         $Filter = "displayName eq '{0}'" -f $Name.Replace("'", "''")
         $ProbeErrors = $null
         # The try/catch still guards a genuinely TERMINATING failure of the read (auth, a dead
         # transport, a ThrowTerminatingError upstream); the inspection inside it handles the
         # NON-terminating records. Both are needed: neither subsumes the other.
         try {
-            $Existing = Get-OERAccessReviewDefinition -Filter $Filter -ErrorAction SilentlyContinue -ErrorVariable ProbeErrors |
-                Where-Object { $_.DisplayName -eq $Name } |
-                Select-Object -First 1
+            $Matching = Get-OERAccessReviewDefinition -Filter $Filter -ErrorAction SilentlyContinue -ErrorVariable ProbeErrors |
+                Where-Object { $_.DisplayName -eq $Name }
+            # Every match is kept, never just the first (decision D2). Access review definition
+            # display names are NOT unique in Microsoft Graph, and the reconcile below writes by the
+            # matched definition's id, so taking the first of several would silently update an
+            # arbitrary one. More than one match leaves $Existing unset on purpose and hands the
+            # whole set to the refusal after this block. @( ) wraps the FILTERED variable only; the
+            # read above must stay an unwrapped pipeline (see the note on the call).
+            $MatchList = @($Matching | Where-Object { $null -ne $_ })
+            if ($MatchList.Count -gt 1) {
+                $Ambiguous = $MatchList
+            }
+            else {
+                $Existing = $MatchList | Select-Object -First 1
+            }
             if (-not $Existing) {
                 # A failed read is NOT an empty fact. AccessReviewDefinitionNotFound means the
                 # definition genuinely does not exist yet -- proceed with the create. Anything else
@@ -230,6 +248,37 @@ function Sync-OERStructureAccessReview {
                     -ErrorRecord $PSItem
                 return
             }
+        }
+
+        # -- Ambiguous name -> refuse ------------------------------------------------------------
+        # Kept OUTSIDE the try above on purpose: under a caller with -ErrorAction Stop the
+        # $Caller.WriteError below throws, and inside that try the read's own catch would take the
+        # exception, scrub it and publish the same record a second time. A published read failure
+        # (the ProbeFailure branch above) still wins when both happened, since an incomplete read is
+        # not trustworthy evidence either way; nothing is lost, the next run reports the ambiguity.
+        #
+        # The message is the text Resolve-OERAccessReviewDefinitionId throws for the cmdlets (decision
+        # D1), copied here with ONE deliberate difference: its last sentence. That helper tells the
+        # operator to re-run with the definition id, and a document cannot do that -- an
+        # accessReviews entry has no id key and displayName is its match key -- so this one says to
+        # rename a definition instead. The text is not obtained from that helper because calling it
+        # would issue a second, differently shaped Graph read and answer with a throw, when this
+        # handler already holds every candidate from the read it made. Keep the two in step by hand.
+        if ($Ambiguous.Count -gt 1) {
+            $AmbiguousIds = ($Ambiguous | ForEach-Object { [string]$_.Id }) -join ', '
+            $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new(
+                    "Access review definition display name '$Name' matches $($Ambiguous.Count) definitions ($AmbiguousIds). " +
+                    'Access reviews do not enforce unique definition display names, so this name ' +
+                    'cannot identify a single definition. Rename one of them so the display name is unique.'),
+                'AmbiguousName',
+                [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                $Name)
+            $Caller.WriteError($AmbiguousRecord)
+            ConvertTo-OERStructureResult -Section 'accessReviews' -Item $Name -Action 'Failed' `
+                -Detail "$($Ambiguous.Count) access review definitions are named '$Name' ($AmbiguousIds); nothing was written" `
+                -ErrorRecord $AmbiguousRecord
+            return
         }
 
         # -- Existing -> reconcile ---------------------------------------------------------------

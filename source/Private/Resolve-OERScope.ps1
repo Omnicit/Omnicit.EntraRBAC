@@ -10,20 +10,27 @@ function Resolve-OERScope {
     GUID is used directly; any other value is resolved by listing /subscriptions and matching
     displayName case-insensitively. A -ManagementGroup value is first tried verbatim as the
     management group name (the URL id segment); when that GET fails, the management group list is
-    matched on displayName. Throws on caller error -- the public cmdlets catch and route the message
-    through Write-CmdletError.
+    matched on displayName. Subscription and management group display names are not unique, so a
+    display name that more than one subscription (or management group) carries is refused: the throw
+    is an ErrorRecord with ErrorId 'AmbiguousName' (category InvalidArgument, target the name) whose
+    message names every candidate id, and nothing further is read. The caller re-runs with the
+    subscription id, or with the management group name (which is its id). A name that exactly one
+    carries resolves as before, and a name nobody carries keeps the plain not-found throw. Throws on
+    caller error -- the public cmdlets catch and route the message through Write-CmdletError.
 
     .PARAMETER Scope
     A raw ARM scope string such as '/subscriptions/{id}/resourceGroups/{rg}'. Must start with '/'.
 
     .PARAMETER Subscription
-    A subscription GUID or display name.
+    A subscription GUID or display name. A display name carried by more than one subscription is
+    refused as ambiguous; use the subscription id.
 
     .PARAMETER ResourceGroup
     A resource group name that narrows the -Subscription scope. Requires -Subscription.
 
     .PARAMETER ManagementGroup
-    A management group name (id segment) or display name.
+    A management group name (id segment) or display name. A display name carried by more than one
+    management group is refused as ambiguous; use the management group name.
 
     .PARAMETER ResourceType
     The full resource type (e.g. 'Microsoft.Storage/storageAccounts') used to disambiguate a resource
@@ -80,11 +87,26 @@ function Resolve-OERScope {
             $Subscription
         } else {
             $Response = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All
-            $Match = @($Response.value) | Where-Object { $PSItem.displayName -eq $Subscription } | Select-Object -First 1
-            if (-not $Match) {
+            # Subscription display names are not unique, so every match is collected rather than the
+            # first one taken: this id feeds role assignments, policy writes and resource group
+            # deletes. More than one match is refused, naming each candidate, in the shape
+            # Resolve-OERCatalogId uses.
+            $SubMatches = @(@($Response.value) | Where-Object { $PSItem.displayName -eq $Subscription })
+            if ($SubMatches.Count -gt 1) {
+                $SubIds = ($SubMatches | ForEach-Object { [string]$PSItem.subscriptionId }) -join ', '
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Subscription display name '$Subscription' matches $($SubMatches.Count) subscriptions ($SubIds). " +
+                        'Subscription display names are not unique, so this name cannot identify a single subscription. ' +
+                        'Re-run with the subscription id.'),
+                    'AmbiguousName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $Subscription)
+            }
+            if ($SubMatches.Count -eq 0) {
                 throw "Subscription '$Subscription' was not found or you do not have access to it."
             }
-            [string]$Match.subscriptionId
+            [string]$SubMatches[0].subscriptionId
         }
         if ($ResourceName) {
             $ResourcesPath = "/subscriptions/$SubscriptionId/resourceGroups/$([uri]::EscapeDataString($ResourceGroup))/resources?api-version=2025-04-01"
@@ -126,9 +148,23 @@ function Resolve-OERScope {
     if ($Verbatim) { return [string]$Verbatim.id }
 
     $List = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All
-    $MgMatch = @($List.value) | Where-Object { $PSItem.properties.displayName -eq $ManagementGroup } | Select-Object -First 1
-    if (-not $MgMatch) {
+    # Management group display names are not unique either, so the list fallback refuses more than
+    # one match instead of taking the first. A management group's name IS its id segment, so the
+    # names listed are the values to re-run with.
+    $MgMatches = @(@($List.value) | Where-Object { $PSItem.properties.displayName -eq $ManagementGroup })
+    if ($MgMatches.Count -gt 1) {
+        $MgNames = ($MgMatches | ForEach-Object { [string]$PSItem.name }) -join ', '
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new(
+                "Management group display name '$ManagementGroup' matches $($MgMatches.Count) management groups ($MgNames). " +
+                'Management group display names are not unique, so this name cannot identify a single management group. ' +
+                'Re-run with the management group name (its id).'),
+            'AmbiguousName',
+            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+            $ManagementGroup)
+    }
+    if ($MgMatches.Count -eq 0) {
         throw "Management group '$ManagementGroup' was not found, or you do not have access to it."
     }
-    return [string]$MgMatch.id
+    return [string]$MgMatches[0].id
 }

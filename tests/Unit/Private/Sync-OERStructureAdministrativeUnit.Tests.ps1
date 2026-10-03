@@ -1435,4 +1435,126 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
     }
+
+    # The directory-role name map is what turns a live scoped role's role id into the name the document
+    # declares it by. When that read fails the live roles are NOT nameless, they are unread, and -Prune must
+    # not read a declared role as undeclared. These tests run the REAL Get-OERAdministrativeUnit and the REAL
+    # Get-OERDirectoryRoleNameMap under the handler; only the transport and the lookups are mocked.
+    Context 'a directory role name map that cannot be read is an unread scoped-role collection, never an undeclared role' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:AuId = '11111111-1111-1111-1111-111111111111'
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAdministrativeUnitId { $script:AuId }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Add-OERAdministrativeUnitScopedRole { }
+                Mock Remove-OERAdministrativeUnitScopedRole { }
+            }
+        }
+
+        It 'reports Failed naming the directory roles read, and adds and removes no scoped role, under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                Mock Invoke-OERGraphRequest {
+                    if ($Uri -eq 'v1.0/directoryRoles') { throw 'TooManyRequests (injected map failure)' }
+                    if ($Uri -like '*/scopedRoleMembers') {
+                        return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                                    id = 'srm-1'; administrativeUnitId = $script:AuId; roleId = 'dirrole-1'
+                                    roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                                }) }
+                    }
+                    if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+                    if ($Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)") {
+                        return [PSCustomObject]@{ id = $script:AuId; displayName = 'AU-IT' }
+                    }
+                    throw "unexpected Graph call $Uri"
+                }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person1@example.com' })
+                }
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The map read was reached, so the absence assertions that follow are not vacuous; the
+                # Failed row that names the read is asserted after them.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Times 0
+                @($r).Count | Should -Be 1
+                $r[0].Action | Should -BeExactly 'Failed'
+                $r[0].Detail | Should -Match 'failed to read the current state of administrative unit'
+                $r[0].Detail | Should -Match 'v1\.0/directoryRoles'
+                $r[0].Detail | Should -Match 'injected map failure'
+                $null -ne $r[0].Error | Should -BeTrue -Because 'the underlying ErrorRecord travels with the Failed row'
+            }
+        }
+
+        It 'control: with the name map readable, the declared scoped role is Unchanged and nothing is removed' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                Mock Invoke-OERGraphRequest {
+                    if ($Uri -eq 'v1.0/directoryRoles') {
+                        return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'dirrole-1'; roleTemplateId = 'tmpl-1'; displayName = 'User Administrator' }) }
+                    }
+                    if ($Uri -like '*/scopedRoleMembers') {
+                        return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                                    id = 'srm-1'; administrativeUnitId = $script:AuId; roleId = 'dirrole-1'
+                                    roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                                }) }
+                    }
+                    if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+                    if ($Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)") {
+                        return [PSCustomObject]@{ id = $script:AuId; displayName = 'AU-IT' }
+                    }
+                    throw "unexpected Graph call $Uri"
+                }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = 'User Administrator'; principal = 'person1@example.com' })
+                }
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -like "*scopedRole 'User Administrator'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+                Should -Invoke Add-OERAdministrativeUnitScopedRole -Times 0
+            }
+        }
+
+        It 'does not read the name map at all when the entry declares scopedRoles null, so a failing map is not a failure there' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                Mock Invoke-OERGraphRequest {
+                    if ($Uri -eq 'v1.0/directoryRoles') { throw 'TooManyRequests (injected map failure)' }
+                    if ($Uri -like '*/scopedRoleMembers') { throw 'scopedRoleMembers must not be read for an explicit null scopedRoles' }
+                    if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+                    if ($Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)") {
+                        return [PSCustomObject]@{ id = $script:AuId; displayName = 'AU-IT' }
+                    }
+                    throw "unexpected Graph call $Uri"
+                }
+                $Item = '{ "displayName": "AU-IT", "members": null, "scopedRoles": null }' | ConvertFrom-Json
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)/members" }
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                Should -Invoke Remove-OERAdministrativeUnitScopedRole -Times 0
+            }
+        }
+    }
 }

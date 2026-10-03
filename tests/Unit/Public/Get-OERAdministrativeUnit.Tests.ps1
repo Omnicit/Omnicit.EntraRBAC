@@ -255,6 +255,106 @@ Describe 'Get-OERAdministrativeUnit' {
             @($Published).Count | Should -BeGreaterThan 0
             @($Published)[0].FullyQualifiedErrorId | Should -Match 'AdministrativeUnitScopedRoleReadFailed'
         }
+
+        # A scoped role member carries only a role id; the directory role list is what names it. A list
+        # that cannot be read must not leave the roles nameless (RoleName ''): the apply engine matches a
+        # declared role by NAME and, under -Prune, would remove a role it then reads as undeclared.
+        Context 'a directory role name map that cannot be read leaves the scoped roles unread' {
+            BeforeEach {
+                # Catch-all for the transport: a request no mock below covers fails loudly instead of
+                # reaching the real wrapper. The filtered mocks that follow win for the URIs they name.
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    @{ value = @(@{ id = 'srm-1'; roleId = 'r-1'; roleMemberInfo = @{ id = 'u-1'; displayName = 'Jane' } }) }
+                } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/cccccccc-1111-1111-1111-111111111111/scopedRoleMembers' }
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw 'TooManyRequests (injected map failure)'
+                } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            }
+
+            It 'omits the ScopedRoles property and publishes AdministrativeUnitScopedRoleReadFailed naming the directory roles read' {
+                $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'cccccccc-1111-1111-1111-111111111111' -IncludeScopedRoles -ErrorVariable ReadErr -ErrorAction SilentlyContinue
+
+                # Positive proof first: the unit was read, the scoped-role members were read, and the name
+                # map read was attempted -- so the absent property below is the map's doing.
+                $Au | Should -Not -BeNullOrEmpty
+                $Au.Id | Should -Be 'cccccccc-1111-1111-1111-111111111111'
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/directory/administrativeUnits/cccccccc-1111-1111-1111-111111111111/scopedRoleMembers'
+                }
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/directoryRoles'
+                }
+                $Au.PSObject.Properties.Name -contains 'ScopedRoles' |
+                    Should -BeFalse -Because 'a ScopedRoles collection whose RoleName is empty is read by -Prune as roles nobody declared'
+                $Published = @($ReadErr) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAdministrativeUnit' -and
+                    $_.FullyQualifiedErrorId -match 'AdministrativeUnitScopedRoleReadFailed'
+                }
+                @($Published).Count | Should -Be 1
+                $Published.Exception.Message | Should -Match 'Could not read scoped roles for administrative unit cccccccc-1111-1111-1111-111111111111'
+                $Published.Exception.Message | Should -Match 'v1\.0/directoryRoles'
+                $Published.Exception.Message | Should -Match 'injected map failure'
+                $Published.Exception.Message | Should -Match 'ScopedRoles property is omitted rather than reported as empty'
+            }
+
+            It 'scrubs the unreadable name map and the scoped-role read it ends, once each' {
+                Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+
+                $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'cccccccc-1111-1111-1111-111111111111' -IncludeScopedRoles -ErrorAction SilentlyContinue
+
+                # Positive proof first: the scoped-role catch was reached (the property is omitted).
+                $Au | Should -Not -BeNullOrEmpty
+                $Au.PSObject.Properties.Name -contains 'ScopedRoles' | Should -BeFalse
+                # The name map's own catch, on the record the transport raised ...
+                Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record.Exception.Message -eq 'TooManyRequests (injected map failure)'
+                }
+                # ... and the reader's scoped-role catch, on the exception the name map rethrew.
+                Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record.Exception.Message -like 'Could not read the directory roles*' -and
+                    $Record.Exception.InnerException.Message -eq 'TooManyRequests (injected map failure)'
+                }
+            }
+
+            It 'does not read the name map for a unit that has no scoped roles, so an empty collection is still stated as empty' {
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    @{ value = @() }
+                } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/cccccccc-1111-1111-1111-111111111111/scopedRoleMembers' }
+
+                $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'cccccccc-1111-1111-1111-111111111111' -IncludeScopedRoles -ErrorVariable ReadErr -ErrorAction SilentlyContinue
+
+                $Au | Should -Not -BeNullOrEmpty
+                $Au.PSObject.Properties.Name -contains 'ScopedRoles' |
+                    Should -BeTrue -Because 'the read of an empty unit succeeded, and the map is only needed to name a role that exists'
+                @($Au.ScopedRoles).Count | Should -Be 0
+                @(@($ReadErr) | Where-Object { $_.FullyQualifiedErrorId -match 'AdministrativeUnitScopedRoleReadFailed' }).Count | Should -Be 0
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                    $Uri -eq 'v1.0/directoryRoles'
+                }
+            }
+        }
+
+        It 'attaches the named ScopedRoles and writes no error when the name map is readable' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'srm-1'; roleId = 'r-1'; roleMemberInfo = @{ id = 'u-1'; displayName = 'Jane' } }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/cccccccc-1111-1111-1111-111111111111/scopedRoleMembers' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'r-1'; roleTemplateId = 'rt-1'; displayName = 'User Administrator' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+
+            $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'cccccccc-1111-1111-1111-111111111111' -IncludeScopedRoles -ErrorVariable ReadErr -ErrorAction SilentlyContinue
+
+            @($Au.ScopedRoles).Count | Should -Be 1
+            $Au.ScopedRoles[0].RoleName | Should -Be 'User Administrator'
+            $Au.ScopedRoles[0].RoleId | Should -Be 'r-1'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/directoryRoles'
+            }
+            @(@($ReadErr) | Where-Object {
+                    $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAdministrativeUnit'
+                }).Count | Should -Be 0
+        }
     }
 }
 

@@ -31,10 +31,14 @@ function Disable-OEREligibleRoleAssignment {
     A raw ARM scope string. Pipeline by property name.
     .PARAMETER Subscription
     A subscription GUID or display name. Pipeline by property name (SubscriptionId).
+    A display name that several subscriptions share is refused, naming the candidates;
+    use the subscription id.
     .PARAMETER ResourceGroup
     A resource group name narrowing the -Subscription scope. Pipeline by property name.
     .PARAMETER ManagementGroup
     A management group name or display name. Pipeline by property name (ManagementGroupName).
+    A display name that several management groups share is refused, naming the candidates;
+    use the management group name.
     .PARAMETER ResourceType
     The full resource type (e.g. 'Microsoft.Storage/storageAccounts') that disambiguates -ResourceName
     within the -ResourceGroup. Requires -ResourceName. Pipeline by property name.

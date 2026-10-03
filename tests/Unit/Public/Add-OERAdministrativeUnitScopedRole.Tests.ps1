@@ -93,6 +93,28 @@ Describe 'Add-OERAdministrativeUnitScopedRole' {
         $Result.RoleName | Should -Be 'User Administrator'
     }
 
+    It 'stays best-effort when the directory roles cannot be read: emits the created assignment with an empty RoleName and no error' {
+        # The assignment is already made when the name is looked up, so an unreadable role list must not
+        # turn a successful write into a failure (Get-OERAdministrativeUnit, which feeds the apply
+        # engine, is the caller that must not tolerate it -- see its own tests).
+        Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { 'au-1' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ id = 'srm-1'; roleId = 'role-guid-1'; roleMemberInfo = @{ id = '11111111-1111-1111-1111-111111111111' } }
+        } -ParameterFilter { $Method -eq 'POST' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            throw 'TooManyRequests (injected map failure)'
+        } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+        $Result = Add-OERAdministrativeUnitScopedRole -Id 'au-1' -RoleId 'role-guid-1' `
+            -PrincipalId '11111111-1111-1111-1111-111111111111' -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+        $Result.ScopedRoleMembershipId | Should -Be 'srm-1'
+        $Result.RoleId | Should -Be 'role-guid-1'
+        $Result.RoleName | Should -BeNullOrEmpty
+        @(@($Err) | Where-Object { $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Add-OERAdministrativeUnitScopedRole' }).Count | Should -Be 0
+    }
+
     It 'errors AdministrativeUnitNotFound when the unit cannot be resolved' {
         Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { $null }
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}

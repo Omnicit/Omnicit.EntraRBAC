@@ -18,12 +18,122 @@ Describe 'Get-OERDirectoryRoleNameMap' {
         }
     }
 
+    It 'returns an empty map, without throwing, when the read succeeds and lists no activated role and -ThrowOnFailure is not set' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+        InModuleScope $script:moduleName {
+            $Map = Get-OERDirectoryRoleNameMap
+            $Map       | Should -BeOfType [hashtable]
+            $Map.Count | Should -Be 0
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+    }
+
     It 'returns an empty map when the Graph call fails' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down' }
         InModuleScope $script:moduleName {
             $Map = Get-OERDirectoryRoleNameMap
             $Map       | Should -BeOfType [hashtable]
             $Map.Count | Should -Be 0
+        }
+    }
+
+    It 'scrubs the failed read exactly once and still returns an empty map when the Graph call fails' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down (injected default-mode failure)' }
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        InModuleScope $script:moduleName {
+            $Map = Get-OERDirectoryRoleNameMap
+            # Positive proof first: the catch was reached and swallowed the failure.
+            $Map       | Should -BeOfType [hashtable]
+            $Map.Count | Should -Be 0
+        }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'graph down (injected default-mode failure)'
+        }
+    }
+
+    Context '-ThrowOnFailure (the caller that cannot treat an unreadable map as an empty one)' {
+        It 'returns the same map as the default when the read succeeds' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                    @{ id = 'role-1'; roleTemplateId = 'tmpl-1'; displayName = 'User Administrator' }
+                ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Map = Get-OERDirectoryRoleNameMap -ThrowOnFailure
+                $Map           | Should -BeOfType [hashtable]
+                $Map.Count     | Should -Be 2
+                $Map['role-1'] | Should -Be 'User Administrator'
+                $Map['tmpl-1'] | Should -Be 'User Administrator'
+            }
+        }
+
+        # The map is read only for a unit that has at least one scoped role, so at least one directory
+        # role is activated (Global Administrator and the implicit user roles always are). A listing
+        # that succeeds with none is evidence of a bad read, and an empty map there would name every
+        # scoped role '' and bring back the prune of the roles a document declared by name.
+        It 'throws when the read succeeds but lists no activated role, naming the read and saying the listing came back empty' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                $Map = 'sentinel: the call did not return'
+                try { $Map = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                # Positive proof first: the failure surfaced, and no map (empty or otherwise) came back.
+                $null -ne $Thrown | Should -BeTrue
+                $Map | Should -BeExactly 'sentinel: the call did not return'
+                $Thrown.Exception.Message | Should -Match 'v1\.0/directoryRoles'
+                $Thrown.Exception.Message | Should -Match 'came back empty'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/directoryRoles' -and $All
+            }
+        }
+
+        It 'throws for a read that succeeds with no value collection at all, or only null entries' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                $null -ne $Thrown | Should -BeTrue
+                $Thrown.Exception.Message | Should -Match 'came back empty'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @($null, $null) } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                $null -ne $Thrown | Should -BeTrue
+                $Thrown.Exception.Message | Should -Match 'came back empty'
+            }
+        }
+
+        It 'throws instead of returning an empty map when the Graph call fails, naming the read and keeping the cause' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down (injected strict failure)' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                $Map = 'sentinel: the call did not return'
+                try { $Map = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                # Positive proof first: the failure surfaced, and no map (empty or otherwise) came back.
+                $null -ne $Thrown | Should -BeTrue
+                $Map | Should -BeExactly 'sentinel: the call did not return'
+                $Thrown.Exception.Message | Should -Match 'v1\.0/directoryRoles'
+                $Thrown.Exception.Message | Should -Match 'injected strict failure'
+                $Thrown.Exception.InnerException.Message | Should -Be 'graph down (injected strict failure)'
+            }
+        }
+
+        It 'scrubs the failed read exactly once before it throws' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down (injected strict failure)' }
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                # The catch was reached and rethrew, so the scrub assertion below is not vacuous.
+                $null -ne $Thrown | Should -BeTrue
+            }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'graph down (injected strict failure)'
+            }
         }
     }
 

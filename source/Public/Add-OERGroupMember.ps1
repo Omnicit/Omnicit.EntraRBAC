@@ -8,8 +8,9 @@ function Add-OERGroupMember {
     (default) or as an owner when -AccessType owner is set. Each principal is added through the
     group's members/$ref or owners/$ref navigation endpoint. A principal that is already present
     surfaces a Graph error that is reported per-principal without stopping the remaining additions.
-    A group that cannot be resolved produces a non-terminating GroupNotFound error. Supports
-    -WhatIf and -Confirm.
+    A group name that matches nothing produces a non-terminating GroupNotFound error; a group lookup
+    that itself fails (a refused, throttled or failed read) is reported as that failure, never as
+    GroupNotFound. Supports -WhatIf and -Confirm.
 
     Principals may be given as raw object ids with -PrincipalId or by name with -User (user
     principal name), -GroupPrincipal (group display name) and -ServicePrincipal (service principal
@@ -109,7 +110,8 @@ function Add-OERGroupMember {
         $GraphServiceRoot = Get-OERGraphServiceRoot
     }
     process {
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $ResolvedGroupId = $null
         try {
             $ResolvedGroupId = Resolve-OERGroupId -DisplayName $Group
@@ -122,6 +124,10 @@ function Add-OERGroupMember {
                     -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such group exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $ResolvedGroupId) {
             Write-CmdletError `

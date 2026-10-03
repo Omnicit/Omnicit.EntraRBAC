@@ -86,6 +86,13 @@ function Get-OERInventory {
     the bundle fail the schema.json written beside it. An omitted durationInDays means "leave
     untouched" on apply, which is the correct reading of that sentinel; a positive value above 365
     is dropped with a warning, because that is real configuration the schema cannot carry.
+    A review's accessPackage and assignmentPolicy are written under their display names, read by
+    id. A package or policy that no longer exists is written by its id: that is a fact about the
+    review, so nothing is reported for it. A name that could not be read -- a refused, throttled
+    or failed read -- is written by id too, and is reported as an unread collection (accessReviews,
+    the review's display name, then accessPackage or assignmentPolicy) in the InventoryPartial
+    error, so a document written by id for that reason is never mistaken for one whose target was
+    deleted.
     The AccessPackages projection
     carries the hidden flag so a hidden package stays
     hidden across a round-trip. The RoleAssignments projection carries the ABAC condition,
@@ -270,18 +277,19 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits sixteen
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits eighteen
         # read-failure message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
         # access package resource role bindings, catalog resources, the catalog resource-name map,
-        # the catalog list, a catalog's package list, an access package's assignment policies), so
-        # sixteen admits one of each and a normal partial run is still reported in full; only a
+        # the catalog list, a catalog's package list, an access package's assignment policies, an
+        # access review's access package name, an access review's assignment policy name), so
+        # eighteen admits one of each and a normal partial run is still reported in full; only a
         # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
         # rather than silently lost. Nothing is discarded either way -- every cause is written to the
-        # verbose stream as it is seen. Raise this with the shape count when a seventeenth
+        # verbose stream as it is seen. Raise this with the shape count when a nineteenth
         # read-failure message is added, or one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 16
+        $UnreadCauseCap = 18
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -299,6 +307,60 @@ function Get-OERInventory {
             if (-not [string]::IsNullOrWhiteSpace($Target)) { $Key = $Key.Replace($Target, '<id>') }
             if (-not $UnreadCauseKeys.Add($Key)) { return }
             if ($UnreadCauses.Count -lt $UnreadCauseCap) { $UnreadCauses.Add($Cause) }
+        }
+
+        # Reads the display name of the access package or assignment policy an access review points
+        # at, and returns it -- or the id, which is a safe reference and is what the document carries
+        # whenever no name is to be had. Local to this cmdlet for the same reason as Add-UnreadCause:
+        # the two lookups share one rule, and the rule needs the cause list and the unread collections.
+        #
+        # THE READ IS A TRANSPORT READ WITH THE NOT-FOUND CODES DECLARED, NOT A CALL TO
+        # Get-OERAccessPackage / Get-OERAccessPackageAssignmentPolicy. Those cmdlets publish what they
+        # catch, and -ErrorVariable is filled by the ENGINE before any catch runs, so a lookup through
+        # them left about ten records per lookup in the caller's error variable -- identical for a
+        # deleted package and for a 403 -- and nothing that told the two apart. Declaring the codes
+        # makes a deleted package or policy an ANSWER: the wrapper returns a marker instead of raising,
+        # so nothing is deposited anywhere. Measured offline against the real wrapper: 20 records
+        # for a review whose package and policy were deleted through the two readers, 0 through this
+        # read. A 403, an exhausted 429, a 5xx, or a not-found code that was not declared still
+        # raises (and still leaves its own strays, which is acceptable: it is a real failure, and the
+        # partial names it). -Uri is the by-id URI the two readers send, so no request shape is
+        # introduced that was not already live.
+        #
+        # THE THREE OUTCOMES:
+        #   a name       -> the name; an answer with no name in it (null or blank) -> the id, and
+        #                   nothing is reported
+        #   the marker   -> the id; a deleted package or policy is a fact about the review, so no
+        #                   partial is added and no record is left
+        #   a throw      -> the id; the record is scrubbed first, then the read is counted as unread
+        #                   (the cause AND the collection), so the run ends in InventoryPartial
+        function Get-AccessReviewReferenceName {
+            param(
+                [string]$Uri,
+                [string[]]$NotFoundCode,
+                [string]$Id,
+                [string]$ReviewName,
+                [string]$Part,
+                [string]$Label
+            )
+            try {
+                $Response = Invoke-OERGraphRequest -Uri $Uri -ExpectedErrorCode $NotFoundCode
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $LookupCause = "Could not read an access review's $Label name: $($PSItem.Exception.Message)"
+                Write-Verbose "Get-OERInventory: $LookupCause"
+                Add-UnreadCause -Cause $LookupCause -Target $Id
+                $UnreadCollections.Add("accessReviews/$ReviewName/$Part")
+                return $Id
+            }
+            if (@($Response.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') { return $Id }
+            # An answer that carries no name is no name: '' would be a DECLARED value, so it would
+            # pass the schema and fail only at apply, where the id (a safe reference) applies cleanly.
+            # Not a failed read either, so nothing is reported. Graph requires displayName, so this is
+            # a guard against an odd body, not an expected path.
+            $Name = [string]$Response.displayName
+            if ([string]::IsNullOrWhiteSpace($Name)) { return $Id }
+            return $Name
         }
 
         if ($Include -contains 'Groups') {
@@ -720,9 +782,11 @@ function Get-OERInventory {
                 if ($Au.PSObject.Properties.Name -contains 'ScopedRoles') {
                     # Scoped-role principals project as the object id: the Graph scopedRoleMembership carries
                     # no UPN for the role member, and the id resolves verbatim (a display name does not).
-                    # The role projects as its friendly name when the best-effort directory-role name map
-                    # resolved it, and otherwise falls back to the role id -- emitting role:null would fail
-                    # schema validation and make the unit un-appliable.
+                    # The role projects as its friendly name when the directory-role name map has one for
+                    # it, and otherwise falls back to the role id -- emitting role:null would fail schema
+                    # validation and make the unit un-appliable. A name map that could not be READ at all
+                    # never gets here: Get-OERAdministrativeUnit then omits ScopedRoles, and the branch
+                    # below reports it unread.
                     $Proj.scopedRoles = @(foreach ($S in @($Au.ScopedRoles)) {
                         if (-not $S) { continue }
                         $SrPrincipal = if ($S.PrincipalId) { [string]$S.PrincipalId } else { [string]$S.PrincipalDisplayName }
@@ -1224,20 +1288,21 @@ function Get-OERInventory {
 
                 $Proj = [ordered]@{ displayName = $Ar.DisplayName }
 
-                # accessPackage + assignmentPolicy: resolve ids to names (fallback to the id).
-                $ApName = $Ar.AccessPackageId
-                if ($Ar.AccessPackageId) {
-                    $ApObj = try { Get-OERAccessPackage -Id $Ar.AccessPackageId -ErrorAction Stop } catch { Remove-OERErrorRecord -Record $PSItem; $null }
-                    if ($ApObj) { $ApName = $ApObj.DisplayName }
-                }
-                $Proj.accessPackage = $ApName
-
-                $PolName = $Ar.AssignmentPolicyId
-                if ($Ar.AssignmentPolicyId) {
-                    $PolObj = try { Get-OERAccessPackageAssignmentPolicy -Id $Ar.AssignmentPolicyId -ErrorAction Stop } catch { Remove-OERErrorRecord -Record $PSItem; $null }
-                    if ($PolObj) { $PolName = $PolObj.DisplayName }
-                }
-                $Proj.assignmentPolicy = $PolName
+                # accessPackage + assignmentPolicy: resolve ids to names (fallback to the id). Both ids
+                # are present here (the skip above requires them). A deleted target is written by id
+                # and reported nowhere; a FAILED read is written by id too and reported as an unread
+                # collection -- see Get-AccessReviewReferenceName, which owns the rule and the reason
+                # these are transport reads rather than calls to the Get-OER* readers.
+                $Proj.accessPackage = Get-AccessReviewReferenceName `
+                    -Uri ('v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?$expand=catalog' -f $Ar.AccessPackageId) `
+                    -NotFoundCode 'AccessPackageNotFound', 'NotFound' `
+                    -Id ([string]$Ar.AccessPackageId) -ReviewName ([string]$Ar.DisplayName) `
+                    -Part 'accessPackage' -Label 'access package'
+                $Proj.assignmentPolicy = Get-AccessReviewReferenceName `
+                    -Uri ('v1.0/identityGovernance/entitlementManagement/assignmentPolicies/{0}?$expand=accessPackage' -f $Ar.AssignmentPolicyId) `
+                    -NotFoundCode 'PolicyNotFound', 'NotFound' `
+                    -Id ([string]$Ar.AssignmentPolicyId) -ReviewName ([string]$Ar.DisplayName) `
+                    -Part 'assignmentPolicy' -Label 'assignment policy'
 
                 # reviewers -> friendly tokens (manager / self / resolved name). Every query is parsed
                 # through Resolve-OERReviewerScopeQuery, the module's single owner of that grammar. It
@@ -1687,7 +1752,7 @@ function Get-OERInventory {
             } else { '' }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document. " +
+                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `

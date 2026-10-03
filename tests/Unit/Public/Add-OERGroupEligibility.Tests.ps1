@@ -174,14 +174,36 @@ Describe 'Add-OERGroupEligibility' {
             $Text | Should -Match 'object id'
         }
 
-        It 'leaves no record in $Error when the group resolver fails' {
+        It 'reports a failed group resolver as itself, exactly once, and never as GroupNotFound' {
             Mock -ModuleName $script:moduleName Initialize-OERAuth { }
             Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'transport failure' }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
             $Error.Clear()
             Add-OERGroupEligibility -Group 'grp' -PrincipalId $script:PrincipalGuid -Duration 365 -ErrorAction SilentlyContinue | Out-Null
-            # Only the cmdlet's own GroupNotFound record may remain; the swallowed resolver throw must not.
-            @($Error).Exception.Message -join ';' | Should -Not -Match 'transport failure'
+            # Supersedes 'leaves no record in $Error when the group resolver fails', which pinned the old
+            # swallow-then-GroupNotFound path. The failure is now reported as itself and once: exactly one
+            # record remains, the failure and not a GroupNotFound. This is the CONTRACT, not the scrub
+            # proof: the catch re-publishes the caught record, so the same single record is there whether
+            # or not Remove-OERErrorRecord ran. The scrub has its own test below.
+            @($Error).Count | Should -Be 1
+            $Error[0].Exception.Message | Should -Match 'transport failure'
+            $Error[0].FullyQualifiedErrorId | Should -Not -Match 'GroupNotFound'
+        }
+
+        It 'scrubs the failed group resolver record before re-publishing it (bearer hygiene)' {
+            # The catch re-publishes the caught record with $PSCmdlet.WriteError($PSItem), the same shape as a
+            # bare re-throw: the same exception instance reaches $Error with or without the scrub, so an
+            # $Error-based proof passes with the Remove-OERErrorRecord line deleted. The prescribed proof
+            # (rationale.md, #bearer-scrub-tests) guards the call directly: mock it and require exactly
+            # one call, filtered to THIS record so no other catch on the path can satisfy it.
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'transport failure' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {}
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            Add-OERGroupEligibility -Group 'grp' -PrincipalId $script:PrincipalGuid -Duration 365 -ErrorAction SilentlyContinue | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'transport failure'
+            }
         }
     }
 
@@ -553,5 +575,53 @@ Describe 'Add-OERGroupEligibility verbose output' {
         $Text = $Verbose.Message -join "`n"
         $Text | Should -Match "\[Add-OERGroupEligibility\] Resolved PIM policy id: 'pol-1'."
         Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -ParameterFilter { $PolicyId -eq 'pol-1' }
+    }
+}
+
+Describe 'Add-OERGroupEligibility -- a failed policy-id read is not GroupNotOnboarded' {
+    # The REAL Get-OERGroupPermanentEligibilityState runs here (the Describes above mock it whole), so
+    # this is the end-to-end proof of the pair: a refused policy-id read used to come back from that
+    # helper as HasPolicy = $false, which this cmdlet reported as GroupNotOnboarded ("Graph does not
+    # list a policy for this group yet, re-run after a short while") -- a replication-delay diagnosis
+    # for a group that was merely unreadable. The helper now rethrows, and this cmdlet's existing
+    # pre-check catch ("Proceeding; Microsoft Graph will enforce the policy") handles it.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'gid-1' }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                'gid-1')
+        }
+        Mock -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility { $true }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-x'; status = 'Provisioned'; action = 'adminAssign' } }
+    }
+
+    It 'does not report GroupNotOnboarded for a 403 on the policy-id read, and leaves the decision to Graph' {
+        $Err = $null
+        $Out = Add-OERGroupEligibility -Group 'gid-1' -PrincipalId '11111111-1111-1111-1111-111111111111' `
+            -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1
+        $Verbose = @($Out | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+        $Result = @($Out | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+        # The positive half: the pre-check ran the real helper, which reached the refused read, and the
+        # cmdlet's catch took it -- named in its verbose line with the real error text -- so the
+        # negative assertion below is not a pre-check that never ran.
+        Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 1 -Exactly -ParameterFilter {
+            $GroupId -eq 'gid-1' -and $AccessType -eq 'member'
+        }
+        ($Verbose.Message -join "`n") | Should -Match 'Could not pre-check the PIM-for-groups policy: Authorization_RequestDenied: Insufficient privileges'
+        # No GroupNotOnboarded, and no error of the cmdlet's own at all.
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*GroupNotOnboarded*' }).Count | Should -Be 0
+        @($Err | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Add-OERGroupEligibility'
+            }).Count | Should -Be 0
+        # The documented degrade: nothing was learned about the policy, so Graph enforces it on the POST.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 0 -Exactly
+        $Result.Count | Should -Be 1
     }
 }

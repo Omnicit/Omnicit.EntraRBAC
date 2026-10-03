@@ -146,3 +146,51 @@ Describe 'Get-OERSubscription' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
     }
 }
+
+Describe 'Get-OERSubscription with an ambiguous management group display name' {
+    # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and the management group
+    # list answers with two management groups that share the display name 'Platform'. Management group
+    # display names are not unique, so the name is refused and the candidates reach the operator in the
+    # ManagementGroupNotFound record this cmdlet maps a resolver failure to (the id is unchanged).
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            [PSCustomObject]@{ value = @(
+                [PSCustomObject]@{ id = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Prod'; state = 'Enabled'; tenantId = 't' }
+            ) }
+        } -ParameterFilter { $Path -eq '/subscriptions?api-version=2022-12-01' -and $All }
+        $NotFoundErr = InModuleScope Omnicit.EntraRBAC {
+            Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 404; Content = '' })
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -MockWith ({ throw $NotFoundErr }.GetNewClosure()) `
+            -ParameterFilter { $Path -like '/providers/Microsoft.Management/managementGroups/Platform?*' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            [PSCustomObject]@{ value = @(
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-platform-a'; name = 'mg-platform-a'; properties = [PSCustomObject]@{ displayName = 'Platform' } }
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-platform-b'; name = 'mg-platform-b'; properties = [PSCustomObject]@{ displayName = 'Platform' } }
+            ) }
+        } -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw "unexpected ARM call: $Path" }
+    }
+
+    It 'reports ManagementGroupNotFound carrying both candidate names, and reads no management group tree' {
+        $Err = $null
+        $Out = @(Get-OERSubscription -ManagementGroup 'Platform' -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        # Positive proof first: the management group list WAS read, so the refusal is the ambiguity.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -like '*expand=children*' }
+        $Out.Count | Should -Be 0
+
+        $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'ManagementGroupNotFound,Get-OERSubscription' })
+        $Mine.Count | Should -Be 1
+        $Mine[0].Exception.Message | Should -BeExactly (
+            "Management group display name 'Platform' matches 2 management groups (mg-platform-a, mg-platform-b). " +
+            'Management group display names are not unique, so this name cannot identify a single management group. ' +
+            'Re-run with the management group name (its id).')
+    }
+}

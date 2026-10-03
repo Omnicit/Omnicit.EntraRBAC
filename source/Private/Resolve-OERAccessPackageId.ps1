@@ -57,24 +57,19 @@ function Resolve-OERAccessPackageId {
         assignment-policy read is the other two (its probe plus the filtered list). Two of the five
         are the new probes, which is the 2P.
 
-    THE ONE PLACE THAT IS NOT PURELY A COST is that same inventory loop, and the exposure must be
-    stated rather than softened. At every caller that SURFACES a resolver failure, extra requests
-    cannot turn into a wrong answer: a probe that fails on a 403 or an exhausted 429 is reported as
-    that failure, never as a not-found. Get-OERInventory's resource-role read is the exception --
-    it is called with -ErrorAction SilentlyContinue, which suppresses the non-terminating error
-    Get-OERAccessPackageResourceRole publishes for exactly that failure, and the projection then
-    books resourceRoles = @() for the package. That array is what Invoke-OERStructure -Prune diffs
-    against, so a failed read is recorded as the empty fact "this package has no resource roles",
-    which is issue #76's defect class. The SWALLOW is pre-existing and is not changed here; what IS
-    new is that the same suppressed path now issues a SECOND, independent request per package, so
-    the probability that the projection is empty-by-failure rather than empty-in-fact roughly
-    doubles -- against entitlement management endpoints Microsoft documents as heavily throttled.
-    The assignment-policy read beside it passes no -ErrorAction, so its failure does reach the
-    caller's error stream, but that package's assignmentPolicies is still booked as @(). Whether
-    that -ErrorAction SilentlyContinue should change at all is a separate design question with its
-    own blast radius, deliberately not decided here. Narrowing the cost itself (an internal
-    id-trusted entry point, or caching probed ids for the life of a call) is likewise a design
-    change with its own tests, deliberately not made here.
+    NO CALLER TURNS THOSE EXTRA REQUESTS INTO A WRONG ANSWER, THE INVENTORY LOOP INCLUDED. Every
+    caller surfaces a resolver failure: a probe that fails on a 403, an exhausted 429 or a 5xx is
+    reported as that failure, never as a not-found. Get-OERInventory reads each package's resource
+    roles and assignment policies with -ErrorAction Stop inside a try/catch, so a failed probe there
+    is an UNREAD collection and not an empty one. An unread resourceRoles is exported as an explicit
+    null, which Invoke-OERStructure leaves untouched even under -Prune (an empty array is what -Prune
+    diffs against); an unread assignmentPolicies is exported as @(), which deletes nothing since
+    Sync-OERStructureAccessPackage never removes an assignment policy; and the InventoryPartial error
+    names the package in both cases. What the extra probe still costs there is a SECOND, independent
+    request per package, so a throttled inventory is more likely to end with a package reported
+    partial -- against entitlement management endpoints Microsoft documents as heavily throttled.
+    Narrowing the cost itself (an internal id-trusted entry point, or caching probed ids for the
+    life of a call) is a design change with its own tests, deliberately not made here.
 
     When -DisplayName is not a GUID a filtered query against the entitlement management
     accessPackages collection is issued through Invoke-OERGraphRequest. Exactly one match returns
@@ -146,7 +141,7 @@ function Resolve-OERAccessPackageId {
         if (@($Probe.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
             # THE MESSAGE'S THREE REASONS ARE NOT EXHAUSTIVE: there is a fourth, a READ-YOUR-WRITE
             # window. Sync-OERStructureAccessPackage sets $ApId from New-OERAccessPackage's response
-            # (line 223) and then passes it straight back in as -AccessPackage seconds later, at the
+            # and then passes it straight back in as -AccessPackage seconds later, at the
             # Add-OERAccessPackageResourceRole call and again at the New-OERAccessPackageAssignmentPolicy
             # call. If entitlement management has not yet made the new package readable, this probe
             # answers not-found and the operator is told the id may be stale, mistyped or from

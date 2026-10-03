@@ -602,3 +602,51 @@ Describe 'New-OERRoleAssignment piped principal ambiguity guard' {
         }
     }
 }
+
+Describe 'New-OERRoleAssignment with an ambiguous subscription display name' {
+    # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and its subscription
+    # list answers with two subscriptions that share the display name 'Dup Sub'. Subscription display
+    # names are not unique, so the cmdlet must refuse the name -- an arbitrary one of the two must
+    # not receive the role assignment. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/r1' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            [PSCustomObject]@{ value = @(
+                [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Dup Sub' }
+                [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Dup Sub' }
+            ) }
+        } -ParameterFilter { $Path -eq '/subscriptions?api-version=2022-12-01' -and $All }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw "unexpected ARM call: $Method $Path" }
+    }
+
+    It 'reports InvalidScope carrying both candidate ids, and sends no role assignment PUT' {
+        $Err = $null
+        $Out = New-OERRoleAssignment -Role 'Reader' -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000001' `
+            -Subscription 'Dup Sub' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+
+        # Positive proof first: the subscription list was read, exactly once. Then the write: no PUT
+        # went to any subscription. Only then is the call count held to that single read.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 0
+        $Out | Should -BeNullOrEmpty
+
+        # -ErrorVariable also holds the engine's own capture of the resolver's throw, so the cmdlet's
+        # record is found by its qualified id.
+        $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidScope,New-OERRoleAssignment' })
+        $Mine.Count | Should -Be 1
+        $Mine[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Mine[0].TargetObject | Should -BeExactly 'Dup Sub'
+        $Mine[0].Exception.Message | Should -BeExactly (
+            "Subscription display name 'Dup Sub' matches 2 subscriptions " +
+            '(aaaa1111-0000-0000-0000-000000000001, aaaa1111-0000-0000-0000-000000000002). ' +
+            'Subscription display names are not unique, so this name cannot identify a single subscription. ' +
+            'Re-run with the subscription id.')
+    }
+}

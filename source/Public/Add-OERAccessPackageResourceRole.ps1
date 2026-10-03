@@ -10,7 +10,8 @@ function Add-OERAccessPackageResourceRole {
     located in -Catalog and identified by exactly one of -ResourceOriginId (the directory object id or
     site identifier, used verbatim), -Group (a group display name or id, resolved via Resolve-OERGroupId),
     or -Application (an enterprise application display name or service principal id, resolved via
-    Resolve-OERApplicationId). -Role names the role to bind. Graph's create response carries only the
+    Resolve-OERApplicationId). -Role names the role to bind; a role name that more than one role of the
+    resource carries is refused, never bound to the first of them. Graph's create response carries only the
     binding id, so after the POST succeeds this cmdlet re-reads the binding through
     Get-OERAccessPackageResourceRole and emits that object -- making create output match read output BY
     CONSTRUCTION rather than by hand-composing the same fields twice. If the confirmation read fails or
@@ -32,7 +33,10 @@ function Add-OERAccessPackageResourceRole {
     of the three.
 
     .PARAMETER Role
-    The display name of the resource role to bind (for example 'Member' or 'Owner').
+    The display name of the resource role to bind (for example 'Member' or 'Owner'). A resource does not
+    enforce unique role display names (two application roles can both be called 'User'), so a name that
+    more than one role of the resource carries is refused with AmbiguousName, naming the origin id of
+    each, and nothing is bound.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -117,7 +121,8 @@ function Add-OERAccessPackageResourceRole {
             return
         }
 
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $CatalogId = $null
         try {
             $CatalogId = Resolve-OERCatalogId -DisplayName $Catalog
@@ -130,6 +135,10 @@ function Add-OERAccessPackageResourceRole {
                     -TargetObject $Catalog -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such catalog exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $CatalogId) {
             Write-CmdletError `
@@ -162,7 +171,8 @@ function Add-OERAccessPackageResourceRole {
         # `$ResourceOriginId = $null` below would itself throw ValidationMetadataException.
         $EffectiveOriginId = $ResourceOriginId
         if ($PSBoundParameters.ContainsKey('Group')) {
-            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+            # $null return (a display name that matched nothing) reaches the not-found branch.
             $EffectiveOriginId = $null
             try {
                 $EffectiveOriginId = Resolve-OERGroupId -DisplayName $Group
@@ -175,6 +185,10 @@ function Add-OERAccessPackageResourceRole {
                         -TargetObject $Group -Cmdlet $PSCmdlet
                     return
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+                # no such group exists: surface it as itself, never as the not-found below.
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
             if (-not $EffectiveOriginId) {
                 Write-CmdletError `
@@ -189,7 +203,8 @@ function Add-OERAccessPackageResourceRole {
             # nothing and misleadingly reporting ApplicationNotFound. Test-OERGuid is the module's
             # single GUID predicate; this makes -Application's help claim ("display name or object
             # id") symmetric with -Group's, which is already true.
-            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+            # $null return (a display name that matched nothing) reaches the not-found branch.
             $EffectiveOriginId = $null
             try {
                 $EffectiveOriginId = if (Test-OERGuid -Value $Application) { Resolve-OERApplicationId -Id $Application }
@@ -203,6 +218,10 @@ function Add-OERAccessPackageResourceRole {
                         -TargetObject $Application -Cmdlet $PSCmdlet
                     return
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+                # no such application exists: surface it as itself, never as the not-found below.
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
             if (-not $EffectiveOriginId) {
                 Write-CmdletError `
@@ -212,7 +231,17 @@ function Add-OERAccessPackageResourceRole {
             }
         }
 
-        $Resource = try { Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $EffectiveOriginId -IncludeRoles } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        # A throw here is a failed read of the catalog's resources -- a 403, an exhausted 429, a 5xx --
+        # which is not evidence that the resource is absent: surface it as itself, never as the
+        # not-found below. Only a $null return (the resource is not in the catalog) reaches that.
+        $Resource = $null
+        try {
+            $Resource = Resolve-OERCatalogResource -CatalogId $CatalogId -OriginId $EffectiveOriginId -IncludeRoles
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $PSCmdlet.WriteError($PSItem)
+            return
+        }
         if (-not $Resource) {
             Write-CmdletError `
                 -Message ([System.Exception]::new("Resource '$EffectiveOriginId' not found in catalog '$CatalogId'.")) `
@@ -220,7 +249,25 @@ function Add-OERAccessPackageResourceRole {
             return
         }
 
-        $ResourceRole = @($Resource.roles) | Where-Object { $_.displayName -eq $Role } | Select-Object -First 1
+        # Every role carrying the requested display name is kept, never just the first. A catalog
+        # resource does not enforce unique role display names -- Graph documents appRole.id as unique
+        # and states no uniqueness for displayName, so an application can carry two roles both called
+        # 'User' -- and binding the first of several would grant the access package an arbitrary one of
+        # them. More than one match makes the name ambiguous: refused before the POST, and before
+        # ShouldProcess, so a -WhatIf preview reads the same as the run. One match and no match are
+        # exactly what they were.
+        $ResourceRoleMatches = @(@($Resource.roles) | Where-Object { $_.displayName -eq $Role })
+        if ($ResourceRoleMatches.Count -gt 1) {
+            $ResourceLabel = if ($Resource.displayName) { [string]$Resource.displayName } else { $EffectiveOriginId }
+            $RoleOriginIds = ($ResourceRoleMatches | ForEach-Object { [string]$_.originId }) -join ', '
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Role '$Role' matches $($ResourceRoleMatches.Count) roles of resource '$ResourceLabel' ($RoleOriginIds). " +
+                    'A resource does not enforce unique role display names, so this name cannot identify a single role.')) `
+                -ErrorId 'AmbiguousName' -Category InvalidArgument -TargetObject $Role -Cmdlet $PSCmdlet
+            return
+        }
+        $ResourceRole = $ResourceRoleMatches | Select-Object -First 1
         if (-not $ResourceRole) {
             Write-CmdletError `
                 -Message ([System.Exception]::new("Role '$Role' not found on resource '$EffectiveOriginId'.")) `

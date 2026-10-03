@@ -24,7 +24,9 @@ function New-OERAccessReviewDefinition {
     The access package display name or id to scope the review to.
 
     .PARAMETER AssignmentPolicy
-    The assignment policy display name or id whose assignments are reviewed.
+    The assignment policy display name or id whose assignments are reviewed. A display name that
+    several policies of the access package share is refused with AmbiguousName, naming their ids;
+    the policy id is the way out.
 
     .PARAMETER Catalog
     Optional catalog display name or id. When omitted the catalog is derived from the access package.
@@ -235,6 +237,14 @@ function New-OERAccessReviewDefinition {
         if ($Catalog) { $ScopeParams.Catalog = $Catalog }
         $Target = Resolve-OERAccessReviewScopeTarget @ScopeParams
         if ($Target.FailedValue) {
+            # A catalog or assignment policy read that FAILED (a 403, an exhausted 429, a 5xx) is not
+            # evidence that no such catalog or policy exists: re-publish the caught record as itself,
+            # never as "<Kind> '<Value>' not found." The access package branch reports its own failures
+            # through FailedErrorId/FailedCategory below, and sets no FailedRecord.
+            if ($Target.FailedRecord) {
+                $PSCmdlet.WriteError($Target.FailedRecord)
+                return
+            }
             # A resolver that supplies its own ErrorId/message knows more about the failure than the
             # generic "<Kind> '<Value>' not found." construction can express -- prefer it when present.
             $ScopeErrorId = if ($Target.FailedErrorId) { $Target.FailedErrorId } else { "$($Target.FailedKind)NotFound" }
@@ -249,8 +259,9 @@ function New-OERAccessReviewDefinition {
             # Resolve-OERAccessReviewScopeTarget populates FailedCategory on EVERY throw out of
             # Resolve-OERAccessPackageId -- 'InvalidArgument' on the ambiguity path and the caught
             # record's own ErrorCategory (PermissionDenied, ObjectNotFound, ...) on every other --
-            # and leaves it $null on every path that does not come out of that catch: the plain
-            # no-match, both catalog paths, and the assignment policy.
+            # and on an ambiguous assignment policy display name ('InvalidArgument'). It leaves it
+            # $null on every path that comes out of neither: the plain no-match, both catalog
+            # paths, and the assignment policy other than that ambiguity.
             # A CONSEQUENCE WORTH KNOWING: 'AmbiguousAccessPackageName' therefore never reaches the
             # elseif below -- the resolver already answered 'InvalidArgument' for it, and the first
             # arm wins. That arm is kept naming it anyway, and is not dead weight: it is what makes
@@ -334,6 +345,13 @@ function New-OERAccessReviewDefinition {
 
             $Resolved = Resolve-OERReviewerScope @ReviewerParams
             if ($Resolved.FailedValue) {
+                # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user
+                # or group exists: re-publish the caught record as itself, never as
+                # "<Kind> '<Value>' not found."
+                if ($Resolved.FailedRecord) {
+                    $PSCmdlet.WriteError($Resolved.FailedRecord)
+                    return
+                }
                 # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
                 $ReviewerErrorId = if ($Resolved.FailedErrorId) { $Resolved.FailedErrorId } else { "$($Resolved.FailedKind)NotFound" }
                 $ReviewerMessage = if ($Resolved.FailedMessage) { $Resolved.FailedMessage } else { "$($Resolved.FailedKind) '$($Resolved.FailedValue)' not found." }

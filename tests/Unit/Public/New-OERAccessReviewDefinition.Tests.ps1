@@ -449,3 +449,174 @@ Describe 'New-OERAccessReviewDefinition ambiguous reviewer group' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -Times 0
     }
 }
+
+Describe 'New-OERAccessReviewDefinition -- a failed reviewer lookup is not a not-found' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewScopeTarget {
+            @{ AccessPackageId = 'ap'; AssignmentPolicyId = 'pol'; CatalogId = 'cat'
+                FailedKind = $null; FailedValue = $null; FailedErrorId = $null; FailedMessage = $null }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { @{ id = 'new-def' } }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied@contoso.com')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Group')
+        }
+    }
+
+    It 'publishes a 403 on a <Slot> as itself, never as a not-found, and does not POST' -ForEach @(
+        @{ Slot = 'reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ Reviewer = 'denied@contoso.com' } }
+        @{ Slot = 'reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ ReviewerGroup = 'Denied Group' } }
+        @{ Slot = 'fallback reviewer user'; Resolver = 'Resolve-OERUserId'; Params = @{ Manager = $true; FallbackReviewer = 'denied@contoso.com' } }
+        @{ Slot = 'fallback reviewer group'; Resolver = 'Resolve-OERGroupId'; Params = @{ Manager = $true; FallbackReviewerGroup = 'Denied Group' } }
+    ) {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP' -AssignmentPolicy 'Standard' @Params `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        # The positive half: the lookup was attempted and refused, so the zero below is not a cmdlet
+        # that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC -CommandName $Resolver -Times 1 -Exactly
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+}
+
+Describe 'New-OERAccessReviewDefinition -- a failed catalog or policy read is not a not-found' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERCatalogId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Denied Catalog')
+        }
+        # The package read (catalog derivation) succeeds; only the assignment policy LISTING is refused.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri, $Method)
+            if ($Uri -like '*assignmentPolicies*') {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+            }
+            return @{ id = 'new-def'; catalog = @{ id = 'cat-1' } }
+        }
+    }
+
+    It 'publishes a 403 on <Slot> as itself, never as a not-found, and does not POST' -ForEach @(
+        @{ Slot = 'an explicit -Catalog name'; Reached = 'catalog'; Params = @{ Catalog = 'Denied Catalog'; AssignmentPolicy = 'Standard' } }
+        @{ Slot = 'the assignment policy listing'; Reached = 'policy'; Params = @{ AssignmentPolicy = 'Standard' } }
+    ) {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP-Sales' @Params -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: see the note in the reviewer Describe above.
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        # The positive half: the failing read was the one this case targets, so the zero POSTs below
+        # cannot be a cmdlet that stopped for another reason.
+        if ($Reached -eq 'catalog') {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERCatalogId -Times 1 -Exactly
+        } else {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        }
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+}
+
+# Decision D3 (Philip, 2026-10-03): an assignment policy display name that two policies of the package
+# share used to scope the new review to whichever policy Graph listed first. Resolve-OERAccessReviewScopeTarget
+# now answers with an AmbiguousName descriptor and the cmdlet publishes it, naming every candidate id,
+# before any POST. The resolver is NOT mocked here: the policy listing is the Graph call, so the whole
+# path from the listing to the published record is exercised.
+Describe 'New-OERAccessReviewDefinition -- an ambiguous assignment policy name is refused' {
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri, $Method)
+            if ($Uri -like '*assignmentPolicies*') {
+                return @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Standard' }
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Standard' }
+                    ) }
+            }
+            if ($Method -eq 'POST') { return @{ id = 'new-def'; displayName = 'Q3'; status = 'NotStarted' } }
+            return @{ id = 'ap-1'; catalog = @{ id = 'cat-1' } }
+        }
+    }
+
+    It 'publishes AmbiguousName naming both policy ids as itself, and POSTs nothing' {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard' -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of any inner throw, so
+        # an unnarrowed match can pass with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        # The positive half: the policy listing was reached, once, so the zero POSTs below are a refusal
+        # of THIS lookup and not a cmdlet that stopped for another reason.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        @($Published).Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^AmbiguousName'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Published[0].TargetObject | Should -Be 'Standard'
+        $Published[0].Exception.Message | Should -BeLike "Assignment policy display name 'Standard' matches 2 policies (*) in access package 'AP-Sales'.*"
+        $Published[0].Exception.Message | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+        $Published[0].Exception.Message | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+        $Published[0].Exception.Message | Should -BeLike '*Re-run with the assignment policy id instead of the display name.'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'still accepts the policy id as the way out of the ambiguity, skipping the listing and POSTing the review' {
+        $Err = $null
+        $Out = New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'a' -DescriptionForReviewers 'r' `
+            -AccessPackage 'AP-Sales' -AssignmentPolicy '22222222-2222-2222-2222-222222222222' -SelfReview `
+            -Recurrence OneTime -StartDate ([datetime]'2026-07-05') -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err).Count | Should -Be 0
+        $Out | Should -Not -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'POST' -and $Body.scope.query -like "*assignmentPolicy/id eq '22222222-2222-2222-2222-222222222222'*"
+        }
+    }
+}

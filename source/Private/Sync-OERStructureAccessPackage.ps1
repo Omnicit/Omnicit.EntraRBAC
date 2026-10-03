@@ -37,10 +37,27 @@ function Sync-OERStructureAccessPackage {
        role display name. The declared resource name resolves to an OriginId in this order: the
        group Resolve-OERGroupId finds under that name (or object id) when that group is a resource of
        the catalog -- so a renamed group is found under its CURRENT name, and never confused with
-       another resource the catalog recorded under that name; else the catalog resource recorded
+       another GROUP the catalog recorded under that name; else the catalog resource recorded
        under that display name (Get-OERCatalogResource; applications, SharePoint sites, and a group
-       under the name the catalog recorded); else the group's id. Existing bindings are read via a raw
-       Graph call against resourceRoleScopes.
+       under the name the catalog recorded); else the group's id. A name that SEVERAL catalog
+       resources carry is refused rather than resolved to the first of them (a catalog does not
+       enforce unique resource display names), and so is a name a group resolves to while a resource
+       that is not a group (an application, a site) is recorded under the same name in the catalog:
+       that entry gets one Failed row and one AmbiguousName error naming every candidate origin id,
+       no binding is added for it, and it counts as unresolved for the withheld prune below. The same
+       goes for a name that a group OUTSIDE the catalog carries now while the one catalog resource
+       recorded under it is another group (the catalog keeps the name a group had when it was
+       added, so that group may since have been renamed): both ids are named. Declare a group or an
+       application by one of the origin ids listed, or refresh or remove and re-add one of the
+       resources in the catalog so their recorded names differ (renaming a resource at its source
+       does not change the name the catalog recorded; a SharePoint site's origin id is its URL, which
+       a document cannot name). A group id that is not a resource of the catalog is still tried, so the
+       add fails with the real reason, but that entry counts as unresolved too: no live binding can
+       belong to it. Under -WhatIf a group that the same run would add to the catalog is not in the
+       catalog yet when this handler reads it, so it reads as that case and the plan withholds the
+       binding prune, while the real run (the group then in the catalog) prunes -- the engine's
+       existing precedent for objects the same run would create.
+       Existing bindings are read via a raw Graph call against resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
 
@@ -66,6 +83,11 @@ function Sync-OERStructureAccessPackage {
        approvers, and no PrimaryApprovers default emits Failed for that policy and is skipped. A
        live policy whose displayName is not declared is reported as Extra and is NEVER removed by
        this handler, regardless of -Prune -- use Remove-OERAccessPackageAssignmentPolicy directly.
+       A displayName that SEVERAL live policies of the package share is refused rather than resolved
+       to the first of them (Microsoft Graph does not enforce unique policy names within a package):
+       that declared policy gets one Failed row and one AmbiguousName error naming every candidate id,
+       nothing is created or updated for it, and the package's other declared policies are processed
+       as before. Rename one of the duplicates in the tenant to clear it.
 
     When -Prune is set, current resource role bindings whose (role.displayName, scope.originId)
     pair is not declared are removed (with Write-Warning) after a ShouldProcess gate. Without
@@ -74,17 +96,25 @@ function Sync-OERStructureAccessPackage {
 
     Withheld prune: a declared resourceRoles entry is unresolved when its resource name matches no
     resource in the catalog by display name and Resolve-OERGroupId finds no group by that name
-    either. Such an entry carries no origin id, so the pass cannot tell which live binding it names,
+    either, when it matches SEVERAL catalog resources, a group plus a non-group resource, or a group
+    outside the catalog plus another group the catalog recorded under that name (refused, see
+    above), and when it resolves to a group that is not in the catalog (its add fails; under -WhatIf
+    that includes a group the same run would add to the catalog, so the plan withholds a prune the
+    real run performs). Such an
+    entry carries no origin id of a live binding, so the pass cannot tell which live binding it names,
     and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
     every undeclared live binding of the package is reported Skipped, with a Detail that starts
     "prune withheld: declared entry '<resource>' could not be resolved" (several unresolved entries:
     "declared entries '<resource1>', '<resource2>' could not be resolved"), with or without -Prune;
     no warning is written, no ShouldProcess prompt is issued, and no binding is removed until the
     entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
-    the text). The unresolved entry keeps its own Failed record (the record is lost only when the
-    handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
-    finding nothing, is not caught by this handler (a name matching several groups only once the
-    catalog's recorded names cannot decide either): it ends the item where it is thrown, neither the
+    the text). The unresolved entry keeps its own record: Failed when it was refused or could not be
+    resolved, and for a group outside the catalog whatever its attempted add reports (Failed
+    normally, Skipped under -WhatIf, Unchanged when that binding is already live, Created if the add
+    succeeds) -- the record is lost only when the
+    handler later throws for the same item, see below. A Resolve-OERGroupId lookup that THROWS, rather than
+    finding nothing, is not caught by this handler (a name matching several groups, once no catalog
+    resource carries that name either): it ends the item where it is thrown, neither the
     resource role prune nor the assignment policy step runs, and the engine reports the item as one
     Failed ("handler error") record, discarding every record the handler had already emitted for it
     (a Created package or an added binding stands with no row).
@@ -115,7 +145,8 @@ function Sync-OERStructureAccessPackage {
     only: an undeclared assignment policy is always reported as Extra and is never removed, with
     or without -Prune -- call Remove-OERAccessPackageAssignmentPolicy directly to delete one.
     While a declared resourceRoles entry cannot be resolved (its resource matches no catalog
-    resource and no group), no binding is removed or reported Extra: every undeclared live binding
+    resource and no group, several catalog resources, a group plus a same-named non-group resource,
+    or a group outside the catalog), no binding is removed or reported Extra: every undeclared live binding
     is reported Skipped with a Detail starting "prune withheld:", with or without this switch. A
     lookup that throws aborts the item instead, before the resource role prune.
 
@@ -407,10 +438,14 @@ function Sync-OERStructureAccessPackage {
                 #    the catalog. A catalog keeps the display name a resource had when it was added,
                 #    also after the group is renamed, so the group's CURRENT name must win over a name
                 #    the catalog recorded for another resource -- or the binding would be matched to
-                #    the wrong resource and the right one read as undeclared.
+                #    the wrong resource and the right one read as undeclared. It decides only while no
+                #    resource that is not a group is recorded under that name too: see the refusal below.
                 # 2. The catalog resource recorded under that display name (an application, a
-                #    SharePoint site, or a group under the name the catalog recorded).
-                # 3. The group's id even when it is not in the catalog (adding the binding then fails).
+                #    SharePoint site, or a group under the name the catalog recorded), when exactly
+                #    one resource carries it. Several do not decide: see the refusal below. Nor does
+                #    one other GROUP while a group outside the catalog carries the name now.
+                # 3. The group's id even when it is not in the catalog (adding the binding then fails,
+                #    so the entry counts as unresolved and the prune is withheld).
                 # A name matching several groups is set aside while step 2 can still decide; it is
                 # thrown when step 2 cannot. Any other failure of the lookup throws at once.
                 $OriginId = $null
@@ -423,20 +458,106 @@ function Sync-OERStructureAccessPackage {
                     if (-not (Test-OERAmbiguousNameError -Record $PSItem)) { throw }
                     $GroupLookupError = $PSItem
                 }
+                # The origin ids of the catalog resources this name cannot choose between (decisions D4
+                # and D5). Empty while the name identifies at most one; the refusal below reads it.
+                $AmbiguousIds = @()
                 if ($GroupOriginId -and @($CatResources | Where-Object { [string]$_.OriginId -eq [string]$GroupOriginId }).Count -gt 0) {
                     $OriginId = $GroupOriginId
+                    # Step 1 does not end the search (decision D5). The group's CURRENT name beats a name
+                    # the catalog recorded for ANOTHER GROUP -- that is the rename case step 1 exists
+                    # for -- but it must not beat a resource that is not a group and is recorded under
+                    # this very name: an application (or a site) and a group sharing one display name in
+                    # one catalog are both genuine candidates. Taking the group would bind the role to
+                    # the wrong resource or fail in the add, and either way the binding of the resource
+                    # the entry really names would read as undeclared and be removed under -Prune. So
+                    # a non-group resource recorded under the declared name, with another origin id,
+                    # makes the name ambiguous exactly as several same-named resources do (the group is
+                    # listed with them). A recorded originSystem other than AadGroup is what counts: a
+                    # resource with no originSystem is not assumed to be a group.
+                    $SameNamedOthers = @($CatResources | Where-Object {
+                            $_.DisplayName -eq $ResName -and
+                            [string]$_.OriginId -ne [string]$GroupOriginId -and
+                            [string]$_.OriginSystem -ne 'AadGroup'
+                        })
+                    if ($SameNamedOthers.Count -gt 0) {
+                        $AmbiguousIds = @([string]$GroupOriginId) + @($SameNamedOthers | ForEach-Object { [string]$_.OriginId })
+                    }
                 }
 
                 if (-not $OriginId) {
-                    $MatchedCatRes = $CatResources | Where-Object { $_.DisplayName -eq $ResName } | Select-Object -First 1
-                    if ($MatchedCatRes) {
-                        $OriginId = $MatchedCatRes.OriginId
+                    # Every match is kept, never just the first (decision D4). A catalog does NOT enforce
+                    # unique resource display names -- two same-named groups, an application and a group,
+                    # two sites -- so taking the first of several would bind the role to an arbitrary one,
+                    # and under -Prune the binding of the right one would read as undeclared and be
+                    # removed. More than one match makes the name ambiguous, which refuses THIS entry
+                    # below. It also holds while a name matching several groups is set aside: the catalog
+                    # cannot decide either, and that case used to bind the first resource. One match and
+                    # no match are exactly what they were.
+                    $MatchedCatRes = @($CatResources | Where-Object { $_.DisplayName -eq $ResName })
+                    if ($MatchedCatRes.Count -gt 1) {
+                        $AmbiguousIds = @($MatchedCatRes | ForEach-Object { [string]$_.OriginId })
                     }
+                    if ($MatchedCatRes.Count -eq 1) {
+                        # A group that currently carries the declared name but is NOT a resource of the
+                        # catalog (step 1 would have decided otherwise) is a second candidate when the one
+                        # catalog resource under that name is ANOTHER GROUP: the catalog keeps the name a
+                        # group had when it was added, so that group may since have been renamed, and the
+                        # name now belongs to the group outside the catalog. Binding the role to the
+                        # catalog's group would be a silent wrong write, so this is refused like the
+                        # others, listing both ids. Only a positively identified AadGroup counts: widening
+                        # it to a non-group match would refuse an application that shares its name with
+                        # any group of the tenant, which the inventory round trip produces. The match can
+                        # never carry the group's own id here, since that group would have decided at
+                        # step 1.
+                        if ($GroupOriginId -and [string]$MatchedCatRes[0].OriginSystem -eq 'AadGroup') {
+                            $AmbiguousIds = @([string]$GroupOriginId, [string]$MatchedCatRes[0].OriginId)
+                        } else {
+                            $OriginId = $MatchedCatRes[0].OriginId
+                        }
+                    }
+                }
+
+                if ($AmbiguousIds.Count -gt 0) {
+                    # The refusal (decisions D4 and D5): the entry counts as unresolved, exactly as a name
+                    # that matches no resource at all. It carries no binding key, so the prune pass below
+                    # withholds every live binding of the package until the document is fixed
+                    # (ConvertTo-OERPruneWithheldResult owns that rule, and this refusal does not touch
+                    # it). It sits before ShouldProcess, so it reads the same under -WhatIf, and the
+                    # package's other declared entries carry on. The last sentence of the message has to
+                    # be followable for every resource type, and renaming a resource at its source is not
+                    # a way out: a catalog keeps the name a resource had when it was added. A group or an
+                    # application can be declared by one of the origin ids listed (a SharePoint site's
+                    # origin id is its URL, which a document cannot name), and any resource can be
+                    # refreshed, or removed and added again, so that the recorded names differ.
+                    $AmbiguousList = $AmbiguousIds -join ', '
+                    $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new(
+                            "Resource name '$ResName' matches $($AmbiguousIds.Count) resources of catalog '$($Item.catalog)' ($AmbiguousList). " +
+                            'A catalog does not enforce unique resource display names, so this name ' +
+                            'cannot identify a single resource. Declare a group or an application by one of the origin ids listed above, ' +
+                            'or refresh or remove and re-add one of the resources in the catalog so their recorded names differ.'),
+                        'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $ResName)
+                    $Caller.WriteError($AmbiguousRecord)
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "$($AmbiguousIds.Count) resources of catalog '$($Item.catalog)' are named '$ResName' ($AmbiguousList); no resourceRole was added for it" `
+                        -ErrorRecord $AmbiguousRecord
+                    $ResourceRoleUnresolved.Add($ResName)
+                    continue
                 }
 
                 if (-not $OriginId) {
                     if ($GroupLookupError) { throw $GroupLookupError }
                     $OriginId = $GroupOriginId
+                    # Step 3 (decision D5): a group that is NOT a resource of the catalog. Its id is used
+                    # only so the add can fail with the real reason (CatalogResourceNotFound); it can
+                    # never name a live binding, since a binding exists only for a resource of the
+                    # catalog. So the entry counts as unresolved and keeps its own Failed row from that
+                    # add: without this, a renamed application and a same-named group outside the catalog
+                    # made the application's live binding read as undeclared and be removed under -Prune.
+                    # An id of $null is left to the unresolved path just below, which counts it itself.
+                    if ($OriginId) { $ResourceRoleUnresolved.Add($ResName) }
                 }
 
                 if (-not $OriginId) {
@@ -796,7 +917,40 @@ function Sync-OERStructureAccessPackage {
             foreach ($PolEntry in @($Item.assignmentPolicies)) {
                 $PolName = $PolEntry.displayName
                 $DeclaredPolicyNames.Add(([string]$PolName).ToLowerInvariant())
-                $ExistingPol = $CurrentPolicies | Where-Object { $_.DisplayName -eq $PolName } | Select-Object -First 1
+
+                # Every match is kept, never just the first (decision D3). Assignment policy display
+                # names are NOT unique within an access package in Microsoft Graph, and the reconcile
+                # below writes by the matched policy's id (requestor scope, approval), so taking the
+                # first of several would silently update an arbitrary one. More than one match
+                # refuses this policy and moves on to the next declared one: nothing is created or
+                # updated for it, and the package's other declared policies are processed as before
+                # (its resource role bindings were reconciled in an earlier step). One match and no
+                # match are exactly what they were. The refusal sits BEFORE the policy parts are
+                # built, so a policy that will not be touched raises no approver-default warnings.
+                $MatchingPolicies = @($CurrentPolicies | Where-Object { $_.DisplayName -eq $PolName })
+                if ($MatchingPolicies.Count -gt 1) {
+                    # The message follows the text Resolve-OERAccessReviewScopeTarget publishes for the
+                    # review scope (decision D3) and Sync-OERStructureAccessReview for a definition
+                    # (decision D2), with ONE deliberate difference: its last sentence. A document cannot
+                    # name an assignment policy by id -- an assignmentPolicies entry has no id key and
+                    # displayName is its match key -- so this one says to rename a policy instead of
+                    # re-running with an id. Keep the texts in step by hand.
+                    $AmbiguousIds = ($MatchingPolicies | ForEach-Object { [string]$_.Id }) -join ', '
+                    $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new(
+                            "Assignment policy display name '$PolName' matches $($MatchingPolicies.Count) policies ($AmbiguousIds) in access package '$Name'. " +
+                            'Access packages do not enforce unique policy display names, so this name ' +
+                            'cannot identify a single policy. Rename one of them so the display name is unique.'),
+                        'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                        $PolName)
+                    $Caller.WriteError($AmbiguousRecord)
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail "$($MatchingPolicies.Count) assignment policies of '$Name' are named '$PolName' ($AmbiguousIds); nothing was written for it" `
+                        -ErrorRecord $AmbiguousRecord
+                    continue
+                }
+                $ExistingPol = $MatchingPolicies | Select-Object -First 1
 
                 # Build the desired parts once (used by the diff and by the Set/New call).
                 $Parts = Build-OERPolicyParts -PolicyEntry $PolEntry -PolicyName $PolName -Alias $TenantAlias

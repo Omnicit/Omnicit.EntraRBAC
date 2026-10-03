@@ -642,3 +642,130 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
         ($Named -join ',') | Should -BeExactly ($Missing -join ',')
     }
 }
+
+Describe 'Invoke-OERStructure with an ambiguous subscription display name in a scope' {
+    # The Azure handlers run for REAL here, and so do Resolve-OERScope and (for the policy entry)
+    # Get-/Set-OERRoleManagementPolicy: only the ARM and Graph transports and the lookups below the
+    # scope are mocked. The subscription list answers with two subscriptions that share the display
+    # name 'Dup Sub' and one 'Good Sub'. Subscription display names are not unique, so a scope
+    # 'subscription:Dup Sub' cannot name one subscription: the entry must fail with the candidates
+    # and the run must go on, and under -Prune nothing at the ambiguous scope may be removed or
+    # created. 'Good Sub' is the positive control: its extra assignment IS removed, which shows that
+    # the prune is live and that the run went past the failed entries. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                    [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Dup Sub' }
+                    [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Dup Sub' }
+                    [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000003'; displayName = 'Good Sub' }
+                ) }
+            } -ParameterFilter { $Path -eq '/subscriptions?api-version=2022-12-01' -and $All }
+            Mock Invoke-OERArmRequest { throw "unexpected ARM call: $Method $Path" }
+            Mock Resolve-OERStructurePrincipal { "p-$Reference" }
+            Mock Resolve-OERRoleDefinitionId { "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-$Role" }
+            # What the old first-match code would have read for 'Dup Sub': the live assignments of the
+            # FIRST of the two subscriptions, one declared and one undeclared.
+            Mock Get-OERRoleAssignment {
+                if ($Subscription -eq 'Dup Sub') {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; PrincipalId = 'p-grp-a'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-dup-declared' }
+                        [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; PrincipalId = 'p-live-dup'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-dup-extra' }
+                    )
+                } elseif ($Subscription -eq 'Good Sub') {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'; PrincipalId = 'p-grp-c'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-good-declared' }
+                        [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'; PrincipalId = 'p-live-good'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-good-extra' }
+                    )
+                }
+            }
+            Mock New-OERRoleAssignment {}
+            Mock Set-OERRoleAssignment {}
+            Mock Remove-OERRoleAssignment {}
+        }
+    }
+
+    It 'fails every entry at the ambiguous scope with both candidate ids, goes on to the next scope, and under -Prune removes nothing at the ambiguous one' {
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-a"}, ' +
+            '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-b"}, ' +
+            '{"scope":"subscription:Good Sub","role":"Reader","principal":"grp-c"} ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        # Positive proof first: the run reached the third entry, whose scope IS resolvable, and pruned
+        # there. Without this the negative assertions below could pass on a run that stopped early.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Subscription -eq 'Good Sub' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-good-extra' }
+
+        # Nothing at the ambiguous scope was written or even read. The writes come first, so a
+        # regression that resolves the name to one of the two subscriptions fails on the write.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -like 'ra-dup-*' }
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Subscription -eq 'Dup Sub' }
+
+        # The rows: the resolvable scope reconciled as usual ...
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> grp-c @ subscription:Good Sub' }).Action | Should -Be @('Unchanged')
+        $Removed = @($Rows | Where-Object { $_.Action -eq 'Removed' })
+        $Removed.Count | Should -Be 1
+        $Removed[0].Item | Should -BeExactly 'rd-Reader -> p-live-good @ /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+
+        # ... and the ambiguous scope's two entries are Failed rows, the only rows it produced.
+        $DupRows = @($Rows | Where-Object { $_.Item -like '* @ subscription:Dup Sub' })
+        $DupRows.Count | Should -Be 2
+        @($DupRows.Action) | Should -Be @('Failed', 'Failed')
+        foreach ($DupRow in $DupRows) {
+            $DupRow.Detail | Should -Match "could not resolve scope 'subscription:Dup Sub'"
+            $DupRow.Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000001'
+            $DupRow.Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000002'
+        }
+        @($Rows | Where-Object { $_.Action -in @('Created', 'Updated', 'Removed', 'Extra', 'Skipped') }).Count | Should -Be 1
+        $Rows.Count | Should -Be 4
+
+        # The refusal is published once per failed entry, as the AmbiguousName record itself. Narrowed
+        # to the engine's own publication: -ErrorVariable also holds the inner throw's capture, which
+        # carries no command name and would satisfy a bare count with the re-publication removed.
+        $Published = @($Err | Where-Object {
+                $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
+                $_.FullyQualifiedErrorId -like 'AmbiguousName*' -and $_.TargetObject -eq 'Dup Sub'
+            })
+        $Published.Count | Should -Be 2
+    }
+
+    It 'fails a roleManagementPolicies entry at the ambiguous scope with both candidate ids and reads and writes no policy' {
+        $Json = '{ "version":"1.0", "roleManagementPolicies":[' +
+            '{"scope":"subscription:Dup Sub","role":"Reader","allowPermanentEligibility":false} ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleManagementPolicies -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        # Positive proof first: the subscription list WAS read, so the refusal is the ambiguity.
+        # Twice: Get-OERRoleManagementPolicy and Set-OERRoleManagementPolicy each re-resolve the scope.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 2 -Exactly -ParameterFilter {
+            $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
+        }
+
+        # No policy was looked up or written: the subscription list is the only ARM request made.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter {
+            $Path -ne '/subscriptions?api-version=2022-12-01'
+        }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 0
+
+        $Rows.Count | Should -Be 1
+        $Rows[0].Item | Should -BeExactly 'Reader @ subscription:Dup Sub'
+        $Rows[0].Action | Should -Be 'Failed'
+        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000001'
+        $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000002'
+        # One InvalidScope record is the engine's publication for the entry; the Get and Set cmdlets
+        # each published their own before it, so narrow on the command that published.
+        @($Err | Where-Object {
+                $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
+                $_.FullyQualifiedErrorId -like 'InvalidScope,*' -and $_.Exception.Message -like '*matches 2 subscriptions*'
+            }).Count | Should -Be 1
+    }
+}

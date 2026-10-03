@@ -27,6 +27,30 @@ Describe 'Get-OERAdministrativeUnitScopedRole' {
         $Result[0].PrincipalDisplayName | Should -Be 'Jane'
     }
 
+    It 'stays best-effort when the directory roles cannot be read: lists the scoped roles with an empty RoleName and no error' {
+        # The listing is read-only and the name is an enrichment, so an unreadable role list does not
+        # block it (Get-OERAdministrativeUnit, which feeds the apply engine, is the caller that must
+        # not tolerate it -- see its own tests).
+        Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { 'au-1' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{ value = @(
+                @{ id = 'srm-1'; roleId = 'r-1'; administrativeUnitId = 'au-1'; roleMemberInfo = @{ id = 'u-1'; displayName = 'Jane' } }
+            ) }
+        } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/au-1/scopedRoleMembers' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            throw 'TooManyRequests (injected map failure)'
+        } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+        $Result = @(Get-OERAdministrativeUnitScopedRole -Id 'au-1' -ErrorVariable Err -ErrorAction SilentlyContinue)
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+        $Result.Count | Should -Be 1
+        $Result[0].ScopedRoleMembershipId | Should -Be 'srm-1'
+        $Result[0].RoleId | Should -Be 'r-1'
+        $Result[0].RoleName | Should -BeNullOrEmpty
+        @(@($Err) | Where-Object { $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERAdministrativeUnitScopedRole' }).Count | Should -Be 0
+    }
+
     It 'positional binding: collapsing ById/ByName into a single parameter set ADDS positional binding for -AdministrativeUnit (a capability, not a break)' {
         # Before the identity-parameter collapse this cmdlet had two parameter sets (ById/ByName),
         # which suppressed ALL implicit positional binding. After the collapse there is exactly one

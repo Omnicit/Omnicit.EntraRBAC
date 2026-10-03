@@ -25,6 +25,8 @@ function Get-OERSubscription {
     .PARAMETER ManagementGroup
     A management group name or display name whose descendant subscriptions are listed. Bound from
     the pipeline by property name (ManagementGroupName), so Get-OERManagementGroup pipes in.
+    A display name that several management groups share is refused, naming the candidates;
+    use the management group name.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.

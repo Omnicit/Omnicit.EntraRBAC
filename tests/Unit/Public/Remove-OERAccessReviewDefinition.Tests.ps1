@@ -19,7 +19,7 @@ Describe 'Remove-OERAccessReviewDefinition' {
     }
 
     It 'warns before deleting and still issues the DELETE' {
-        # CLAUDE.md SECURITY rule #4: audit PR9 Task 7 sweep -- Remove-OERAccessReviewDefinition.ps1:60
+        # CLAUDE.md SECURITY rule #4: audit PR9 Task 7 sweep -- Remove-OERAccessReviewDefinition
         # emits an operator warning before the destructive DELETE, but no It captured it.
         $Warnings = @()
         Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
@@ -52,22 +52,86 @@ Describe 'Remove-OERAccessReviewDefinition' {
         }
     }
 
-    It 'writes a non-terminating error (no DELETE) when definition resolution throws (Fix 4 bearer-leak guard path)' {
-        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { throw 'resolution failed' }
-        Remove-OERAccessReviewDefinition -DisplayName 'ghost-def' -Confirm:$false -ErrorVariable ErrVar -ErrorAction SilentlyContinue
-        # Match the cmdlet-QUALIFIED ErrorId. The mock's own thrown record is auto-recorded into
-        # -ErrorVariable at roughly a dozen call boundaries (14 records here; only the last is the
-        # cmdlet's own), so 'Should -Not -BeNullOrEmpty' cannot fail. Note the resolver catch at
-        # Remove-OERAccessReviewDefinition.ps1:51 swallows to $null -- the record that is actually
-        # written comes from the not-found branch at :53, hence AccessReviewDefinitionNotFound.
-        @($ErrVar | Where-Object { $_.FullyQualifiedErrorId -eq 'AccessReviewDefinitionNotFound,Remove-OERAccessReviewDefinition' }).Count |
-            Should -Be 1
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    It 'publishes a failed definition lookup (a 403) as itself, never as AccessReviewDefinitionNotFound, and deletes nothing' {
+        # INVERTED. This It used to pin the OLD behaviour: a resolver that THROWS was folded into
+        # AccessReviewDefinitionNotFound, which told the operator the definition did not exist when the
+        # lookup had merely been refused (a 403, an exhausted 429, a 5xx). Only a $null answer from the
+        # lookup is "not found" (the It below); a throw is published as the record it is, and nothing
+        # after it runs -- no scope read, no warning, no DELETE.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied-def')
+        }
+        $Err = $null
+        $Out = Remove-OERAccessReviewDefinition -DisplayName 'denied-def' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'Authorization_RequestDenied' whether or not this cmdlet re-published it,
+        # so an unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Remove-OERAccessReviewDefinition'
+            })
+        # The positive half: the lookup was reached, once, so the no-DELETE assertion below is not a
+        # cmdlet that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'NotFound'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'still reports AccessReviewDefinitionNotFound, once, when the display name matches nothing' {
+        # The counterpart of the It above: a $null from the lookup IS "not found", and nothing about
+        # the throw path may change its id, its category or its message.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId { $null }
+        $Err = $null
+        $Out = Remove-OERAccessReviewDefinition -DisplayName 'ghost-def' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Remove-OERAccessReviewDefinition'
+            })
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Be 'AccessReviewDefinitionNotFound,Remove-OERAccessReviewDefinition'
+        $Published[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Published[0].Exception.Message | Should -Be 'Access review definition not found.'
+        $Out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+    }
+
+    It 'scrubs the failed definition lookup record before publishing it (bearer hygiene)' {
+        # The catch hands the record on with WriteError, so an $Error-count proof would stay green with
+        # the Remove-OERErrorRecord call deleted. The proof is the mocked call: exactly one, for THIS
+        # record, beside a positive assertion that the catch was reached and the record published.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: definition lookup scrub marker.'),
+                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'denied-def')
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+        $Err = $null
+        Remove-OERAccessReviewDefinition -DisplayName 'denied-def' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Remove-OERAccessReviewDefinition'
+            })
+        $Published.Count | Should -Be 1
+        $Published[0].Exception.Message | Should -Be 'Authorization_RequestDenied: definition lookup scrub marker.'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Authorization_RequestDenied: definition lookup scrub marker.'
+        }
     }
 
     It 'surfaces a Graph DELETE failure as a non-terminating error and emits nothing' {
-        # Targets the DELETE catch at Remove-OERAccessReviewDefinition.ps1:65 -- distinct from the
-        # resolver-throw test above, which never reaches Invoke-OERGraphRequest at all. Guards two
+        # Targets the catch around the Graph DELETE call -- distinct from the resolver-throw tests
+        # above, which never reach Invoke-OERGraphRequest at all. Guards two
         # things the cmdlet must do on a Graph failure: call Remove-OERErrorRecord (the mandatory
         # bearer-token-hygiene line -- asserted via Should -Invoke, since a deleted line would
         # otherwise pass unnoticed) and write its OWN non-terminating record. Match the
@@ -324,5 +388,80 @@ Describe 'Remove-OERAccessReviewDefinition access package assignments scope warn
         ($GroupScoped.Prompts -join ' ') | Should -Match 'Delete access review definition' -Because 'the control has to prove the prompt was rendered and captured, or the negative below proves nothing'
         ($ApScoped.Prompts -join ' ') | Should -Match "targets an access package's assignments" -Because 'the prompt is the one line an operator cannot skip, so the scope fact belongs in the action text and not only in a Warning'
         ($GroupScoped.Prompts -join ' ') | Should -Not -Match "targets an access package's assignments" -Because 'a group-scoped review carries no access package risk, so its prompt must stay the plain action text'
+    }
+}
+
+Describe 'Remove-OERAccessReviewDefinition refuses an ambiguous display name' {
+    # Graph does not enforce unique access review definition display names, so -DisplayName used to
+    # DELETE whichever of several same-named definitions the lookup listed first. These Its leave the
+    # resolver REAL and mock only the Graph boundary, so they prove the refusal end to end: the lookup
+    # finds two definitions, the resolver refuses the name, and nothing is deleted. A mocked resolver
+    # could not show that -- it would stay green with the resolver's count check deleted.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+    }
+
+    It 'publishes AmbiguousName with both candidate ids and issues no DELETE when two definitions share the display name' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'DELETE') { return $null }
+            if ($Uri -like '*accessReviews/definitions?*displayName eq*') {
+                return @{ value = @(
+                        @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup' },
+                        @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup' }) }
+            }
+            return @{ id = '11111111-1111-1111-1111-111111111111'; scope = @{ query = '/groups/g-1/transitiveMembers' } }
+        }
+        $Err = $null
+        $Out = Remove-OERAccessReviewDefinition -DisplayName 'Dup' -Confirm:$false -WarningAction SilentlyContinue `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        # NARROWED ON PURPOSE: -ErrorVariable also holds the engine's own capture of the INNER throw,
+        # whose id is the bare 'AmbiguousName' whether or not this cmdlet re-published it, so an
+        # unnarrowed match passes with the fix reverted (measured; see the issue #71 Describe in
+        # Add-OERAccessPackageResourceRole.Tests.ps1).
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'Remove-OERAccessReviewDefinition'
+            })
+        # The positive half: the real resolver ran its lookup, once, so the zero-DELETE assertion
+        # below is not a cmdlet that never got that far.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -like "*accessReviews/definitions?*displayName eq 'Dup'*"
+        }
+        # The point of the refusal, asserted FIRST so that a resolver which picks a definition anyway
+        # fails on the DELETE it then issues: not one of the two same-named definitions is deleted...
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter {
+            $Method -eq 'DELETE'
+        }
+        # ...and the lookup is the ONLY Graph call -- not even the pre-delete scope read happened.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Be 'AmbiguousName,Remove-OERAccessReviewDefinition'
+        $Published[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Published[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+        $Published[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        $Published[0].Exception.Message | Should -Match 'Re-run with the definition id instead of the display name'
+        $Out | Should -BeNullOrEmpty
+    }
+
+    It 'still DELETEs the one definition a display name matches (the real resolver, one match)' {
+        # The positive counterpart of the It above: the refusal is for AMBIGUITY, not for names. One
+        # match is resolved and deleted as before, so the zero-DELETE proof above cannot be a cmdlet
+        # that refuses every display name.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            if ($Method -eq 'DELETE') { return $null }
+            if ($Uri -like '*accessReviews/definitions?*displayName eq*') {
+                return @{ value = @(@{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'Solo' }) }
+            }
+            return @{ id = '33333333-3333-3333-3333-333333333333'; scope = @{ query = '/groups/g-1/transitiveMembers' } }
+        }
+        $Err = $null
+        Remove-OERAccessReviewDefinition -DisplayName 'Solo' -Confirm:$false -WarningAction SilentlyContinue `
+            -ErrorAction SilentlyContinue -ErrorVariable Err
+        @($Err).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'DELETE' -and
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/33333333-3333-3333-3333-333333333333'
+        }
     }
 }

@@ -28,12 +28,16 @@ function Get-OERRoleDefinition {
 
     .PARAMETER Subscription
     A subscription GUID or display name to scope the query.
+    A display name that several subscriptions share is refused, naming the candidates;
+    use the subscription id.
 
     .PARAMETER ResourceGroup
     A resource group name narrowing the -Subscription scope. Pipeline by property name.
 
     .PARAMETER ManagementGroup
     A management group name or display name to scope the query.
+    A display name that several management groups share is refused, naming the candidates;
+    use the management group name.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.

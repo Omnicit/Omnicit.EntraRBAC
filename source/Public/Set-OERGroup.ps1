@@ -7,7 +7,9 @@ function Set-OERGroup {
     Patches an existing Entra ID group identified by -Group. Only the supplied properties are sent:
     -NewDisplayName, -Description, -MailNickname, -MembershipRule, and -MembershipRuleProcessingState.
     At least one updatable property must be supplied or a non-terminating NothingToUpdate error is
-    emitted. A group that cannot be resolved produces a non-terminating GroupNotFound error.
+    emitted. A group name that matches nothing produces a non-terminating GroupNotFound error; a
+    group lookup that itself fails (a refused, throttled or failed read) is reported as that
+    failure, never as GroupNotFound.
 
     -MembershipRule and -MembershipRuleProcessingState only apply to a dynamic-membership group (one
     whose groupTypes contains DynamicMembership). A static or role-assignable group cannot be converted
@@ -101,7 +103,8 @@ function Set-OERGroup {
             return
         }
 
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $GroupId = $null
         try {
             $GroupId = Resolve-OERGroupId -DisplayName $Group
@@ -114,6 +117,10 @@ function Set-OERGroup {
                     -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such group exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $GroupId) {
             Write-CmdletError `

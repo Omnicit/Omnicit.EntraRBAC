@@ -135,6 +135,13 @@ function New-OERAccessPackageRequestorScope {
                 if ($TenantId) { $AuthParams.TenantId = $TenantId }
                 $Resolved = Resolve-OERTargetList -User $User -Group $Group @AuthParams
                 if ($Resolved.FailedValue) {
+                    # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such
+                    # user or group exists: re-publish the caught record as itself, never as
+                    # "<Kind> '<Value>' not found."
+                    if ($Resolved.FailedRecord) {
+                        $PSCmdlet.WriteError($Resolved.FailedRecord)
+                        return
+                    }
                     # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
                     $ErrId = if ($Resolved.FailedErrorId) { $Resolved.FailedErrorId }
                     elseif ($Resolved.FailedKind -eq 'User') { 'UserNotFound' } else { 'GroupNotFound' }

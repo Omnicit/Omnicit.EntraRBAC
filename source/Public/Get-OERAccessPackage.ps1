@@ -136,7 +136,8 @@ function Get-OERAccessPackage {
             $Escaped = ConvertTo-OERODataFilterValue -Value $DisplayName
             $QueryParts += "`$filter=displayName eq '$Escaped'"
         } elseif ($Catalog) {
-            # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+            # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+            # $null return (a display name that matched nothing) reaches the not-found branch.
             $CatalogId = $null
             try {
                 $CatalogId = Resolve-OERCatalogId -DisplayName $Catalog
@@ -149,6 +150,10 @@ function Get-OERAccessPackage {
                         -TargetObject $Catalog -Cmdlet $PSCmdlet
                     return
                 }
+                # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+                # no such catalog exists: surface it as itself, never as the not-found below.
+                $PSCmdlet.WriteError($PSItem)
+                return
             }
             if (-not $CatalogId) {
                 Write-CmdletError -Message ([System.Exception]::new("Catalog '$Catalog' not found.")) `

@@ -342,6 +342,60 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 
+    It 'approver-default fallback: a Tenant Profile that cannot be read -> Failed carries the profile error, not "no PrimaryApprovers default"' {
+        # Resolve-OERStructureDefault used to turn a failed profile read (a profile that cannot be
+        # parsed, declares no TenantId, or names an unsupported Environment) into $null, and this
+        # handler then reported "no Tenant Profile PrimaryApprovers default" -- sending the operator to
+        # add a default to a profile that already holds one but cannot be read. The helper now rethrows,
+        # and the throw lands in this handler's existing try/catch around the policy build, whose Failed
+        # row carries the real error. NO handler change is needed or made: this pins that the pair
+        # works end to end, with the REAL Resolve-OERStructureDefault and only the profile read mocked.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncApViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+            Mock Get-OERAccessPackageAssignmentPolicy { @() }
+            # A CMDLET failure mock, never Write-Error: Resolve-OERStructureDefault calls the profile
+            # read with -ErrorAction Stop, and only the cmdlet's own WriteError is promoted by it.
+            Mock Get-OERConfiguration {
+                [CmdletBinding()] param([string]$TenantAlias, [string]$BasePath)
+                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Tenant Profile 'test' at 'profile-path' could not be parsed and was skipped: profile read marker."),
+                        'TenantProfileMalformed', [System.Management.Automation.ErrorCategory]::InvalidData, 'profile-path'))
+            }
+            Mock New-OERAccessPackageAssignmentPolicy {}
+            Mock Initialize-OERAuth {}
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP-Sales'
+                catalog            = 'CAT-IT'
+                assignmentPolicies = @(
+                    [PSCustomObject]@{
+                        displayName    = 'Default'
+                        approvalStages = @(
+                            [PSCustomObject]@{ durationDays = 7 }
+                        )
+                    }
+                )
+            }
+            $r = @(Invoke-SyncApViaCaller -Item $Item -TenantAlias 'test' -ErrorAction SilentlyContinue)
+            # The positive half: the profile was read, once, through the real helper.
+            Should -Invoke Get-OERConfiguration -Times 1 -Exactly -ParameterFilter { $TenantAlias -eq 'test' }
+            $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to build assignmentPolicy 'Default':*"
+            $Failed[0].Detail | Should -Match 'profile read marker'
+            $Failed[0].Detail | Should -Not -Match 'no Tenant Profile PrimaryApprovers default'
+            $Failed[0].Error | Should -Not -BeNullOrEmpty
+            $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^TenantProfileMalformed'
+            Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0 -Exactly
+        }
+    }
+
     It 'with -Prune removes an undeclared resourceRole binding via -ResourceRoleScopeId and reports Removed' {
         InModuleScope $script:moduleName {
             function Invoke-SyncApViaCaller {
@@ -3251,7 +3305,7 @@ Describe 'Sync-OERStructureAccessPackage' {
     # renamed group's binding as undeclared.
     Context 'resourceRoles resolve a group by its current name before the name the catalog recorded' {
 
-        It 'binds to the group the CURRENT name resolves to, not to another resource recorded under that name, and prunes nothing' {
+        It 'binds to the group the CURRENT name resolves to, not to another group recorded under that name, and prunes nothing' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncApViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
@@ -3263,11 +3317,13 @@ Describe 'Sync-OERStructureAccessPackage' {
                 Mock Resolve-OERAccessPackageId { 'ap-1' }
                 Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
                 # 'shared' is the name the catalog recorded for grp-a (since renamed); grp-b, recorded
-                # as 'b-old', carries the name 'shared' now and holds the live binding.
+                # as 'b-old', carries the name 'shared' now and holds the live binding. Both are groups,
+                # which is what keeps grp-a from competing with grp-b (decision D5): the catalog always
+                # reports the originSystem of a resource.
                 Mock Get-OERCatalogResource {
                     @(
-                        [PSCustomObject]@{ DisplayName = 'shared'; OriginId = 'grp-a'; Id = 'res-a' }
-                        [PSCustomObject]@{ DisplayName = 'b-old'; OriginId = 'grp-b'; Id = 'res-b' }
+                        [PSCustomObject]@{ DisplayName = 'shared'; OriginId = 'grp-a'; Id = 'res-a'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ DisplayName = 'b-old'; OriginId = 'grp-b'; Id = 'res-b'; OriginSystem = 'AadGroup' }
                     )
                 }
                 Mock Resolve-OERGroupId { 'grp-b' } -ParameterFilter { $DisplayName -eq 'shared' }
@@ -3369,6 +3425,1477 @@ Describe 'Sync-OERStructureAccessPackage' {
                 { Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
                     Should -Throw -ErrorId 'AmbiguousName'
                 Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+    }
+
+    # Decision D3 (Philip, 2026-10-03): the handler picked the FIRST of several assignment policies of
+    # one access package that share the declared display name, then diffed and updated that policy
+    # (requestor scope, approval) -- a silent write to an arbitrary policy. Graph does not enforce
+    # unique policy display names within a package. It now refuses, the way the access review
+    # handler does for definitions (decision D2): one Failed row, one published AmbiguousName record
+    # naming every candidate id, and nothing created or updated for THAT policy. The package's other
+    # declared policies are processed as before.
+    #
+    # Every ambiguous fixture below carries a live shape that DRIFTS from the declaration
+    # (durationInDays 10 live, 30 declared), so a handler that wrongly took the first match reaches
+    # Set-OERAccessPackageAssignmentPolicy -- the zero-call assertions then fail for the right reason
+    # instead of passing because the diff found nothing to do.
+    Context 'an ambiguous assignment policy name is refused' {
+
+        It 'creates and updates nothing for a policy whose name two live policies share' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: the live policies were read, once, and the policy was reported
+                # Failed -- so the zero-call assertions below are a refusal, not a handler that never
+                # got as far as the policies.
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 1
+
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'reports one Failed row naming the package, the policy name, the count and both ids' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Section | Should -Be 'accessPackages'
+                $Failed[0].Item | Should -Be 'AP-Sales'
+                $Failed[0].Detail | Should -BeLike "2 assignment policies of 'AP-Sales' are named 'Standard' (*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*nothing was written for it*'
+            }
+        }
+
+        It 'publishes exactly one AmbiguousName record carrying the name, the package and both ids, and attaches it to the row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Records.Count | Should -Be 1 -Because 'one error is published for the ambiguous policy, no more'
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Records[0].TargetObject | Should -Be 'Standard'
+                $Records[0].Exception.Message | Should -BeLike "Assignment policy display name 'Standard' matches 2 policies (*) in access package 'AP-Sales'.*"
+                $Records[0].Exception.Message | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Records[0].Exception.Message | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Records[0].Exception.Message | Should -BeLike '*Access packages do not enforce unique policy display names*'
+                $Records[0].Exception.Message | Should -BeLike '*Rename one of them so the display name is unique.'
+                # The document cannot name a policy by id, so the message must not advise doing so.
+                $Records[0].Exception.Message | Should -Not -BeLike '*policy id instead*'
+
+                # The Failed row carries the very record that was published.
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Failed[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+            }
+        }
+
+        It 'names every candidate and the right count when three policies share the name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "3 assignment policies of 'AP-Sales' are named 'Standard'*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*33333333-3333-3333-3333-333333333333*'
+                $Failed[0].Error.Exception.Message | Should -BeLike '*matches 3 policies (*33333333-3333-3333-3333-333333333333*'
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'refuses under -WhatIf as well, since refusing is not a write and ShouldProcess is never reached' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "2 assignment policies of 'AP-Sales' are named 'Standard'*"
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "*assignmentPolicy 'Standard'*" }).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'still processes the package''s other declared policies when one declared policy is ambiguous' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                # 'Standard' is shared by two live policies; 'Single' exists once and drifts; 'Fresh'
+                # does not exist at all. The ambiguous policy is declared FIRST, so a refusal that did
+                # not move on to the next declared policy would starve the other two.
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Single'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @(
+                        [PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 }
+                        [PSCustomObject]@{ displayName = 'Single'; durationInDays = 30 }
+                        [PSCustomObject]@{ displayName = 'Fresh'; durationInDays = 30 }
+                    )
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The ambiguous policy: refused, and touched by neither write.
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "*named 'Standard'*" }).Count | Should -Be 1
+                # A refused policy is still a DECLARED one: it is not also reported as an undeclared
+                # live policy ('Extra') for each of the two live policies that carry its name.
+                @($r | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $Id -in @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222') }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $DisplayName -eq 'Standard' }
+
+                # The others: the single match is updated by ITS id, the absent one is created.
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $Id -eq '33333333-3333-3333-3333-333333333333' -and $DisplayName -eq 'Single' }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Fresh' }
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like "*assignmentPolicy 'Single'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -like "*assignmentPolicy 'Fresh'*" }).Count | Should -Be 1
+            }
+        }
+
+        It 'leaves a single matching policy alone, even when other live policies carry other names (no AmbiguousName)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @(
+                        [PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 }
+                        [PSCustomObject]@{ Id = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Other'; DurationInDays = 10 }
+                    )
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 10 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "assignmentPolicy 'Standard' matches" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -like "*'Other'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+            }
+        }
+
+        It 'updates a single matching policy by its own id, with no AmbiguousName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy {
+                    @([PSCustomObject]@{ Id = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Standard'; DurationInDays = 10 })
+                }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $Id -eq '11111111-1111-1111-1111-111111111111' }
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            }
+        }
+
+        It 'creates a declared policy no live policy carries, with no AmbiguousName' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null; IsHidden = $false } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Set-OERAccessPackageAssignmentPolicy { }
+                Mock New-OERAccessPackageAssignmentPolicy { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    assignmentPolicies = @([PSCustomObject]@{ displayName = 'Standard'; durationInDays = 30 })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+                Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 1 -Exactly -ParameterFilter { $DisplayName -eq 'Standard' }
+                Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -like "*assignmentPolicy 'Standard'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            }
+        }
+    }
+
+    # Decision D4 (Philip, 2026-10-03): a declared resourceRoles[].resource that is not a catalog group
+    # is resolved by the display name the catalog recorded, and the handler took the FIRST catalog
+    # resource carrying that name. A catalog does not enforce unique resource display names (two
+    # same-named groups, an application and a group, two sites), so the role was bound to an arbitrary
+    # one -- and under -Prune the binding of the RIGHT resource then read as undeclared and was
+    # removed. It now refuses: one Failed row naming every candidate origin id, one AmbiguousName
+    # record, and the name counts as unresolved, so the existing withhold-prune rule keeps the
+    # package's live bindings exactly as it does for a name that matches no resource at all.
+    #
+    # Every ambiguous fixture below holds the live binding on the SECOND of the two same-named
+    # resources, so a handler that wrongly took the first match would add a binding to the first and
+    # remove the live one under -Prune -- the zero-call assertions then fail for the right reason.
+    Context 'an ambiguous catalog resource name in a binding is refused' {
+
+        It 'adds no binding for a name two catalog resources share, and says so in one Failed row naming both origin ids' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: the catalog was read, once, and the entry was reported Failed --
+                # so the zero-call assertions below are a refusal, not a handler that never got that far.
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Section | Should -Be 'accessPackages'
+                $Failed[0].Item | Should -Be 'AP-Sales'
+                $Failed[0].Detail | Should -BeLike "2 resources of catalog 'CAT-IT' are named 'Finance' (*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*no resourceRole was added for it*'
+
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 0
+            }
+        }
+
+        It 'publishes exactly one AmbiguousName record carrying the name, the catalog and both origin ids, and attaches it to the row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Records.Count | Should -Be 1
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Records[0].TargetObject | Should -Be 'Finance'
+                $Records[0].Exception.Message | Should -Be ("Resource name 'Finance' matches 2 resources of catalog 'CAT-IT' (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222). " +
+                    'A catalog does not enforce unique resource display names, so this name cannot identify a single resource. ' +
+                    'Declare a group or an application by one of the origin ids listed above, ' +
+                    'or refresh or remove and re-add one of the resources in the catalog so their recorded names differ.')
+
+                # The Failed row carries the very record that was published.
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Failed[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+            }
+        }
+
+        It 'removes no live binding under -Prune and reports each candidate Skipped as a withheld prune, the binding of the second same-named resource included' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                # The package already holds a binding on the SECOND Finance resource (the one the document
+                # means) and one on an unrelated resource. Taking the first match would declare Member on
+                # the FIRST resource, leaving both of these undeclared and removed under -Prune.
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-live-2'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                            [PSCustomObject]@{ id = 'b-other'; role = [PSCustomObject]@{ displayName = 'Owner' }; scope = [PSCustomObject]@{ originId = '33333333-3333-3333-3333-333333333333' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $Warnings = @()
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+
+                # Positive proof: the live bindings were read (they are named in the rows below) and the
+                # ambiguous entry was refused -- so the zero-call assertions are the withhold at work.
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "2 resources of catalog 'CAT-IT' are named 'Finance'*" }).Count | Should -Be 1
+
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'removing'
+
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' })
+                $Withheld.Count | Should -Be 2
+                @($Withheld | Where-Object { $_.Detail -like "*undeclared resourceRole binding 'Member|22222222-2222-2222-2222-222222222222'*" }).Count | Should -Be 1
+                @($Withheld | Where-Object { $_.Detail -like "*undeclared resourceRole binding 'Owner|33333333-3333-3333-3333-333333333333'*" }).Count | Should -Be 1
+                $Withheld[0].Detail | Should -BeLike "prune withheld: declared entry 'Finance' could not be resolved*"
+            }
+        }
+
+        It 'withholds the Extra report too when -Prune is not set' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-live-2'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 1
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "prune withheld: declared entry 'Finance' could not be resolved*" })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -BeLike "*undeclared resourceRole binding 'Member|22222222-2222-2222-2222-222222222222'*"
+                @($r | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'refuses under -WhatIf as well, since refusing is not a write and ShouldProcess is never reached' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "2 resources of catalog 'CAT-IT' are named 'Finance'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would add resourceRole*" }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'names every candidate and the right count when three catalog resources share the name' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; Id = 'res-c' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "3 resources of catalog 'CAT-IT' are named 'Finance'*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+                $Failed[0].Detail | Should -BeLike '*https://contoso.sharepoint.com/sites/finance*'
+                $Failed[0].Error.Exception.Message | Should -BeLike "*matches 3 resources of catalog 'CAT-IT' (*https://contoso.sharepoint.com/sites/finance)*"
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'still processes the package''s other declared resourceRoles when one declared name is ambiguous' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                        [PSCustomObject]@{ DisplayName = 'Wiki'; OriginId = '44444444-4444-4444-4444-444444444444'; Id = 'res-w' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                # The ambiguous entry is declared FIRST, so a refusal that did not move on to the next
+                # declared entry would starve the one after it.
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @(
+                        [PSCustomObject]@{ resource = 'Finance'; role = 'Member' }
+                        [PSCustomObject]@{ resource = 'Wiki'; role = 'Reader' }
+                    )
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "*are named 'Finance'*" }).Count | Should -Be 1
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0 -ParameterFilter { $ResourceOriginId -in @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222') }
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $ResourceOriginId -eq '44444444-4444-4444-4444-444444444444' -and $Role -eq 'Reader' }
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq "added resourceRole 'Reader' on 'Wiki'" }).Count | Should -Be 1
+            }
+        }
+
+        It 'leaves a name exactly one catalog resource carries alone, even when other resources carry other names' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Wiki'; OriginId = '44444444-4444-4444-4444-444444444444'; Id = 'res-w' }
+                    )
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-live-1'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '11111111-1111-1111-1111-111111111111' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @(
+                        [PSCustomObject]@{ resource = 'Finance'; role = 'Member' }
+                        [PSCustomObject]@{ resource = 'Wiki'; role = 'Reader' }
+                    )
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                # 'Finance' matches one resource and is already bound; 'Wiki' matches one and is added
+                # by ITS origin id. Nothing is refused, withheld or removed.
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on 'Finance' already bound" }).Count | Should -Be 1
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $ResourceOriginId -eq '44444444-4444-4444-4444-444444444444' -and $Role -eq 'Reader' }
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq "added resourceRole 'Reader' on 'Wiki'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($r | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'binds a declared object id even when two catalog resources share a display name, which is the way out the message names' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                # Resolve-OERGroupId is deliberately NOT mocked: a GUID is returned verbatim with no Graph
+                # call, which is the path that decides here (the catalog resource whose origin id it is).
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-live-2'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = '22222222-2222-2222-2222-222222222222'; role = 'Member' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on '22222222-2222-2222-2222-222222222222' already bound" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'refuses a name several groups AND several catalog resources share, instead of binding the first resource or throwing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '11111111-1111-1111-1111-111111111111'; Id = 'res-a' }
+                        [PSCustomObject]@{ DisplayName = 'Finance'; OriginId = '22222222-2222-2222-2222-222222222222'; Id = 'res-b' }
+                    )
+                }
+                Mock Resolve-OERGroupId {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Group display name 'Finance' matches 2 groups (g-a, g-b)."), 'AmbiguousName',
+                        [System.Management.Automation.ErrorCategory]::InvalidArgument, 'Finance')
+                }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-live-2'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Sales'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Resolve-OERGroupId -Times 1 -Exactly
+                # -ErrorVariable also holds the engine's own capture of the group resolver's throw, so the
+                # published record is found by its text, not by counting every record.
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.Exception.Message -like "Resource name 'Finance' matches*" })
+                $Records.Count | Should -Be 1
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].Exception.Message | Should -BeLike "Resource name 'Finance' matches 2 resources of catalog 'CAT-IT' (*"
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "2 resources of catalog 'CAT-IT' are named 'Finance'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' }).Count | Should -Be 1
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+    }
+
+    # Decision D5 (Philip, 2026-10-03), found by the ambiguity sweep (P0-1): decision D4's refusal only
+    # ran when step 1 (the group the declared name resolves to, when that group is a resource of the
+    # catalog) did not decide. So a group and an APPLICATION (or a site) recorded under one display
+    # name in one catalog were never compared: the group won step 1, the add then bound the wrong
+    # resource or failed, and under -Prune the binding of the resource the entry really names read as
+    # undeclared and was removed. Step 3 (a group that is NOT in the catalog becomes the origin id)
+    # had the same ending: the add can only fail, and the live binding of the renamed application the
+    # entry named was removed. Both now count as unresolved, so the existing withhold-prune rule keeps
+    # the package's live bindings.
+    #
+    # Every fixture holds the live binding on the NON-group resource (the application), which is the
+    # one the old code removed under -Prune.
+    Context 'a group sharing its name with a non-group catalog resource is refused, and a group outside the catalog counts as unresolved' {
+
+        It 'adds no binding and removes no live binding under -Prune: the probe case of a group and an application named alike' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ Id = 'res-g'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Payroll'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' }
+                    )
+                }
+                Mock Resolve-OERGroupId { '11111111-1111-1111-1111-111111111111' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-app'; role = [PSCustomObject]@{ displayName = 'Reader' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $Warnings = @()
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
+
+                # The catalog was read once, so the zero-call assertions below are the refusal and the
+                # withhold at work (the Failed row and the withheld row follow as the positive proof). The
+                # removal comes first: it is the defect itself.
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 0
+                (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'removing'
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "2 resources of catalog 'CAT-IT' are named 'Payroll' (*"
+                $Failed[0].Detail | Should -BeLike '*11111111-1111-1111-1111-111111111111*'
+                $Failed[0].Detail | Should -BeLike '*22222222-2222-2222-2222-222222222222*'
+
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -BeLike "prune withheld: declared entry 'Payroll' could not be resolved*"
+                $Withheld[0].Detail | Should -BeLike "*undeclared resourceRole binding 'Reader|22222222-2222-2222-2222-222222222222'*"
+            }
+        }
+
+        It 'publishes exactly one AmbiguousName record naming the group and the application, and a way out that fits every resource type' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' }
+                        [PSCustomObject]@{ Id = 'res-g'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Payroll'; OriginSystem = 'AadGroup' }
+                    )
+                }
+                Mock Resolve-OERGroupId { '11111111-1111-1111-1111-111111111111' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Records.Count | Should -Be 1
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Records[0].TargetObject | Should -Be 'Payroll'
+                # The group is listed first, then the others in catalog order, whatever the catalog order is.
+                $Records[0].Exception.Message | Should -Be ("Resource name 'Payroll' matches 2 resources of catalog 'CAT-IT' (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222). " +
+                    'A catalog does not enforce unique resource display names, so this name cannot identify a single resource. ' +
+                    'Declare a group or an application by one of the origin ids listed above, ' +
+                    'or refresh or remove and re-add one of the resources in the catalog so their recorded names differ.')
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'counts a renamed group, an application and a site recorded under the name as three resources' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                # The group is recorded under its OLD name (the rename case), yet the name now also
+                # belongs to an application and to a site: the group must not win over them.
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ Id = 'res-g'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Payroll-old'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' }
+                        [PSCustomObject]@{ Id = 'res-s'; OriginId = 'https://contoso.sharepoint.com/sites/payroll'; DisplayName = 'Payroll'; OriginSystem = 'SharePointOnline' }
+                    )
+                }
+                Mock Resolve-OERGroupId { '11111111-1111-1111-1111-111111111111' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "3 resources of catalog 'CAT-IT' are named 'Payroll' (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222, https://contoso.sharepoint.com/sites/payroll);*"
+                $Failed[0].Error.Exception.Message | Should -BeLike "Resource name 'Payroll' matches 3 resources of catalog 'CAT-IT' (*https://contoso.sharepoint.com/sites/payroll)*"
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'still resolves a renamed group through step 1: a group the catalog recorded under another name is not a competitor, and the prune is not withheld' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                # 'shared' is the name the catalog recorded for grp-a (since renamed); grp-b, recorded as
+                # 'b-old', carries the name 'shared' now and holds the live binding. Both are groups. An
+                # application of another name sits in the catalog too, with an undeclared live binding.
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ DisplayName = 'shared'; OriginId = 'grp-a'; Id = 'res-a'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ DisplayName = 'b-old'; OriginId = 'grp-b'; Id = 'res-b'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ DisplayName = 'Contoso App'; OriginId = 'app-9'; Id = 'res-c'; OriginSystem = 'AadApplication' }
+                    )
+                }
+                Mock Resolve-OERGroupId { 'grp-b' } -ParameterFilter { $DisplayName -eq 'shared' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'bind-b'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = 'grp-b' } }
+                            [PSCustomObject]@{ id = 'bind-x'; role = [PSCustomObject]@{ displayName = 'User' }; scope = [PSCustomObject]@{ originId = 'app-9' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{ displayName = 'AP-Sales'; catalog = 'CAT-IT'; resourceRoles = @([PSCustomObject]@{ resource = 'shared'; role = 'Member' }) }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                # Step 1 decided: the entry is bound to grp-b and reported Unchanged, nothing refused.
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on 'shared' already bound" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                # The prune is NOT withheld: the application's undeclared binding is still removed under
+                # -Prune, exactly as before this decision.
+                @($r | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 1 -Exactly
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $ResourceRoleScopeId -eq 'bind-x' }
+                @($r | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -like "*'User|app-9'*" }).Count | Should -Be 1
+            }
+        }
+
+        It 'never lets a group compete with its own catalog entry, whatever that entry records for originSystem' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = $null } }
+                # The group's own catalog entry is recorded under the declared name and carries no
+                # originSystem at all (so it is not 'AadGroup'): the one thing that keeps it from being
+                # counted as a second resource under the name is that its origin id IS the group's.
+                Mock Get-OERCatalogResource { [PSCustomObject]@{ DisplayName = 'role_sec_x'; OriginId = 'grp-1'; Id = 'res-1' } }
+                Mock Resolve-OERGroupId { 'grp-1' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'bind-1'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = 'grp-1' } }) }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{ displayName = 'AP-Sales'; catalog = 'CAT-IT'; resourceRoles = @([PSCustomObject]@{ resource = 'role_sec_x'; role = 'Member' }) }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on 'role_sec_x' already bound" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                @($r | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'counts a group outside the catalog as unresolved: the add fails and the renamed application binding survives -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                # The application was renamed after onboarding: the catalog still records 'Payroll-old',
+                # while the document (like the inventory) names it by its CURRENT name 'Payroll'. A group
+                # of that current name exists, but is not a resource of the catalog.
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll-old'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { '55555555-5555-5555-5555-555555555555' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-app'; role = [PSCustomObject]@{ displayName = 'Reader' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                # The real cmdlet reports a group outside the catalog as a non-terminating error and
+                # emits nothing; the handler calls it with -ErrorAction Stop, which only the cmdlet's
+                # own WriteError is promoted by.
+                Mock Add-OERAccessPackageResourceRole {
+                    [CmdletBinding(SupportsShouldProcess)] param([string]$AccessPackage, [string]$Catalog, [string]$ResourceOriginId, [string]$Role)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Resource '$ResourceOriginId' not found in catalog '$Catalog'."), 'CatalogResourceNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound, $ResourceOriginId))
+                }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: step 3 was reached (the add was tried against the group's id,
+                # once) and the entry kept its own Failed row from that failed add.
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $ResourceOriginId -eq '55555555-5555-5555-5555-555555555555' -and $Role -eq 'Reader' }
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "failed to add resourceRole 'Reader' on 'Payroll': *not found in catalog*"
+
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 0
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -BeLike "prune withheld: declared entry 'Payroll' could not be resolved*"
+                $Withheld[0].Detail | Should -BeLike "*undeclared resourceRole binding 'Reader|22222222-2222-2222-2222-222222222222'*"
+            }
+        }
+
+        It 'withholds the prune for a group outside the catalog under -WhatIf too, where the add is never attempted' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll-old'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { '55555555-5555-5555-5555-555555555555' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-app'; role = [PSCustomObject]@{ displayName = 'Reader' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The would-add row shows step 3 was reached; the binding is reported withheld, never as
+                # a prune candidate ("would remove").
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq "would add resourceRole 'Reader' on 'Payroll'" }).Count | Should -Be 1
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' -and $_.Detail -like "*'Reader|22222222-2222-2222-2222-222222222222'*" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would remove undeclared*" }).Count | Should -Be 0
+            }
+        }
+    }
+
+    # Decision D5, fix round 1 (controller ruling T12a): step 2 accepted a SINGLE catalog match even when a
+    # group currently carries the declared name but is not in the catalog. The catalog keeps the name a
+    # group had when it was added: group A, recorded as 'Finance' and since renamed, and group B, which
+    # now carries 'Finance' outside the catalog, made step 2 bind the role to A -- a silent wrong write.
+    # A single match that is another GROUP is now refused like the other ambiguities, listing both ids.
+    # Only a positively identified AadGroup counts: an application recorded under the name stays
+    # accepted, since the inventory round trip of an application that shares its name with any group of
+    # the tenant produces exactly that.
+    Context 'a group outside the catalog does not hand its name to the other group the catalog recorded under it' {
+
+        It 'adds no binding to the renamed group the catalog recorded, and removes no live binding under -Prune' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Finance'; Description = $null } }
+                # Group A is in the catalog under the name it had when it was added ('Finance'); it has
+                # since been renamed. Group B carries 'Finance' now and is not in the catalog.
+                Mock Get-OERCatalogResource {
+                    @(
+                        [PSCustomObject]@{ Id = 'res-a'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Finance'; OriginSystem = 'AadGroup' }
+                        [PSCustomObject]@{ Id = 'res-o'; OriginId = '33333333-3333-3333-3333-333333333333'; DisplayName = 'Other App'; OriginSystem = 'AadApplication' }
+                    )
+                }
+                Mock Resolve-OERGroupId { '55555555-5555-5555-5555-555555555555' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @(
+                            [PSCustomObject]@{ id = 'b-other'; role = [PSCustomObject]@{ displayName = 'Owner' }; scope = [PSCustomObject]@{ originId = '33333333-3333-3333-3333-333333333333' } }
+                        )
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Finance'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The catalog was read once, so the zero-call assertions are the refusal at work: the old
+                # code bound the role to group A (the write) and, with the entry bound, pruned the
+                # unrelated live binding.
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+                @($r | Where-Object { $_.Action -eq 'Created' -or $_.Action -eq 'Removed' }).Count | Should -Be 0
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "2 resources of catalog 'CAT-IT' are named 'Finance' (55555555-5555-5555-5555-555555555555, 11111111-1111-1111-1111-111111111111);*"
+                $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld:*' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail | Should -BeLike "prune withheld: declared entry 'Finance' could not be resolved*"
+                $Withheld[0].Detail | Should -BeLike "*undeclared resourceRole binding 'Owner|33333333-3333-3333-3333-333333333333'*"
+            }
+        }
+
+        It 'publishes exactly one AmbiguousName record listing the group outside the catalog first and the recorded group second' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Finance'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Finance'; OriginSystem = 'AadGroup' })
+                }
+                Mock Resolve-OERGroupId { '55555555-5555-5555-5555-555555555555' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Finance'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                $Records.Count | Should -Be 1
+                $Records[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+                $Records[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Records[0].TargetObject | Should -Be 'Finance'
+                $Records[0].Exception.Message | Should -Be ("Resource name 'Finance' matches 2 resources of catalog 'CAT-IT' (55555555-5555-5555-5555-555555555555, 11111111-1111-1111-1111-111111111111). " +
+                    'A catalog does not enforce unique resource display names, so this name cannot identify a single resource. ' +
+                    'Declare a group or an application by one of the origin ids listed above, ' +
+                    'or refresh or remove and re-add one of the resources in the catalog so their recorded names differ.')
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Error.Exception.Message | Should -Be $Records[0].Exception.Message
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'still accepts the one application recorded under the name while a group outside the catalog carries it too' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                # The inventory round trip of an application that shares its name with a group of the
+                # tenant: the group is not in the catalog, the application is the one resource recorded
+                # under the name. It must stay bound, not refused.
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { '55555555-5555-5555-5555-555555555555' }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @([PSCustomObject]@{ id = 'b-app'; role = [PSCustomObject]@{ displayName = 'Reader' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } })
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'Reader' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Reader' on 'Payroll' already bound" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($r | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+
+        It 'still resolves the one group the catalog recorded under the name when no group carries that name now' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Finance'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '11111111-1111-1111-1111-111111111111'; DisplayName = 'Finance'; OriginSystem = 'AadGroup' })
+                }
+                # No group carries the name any more: the group's own recorded name is all there is.
+                Mock Resolve-OERGroupId { $null }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest {
+                    [PSCustomObject]@{
+                        value = @([PSCustomObject]@{ id = 'b-a'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '11111111-1111-1111-1111-111111111111' } })
+                    }
+                } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Add-OERAccessPackageResourceRole { }
+                Mock Remove-OERAccessPackageResourceRole { }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Finance'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Finance'; role = 'Member' })
+                }
+                $Published = $null
+                $r = @(Invoke-SyncApViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+                Should -Invoke Get-OERCatalogResource -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on 'Finance' already bound" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($r | Where-Object { $_.Detail -like 'prune withheld:*' }).Count | Should -Be 0
+                @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+                Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+                Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            }
+        }
+    }
+
+    Context 'a role name several roles of the resource share is refused by the real cmdlet, and the engine reports it as a Failed row' {
+        # Application roles do not have unique display names. Add-OERAccessPackageResourceRole used to bind
+        # the FIRST role carrying the name, so an access package granted an arbitrary one of them. It now
+        # refuses, and the engine -- which calls it with -ErrorAction Stop -- turns the refusal into a Failed
+        # row. The cmdlet under test here is the REAL one: only the reads and the transport are mocked.
+
+        It 'reports a Failed row carrying the ambiguity message and posts no binding' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERAccessPackageResourceRole { $null }
+                # The cmdlet reads the resource itself, with its roles: two application roles named 'User'.
+                Mock Resolve-OERCatalogResource {
+                    [PSCustomObject]@{
+                        id           = 'res-a'
+                        displayName  = 'Payroll'
+                        originId     = '22222222-2222-2222-2222-222222222222'
+                        originSystem = 'AadApplication'
+                        roles        = @(
+                            [PSCustomObject]@{ id = 'role-1'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a001' }
+                            [PSCustomObject]@{ id = 'role-2'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a002' }
+                        )
+                    }
+                }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'rrs-posted' } } -ParameterFilter { $Method -eq 'POST' }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'User' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The cmdlet was reached and read the resource (the positive proof), then refused.
+                Should -Invoke Resolve-OERCatalogResource -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 0
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "failed to add resourceRole 'User' on 'Payroll': Role 'User' matches 2 roles of resource 'Payroll' (*"
+                $Failed[0].Detail | Should -BeLike '*aaaaaaaa-0000-0000-0000-00000000a001*'
+                $Failed[0].Detail | Should -BeLike '*aaaaaaaa-0000-0000-0000-00000000a002*'
+                $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+            }
+        }
+
+        It 'binds the role once when only one role of the resource carries the name (control)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERAccessPackageResourceRole { $null }
+                Mock Resolve-OERCatalogResource {
+                    [PSCustomObject]@{
+                        id           = 'res-a'
+                        displayName  = 'Payroll'
+                        originId     = '22222222-2222-2222-2222-222222222222'
+                        originSystem = 'AadApplication'
+                        roles        = @(
+                            [PSCustomObject]@{ id = 'role-1'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a001' }
+                            [PSCustomObject]@{ id = 'role-3'; displayName = 'Admin'; originId = 'aaaaaaaa-0000-0000-0000-00000000a003' }
+                        )
+                    }
+                }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'rrs-posted' } } -ParameterFilter { $Method -eq 'POST' }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'User' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.role.originId -eq 'aaaaaaaa-0000-0000-0000-00000000a001'
+                }
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq "added resourceRole 'User' on 'Payroll'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
             }
         }
     }

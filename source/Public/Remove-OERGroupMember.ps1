@@ -8,8 +8,9 @@ function Remove-OERGroupMember {
     members collection (default) or the owners collection when -AccessType owner is set. Each
     principal is removed through the group's members/{id}/$ref or owners/{id}/$ref navigation
     endpoint. A principal that is not present surfaces a Graph error that is reported per-principal
-    without stopping the remaining removals. A group that cannot be resolved produces a
-    non-terminating GroupNotFound error. Supports -WhatIf and -Confirm.
+    without stopping the remaining removals. A group name that matches nothing produces a
+    non-terminating GroupNotFound error; a group lookup that itself fails (a refused, throttled or
+    failed read) is reported as that failure, never as GroupNotFound. Supports -WhatIf and -Confirm.
 
     Principals may be given as raw object ids with -PrincipalId or by name with -User (user
     principal name), -GroupPrincipal (group display name) and -ServicePrincipal (service principal
@@ -108,7 +109,8 @@ function Remove-OERGroupMember {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $ResolvedGroupId = $null
         try {
             $ResolvedGroupId = Resolve-OERGroupId -DisplayName $Group
@@ -121,6 +123,10 @@ function Remove-OERGroupMember {
                     -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such group exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $ResolvedGroupId) {
             Write-CmdletError `

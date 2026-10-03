@@ -8,8 +8,10 @@ function Remove-OERGroup {
     Deleting a group is a high-impact, hard-to-reverse operation, so the command declares
     ConfirmImpact = High (it prompts unless -Confirm:$false is passed) and emits an explicit warning
     before the delete. The warning is written BEFORE the confirmation prompt, so it also appears under
-    -WhatIf and under -Confirm:$false. A group that cannot be resolved produces a non-terminating
-    GroupNotFound error. Supports -WhatIf and -Confirm.
+    -WhatIf and under -Confirm:$false. A group name that matches nothing produces a non-terminating
+    GroupNotFound error; a group lookup that itself fails (a refused, throttled or failed read) is
+    reported as that failure, never as GroupNotFound, and nothing is deleted. Supports -WhatIf and
+    -Confirm.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same
@@ -46,7 +48,8 @@ function Remove-OERGroup {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $GroupId = $null
         try {
             $GroupId = Resolve-OERGroupId -DisplayName $Group
@@ -59,6 +62,10 @@ function Remove-OERGroup {
                     -TargetObject $Group -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such group exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $GroupId) {
             Write-CmdletError `

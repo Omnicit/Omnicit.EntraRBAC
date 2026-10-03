@@ -7,9 +7,15 @@ function Resolve-OERStructureDefault {
     Looks up one named fallback value from the Tenant Profile identified by -TenantAlias via
     Get-OERConfiguration. Only a small explicit set of keys is supported -- PrimaryApprovers,
     EscalationApprovers, AuthenticationContextId, ActivationMaxHours, and Catalog -- so the apply engine
-    can fill an omitted document field. Returns $null when no alias is supplied, the profile cannot be
-    read, the Defaults section is absent, or the key is not present. An explicit value in the document
-    always wins; this helper is only consulted for omitted fields.
+    can fill an omitted document field. Returns $null when no alias is supplied, no profile exists for
+    the alias, the Defaults section is absent, or the key is not present. Anything else that stops the
+    profile from being read is not "no default" and is thrown: an alias that is not a valid
+    -TenantAlias (InvalidTenantAlias), a profile path that would leave the profile directory
+    (ProfilePathEscapesBase), or a profile that EXISTS but cannot be read (it cannot be parsed,
+    declares no TenantId, names an unsupported Environment, or carries a Naming or Defaults section of
+    the wrong shape; each is TenantProfileMalformed). The read error is rethrown after the scrub,
+    unchanged, so the caller reports the real cause instead of a missing default. An explicit value in
+    the document always wins; this helper is only consulted for omitted fields.
 
     .PARAMETER TenantAlias
     The Tenant Profile alias whose Defaults are read. When omitted the function returns $null.
@@ -31,7 +37,17 @@ function Resolve-OERStructureDefault {
         [string]$Name
     )
     if ([string]::IsNullOrWhiteSpace($TenantAlias)) { return $null }
-    $Config = try { Get-OERConfiguration -TenantAlias $TenantAlias -ErrorAction Stop } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+    # A profile that does not exist is no error at all: Get-OERConfiguration writes nothing for it and
+    # the $null below is "no default". Anything else it reports -- an invalid alias, a path that would
+    # leave the profile directory, or a profile that exists but cannot be read -- IS an error
+    # (-ErrorAction Stop promotes it to a throw), and is rethrown after the scrub rather than folded
+    # into that $null.
+    $Config = try {
+        Get-OERConfiguration -TenantAlias $TenantAlias -ErrorAction Stop
+    } catch {
+        Remove-OERErrorRecord -Record $PSItem
+        throw
+    }
     if (-not $Config) { return $null }
     $Defaults = $Config.Defaults
     if (-not $Defaults) { return $null }

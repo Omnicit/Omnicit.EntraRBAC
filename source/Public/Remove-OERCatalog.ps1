@@ -43,7 +43,8 @@ function Remove-OERCatalog {
         Initialize-OERAuth @AuthParams
     }
     process {
-        # Refuse an ambiguous display name loudly; any other throw falls through to the not-found branch.
+        # Refuse an ambiguous display name loudly, and surface any other throw as itself. Only a
+        # $null return (a display name that matched nothing) reaches the not-found branch.
         $CatalogId = $null
         try {
             $CatalogId = if ($PSCmdlet.ParameterSetName -eq 'ByName') { Resolve-OERCatalogId -DisplayName $DisplayName }
@@ -58,6 +59,10 @@ function Remove-OERCatalog {
                     -TargetObject $(if ($Id) { $Id } else { $DisplayName }) -Cmdlet $PSCmdlet
                 return
             }
+            # Anything else the resolver raised -- a 403, an exhausted 429, a 5xx -- is not evidence that
+            # no such catalog exists: surface it as itself, never as the not-found below.
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $CatalogId) {
             Write-CmdletError `

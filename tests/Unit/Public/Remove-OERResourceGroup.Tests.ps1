@@ -67,3 +67,40 @@ Describe 'Remove-OERResourceGroup' {
             Should -Be 1
     }
 }
+
+Describe 'Remove-OERResourceGroup with an ambiguous subscription display name' {
+    # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and its subscription
+    # list answers with two subscriptions that share the display name 'Dup Sub'. A resource group
+    # delete removes everything in it, so an arbitrary one of the two subscriptions must never be
+    # picked. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+            [PSCustomObject]@{ value = @(
+                [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Dup Sub' }
+                [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000002'; displayName = 'Dup Sub' }
+            ) }
+        } -ParameterFilter { $Path -eq '/subscriptions?api-version=2022-12-01' -and $All }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw "unexpected ARM call: $Method $Path" }
+    }
+
+    It 'reports InvalidScope carrying both candidate ids, and sends no DELETE' {
+        $Err = $null
+        Remove-OERResourceGroup -Subscription 'Dup Sub' -Name 'rg-net' -Confirm:$false `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+
+        # Positive proof first: the subscription list was read, exactly once. Then the write: no DELETE
+        # went to any subscription. Only then is the call count held to that single read.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly
+
+        $Mine = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidScope,Remove-OERResourceGroup' })
+        $Mine.Count | Should -Be 1
+        $Mine[0].Exception.Message | Should -BeLike "Subscription display name 'Dup Sub' matches 2 subscriptions (aaaa1111-0000-0000-0000-000000000001, aaaa1111-0000-0000-0000-000000000002). *Re-run with the subscription id."
+    }
+}

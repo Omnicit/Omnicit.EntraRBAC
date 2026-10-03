@@ -16,6 +16,8 @@ function Set-OERResourceGroup {
 
     .PARAMETER Subscription
     A subscription GUID or display name. Bound from the pipeline by property name (SubscriptionId).
+    A display name that several subscriptions share is refused, naming the candidates;
+    use the subscription id.
 
     .PARAMETER Name
     The resource group name to update. Bound from the pipeline by property name (ResourceGroup).

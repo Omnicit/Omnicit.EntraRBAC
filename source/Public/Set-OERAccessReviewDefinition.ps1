@@ -52,8 +52,10 @@ function Set-OERAccessReviewDefinition {
     .PARAMETER Id
     The access review definition id (GUID) or display name to update. Accepts pipeline input by
     property name. A GUID is used verbatim with no Graph call; a display name is resolved to an id
-    via Resolve-OERAccessReviewDefinitionId, which returns the FIRST matching definition with no
-    ambiguity check -- the same behaviour as this resolver's other six call sites in the module.
+    via Resolve-OERAccessReviewDefinitionId. A display name that matches more than one definition is
+    refused with an AmbiguousName error that lists the candidate ids, and nothing is read or written:
+    Microsoft Graph does not enforce unique access review definition display names, so a shared name
+    cannot identify a single definition. Re-run with the definition id.
 
     .PARAMETER DisplayName
     New display name for the access review definition.
@@ -258,16 +260,21 @@ function Set-OERAccessReviewDefinition {
 
         # Resolve -Id to the definition id before the read-modify-write GET. A GUID is returned
         # verbatim with no Graph call (Resolve-OERAccessReviewDefinitionId), so a GUID caller stays
-        # byte-identical to the pre-Task-4b behaviour. Any resolve failure (Graph throttling, auth,
-        # or a genuine no-match) collapses into the SAME AccessReviewDefinitionNotFound error this
-        # cmdlet already emitted for a definition that vanished between the resolve and the GET --
-        # mirroring Remove-OERAccessReviewDefinition's fold of the two failure modes into one outcome.
-        $DefId = try {
-            Resolve-OERAccessReviewDefinitionId -DisplayName $Id
+        # byte-identical to the pre-Task-4b behaviour. A resolve that FAILS (Graph throttling, auth,
+        # a 5xx) is not evidence that no such definition exists: the record is published as itself
+        # and nothing is read or written after it, whatever the resolver threw. That includes a
+        # display name that more than one definition carries (AmbiguousName, with the candidate ids):
+        # Graph does not enforce unique review names, so the overwrite is refused rather than aimed at
+        # an arbitrary one of them. Only a $null answer (a genuine no-match) is
+        # AccessReviewDefinitionNotFound -- the same error this cmdlet emits for a definition that
+        # vanished between the resolve and the GET below.
+        try {
+            $DefId = Resolve-OERAccessReviewDefinitionId -DisplayName $Id
         }
         catch {
             Remove-OERErrorRecord -Record $PSItem
-            $null
+            $PSCmdlet.WriteError($PSItem)
+            return
         }
         if (-not $DefId) {
             Write-CmdletError `
@@ -384,6 +391,13 @@ function Set-OERAccessReviewDefinition {
 
             $Resolved = Resolve-OERReviewerScope @ReviewerParams
             if ($Resolved.FailedValue) {
+                # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user
+                # or group exists: re-publish the caught record as itself, never as
+                # "<Kind> '<Value>' not found."
+                if ($Resolved.FailedRecord) {
+                    $PSCmdlet.WriteError($Resolved.FailedRecord)
+                    return
+                }
                 # Prefer the resolver's own ErrorId/message (an ambiguous name names the candidate ids).
                 $ReviewerErrorId = if ($Resolved.FailedErrorId) { $Resolved.FailedErrorId } else { "$($Resolved.FailedKind)NotFound" }
                 $ReviewerMessage = if ($Resolved.FailedMessage) { $Resolved.FailedMessage } else { "$($Resolved.FailedKind) '$($Resolved.FailedValue)' not found." }

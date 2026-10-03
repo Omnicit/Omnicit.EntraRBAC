@@ -222,13 +222,34 @@ Describe 'Set-OERGroupPimPolicy' {
         $Text | Should -Match 'object id'
     }
 
-    It 'leaves no record in $Error when the group resolver fails' {
+    It 'reports a failed group resolver as itself, exactly once, and never as GroupNotFound' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth { }
         Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'transport failure' }
         $Error.Clear()
         Set-OERGroupPimPolicy -Group 'grp' -ActivationMaxHours 4 -ErrorAction SilentlyContinue | Out-Null
-        # Only the cmdlet's own GroupNotFound record may remain; the swallowed resolver throw must not.
-        @($Error).Exception.Message -join ';' | Should -Not -Match 'transport failure'
+        # Supersedes 'leaves no record in $Error when the group resolver fails', which pinned the old
+        # swallow-then-GroupNotFound path. The failure is now reported as itself and once: exactly one
+        # record remains, the failure and not a GroupNotFound. This is the CONTRACT, not the scrub
+        # proof: the catch re-publishes the caught record, so the same single record is there whether
+        # or not Remove-OERErrorRecord ran. The scrub has its own test below.
+        @($Error).Count | Should -Be 1
+        $Error[0].Exception.Message | Should -Match 'transport failure'
+        $Error[0].FullyQualifiedErrorId | Should -Not -Match 'GroupNotFound'
+    }
+
+    It 'scrubs the failed group resolver record before re-publishing it (bearer hygiene)' {
+        # The catch re-publishes the caught record with $PSCmdlet.WriteError($PSItem), the same shape as a
+        # bare re-throw: the same exception instance reaches $Error with or without the scrub, so an
+        # $Error-based proof passes with the Remove-OERErrorRecord line deleted. The prescribed proof
+        # (rationale.md, #bearer-scrub-tests) guards the call directly: mock it and require exactly
+        # one call, filtered to THIS record so no other catch on the path can satisfy it.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { throw 'transport failure' }
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        Set-OERGroupPimPolicy -Group 'grp' -ActivationMaxHours 4 -ErrorAction SilentlyContinue | Out-Null
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'transport failure'
+        }
     }
 
     It 'leaves no DUPLICATE record in $Error when the policy resolver fails' {
