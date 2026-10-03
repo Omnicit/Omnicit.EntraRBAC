@@ -61,8 +61,10 @@ onto `main` before it merges.
   `Failed` row with one record whose message says a re-run usually applies it -- `ResourceNotFound`
   for a time-bound eligibility, `GroupNotOnboarded` for a permanent one, the ids those rows already
   carried; a refusal (403, a throttle the transport could not ride out, a 5xx) is reported as
-  itself and never waited on. A group that already existed is unchanged: no probe, no wait, the
-  same cmdlet call.
+  itself and never waited on. A request Graph accepts but answers with status `Failed` -- the second
+  phase of the same replication, found by this file's first run (1.2 and 1.3, correction round 1) --
+  is waited out the same way, in both steps ("wait out a new group's accepted-but-failed eligibility
+  request"). A group that already existed is unchanged: no probe, no wait, the same cmdlet call.
 - **B. A refused write: the records it leaves were measured, and nothing changed.** The claim from
   Sprint 6 -- "a refused Graph write leaves four records in `-ErrorVariable`, one of them empty" --
   was measured with the transport mocked: the count depends on the cmdlet (2 for
@@ -325,6 +327,8 @@ Connect-OerLive -Arm
         $Answer = & $script:S73Transport @PSBoundParameters
         if ($null -ne $Answer -and @($Answer.PSObject.TypeNames) -contains 'Omnicit.EntraRBAC.GraphExpectedError') {
             $script:S73Declared.Add("$($Method.ToUpperInvariant()) $Path answered $($Answer.StatusCode) $($Answer.ExpectedErrorCode)")
+        } elseif ($Method -ne 'GET' -and $Answer -is [System.Collections.IDictionary] -and $Answer.Contains('status')) {
+            $script:S73Declared.Add("$($Method.ToUpperInvariant()) $Path accepted, request status $([string]$Answer['status'])")
         }
         $Answer
     }
@@ -356,14 +360,19 @@ Disconnect-OerLive
 **Expect:** two rows -- `Created` `created group oer-s73-new (...)` and `Updated` `set time-bound
 member eligibility for 'oer-s73-user1@example.com' (5 days): ...` (the handler reports an applied
 eligibility as `Updated`, as it reports every child it adds; the GROUP row is the one that is
-`Created`); `records in -ErrorVariable: 0`, no warning. The wait: each 404 Graph gave the eligibility
-request shows as one `Wait:` line and one `answered 404 ResourceNotFound` entry, and the requests that
-are not a GET are the group's POST and then the eligibility POST once per attempt (404s plus one).
-Zero waits is a pass too -- Graph knew the group at once -- and is recorded as such.
+`Created`); `records in -ErrorVariable: 0`, no warning. The wait: a new group goes through two phases
+of replication in PIM for Groups, measured in this file's first run -- the request answers 404
+(`answered 404 ResourceNotFound`), then it is accepted but answers request status `Failed`. Each such
+answer shows as one `Wait:` line and one entry in the declared/accepted list, and the requests that
+are not a GET are the group's POST and then the eligibility POST once per attempt; the last entry is
+`accepted, request status Provisioned` (or another status that is not `Failed`). Zero waits is a pass
+too -- Graph knew the group at once -- and is recorded as such. 1.3 is what proves the eligibility
+exists.
 **Failure looks like:** a `Failed` row -- its Detail says whether the budget ran out
 (`within the 30-second wait` ... `replication delay`, re-run once 1.3 shows nothing) or Graph refused
 the request (the record says which); any record in `-ErrorVariable` on a run that ended `Created`
-and `Updated` -- that is the defect this branch closes.
+and `Updated` -- that is the defect this branch closes; a last accepted entry with request status
+`Failed` beside an `Updated` row -- the second phase was not waited out.
 
 Result:
 
@@ -514,10 +523,13 @@ foreach ($Name in $Calls.Keys) {
     $I = 0
     foreach ($E in @($S73Err)) {
         $I++
-        $Msg = [string]$E.Exception.Message
+        $IsRecord = $E -is [System.Management.Automation.ErrorRecord]
+        $Ex = if ($IsRecord) { $E.Exception } else { $E }
+        $Msg = [string]$Ex.Message
         if ($Msg.Length -gt 90) { $Msg = $Msg.Substring(0, 90) + '...' }
-        $Who = if ($E.InvocationInfo -and $E.InvocationInfo.MyCommand) { $E.InvocationInfo.MyCommand.Name } else { '(none)' }
-        Write-OerLiveStep "  $I. $($E.FullyQualifiedErrorId) [$($E.GetType().Name) / $($E.Exception.GetType().Name)] by $Who -- $Msg"
+        $Who = if ($IsRecord -and $E.InvocationInfo -and $E.InvocationInfo.MyCommand) { $E.InvocationInfo.MyCommand.Name } else { '(none)' }
+        $Id = if ($IsRecord) { [string]$E.FullyQualifiedErrorId } else { '(no error id: a bare exception)' }
+        Write-OerLiveStep "  $I. $Id [$($E.GetType().Name)$(if ($IsRecord -and $Ex) { ' / ' + $Ex.GetType().Name })] by $Who -- $Msg"
     }
 }
 Disconnect-OerLive
