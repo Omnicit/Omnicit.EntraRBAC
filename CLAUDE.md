@@ -662,8 +662,8 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `*NotFound` -- a COHORT check holds that, not a helper.**
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
   `$script:GuardCases` list with an ambiguous name and with a 403, so a new public call site of an
-  ambiguity-refusing `Resolve-OER*Id` helper joins that list.
-  `Why: docs/development/rationale.md#bearer-scrub-tests`
+  ambiguity-refusing `Resolve-OER*Id` helper joins that list. The 403 case narrows to the cmdlet's
+  own record: `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.
