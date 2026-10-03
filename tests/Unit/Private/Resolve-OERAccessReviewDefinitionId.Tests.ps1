@@ -85,7 +85,7 @@ Describe 'Resolve-OERAccessReviewDefinitionId' {
             # the refusal only when the read is made with -All.
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 param($Uri, [switch]$All)
-                if ($All) {
+                if ($All -and $Uri -like '*accessReviews/definitions*') {
                     @{ value = @(
                             @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup' },
                             @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup' }) }
