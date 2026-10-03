@@ -39,8 +39,12 @@ function Sync-OERStructureAccessPackage {
        the catalog -- so a renamed group is found under its CURRENT name, and never confused with
        another resource the catalog recorded under that name; else the catalog resource recorded
        under that display name (Get-OERCatalogResource; applications, SharePoint sites, and a group
-       under the name the catalog recorded); else the group's id. Existing bindings are read via a raw
-       Graph call against resourceRoleScopes.
+       under the name the catalog recorded); else the group's id. A name that SEVERAL catalog
+       resources carry is refused rather than resolved to the first of them (a catalog does not
+       enforce unique resource display names): that entry gets one Failed row and one AmbiguousName
+       error naming every candidate origin id, no binding is added for it, and it counts as
+       unresolved for the withheld prune below. Declare such a resource by its object id instead.
+       Existing bindings are read via a raw Graph call against resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
 
@@ -79,7 +83,8 @@ function Sync-OERStructureAccessPackage {
 
     Withheld prune: a declared resourceRoles entry is unresolved when its resource name matches no
     resource in the catalog by display name and Resolve-OERGroupId finds no group by that name
-    either. Such an entry carries no origin id, so the pass cannot tell which live binding it names,
+    either, and also when it matches SEVERAL catalog resources (refused, see above). Such an entry
+    carries no origin id, so the pass cannot tell which live binding it names,
     and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
     every undeclared live binding of the package is reported Skipped, with a Detail that starts
     "prune withheld: declared entry '<resource>' could not be resolved" (several unresolved entries:
@@ -88,8 +93,8 @@ function Sync-OERStructureAccessPackage {
     entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
     the text). The unresolved entry keeps its own Failed record (the record is lost only when the
     handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
-    finding nothing, is not caught by this handler (a name matching several groups only once the
-    catalog's recorded names cannot decide either): it ends the item where it is thrown, neither the
+    finding nothing, is not caught by this handler (a name matching several groups, once no catalog
+    resource carries that name either): it ends the item where it is thrown, neither the
     resource role prune nor the assignment policy step runs, and the engine reports the item as one
     Failed ("handler error") record, discarding every record the handler had already emitted for it
     (a Created package or an added binding stands with no row).
@@ -120,7 +125,7 @@ function Sync-OERStructureAccessPackage {
     only: an undeclared assignment policy is always reported as Extra and is never removed, with
     or without -Prune -- call Remove-OERAccessPackageAssignmentPolicy directly to delete one.
     While a declared resourceRoles entry cannot be resolved (its resource matches no catalog
-    resource and no group), no binding is removed or reported Extra: every undeclared live binding
+    resource and no group, or several catalog resources), no binding is removed or reported Extra: every undeclared live binding
     is reported Skipped with a Detail starting "prune withheld:", with or without this switch. A
     lookup that throws aborts the item instead, before the resource role prune.
 
@@ -414,7 +419,8 @@ function Sync-OERStructureAccessPackage {
                 #    the catalog recorded for another resource -- or the binding would be matched to
                 #    the wrong resource and the right one read as undeclared.
                 # 2. The catalog resource recorded under that display name (an application, a
-                #    SharePoint site, or a group under the name the catalog recorded).
+                #    SharePoint site, or a group under the name the catalog recorded), when exactly
+                #    one resource carries it. Several do not decide: see the refusal below.
                 # 3. The group's id even when it is not in the catalog (adding the binding then fails).
                 # A name matching several groups is set aside while step 2 can still decide; it is
                 # thrown when step 2 cannot. Any other failure of the lookup throws at once.
@@ -433,9 +439,39 @@ function Sync-OERStructureAccessPackage {
                 }
 
                 if (-not $OriginId) {
-                    $MatchedCatRes = $CatResources | Where-Object { $_.DisplayName -eq $ResName } | Select-Object -First 1
-                    if ($MatchedCatRes) {
-                        $OriginId = $MatchedCatRes.OriginId
+                    # Every match is kept, never just the first (decision D4). A catalog does NOT enforce
+                    # unique resource display names -- two same-named groups, an application and a group,
+                    # two sites -- so taking the first of several would bind the role to an arbitrary one,
+                    # and under -Prune the binding of the right one would read as undeclared and be
+                    # removed. More than one match refuses THIS entry and counts it as unresolved, exactly
+                    # as a name that matches no resource at all: it carries no binding key, so the prune
+                    # pass below withholds every live binding of the package until the document names
+                    # the resource by its object id (ConvertTo-OERPruneWithheldResult owns that rule, and
+                    # this change does not touch it). The refusal sits before ShouldProcess, so it reads
+                    # the same under -WhatIf, and the package's other declared entries carry on. It also
+                    # holds while a name matching several groups is set aside: the catalog cannot decide
+                    # either, and that case used to bind the first resource. One match and no match are
+                    # exactly what they were.
+                    $MatchedCatRes = @($CatResources | Where-Object { $_.DisplayName -eq $ResName })
+                    if ($MatchedCatRes.Count -gt 1) {
+                        $AmbiguousIds = ($MatchedCatRes | ForEach-Object { [string]$_.OriginId }) -join ', '
+                        $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new(
+                                "Resource name '$ResName' matches $($MatchedCatRes.Count) resources of catalog '$($Item.catalog)' ($AmbiguousIds). " +
+                                'A catalog does not enforce unique resource display names, so this name ' +
+                                'cannot identify a single resource. Declare the resource by its object id instead.'),
+                            'AmbiguousName',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $ResName)
+                        $Caller.WriteError($AmbiguousRecord)
+                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                            -Detail "$($MatchedCatRes.Count) resources of catalog '$($Item.catalog)' are named '$ResName' ($AmbiguousIds); no resourceRole was added for it" `
+                            -ErrorRecord $AmbiguousRecord
+                        $ResourceRoleUnresolved.Add($ResName)
+                        continue
+                    }
+                    if ($MatchedCatRes.Count -eq 1) {
+                        $OriginId = $MatchedCatRes[0].OriginId
                     }
                 }
 
