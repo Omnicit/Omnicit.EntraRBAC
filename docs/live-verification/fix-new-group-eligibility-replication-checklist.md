@@ -124,7 +124,7 @@ an error naming the method and path.
 
 ### S.1. Point the clone at this branch and build it
 
-- [ ] **S.1** The clone OerLive loads from holds this branch's build.
+- [x] **S.1** The clone OerLive loads from holds this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -149,13 +149,21 @@ branch's fix: True`.
 exit code other than 0; `False` -- the clone did not get this branch, and every check below would
 measure `main`.
 
-Result:
+Result: 2026-10-03 20:41 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. 0 tracked changes in the clone; the clone at the branch head 0d52837; build exit 0; the built module carries the fix: True.
+
+[oer-s73] Tracked changes in the clone before the switch: 0
+[oer-s73] Clone at: 0d52837 docs: add the live-verification checklist for the new-group eligibility wait
+[oer-s73] Build exit code: 0; the built module carries this branch's fix: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, Graph and the module session
 
-- [ ] **0.1** Both sign-ins pass the identity check, and the module is this branch's build.
+- [x] **0.1** Both sign-ins pass the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -178,11 +186,34 @@ belongs to the test tenant and is Enabled), each sign-in ending `identity check 
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-03 20:42 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the Graph sign-in and the module session (app-only, app id, app name oer-live-cc, test tenant, service principal named oer-live-cc and, for the module session, the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the subscription belongs to the test tenant and is Enabled); the module is the clone's build.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s73] The module is the clone's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, the module session and Graph
 
-- [ ] **0.2** The no-permission identity signs in to a module session and to Graph.
+- [x] **0.2** The no-permission identity signs in to a module session and to Graph.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -199,11 +230,28 @@ the app name in the session is `oer-live-cc-noperm`: `True`, the test tenant `Tr
 session the ARM token from the certificate `True`, and `identity check passed: True`.
 **Failure looks like:** any `False` -- STOP; section 2 needs both sessions.
 
-Result:
+Result: 2026-10-03 20:42 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. oer-live-cc-noperm in the module session and on Graph: app-only with its app id, app name oer-live-cc-noperm, test tenant, and (module session) the ARM token from the certificate -- all True; both identity checks passed.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc-noperm: identity check passed: True
+```
 
 ### 0.3. The prerequisite script's plan
 
-- [ ] **0.3** `-WhatIf` plans only `oer-s73-` objects in the tenant.
+- [x] **0.3** `-WhatIf` plans only `oer-s73-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -226,11 +274,35 @@ user `oer-s73-user1` -- one tenant target, starting with `oer-s73-`;
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
-Result:
+Result: 2026-10-03 21:34 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (round 1 re-run, after the round-0 objects were torn down and read back clean; round 0's run gave the same plan plus the baseline write). Identity check passed; no residue; the sweep found no oer-s73- object; the baseline exists (users 22, groups 97); 2 What-if targets: the transcript under raw\s73\ and, in the tenant, oer-s73-user1 with the prefix; nothing written; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s73\prereq-20261003-213433Z.log".
+[oer-s73] Mode: CREATE or complete. Prefix 'oer-s73-'. Objects (fixed): oer-s73-user1; the checklist's own group oer-s73-new. OerLive 1.0.2.
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Residue: raw\residue.json holds no rows.
+[oer-s73] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s73-' is left.
+[oer-s73] Found: oer-s73-user1 exists: False; oer-s73-new exists: False.
+[oer-s73] The baseline exists (users 22, groups 97 when it was written).
+What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s73-user1".
+[oer-s73] Summary: oer-s73-user1 absent; the checklist's own writes: oer-s73-new absent, eligibility absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s73] WhatIf: nothing was created, removed or written.
+[oer-s73] Done.
+[oer-s73] What-if targets: 2; in the tenant: 1; every tenant target starts with oer-s73-: True; exit code: 0
+```
 
 ### 0.4. The prerequisite script, for real
 
-- [ ] **0.4** The disabled test user exists.
+- [x] **0.4** The disabled test user exists.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -249,7 +321,35 @@ and the checklist's own writes (`oer-s73-new`, eligibility) `absent`; exit code 
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.4 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-03 21:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (round 1 re-run; round 0 wrote the baseline: users 22, groups 97). The baseline exists; user oer-s73-user1 created disabled (201), resolving by its user principal name after 4 reads (14.3 s; the same UPN was deleted minutes earlier); summary: the user present, the checklist's own writes absent; exit code 0.
+
+[oer-s73] Transcript (redacted): raw\s73\prereq-20261003-213448Z.log; OerLive 1.0.2.
+[oer-s73] Mode: CREATE or complete. Prefix 'oer-s73-'. Objects (fixed): oer-s73-user1; the checklist's own group oer-s73-new. OerLive 1.0.2.
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s73] Residue: raw\residue.json holds no rows.
+[oer-s73] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s73-' is left.
+[oer-s73] Found: oer-s73-user1 exists: False; oer-s73-new exists: False.
+[oer-s73] The baseline exists (users 22, groups 97 when it was written).
+[oer-s73] Created user oer-s73-user1 (disabled): 201.
+[oer-s73] oer-s73-user1 resolves by its user principal name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s73] oer-s73-user1 resolves by its user principal name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s73] oer-s73-user1 resolves by its user principal name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s73] oer-s73-user1 resolves by its user principal name: converged after 4 read(s), 14.3 s.
+[oer-s73] Summary: oer-s73-user1 present; the checklist's own writes: oer-s73-new absent, eligibility absent; written to the tenant: True.
+[oer-s73] Done.
+[oer-s73] Exit code: 0
+```
 
 ### 1. A new group and its eligibility in one run, as oer-live-cc
 
@@ -260,7 +360,7 @@ Graph learned about a second earlier.
 
 ### 1.1. The apply document's plan: the group would be created, nothing written
 
-- [ ] **1.1** `-WhatIf` plans the group and its eligibility, behind the read-only fence.
+- [x] **1.1** `-WhatIf` plans the group and its eligibility, behind the read-only fence.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -303,11 +403,31 @@ request a GET (the group's name lookup), `refused by the fence: 0`.
 **Failure looks like:** a row other than `Skipped`; a request refused by the fence -- a write was
 attempted under `-WhatIf`.
 
-Result:
+Result: 2026-10-03 21:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (round 1 re-run, build 12c2a26). Two rows, both Skipped: would create group oer-s73-new, and would configure eligibility for oer-s73-user1 after group is created; no record, no warning; one request, the GET of the group's name lookup; refused by the fence: 0.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create group" on target "oer-s73-new".
+[oer-s73] Row: groups | oer-s73-new | Skipped | would create group oer-s73-new
+[oer-s73] Row: groups | oer-s73-new | Skipped | would configure eligibility for 'oer-s73-user1@example.com' after group is created
+[oer-s73] Rows: 2; by action: Skipped 2; records in -ErrorVariable: 0
+[oer-s73] Requests: 1 [GET v1.0/groups]; refused by the fence: 0
+```
 
 ### 1.2. The apply document, for real: group and eligibility in the same run, no error record
 
-- [ ] **1.2** The group is `Created` and its eligibility applied in the same run, with 0 records in `-ErrorVariable`; the wait is recorded.
+- [x] **1.2** The group is `Created` and its eligibility applied in the same run, with 0 records in `-ErrorVariable`; the wait is recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -374,11 +494,33 @@ the request (the record says which); any record in `-ErrorVariable` on a run tha
 and `Updated` -- that is the defect this branch closes; a last accepted entry with request status
 `Failed` beside an `Updated` row -- the second phase was not waited out.
 
-Result:
+Result: 2026-10-03 21:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (round 1 re-run on a fresh group, build 12c2a26). Group Created and its five-day member eligibility applied (Updated) in the same run, with 0 records in -ErrorVariable and no warning. Graph answered the new group's eligibility request with 404 ResourceNotFound twice (waited 2 s and 4 s, 6 s of the 30 s budget), then accepted the third with request status Provisioned; the whole apply took 11.6 s. The accepted-but-Failed phase that round 0 met (its request answered status Failed and no schedule was created, while the handler said Updated) did not occur this time; it is proven by the unit tests of correction round 1. 1.3 confirms the schedule.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Row: groups | oer-s73-new | Created | created group oer-s73-new (00000000-0000-0000-0000-000000000006)
+[oer-s73] Row: groups | oer-s73-new | Updated | set time-bound member eligibility for 'oer-s73-user1@example.com' (5 days): time-bound member eligibility (5 days) is absent
+[oer-s73] Wait: Sync-OERStructureGroup: eligibility for 'oer-s73-user1@example.com' (member) on new group 'oer-s73-new' answers 404 (not known to PIM for Groups yet); retry 1 in 2 s.
+[oer-s73] Wait: Sync-OERStructureGroup: eligibility for 'oer-s73-user1@example.com' (member) on new group 'oer-s73-new' answers 404 (not known to PIM for Groups yet); retry 2 in 4 s.
+[oer-s73] Rows: 2; by action: Created 1, Updated 1; records in -ErrorVariable: 0
+[oer-s73] Wait: 2 line(s), 6 s of the 30 s budget; the whole apply took 11.6 s
+[oer-s73] Requests: 7; not a GET: 4 [POST v1.0/groups; POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests; POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests; POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests]; answered with a declared code: 3 [POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests answered 404 ResourceNotFound; POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests answered 404 ResourceNotFound; POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests accepted, request status Provisioned]
+```
 
 ### 1.3. Read back: the eligibility exists, for oer-s73-user1, five days
 
-- [ ] **1.3** Graph lists exactly one member eligibility in `oer-s73-new`, for `oer-s73-user1`, ending five days after it starts.
+- [x] **1.3** Graph lists exactly one member eligibility in `oer-s73-new`, for `oer-s73-user1`, ending five days after it starts.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -412,11 +554,27 @@ five days after the start (`afterDuration` `P5D`, or `afterDateTime` with `days 
 **Failure looks like:** no row after the budget -- the apply reported a success Graph does not show;
 a row for anyone else, or of another access type.
 
-Result:
+Result: 2026-10-03 21:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (round 1). One group, security True, role-assignable False; one user; the eligibility converged on the first read (0.4 s): one row, oer-s73-user1, member; status Provisioned, member type direct, expiration afterDateTime ending 5 days after its start. (Round 0: no schedule after 180 s -- its request had answered status Failed; see the step report.)
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] oer-s73-new: 1 group(s), security True, role-assignable False; oer-s73-user1: 1 user(s)
+[oer-s73] oer-s73-new lists one member eligibility of oer-s73-user1: converged after 1 read(s), 0.4 s.
+[oer-s73] Eligibility: status Provisioned; member type direct; expiration afterDateTime ; days from start to end: 5
+```
 
 ### 1.4. The same document again: only Unchanged, nothing written (G8)
 
-- [ ] **1.4** Run twice, the document converges: the second run is all `Unchanged`, writes nothing and waits for nothing.
+- [x] **1.4** Run twice, the document converges: the second run is all `Unchanged`, writes nothing and waits for nothing.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -461,7 +619,26 @@ group now exists, and a group that already existed never waits); every request a
 **Failure looks like:** any row other than `Unchanged` -- the write does not converge; a request
 refused by the fence; a wait line.
 
-Result:
+Result: 2026-10-03 21:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (G8, round 1). The same document again: two rows, both Unchanged -- group properties match, and the member eligibility of oer-s73-user1 already matches; no record, no warning, no wait line (the group now exists, and a group that already existed never waits); 5 requests, all GET, refused by the fence: 0.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Row: groups | oer-s73-new | Unchanged | group properties match
+[oer-s73] Row: groups | oer-s73-new | Unchanged | eligibility for 'oer-s73-user1@example.com' (member) already matches
+[oer-s73] Rows: 2; by action: Unchanged 2; records in -ErrorVariable: 0; wait lines: 0
+[oer-s73] Requests: 5; not a GET: 0; refused by the fence: 0
+```
 
 ### 2. Refused writes, as oer-live-cc-noperm: the records each one leaves, on this branch and on main
 
@@ -477,7 +654,7 @@ nothing was written.
 
 ### 2.1. This branch: the refused writes and their records
 
-- [ ] **2.1** Every call is refused by Graph, and the records each leaves are counted and described.
+- [x] **2.1** Every call is refused by Graph, and the records each leaves are counted and described.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -545,11 +722,63 @@ GET of the group's name lookup. The counts are the branch's half of the before/a
 identity with no permission: STOP; a cmdlet whose first request was not its write; an id ending in
 `NotFound`.
 
-Result:
+Result: 2026-10-03 20:51 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (this branch, build 0d52837; the block's record printing corrected once, see the step report). Every call refused by Graph, no output from the three cmdlets, no id ending in NotFound. Records in -ErrorVariable / of them bare exceptions with no error id (the 'ERROR []:' of Sprint 6): Add-OERGroupMember 2 / 0, Add-OERGroupEligibility 11 / 3 (PIM for Groups answers 403 PermissionScopeNotGranted), Remove-OERGroupMember 2 / 0, Invoke-OERStructure 14 / 4 (its first request, the group's name lookup GET, refused; its output is the item's Failed row). Each cmdlet sent exactly one request, its write; the engine one GET.
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s73] Add-OERGroupMember: output 0 object(s); records in -ErrorVariable: 2; empty records: 0; requests: 1 [POST v1.0/groups/00000000-0000-0000-0000-000000000003/members/$ref]
+[oer-s73]   1. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   2. Authorization_RequestDenied,Add-OERGroupMember [ErrorRecord / Exception] by Add-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73] Add-OERGroupEligibility: output 0 object(s); records in -ErrorVariable: 11; empty records: 3; requests: 1 [POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests]
+[oer-s73]   1. (no error id: a bare exception) [CmdletInvocationException] by (none) -- POST https://graph.microsoft.com/beta/identityGovernance/privilegedAccess/group/eligibilit...
+[oer-s73]   2. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   3. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   4. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   5. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   6. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   7. (no error id: a bare exception) [RuntimeException] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   8. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   9. (no error id: a bare exception) [RuntimeException] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   10. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   11. UnauthorizedAccessException,Add-OERGroupEligibility [ErrorRecord / Exception] by Add-OERGroupEligibility -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73] Remove-OERGroupMember: output 0 object(s); records in -ErrorVariable: 2; empty records: 0; requests: 1 [DELETE v1.0/groups/00000000-0000-0000-0000-000000000003/members/00000000-0000-0000-0000-000000000004/$ref]
+[oer-s73]   1. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   2. Authorization_RequestDenied,Remove-OERGroupMember [ErrorRecord / Exception] by Remove-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73] Invoke-OERStructure: output 1 object(s); records in -ErrorVariable: 14; empty records: 4; requests: 1 [GET v1.0/groups]
+[oer-s73]   1. (no error id: a bare exception) [CmdletInvocationException] by (none) -- GET https://graph.microsoft.com/v1.0/groups?$filter=displayName%20eq%20'oer-s73-new'&$sele...
+[oer-s73]   2. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   3. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   4. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   5. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   6. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   7. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   8. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   9. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   10. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   11. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   12. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   13. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   14. Authorization_RequestDenied,Invoke-OERStructure [ErrorRecord / Exception] by Invoke-OERStructure -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+```
 
 ### 2.2. main: the same refused writes on main's build
 
-- [ ] **2.2** The same four calls on `main`'s build, for the before half of the table.
+- [x] **2.2** The same four calls on `main`'s build, for the before half of the table.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -574,11 +803,66 @@ exit code: 0; the built module carries this branch's fix: False`; then 2.1's lin
 **Failure looks like:** `True` -- the clone still holds the branch, and the "before" half would
 measure the branch.
 
-Result:
+Result: 2026-10-03 20:52 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. 0 tracked changes; the clone at main's head 3a589a8; build exit 0; the fix absent (False), as it must be. main's counts are identical to the branch's in 2.1, record for record: Add-OERGroupMember 2 / 0, Add-OERGroupEligibility 11 / 3, Remove-OERGroupMember 2 / 0, Invoke-OERStructure 14 / 4 (records / bare exceptions). Before and after this branch: the same.
+
+[oer-s73] Tracked changes in the clone before the switch: 0
+[oer-s73] Clone at: 3a589a8 fix: report a failed lookup as itself, not as not found (#17)
+[oer-s73] Build exit code: 0; the built module carries this branch's fix: False
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s73] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s73] Add-OERGroupMember: output 0 object(s); records in -ErrorVariable: 2; empty records: 0; requests: 1 [POST v1.0/groups/00000000-0000-0000-0000-000000000003/members/$ref]
+[oer-s73]   1. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   2. Authorization_RequestDenied,Add-OERGroupMember [ErrorRecord / Exception] by Add-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73] Add-OERGroupEligibility: output 0 object(s); records in -ErrorVariable: 11; empty records: 3; requests: 1 [POST beta/identityGovernance/privilegedAccess/group/eligibilityScheduleRequests]
+[oer-s73]   1. (no error id: a bare exception) [CmdletInvocationException] by (none) -- POST https://graph.microsoft.com/beta/identityGovernance/privilegedAccess/group/eligibilit...
+[oer-s73]   2. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   3. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   4. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   5. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   6. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   7. (no error id: a bare exception) [RuntimeException] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   8. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   9. (no error id: a bare exception) [RuntimeException] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   10. UnauthorizedAccessException [ErrorRecord / Exception] by (none) -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73]   11. UnauthorizedAccessException,Add-OERGroupEligibility [ErrorRecord / Exception] by Add-OERGroupEligibility -- UnauthorizedAccessException: {"errorCode":"PermissionScopeNotGranted","message":"Authoriza...
+[oer-s73] Remove-OERGroupMember: output 0 object(s); records in -ErrorVariable: 2; empty records: 0; requests: 1 [DELETE v1.0/groups/00000000-0000-0000-0000-000000000003/members/00000000-0000-0000-0000-000000000004/$ref]
+[oer-s73]   1. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   2. Authorization_RequestDenied,Remove-OERGroupMember [ErrorRecord / Exception] by Remove-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73] Invoke-OERStructure: output 1 object(s); records in -ErrorVariable: 14; empty records: 4; requests: 1 [GET v1.0/groups]
+[oer-s73]   1. (no error id: a bare exception) [CmdletInvocationException] by (none) -- GET https://graph.microsoft.com/v1.0/groups?$filter=displayName%20eq%20'oer-s73-new'&$sele...
+[oer-s73]   2. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   3. InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest [ErrorRecord / HttpResponseException] by Invoke-MgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s73]   4. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   5. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   6. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   7. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   8. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   9. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   10. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   11. (no error id: a bare exception) [RuntimeException] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   12. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   13. Authorization_RequestDenied [ErrorRecord / Exception] by (none) -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s73]   14. Authorization_RequestDenied,Invoke-OERStructure [ErrorRecord / Exception] by Invoke-OERStructure -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+```
 
 ### 2.3. Back to this branch
 
-- [ ] **2.3** The clone holds this branch's build again.
+- [x] **2.3** The clone holds this branch's build again.
 
 Run the block of S.1 again, unchanged.
 
@@ -587,11 +871,19 @@ code: 0; the built module carries this branch's fix: True`.
 **Failure looks like:** `False` -- the teardown would run on `main`'s build; it does not depend on
 the module's version, but the clone must be left on the branch for the report.
 
-Result:
+Result: 2026-10-03 21:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The S.1 block again, after correction round 1: 0 tracked changes; the clone at the branch head 12c2a26; build exit 0; the built module carries the fix: True. The rest of the file ran on this build.
+
+[oer-s73] Tracked changes in the clone before the switch: 0
+[oer-s73] Clone at: 12c2a26 docs: untangle the release note's replication sentence
+[oer-s73] Build exit code: 0; the built module carries this branch's fix: True
+```
 
 ### 2.4. Read back: none of the refused writes landed
 
-- [ ] **2.4** `oer-s73-new` still has no member and exactly the one eligibility from 1.2.
+- [x] **2.4** `oer-s73-new` still has no member and exactly the one eligibility from 1.2.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -614,13 +906,27 @@ Disconnect-OerLive
 **Failure looks like:** a member, or a second eligibility row -- a refused write landed after all:
 STOP and record it.
 
-Result:
+Result: 2026-10-03 20:52 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. oer-s73-new still has 0 members and exactly one eligibility row, member Provisioned -- none of the refused writes in 2.1 and 2.2 landed. (That row is the one the diagnostic re-run after 1.3's failure provisioned, see the step report; 1.x is re-run on a fresh group after correction round 1.)
+
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] oer-s73-new: members 0; eligibility rows 1 [member Provisioned]
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans the removal of only `oer-s73-` objects.
+- [x] **T.1** `-Teardown -WhatIf` plans the removal of only `oer-s73-` objects.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -642,11 +948,41 @@ every tenant target starting with `oer-s73-`; `WhatIf: nothing was created, remo
 exit code `0`.
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-03 21:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; residue file empty; the plan removes, in the library's order, the member eligibility in oer-s73-new (step 2), the group oer-s73-new (step 5) and the user oer-s73-user1 (step 6) -- three tenant targets, every one with the prefix (the fourth target is the raw transcript); WhatIf: nothing was created, removed or written; exit code 0. The Expect's note about unreadable assignment schedules (B8) did not apply: the read answered for this group, and nothing was counted Unreadable.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s73\teardown-20261003-213632Z.log".
+[oer-s73] Mode: REMOVE. Prefix 'oer-s73-'. Objects (fixed): oer-s73-user1; the checklist's own group oer-s73-new. OerLive 1.0.2.
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Residue: raw\residue.json holds no rows.
+[oer-s73] Teardown of 'oer-s73-': users 1, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s73] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s73] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s73-new: PIM for Groups member eligibility of a principal".
+[oer-s73] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s73] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s73] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s73-new".
+[oer-s73] Teardown 6/6: the prefixed users.
+What if: Performing the operation "Delete the user (Graph v1.0 DELETE users)" on target "oer-s73-user1".
+[oer-s73] Teardown of 'oer-s73-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s73] WhatIf: nothing was created, removed or written.
+[oer-s73] Done.
+[oer-s73] What-if targets: 4; in the tenant: 3; every tenant target starts with oer-s73-: True; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Every `oer-s73-` object is removed, and the tenant's counts are back at the baseline.
+- [x] **T.2** Every `oer-s73-` object is removed, and the tenant's counts are back at the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -666,11 +1002,45 @@ show in the listing for a few seconds -- T.3 reads again); `Counts: users ... eq
 **Failure looks like:** exit code `3` -- residue: record each RESIDUE line, T.3 retries; exit code
 `1` -- read the stop line.
 
-Result:
+Result: 2026-10-03 21:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Three removals in the library's order, each answered: the member eligibility in oer-s73-new (adminRemove 201, read back as gone), the group (204), the user (204, first attempt, 0.3 s); removed 3, residue 0, unreadable 0; exit code 0. The sweep right after still listed the user and the group, deleted seconds earlier, and the user count read 23 against the baseline 22 -- the listing lag the Expect names; T.3 reads again. (The round-0 objects were torn down the same way before the round-1 re-run: removed 3, residue 0; read back clean 60 s later.)
+
+[oer-s73] Transcript (redacted): raw\s73\teardown-20261003-213654Z.log; OerLive 1.0.2.
+[oer-s73] Mode: REMOVE. Prefix 'oer-s73-'. Objects (fixed): oer-s73-user1; the checklist's own group oer-s73-new. OerLive 1.0.2.
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s73] Residue: raw\residue.json holds no rows.
+[oer-s73] Teardown of 'oer-s73-': users 1, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s73] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s73] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s73] Removed: oer-s73-new: PIM for Groups member eligibility of a principal (201).
+[oer-s73] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s73] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s73] Teardown 5/6: the prefixed groups.
+[oer-s73] Deleted: group oer-s73-new (204).
+[oer-s73] Teardown 6/6: the prefixed users.
+[oer-s73] DELETE user oer-s73-user1@example.com: 204  after 1 attempt(s), 0.3 s; first attempt no membership removed in this run.
+[oer-s73] Teardown of 'oer-s73-': removed 3, residue 0, unreadable 0.
+[oer-s73] Sweep: user 'oer-s73-user1@example.com' (00000000-0000-0000-0000-000000000007) carries the prefix.
+[oer-s73] Sweep: group 'oer-s73-new' (00000000-0000-0000-0000-000000000006) carries the prefix.
+[oer-s73] Counts: users now 23, at the baseline 22; equal: False
+[oer-s73] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s73] Done.
+[oer-s73] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** Nothing with the prefix is left, no residue, and the raw folder and the redaction map are deleted.
+- [x] **T.3** Nothing with the prefix is left, no residue, and the raw folder and the redaction map are deleted.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -695,4 +1065,26 @@ cleared.
 **Failure looks like:** a prefixed object left, or a residue row -- record it in the report, do not
 delete the raw folder.
 
-Result:
+Result: 2026-10-03 21:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Read 60 s after T.2: prefixed objects left: 0; unread collections: 0; residue rows: 0; users 22 and groups 97, both equal to the baseline; Read back clean: True; raw\s73 deleted: True; the redaction map cleared.
+
+[oer-s73] Transcript (redacted): raw\s73\readback-20261003-213824Z.log; OerLive 1.0.2.
+[oer-s73] Mode: READ BACK. Prefix 'oer-s73-'. Objects (fixed): oer-s73-user1; the checklist's own group oer-s73-new. OerLive 1.0.2.
+[oer-s73] Omnicit.EntraRBAC 1.1.1 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.1.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s73] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s73] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s73-' is left.
+[oer-s73] Counts: users now 22, at the baseline 22; equal: True
+[oer-s73] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s73] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s73] Done.
+[oer-s73] Read back clean: True
+[oer-s73] raw\s73 deleted: True
+```
