@@ -7,53 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-`Get-OERInventory` and `Export-OERInventory` no longer write a collection they could not read as an
-empty one. When the read of an access package's resource role bindings or of a catalog's resources
-fails -- refused, throttled or otherwise failed -- the document carries `"resourceRoles": null` or
-`"resources": null`, which `Invoke-OERStructure` leaves untouched, and the `InventoryPartial` error
-names the package or catalog. Earlier versions wrote `[]`, and applying that export with `-Prune`
-removed every binding or resource of the package or catalog. A failed read of the catalogs, of a
-catalog's access packages, of their assignment policies or of the names their bindings are written
-under is now reported through `InventoryPartial` too, and `schema.json` accepts `null` for
-`resources` and `resourceRoles`. When the names an access package's bindings are written under
-cannot be read, a group's binding is written under the group's object id instead of the name the
-catalog recorded, which can name another group after a rename.
+`Get-OERInventory` and `Export-OERInventory` write an access package's unread resource role
+bindings, or a catalog's unread resources, as `"resourceRoles": null` or `"resources": null`, which
+`schema.json` accepts and `Invoke-OERStructure` leaves untouched, and name the package or catalog in
+`InventoryPartial`. Earlier versions wrote `[]`, which made `-Prune` remove every binding or
+resource. `InventoryPartial` also reports a failed read of catalogs, their access packages and
+assignment policies, and binding names; without those names a group's binding is written under its
+object id, as the catalog's recorded name can belong to another group after a rename. Access
+reviews refer to a package or policy by id when its name cannot be read (reported in
+`InventoryPartial`) or when it is gone (unreported, without stray error records).
 
-A lookup that fails is now reported as that failure, not as a missing object, in the lookups named
-here. When the read behind a group, catalog, application or catalog resource name is refused,
-throttled or answered with a server error, the cmdlets that resolve one no longer report
-`GroupNotFound`, `CatalogNotFound`, `ApplicationNotFound` or `CatalogResourceNotFound`. The same
-holds for the user, group, catalog and assignment policy lookups behind the approval, requestor and
-review cmdlets, for the definition lookup of `Remove-OERAccessReviewDefinition` and
-`Set-OERAccessReviewDefinition`, and for an unreadable Tenant Profile in `Invoke-OERStructure`. Only
-a name that matches nothing is not found. `Add-OERGroupEligibility` no longer says a group is not
-onboarded when its policy could not be read: it proceeds and Microsoft Graph enforces the policy.
-`Add-OERCatalogResource` adds nothing when its check for an existing resource fails, and warns,
-returning nothing, when a resource it added cannot be read back. The five access review instance
-cmdlets keep `AccessReviewDefinitionResolveFailed`, now a `ReadError` (was `ObjectNotFound`) whose
-message carries the cause.
+A refused, throttled or server-error read is now reported as such, not as a missing object, when
+resolving a group, catalog, application or catalog resource name (no longer `GroupNotFound`,
+`CatalogNotFound`, `ApplicationNotFound` or `CatalogResourceNotFound`), in the user, group, catalog
+and assignment policy lookups of the approval, requestor and review cmdlets and the definition
+lookup of `Remove-` and `Set-OERAccessReviewDefinition`, and for an unreadable Tenant Profile in
+`Invoke-OERStructure`. Only a name matching nothing is not found. The five access review instance
+cmdlets keep `AccessReviewDefinitionResolveFailed`, now a `ReadError` (was `ObjectNotFound`)
+carrying the cause. `Add-OERGroupEligibility` no longer calls a group not onboarded when its policy
+cannot be read, but proceeds, letting Graph enforce it. `Add-OERCatalogResource` adds nothing when
+its existence check fails, and warns, returning nothing, if it cannot read back what it added.
+Principal, PIM approver and Azure role definition lookups still report a failed read as
+`PrincipalNotFound`, `ApproverNotFound` or `RoleDefinitionNotFound`.
 
-A name that several objects share is now refused with `AmbiguousName`, naming the candidates, where
-earlier versions acted on the first match: an access review definition
-(`Remove-OERAccessReviewDefinition -DisplayName` could delete, and `Set-OERAccessReviewDefinition`
-overwrite, a definition other than the one meant), an assignment policy of an access package, a
-resource role of a catalog resource (`Add-OERAccessPackageResourceRole`), and a subscription or
-management group display name in the Azure cmdlets (reported as `InvalidScope`, or
-`ManagementGroupNotFound` by `Get-OERSubscription`, as a name that does not exist already is).
-`Invoke-OERStructure` reports such an entry `Failed` and writes nothing for it; a binding whose
-resource name can identify more than one resource, or only a group outside the catalog, is `Failed`
-too, and the package's binding prune is withheld.
+An ambiguous name is now refused with `AmbiguousName`, naming the candidates, instead of using the
+first match: an access review definition (`Remove-OERAccessReviewDefinition -DisplayName` could
+delete, and `Set-OERAccessReviewDefinition` overwrite, another one), an access package's assignment
+policy, a catalog resource's role (`Add-OERAccessPackageResourceRole`), and a subscription or
+management group name in the Azure cmdlets (reported as `InvalidScope`, or
+`ManagementGroupNotFound` by `Get-OERSubscription`, as a missing name is). `Invoke-OERStructure`
+reports such an entry `Failed` and writes nothing for it; a binding whose resource name can match
+several resources, or only a group outside the catalog, is `Failed` too, and the package's binding
+prune is withheld.
 
-An administrative unit's scoped roles are no longer removed under `-Prune` when the directory role
-names cannot be read: the unit is `Failed` and nothing is removed, where earlier versions removed
-every scoped role declared by name. `Get-OERInventory` writes an access review whose package or
-policy name cannot be read by id and names it in `InventoryPartial`; one whose package or policy no
-longer exists is written by id with nothing reported and no stray error records. An administrative
-unit whose directory role names cannot be read is exported with `"scopedRoles": null` and named in
-`InventoryPartial`.
+`Invoke-OERStructure -Prune` no longer removes an administrative unit's scoped roles when directory
+role names cannot be read: the unit is `Failed`, where earlier versions removed every scoped role
+declared by name. Such a unit exports as `"scopedRoles": null`, named in `InventoryPartial`. Under
+`-Prune` the engine also warns once, not twice, before removing a scoped role or Azure role
+assignment.
 
-Lookups of principals, PIM policy approvers and Azure role definitions still report a failed read
-as not found (`PrincipalNotFound`, `ApproverNotFound`, `RoleDefinitionNotFound`).
+`Invoke-OERStructure` now applies a PIM for Groups eligibility declared for a group the same run
+creates. Until PIM for Groups knows a new group, Graph can answer its eligibility request with 404
+`ResourceNotFound`, or accept the request and fail it; on the 404, earlier versions could fail with
+many error records until a re-run. The engine waits both out within the same 30-second budget per
+group it spends on the group's PIM policy, so the wait itself leaves no error records; once the
+budget is spent the row is `Failed`, saying a re-run usually applies it. A permanent eligibility
+first waits likewise until the group's policy is listed and readable; an existing group never waits.
 
 ## [1.1.0] - 2026-10-01
 

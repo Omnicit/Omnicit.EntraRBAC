@@ -658,6 +658,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   display-name lookup interpolating a caller-supplied value into a `$filter=... eq '...'` URL must
   escape through it. Four deliberate exceptions exist; a new unescaped site is a bug, not the house
   style. `Why: docs/development/rationale.md#odata-escaping`
+- **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
+  `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal,
+  PIM approver and Azure role definition lookups are the decided exception, still publishing a
+  failed read as `PrincipalNotFound`, `ApproverNotFound` or `RoleDefinitionNotFound` -- never "fix"
+  one of them into a changed published ErrorId.
+  `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
+  `$script:GuardCases` list with an ambiguous name and with a 403, so a new public call site of an
+  ambiguity-refusing `Resolve-OER*Id` helper joins that list. The 403 case narrows to the cmdlet's
+  own record: `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.
@@ -772,7 +781,7 @@ structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 public-cloud path stays byte-identical to what it has always been; the environment name comes from
 `Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All fifteen call sites, in ten
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All sixteen call sites, in eleven
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
 when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the

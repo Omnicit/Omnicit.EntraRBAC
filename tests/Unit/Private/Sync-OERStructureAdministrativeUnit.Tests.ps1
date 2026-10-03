@@ -285,6 +285,39 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
         }
     }
 
+    It 'streams only its own warning for a scopedRole prune, silencing the duplicate the real Remove cmdlet writes' {
+        # Remove-OERAdministrativeUnitScopedRole runs for REAL: only auth and the Graph transport are
+        # mocked, so its own "Removing scoped role membership" warning is written inside its gate. The
+        # warning stream itself is captured (3>&1): -WarningVariable would also collect a warning the
+        # cmdlet writes under a call-site SilentlyContinue, which never reaches the stream.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncAuViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Resolve-OERAdministrativeUnitId { 'au-1' }
+            $ExtraRole = [PSCustomObject]@{
+                ScopedRoleMembershipId = 'srm-extra'
+                RoleName               = 'User Administrator'
+                PrincipalId            = 'extra-principal'
+            }
+            $ExtraRole.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.AdministrativeUnitScopedRole')
+            Mock Get-OERAdministrativeUnit { [PSCustomObject]@{ Id = 'au-1'; Description = $null; Members = @(); ScopedRoles = @($ExtraRole) } }
+            Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest { if ($Method -eq 'DELETE') { return $null }; throw "unexpected $Method $Uri" }
+            $All = @(Invoke-SyncAuViaCaller -Item ([PSCustomObject]@{ displayName = 'AU-IT'; scopedRoles = @() }) -Prune -ErrorAction Stop 3>&1)
+            $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+            $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+            @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
+            # The DELETE ran, so the cmdlet passed its own gate and reached its own warning.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' -and $Uri -like '*/scopedRoleMembers/srm-extra' }
+            $Streamed.Count | Should -Be 1
+            $Streamed[0] | Should -BeLike "Sync-OERStructureAdministrativeUnit: removing undeclared scopedRole 'User Administrator'*"
+        }
+    }
+
     It 'does not prune every live member when the document declares members as null' {
         InModuleScope $script:moduleName {
             function Invoke-SyncAuViaCaller {

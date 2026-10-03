@@ -415,7 +415,7 @@ function Sync-OERStructureRoleAssignment {
                 Write-Warning "Sync-OERStructureRoleAssignment: $PruneVerb $CurLabel at scope '$RawScope'."
                 if ($Caller.ShouldProcess($RawScope, "Remove undeclared role assignment '$($Cur.RoleAssignmentId)'")) {
                     try {
-                        $null = Remove-OERRoleAssignment -Id $Cur.RoleAssignmentId -Confirm:$false -ErrorAction Stop
+                        $null = Remove-OERRoleAssignment -Id $Cur.RoleAssignmentId -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop
                         ConvertTo-OERStructureResult -Section $Section -Item $ExtraItem -Action 'Removed' `
                             -Detail "removed $CurLabel"
                     } catch {

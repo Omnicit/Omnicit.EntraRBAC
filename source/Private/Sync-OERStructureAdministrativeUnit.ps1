@@ -604,7 +604,7 @@ function Sync-OERStructureAdministrativeUnit {
                         Write-Warning "Sync-OERStructureAdministrativeUnit: $PruneVerb undeclared scopedRole '$($CurSr.RoleName)' (principal '$($CurSr.PrincipalId)') from unit '$Name'."
                         if ($Caller.ShouldProcess($Name, "Remove undeclared scopedRole '$($CurSr.RoleName)' for '$($CurSr.PrincipalId)'")) {
                             try {
-                                Remove-OERAdministrativeUnitScopedRole -Id $Auid -ScopedRoleMembershipId $CurSr.ScopedRoleMembershipId -Confirm:$false -ErrorAction Stop
+                                Remove-OERAdministrativeUnitScopedRole -Id $Auid -ScopedRoleMembershipId $CurSr.ScopedRoleMembershipId -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop
                                 ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Removed' -Detail "removed undeclared scopedRole '$($CurSr.RoleName)' (principal '$($CurSr.PrincipalId)')"
                             } catch {
                                 Remove-OERErrorRecord -Record $PSItem
