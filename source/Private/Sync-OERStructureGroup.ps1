@@ -127,18 +127,22 @@ function Sync-OERStructureGroup {
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
        selecting adminAssign or adminUpdate from the diff reason as in step 3.
-       For a group THIS RUN created, the entry first waits until Microsoft Graph lists that access
-       type's policy (Get-OERPimGroupPolicyId -NotFoundAsUnlisted, the readiness signal step 4 uses; a
-       404 counts as not listed yet) from the same shared budget, and then calls Add-OERGroupEligibility
-       once. Unlike step 3 it keeps the cmdlet, because the cmdlet's permanent pre-check and policy
-       self-heal (Get-OERGroupPermanentEligibilityState, Enable-OERGroupPermanentEligibility) are
-       behaviour the engine relies on and the cmdlet cannot declare a 404 to the transport; the
-       silent probe is what spares the caller's -ErrorVariable the records a thrown 404 would leave.
-       A budget spent with no policy listed reports Failed with a ResourceNotFound error record and a
-       replication-delay message naming a re-run, and the cmdlet is not called. A refused probe (a
-       403, for example) ends the wait at once and the cmdlet is called as for any group, and a 404
-       from the cmdlet itself after the policy was listed is reported as for any group. A group that
-       already existed never probes and never waits.
+       For a group THIS RUN created, the entry first waits, from the same shared budget, until
+       Microsoft Graph lists that access type's policy AND that policy answers its read, as step 4
+       does: Get-OERPimGroupPolicyId -NotFoundAsUnlisted, then Get-OERListedGroupPimPolicy, a 404 from
+       either counting as not there yet and a 404 on the read starting over from the listing. Only
+       then does it call Add-OERGroupEligibility, once. Listed is not enough: the cmdlet's pre-check
+       reads that same policy, and a listed policy that still answers 404 would leave it closed and
+       the permanent request refused. Unlike step 3 it keeps the cmdlet, because the cmdlet's
+       permanent pre-check and policy self-heal (Get-OERGroupPermanentEligibilityState,
+       Enable-OERGroupPermanentEligibility) are behaviour the engine relies on and the cmdlet cannot
+       declare a 404 to the transport; the silent probe is what spares the caller's -ErrorVariable the
+       records a thrown 404 would leave. A budget spent with no readable policy reports Failed with a
+       GroupNotOnboarded error record -- the id Add-OERGroupEligibility publishes for the same
+       condition -- and a replication-delay message naming a re-run, and the cmdlet is not called. A
+       refused probe (a 403 on the listing or on the read, for example) ends the wait at once and the
+       cmdlet is called as for any group, and a 404 from the cmdlet itself after the policy was read
+       is reported as for any group. A group that already existed never probes and never waits.
 
     When -Prune is set, current members not present in the declared set are removed (with
     Write-Warning) after a ShouldProcess gate. Without -Prune those extra members are reported as
@@ -1128,16 +1132,23 @@ function Sync-OERStructureGroup {
                     # engine relies on, and the cmdlet cannot declare a 404 to the transport: a 404 thrown
                     # inside it and caught here would leave its records in the caller's -ErrorVariable.
                     # So wait FIRST, silently, until Graph lists the group's policy for this access type
-                    # -- the readiness signal step 4 uses, asked with -NotFoundAsUnlisted so a 404 comes
-                    # back as the same quiet $null -- and then call the cmdlet once. The wait spends the
-                    # one shared $ReplicationRetryDelays budget. A throw from the poll is a refusal, not
-                    # replication: it is scrubbed, logged and ends the poll, and the cmdlet is called as
-                    # for any group (as step 4 does). A 404 from the cmdlet itself after the policy was
-                    # listed is reported as it is today. A group that already existed never polls.
+                    # AND that policy answers its read -- the readiness signal step 4 uses: the listing
+                    # asked with -NotFoundAsUnlisted, the read through Get-OERListedGroupPimPolicy, both
+                    # declaring the 404 so it comes back as the same quiet $null -- and then call the
+                    # cmdlet once. Listed is not enough: a policy listed a second earlier can answer its
+                    # read with 404 (measured live 2026-09-28), and the cmdlet's pre-check reads that
+                    # same policy, proceeds on a failed read, never opens the policy and has the POST
+                    # refused. A 404 on the read starts over from the listing, as in step 4. The wait
+                    # spends the one shared $ReplicationRetryDelays budget. A throw from either call is a
+                    # refusal, not replication: it is scrubbed, logged and ends the poll, and the cmdlet
+                    # is called as for any group (as step 4 does). A 404 from the cmdlet itself after the
+                    # policy was read is reported as it is today. A group that already existed never
+                    # polls.
                     $PollRefused = $false
-                    $ListedPolicyId = $null
+                    $ListedPolicy = $null
                     $Waits = 0
                     while ($true) {
+                        $ListedPolicyId = $null
                         try {
                             $ListedPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $EChange.AccessType -NotFoundAsUnlisted
                         } catch {
@@ -1146,18 +1157,32 @@ function Sync-OERStructureGroup {
                             Write-Verbose "Sync-OERStructureGroup: could not ask whether the $($EChange.AccessType) policy of new group '$Name' is listed ($($PSItem.Exception.Message)); adding the permanent eligibility for '$EPrinRef' directly."
                             break
                         }
-                        if ($ListedPolicyId) { break }
+                        if ($ListedPolicyId) {
+                            try {
+                                $ListedPolicy = Get-OERListedGroupPimPolicy -GroupId $Gid -PolicyId $ListedPolicyId -AccessType $EChange.AccessType
+                            } catch {
+                                Remove-OERErrorRecord -Record $PSItem
+                                $PollRefused = $true
+                                Write-Verbose "Sync-OERStructureGroup: could not read the listed $($EChange.AccessType) policy of new group '$Name' ($($PSItem.Exception.Message)); adding the permanent eligibility for '$EPrinRef' directly."
+                                break
+                            }
+                            if ($ListedPolicy) { break }
+                        }
                         if ($ReplicationRetryDelays.Count -eq 0) { break }
                         $Delay = $ReplicationRetryDelays.Dequeue()
                         $Waits++
-                        Write-Verbose "Sync-OERStructureGroup: the $($EChange.AccessType) policy of new group '$Name' is not listed yet, so its permanent eligibility for '$EPrinRef' waits; retry $Waits in $Delay s."
+                        $NotYet = if ($ListedPolicyId) { 'is listed but its read answers 404' } else { 'is not listed yet' }
+                        Write-Verbose "Sync-OERStructureGroup: the $($EChange.AccessType) policy of new group '$Name' $NotYet, so its permanent eligibility for '$EPrinRef' waits; retry $Waits in $Delay s."
                         Start-Sleep -Seconds $Delay
                     }
-                    if (-not $PollRefused -and -not $ListedPolicyId) {
-                        $Message = "permanent eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: Microsoft Graph does not list a PIM-for-groups policy for '$($EChange.AccessType)' access on group '$Name', created in this run, within the 30-second wait. A new group can take a while to be known to PIM for Groups (replication delay); re-running the same document usually applies it."
+                    if (-not $PollRefused -and -not $ListedPolicy) {
+                        # GroupNotOnboarded, the id Add-OERGroupEligibility publishes for the same
+                        # condition (a new group's policy not listed yet), whether the policy was never
+                        # listed or listed but never readable within the wait.
+                        $Message = "permanent eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: Microsoft Graph does not list a readable PIM-for-groups policy for '$($EChange.AccessType)' access on group '$Name', created in this run, within the 30-second wait. A new group's policies can take a while to be listed and readable (replication delay); re-running the same document usually applies it."
                         $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($Message),
-                            'ResourceNotFound',
+                            'GroupNotOnboarded',
                             [System.Management.Automation.ErrorCategory]::ObjectNotFound,
                             $Name)
                         $Caller.WriteError($ErrRec)

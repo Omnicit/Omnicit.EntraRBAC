@@ -51,9 +51,11 @@ Describe 'Sync-OERStructureGroup' {
             # same thing: Send-OERNewGroupEligibilityRequest is the time-bound write.
             Mock Send-OERNewGroupEligibilityRequest { $script:CallLog.Add('Send-OERNewGroupEligibilityRequest'); @{ id = 'req-1' } }
             Mock Add-OERGroupEligibility { $script:CallLog.Add('Add-OERGroupEligibility') }
-            # The group is created in this run, so step 4 first asks whether its policy is listed;
-            # it is, at once, so nothing waits (Start-Sleep is mocked all the same).
+            # The group is created in this run, so steps 4 and 5 first ask whether its policy is listed
+            # and readable; it is, at once, so nothing waits (Start-Sleep is mocked all the same). The
+            # read is mocked too, so no call reaches the real transport.
             Mock Get-OERPimGroupPolicyId { 'pol-member' }
+            Mock Get-OERListedGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 1 } }
             Mock Start-Sleep { }
             Mock Get-OERGroupPimPolicy { $null }
             Mock Set-OERGroupPimPolicy { $script:CallLog.Add('Set-OERGroupPimPolicy') }
@@ -3343,16 +3345,21 @@ Describe 'Sync-OERStructureGroup' {
         # ResourceNotFound, not with a refusal. For a group THIS run created, step 3 sends the
         # time-bound request through Send-OERNewGroupEligibilityRequest, which declares the 404 to the
         # transport, and waits from the same 2/4/8/16 s budget as step 4; step 5 first waits, silently,
-        # until Graph lists the group's policy and then calls Add-OERGroupEligibility once. These tests
-        # drive the REAL helper and the REAL Get-OERPimGroupPolicyId against a transport mock that
+        # until Graph lists the group's policy AND that policy answers its read, and then calls
+        # Add-OERGroupEligibility once. These tests drive the REAL helper, the REAL
+        # Get-OERPimGroupPolicyId and the REAL Get-OERListedGroupPimPolicy against a transport mock that
         # behaves like Invoke-OERGraphRequest: a code the request DECLARED comes back as the
         # GraphExpectedError marker, and any other failure is thrown as the converted record, so a
-        # missing declaration shows up as a Failed row and a wrong record count.
+        # missing declaration shows up as a Failed row and a wrong record count. $script:Calls records
+        # the order of policy listings and policy reads.
         BeforeEach {
             InModuleScope $script:moduleName {
                 $script:Slept = [System.Collections.Generic.List[int]]::new()
                 $script:Posts = 0
                 $script:Looks = 0
+                $script:Reads = 0
+                $script:Calls = [System.Collections.Generic.List[string]]::new()
+                $script:ReadDeclaredNotFound = [System.Collections.Generic.List[bool]]::new()
                 $script:PostBodies = [System.Collections.Generic.List[object]]::new()
                 $script:PostDeclaredNotFound = [System.Collections.Generic.List[bool]]::new()
                 $script:NotFoundAnswer = {
@@ -3371,7 +3378,8 @@ Describe 'Sync-OERStructureGroup' {
                 }
                 $script:Transport = {
                     param([string]$Method, [string]$Uri, $Body, [string[]]$ExpectedErrorCode,
-                        [int]$PostNotFound, [int]$NotFoundLooks, [switch]$PostForbidden, [switch]$PostOtherStatus, [switch]$ListForbidden)
+                        [int]$PostNotFound, [int]$NotFoundLooks, [switch]$PostForbidden, [switch]$PostOtherStatus, [switch]$ListForbidden,
+                        [int]$ReadNotFound, [switch]$ReadForbidden)
                     if ($Uri -like '*eligibilityScheduleRequests*') {
                         $script:Posts++
                         $script:PostBodies.Add($Body)
@@ -3395,6 +3403,7 @@ Describe 'Sync-OERStructureGroup' {
                     }
                     if ($Uri -like '*roleManagementPolicyAssignments*') {
                         $script:Looks++
+                        $script:Calls.Add('list')
                         if ($ListForbidden) {
                             throw [System.Management.Automation.ErrorRecord]::new(
                                 [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
@@ -3407,6 +3416,17 @@ Describe 'Sync-OERStructureGroup' {
                             ) }
                     }
                     if ($Uri -like '*roleManagementPolicies/pol-*/rules') {
+                        # A policy listed a moment ago can answer its read with 404 (measured live
+                        # 2026-09-28, replicas that do not agree yet).
+                        $script:Reads++
+                        $script:Calls.Add('read')
+                        $script:ReadDeclaredNotFound.Add((@($ExpectedErrorCode) -contains 'ResourceNotFound'))
+                        if ($ReadForbidden) {
+                            throw [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                                'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::OperationStopped, $null)
+                        }
+                        if ($script:Reads -le $ReadNotFound) { return (& $script:NotFoundAnswer -Uri $Uri -ExpectedErrorCode $ExpectedErrorCode) }
                         return @{ value = @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT1H' }) }
                     }
                     throw "unexpected request: $Uri"
@@ -3860,16 +3880,166 @@ Describe 'Sync-OERStructureGroup' {
                 $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
                 @($script:Slept) | Should -Be @(2, 4, 8, 16)
                 $script:Looks | Should -Be 5
+                # Never listed, so never read.
+                @($script:Calls) | Should -Be @('list', 'list', 'list', 'list', 'list')
                 Should -Invoke Add-OERGroupEligibility -Times 0
                 $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
                 $Failed.Count | Should -Be 1
                 $Failed[0].Detail | Should -BeExactly ("permanent eligibility for 'person16@example.com' (member) not applied: Microsoft Graph " +
-                    "does not list a PIM-for-groups policy for 'member' access on group 'role_sec_x', created in this run, " +
-                    'within the 30-second wait. A new group can take a while to be known to PIM for Groups (replication ' +
-                    'delay); re-running the same document usually applies it.')
-                $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^ResourceNotFound'
+                    "does not list a readable PIM-for-groups policy for 'member' access on group 'role_sec_x', created in this " +
+                    "run, within the 30-second wait. A new group's policies can take a while to be listed and readable " +
+                    '(replication delay); re-running the same document usually applies it.')
+                # The id Add-OERGroupEligibility publishes for the same condition, not the transport's.
+                $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
                 # Exactly the Failed row's own record: none of the five 404s left one.
                 @($Err).Count | Should -Be 1
+                $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Err[0].TargetObject | Should -BeExactly 'role_sec_x'
+            }
+        }
+
+        It 'waits until a new group''s listed policy answers its read before the permanent eligibility, then calls Add-OERGroupEligibility once' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                # Listed at once, but the read of the listed policy answers 404 once.
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -ReadNotFound 1 }
+                Mock Add-OERGroupEligibility { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Listed, read 404, one wait, then listed AGAIN before the second read: the read's 404
+                # leads back to the listing, as in step 4. The cmdlet's own pre-check reads the same
+                # policy, and an unreadable one there leaves the policy closed and the POST refused.
+                @($script:Calls) | Should -Be @('list', 'read', 'list', 'read')
+                @($script:Slept) | Should -Be @(2)
+                @($script:ReadDeclaredNotFound) | Should -Be @($true, $true)
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly -ParameterFilter {
+                    $Group -eq 'g-1' -and $PrincipalId -eq 'id-person16@example.com' -and $AccessType -eq 'member'
+                }
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'set permanent member eligibility' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
+            }
+        }
+
+        It 'never waits when the read of a new group''s listed policy is refused (403), and calls Add-OERGroupEligibility as for any group' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -ReadForbidden }
+                Mock Add-OERGroupEligibility { }
+                # The scrub proof: the record the read's catch scrubs is the refusal itself.
+                Mock Remove-OERErrorRecord { param($Record) }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' })
+                }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue)
+                # One listing and one read, refused: the refusal ends the poll, it is never waited on
+                # and never reported as replication.
+                @($script:Calls) | Should -Be @('list', 'read')
+                Should -Invoke Start-Sleep -Times 0
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'set permanent member eligibility' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($r | Where-Object { $_.Detail -match 'within the 30-second wait' }).Count | Should -Be 0
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*'
+                }
+            }
+        }
+
+        It 'reports Failed with GroupNotOnboarded and never calls Add-OERGroupEligibility when a new group''s listed policy answers 404 for the whole budget' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -ReadNotFound 99 }
+                Mock Add-OERGroupEligibility { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Five listings, five reads, four waits: the whole budget, and not one second more.
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                @($script:Calls) | Should -Be @('list', 'read', 'list', 'read', 'list', 'read', 'list', 'read', 'list', 'read')
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ("permanent eligibility for 'person16@example.com' (member) not applied: Microsoft Graph " +
+                    "does not list a readable PIM-for-groups policy for 'member' access on group 'role_sec_x', created in this " +
+                    "run, within the 30-second wait. A new group's policies can take a while to be listed and readable " +
+                    '(replication delay); re-running the same document usually applies it.')
+                $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
+                # Exactly the Failed row's own record: none of the ten 404s left one.
+                @($Err).Count | Should -Be 1
+                $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                $Err[0].TargetObject | Should -BeExactly 'role_sec_x'
+            }
+        }
+
+        It 'writes permanent-eligibility wait lines that end in "; retry N in S s." and name the cause' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -NotFoundLooks 1 -ReadNotFound 1 }
+                Mock Add-OERGroupEligibility { }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' })
+                }
+                $Out = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -Verbose 4>&1)
+                @($script:Calls) | Should -Be @('list', 'list', 'read', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4)
+                # The live checklist counts the wait lines by their '; retry <n> in <s> s.' ending, and
+                # tells the two causes apart by the words before it.
+                @($Out | Where-Object {
+                        $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '; retry \d+ in \d+ s\.$'
+                    } | ForEach-Object { $_.Message }) | Should -Be @(
+                    "Sync-OERStructureGroup: the member policy of new group 'role_sec_x' is not listed yet, so its permanent eligibility for 'person16@example.com' waits; retry 1 in 2 s."
+                    "Sync-OERStructureGroup: the member policy of new group 'role_sec_x' is listed but its read answers 404, so its permanent eligibility for 'person16@example.com' waits; retry 2 in 4 s.")
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
             }
         }
 
