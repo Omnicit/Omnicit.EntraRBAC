@@ -3379,7 +3379,8 @@ Describe 'Sync-OERStructureGroup' {
                 $script:Transport = {
                     param([string]$Method, [string]$Uri, $Body, [string[]]$ExpectedErrorCode,
                         [int]$PostNotFound, [int]$NotFoundLooks, [switch]$PostForbidden, [switch]$PostOtherStatus, [switch]$ListForbidden,
-                        [int]$ReadNotFound, [switch]$ReadForbidden, [int]$PostFailed, [string]$PostStatus = 'Provisioned')
+                        [int]$ReadNotFound, [switch]$ReadForbidden, [int]$PostFailed, [string]$PostStatus = 'Provisioned',
+                        [string]$FailedStatus = 'Failed')
                     if ($Uri -like '*eligibilityScheduleRequests*') {
                         $script:Posts++
                         $script:PostBodies.Add($Body)
@@ -3401,7 +3402,7 @@ Describe 'Sync-OERStructureGroup' {
                         if ($script:Posts -le $PostNotFound) { return (& $script:NotFoundAnswer -Uri $Uri -ExpectedErrorCode $ExpectedErrorCode) }
                         # Measured live 2026-10-03: after the 404s, Graph can ACCEPT a new group's request
                         # (201) and fail it at once -- the 201 body already says status Failed.
-                        if ($script:Posts -le ($PostNotFound + $PostFailed)) { return @{ id = "req-$($script:Posts)"; status = 'Failed' } }
+                        if ($script:Posts -le ($PostNotFound + $PostFailed)) { return @{ id = "req-$($script:Posts)"; status = $FailedStatus } }
                         return @{ id = "req-$($script:Posts)"; status = $PostStatus }
                     }
                     if ($Uri -like '*roleManagementPolicyAssignments*') {
@@ -3561,7 +3562,8 @@ Describe 'Sync-OERStructureGroup' {
                 Mock Resolve-OERGroupId { $null }
                 Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
                 Mock Start-Sleep { $script:Slept.Add($Seconds) }
-                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -PostNotFound 1 -PostFailed 1 }
+                # The Failed answer arrives in lower case: the status is compared case-insensitively.
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -PostNotFound 1 -PostFailed 1 -FailedStatus 'failed' }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
                 Mock Resolve-OERStructureDefault { $null }
@@ -3700,8 +3702,9 @@ Describe 'Sync-OERStructureGroup' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                # Ruled scope (live round 1): only a group THIS run created treats status Failed as
-                # replication; a group that already existed keeps today's behaviour exactly.
+                # Only a group THIS run created treats status Failed as replication. For a group that
+                # already existed the handler reports what Add-OERGroupEligibility returned, as before:
+                # the request's status is not read.
                 Mock Resolve-OERGroupId { 'g-1' }
                 Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
                 Mock Start-Sleep { $script:Slept.Add($Seconds) }
@@ -3730,8 +3733,9 @@ Describe 'Sync-OERStructureGroup' {
                     param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
                     Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
                 }
-                # Ruled scope (live round 1): only a group THIS run created treats status Failed as
-                # replication; a group that already existed keeps today's behaviour exactly.
+                # Only a group THIS run created treats status Failed as replication. For a group that
+                # already existed the handler reports what Add-OERGroupEligibility returned, as before:
+                # the request's status is not read.
                 Mock Resolve-OERGroupId { 'g-1' }
                 Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
                 Mock Start-Sleep { $script:Slept.Add($Seconds) }
@@ -4277,10 +4281,11 @@ Describe 'Sync-OERStructureGroup' {
                 Mock Start-Sleep { $script:Slept.Add($Seconds) }
                 Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode -NotFoundLooks 1 }
                 $script:AddCalls = 0
+                # The Failed answer arrives in lower case: the status is compared case-insensitively.
                 Mock Add-OERGroupEligibility {
                     $script:AddCalls++
                     $script:Calls.Add('add')
-                    [PSCustomObject]@{ Status = $(if ($script:AddCalls -le 1) { 'Failed' } else { 'Provisioned' }) }
+                    [PSCustomObject]@{ Status = $(if ($script:AddCalls -le 1) { 'failed' } else { 'Provisioned' }) }
                 }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
@@ -4305,6 +4310,41 @@ Describe 'Sync-OERStructureGroup' {
                     } | ForEach-Object { $_.Message }) | Should -Be @(
                     "Sync-OERStructureGroup: the member policy of new group 'role_sec_x' is not listed yet, so its permanent eligibility for 'person16@example.com' waits; retry 1 in 2 s."
                     "Sync-OERStructureGroup: permanent eligibility for 'person16@example.com' (member) on new group 'role_sec_x' was accepted but answered status Failed (not ready in PIM for Groups yet); retry 2 in 4 s.")
+            }
+        }
+
+        It 'treats a new group''s permanent request returned with any status other than Failed as applied, and never waits on it' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:Transport -Method $Method -Uri $Uri -Body $Body -ExpectedErrorCode $ExpectedErrorCode }
+                Mock Add-OERGroupEligibility {
+                    $script:Calls.Add('add')
+                    [PSCustomObject]@{ Status = 'PendingProvisioning' }
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Ready at once, called once, and a status that is not Failed ends it: only Failed is
+                # replication, not "anything but Provisioned".
+                @($script:Calls) | Should -Be @('list', 'read', 'add')
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
+                Should -Invoke Start-Sleep -Times 0
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -match 'set permanent member eligibility' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+                @($Err).Count | Should -Be 0
             }
         }
 

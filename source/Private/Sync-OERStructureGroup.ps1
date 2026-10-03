@@ -145,12 +145,12 @@ function Sync-OERStructureGroup {
        Graph accepted it and failed it) counts as the same replication for a group created in this
        run, as in step 3: the next wait comes from the same budget and the entry starts over from the
        listing. A budget spent with no readable policy (the cmdlet then not called), or with the
-       request still answered Failed, reports Failed with a GroupNotOnboarded error record -- the id Add-OERGroupEligibility publishes
-       for the same condition -- and a replication-delay message naming a re-run. A refused probe (a
-       403 on the listing or on the read, for example) ends the wait at once and the cmdlet is called
-       as for any group, and a 404 from the cmdlet itself after the policy was read is reported as for
-       any group. A group that already existed never probes and never waits, and the status its
-       request returns is not read.
+       request still answered Failed, reports Failed with a GroupNotOnboarded error record -- the id
+       Add-OERGroupEligibility publishes for the same condition -- and a replication-delay message
+       naming a re-run. A refused probe (a 403 on the listing or on the read, for example) ends the
+       wait at once and the cmdlet is called as for any group, and a 404 from the cmdlet itself after
+       the policy was read is reported as for any group. A group that already existed never probes
+       and never waits, and the status its request returns is not read.
 
     When -Prune is set, current members not present in the declared set are removed (with
     Write-Warning) after a ShouldProcess gate. Without -Prune those extra members are reported as
@@ -850,7 +850,8 @@ function Sync-OERStructureGroup {
                     # outlasted the transport's own retries, a 5xx, a ResourceNotFound that is not a
                     # 404 -- is reported as itself and never waited on. A group that already existed
                     # takes the cmdlet below and never waits, a 404 or a Failed status included: there
-                    # the status is not read at all (ruled scope of the live round 1 correction).
+                    # the status is not read, and the handler reports what Add-OERGroupEligibility
+                    # returned, as before.
                     $EligibilityApplied = $false
                     $Waits = 0
                     while ($true) {
@@ -869,8 +870,10 @@ function Sync-OERStructureGroup {
                             break
                         }
                         if ($ReplicationRetryDelays.Count -eq 0) {
-                            # The record carries the code Graph gave. No retry count: the budget is shared,
-                            # so a second entry that finds it spent would otherwise read "after 0 retries".
+                            # ResourceNotFound, the code Graph gives the 404, whichever answer used up the
+                            # budget: an accepted request answered Failed is the same replication. No retry
+                            # count: the budget is shared, so a second entry that finds it spent would
+                            # otherwise read "after 0 retries".
                             $Message = "eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: for group '$Name', created in this run, Microsoft Graph answered 404 ResourceNotFound, or accepted the request but answered status Failed, every time within the 30-second wait. A new group can take a while to be known to PIM for Groups (replication delay); re-running the same document usually applies it."
                             $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                                 [System.Exception]::new($Message),
