@@ -127,7 +127,7 @@ Describe 'Get-OERAccessReviewInstanceDecision' {
         }
     }
 
-    Context 'a definition lookup that cannot name one definition (decision D1)' {
+    Context 'a definition lookup that cannot name one definition' {
         # Resolve-OERAccessReviewDefinitionId now refuses a display name that matches more than one
         # definition (Graph does not enforce unique review names), and every other lookup failure still
         # arrives here as a throw. Neither is "not found". The refusal is published as itself, with the

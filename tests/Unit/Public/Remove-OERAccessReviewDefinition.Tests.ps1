@@ -391,7 +391,7 @@ Describe 'Remove-OERAccessReviewDefinition access package assignments scope warn
     }
 }
 
-Describe 'Remove-OERAccessReviewDefinition refuses an ambiguous display name (decision D1)' {
+Describe 'Remove-OERAccessReviewDefinition refuses an ambiguous display name' {
     # Graph does not enforce unique access review definition display names, so -DisplayName used to
     # DELETE whichever of several same-named definitions the lookup listed first. These Its leave the
     # resolver REAL and mock only the Graph boundary, so they prove the refusal end to end: the lookup

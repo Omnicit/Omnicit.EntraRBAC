@@ -3441,7 +3441,7 @@ Describe 'Sync-OERStructureAccessPackage' {
     # (durationInDays 10 live, 30 declared), so a handler that wrongly took the first match reaches
     # Set-OERAccessPackageAssignmentPolicy -- the zero-call assertions then fail for the right reason
     # instead of passing because the diff found nothing to do.
-    Context 'an ambiguous assignment policy name is refused (decision D3)' {
+    Context 'an ambiguous assignment policy name is refused' {
 
         It 'creates and updates nothing for a policy whose name two live policies share' {
             InModuleScope $script:moduleName {
@@ -3679,6 +3679,9 @@ Describe 'Sync-OERStructureAccessPackage' {
 
                 # The ambiguous policy: refused, and touched by neither write.
                 @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like "*named 'Standard'*" }).Count | Should -Be 1
+                # A refused policy is still a DECLARED one: it is not also reported as an undeclared
+                # live policy ('Extra') for each of the two live policies that carry its name.
+                @($r | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
                 Should -Invoke Set-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $Id -in @('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222') }
                 Should -Invoke New-OERAccessPackageAssignmentPolicy -Times 0 -ParameterFilter { $DisplayName -eq 'Standard' }
 
@@ -3806,7 +3809,7 @@ Describe 'Sync-OERStructureAccessPackage' {
     # Every ambiguous fixture below holds the live binding on the SECOND of the two same-named
     # resources, so a handler that wrongly took the first match would add a binding to the first and
     # remove the live one under -Prune -- the zero-call assertions then fail for the right reason.
-    Context 'an ambiguous catalog resource name in a binding is refused (decision D4)' {
+    Context 'an ambiguous catalog resource name in a binding is refused' {
 
         It 'adds no binding for a name two catalog resources share, and says so in one Failed row naming both origin ids' {
             InModuleScope $script:moduleName {
@@ -4273,7 +4276,7 @@ Describe 'Sync-OERStructureAccessPackage' {
     #
     # Every fixture holds the live binding on the NON-group resource (the application), which is the
     # one the old code removed under -Prune.
-    Context 'a group sharing its name with a non-group catalog resource is refused, and a group outside the catalog counts as unresolved (decision D5)' {
+    Context 'a group sharing its name with a non-group catalog resource is refused, and a group outside the catalog counts as unresolved' {
 
         It 'adds no binding and removes no live binding under -Prune: the probe case of a group and an application named alike' {
             InModuleScope $script:moduleName {
@@ -4611,7 +4614,7 @@ Describe 'Sync-OERStructureAccessPackage' {
     # Only a positively identified AadGroup counts: an application recorded under the name stays
     # accepted, since the inventory round trip of an application that shares its name with any group of
     # the tenant produces exactly that.
-    Context 'a group outside the catalog does not hand its name to the other group the catalog recorded under it (decision D5, fix round 1)' {
+    Context 'a group outside the catalog does not hand its name to the other group the catalog recorded under it' {
 
         It 'adds no binding to the renamed group the catalog recorded, and removes no live binding under -Prune' {
             InModuleScope $script:moduleName {
@@ -4793,7 +4796,7 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 
-    Context 'a role name several roles of the resource share is refused by the real cmdlet, and the engine reports it as a Failed row (Task 16)' {
+    Context 'a role name several roles of the resource share is refused by the real cmdlet, and the engine reports it as a Failed row' {
         # Application roles do not have unique display names. Add-OERAccessPackageResourceRole used to bind
         # the FIRST role carrying the name, so an access package granted an arbitrary one of them. It now
         # refuses, and the engine -- which calls it with -ErrorAction Stop -- turns the refusal into a Failed

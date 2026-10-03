@@ -431,7 +431,7 @@ Describe 'New-OERAccessReviewDefinition -- a failed scope resolve is not a not-f
 # scoped to whichever policy Graph listed first. Graph does not enforce unique policy display names
 # within a package. The descriptor now says so, through the same FailedErrorId/FailedMessage/
 # FailedCategory triple the access package branch already uses, and carries no ids at all.
-Describe 'Resolve-OERAccessReviewScopeTarget -- an ambiguous assignment policy name is refused (decision D3)' {
+Describe 'Resolve-OERAccessReviewScopeTarget -- an ambiguous assignment policy name is refused' {
     BeforeEach { InModuleScope 'Omnicit.EntraRBAC' { $script:_OERAuthState = $null } }
 
     It 'returns the AmbiguousName descriptor naming every candidate id, and resolves no policy id' {

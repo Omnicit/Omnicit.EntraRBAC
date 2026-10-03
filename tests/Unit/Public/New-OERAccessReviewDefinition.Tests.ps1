@@ -559,7 +559,7 @@ Describe 'New-OERAccessReviewDefinition -- a failed catalog or policy read is no
 # now answers with an AmbiguousName descriptor and the cmdlet publishes it, naming every candidate id,
 # before any POST. The resolver is NOT mocked here: the policy listing is the Graph call, so the whole
 # path from the listing to the published record is exercised.
-Describe 'New-OERAccessReviewDefinition -- an ambiguous assignment policy name is refused (decision D3)' {
+Describe 'New-OERAccessReviewDefinition -- an ambiguous assignment policy name is refused' {
     BeforeEach {
         InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }

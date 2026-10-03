@@ -68,7 +68,7 @@ Describe 'Remove-OERResourceGroup' {
     }
 }
 
-Describe 'Remove-OERResourceGroup with an ambiguous subscription display name (decision D4)' {
+Describe 'Remove-OERResourceGroup with an ambiguous subscription display name' {
     # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and its subscription
     # list answers with two subscriptions that share the display name 'Dup Sub'. A resource group
     # delete removes everything in it, so an arbitrary one of the two subscriptions must never be

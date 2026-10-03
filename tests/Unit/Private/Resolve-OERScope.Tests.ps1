@@ -177,7 +177,7 @@ Describe 'Resolve-OERScope' {
     }
 }
 
-Describe 'Resolve-OERScope with an ambiguous display name (decision D4)' {
+Describe 'Resolve-OERScope with an ambiguous display name' {
     # Subscription display names are not unique, and neither are management group display names.
     # Taking the first match turned a name into an arbitrary subscription or management group, and
     # every write cmdlet that resolves a friendly scope (and the apply engine, which writes through

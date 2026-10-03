@@ -643,7 +643,7 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
     }
 }
 
-Describe 'Invoke-OERStructure with an ambiguous subscription display name in a scope (decision D4)' {
+Describe 'Invoke-OERStructure with an ambiguous subscription display name in a scope' {
     # The Azure handlers run for REAL here, and so do Resolve-OERScope and (for the policy entry)
     # Get-/Set-OERRoleManagementPolicy: only the ARM and Graph transports and the lookups below the
     # scope are mocked. The subscription list answers with two subscriptions that share the display
@@ -727,8 +727,14 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         @($Rows | Where-Object { $_.Action -in @('Created', 'Updated', 'Removed', 'Extra', 'Skipped') }).Count | Should -Be 1
         $Rows.Count | Should -Be 4
 
-        # The refusal is published once per failed entry, as the AmbiguousName record itself.
-        @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'AmbiguousName' -and $_.TargetObject -eq 'Dup Sub' }).Count | Should -BeGreaterOrEqual 2
+        # The refusal is published once per failed entry, as the AmbiguousName record itself. Narrowed
+        # to the engine's own publication: -ErrorVariable also holds the inner throw's capture, which
+        # carries no command name and would satisfy a bare count with the re-publication removed.
+        $Published = @($Err | Where-Object {
+                $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
+                $_.FullyQualifiedErrorId -like 'AmbiguousName*' -and $_.TargetObject -eq 'Dup Sub'
+            })
+        $Published.Count | Should -Be 2
     }
 
     It 'fails a roleManagementPolicies entry at the ambiguous scope with both candidate ids and reads and writes no policy' {
@@ -739,7 +745,8 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
 
         # Positive proof first: the subscription list WAS read, so the refusal is the ambiguity.
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -ParameterFilter {
+        # Twice: Get-OERRoleManagementPolicy and Set-OERRoleManagementPolicy each re-resolve the scope.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 2 -Exactly -ParameterFilter {
             $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
         }
 
@@ -754,6 +761,11 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         $Rows[0].Action | Should -Be 'Failed'
         $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000001'
         $Rows[0].Detail | Should -Match 'aaaa1111-0000-0000-0000-000000000002'
-        @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidScope,*' -and $_.Exception.Message -like "*matches 2 subscriptions*" }).Count | Should -BeGreaterOrEqual 1
+        # One InvalidScope record is the engine's publication for the entry; the Get and Set cmdlets
+        # each published their own before it, so narrow on the command that published.
+        @($Err | Where-Object {
+                $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
+                $_.FullyQualifiedErrorId -like 'InvalidScope,*' -and $_.Exception.Message -like '*matches 2 subscriptions*'
+            }).Count | Should -Be 1
     }
 }

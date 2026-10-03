@@ -36,7 +36,7 @@ Describe 'Resolve-OERAccessReviewDefinitionId' {
         }
     }
 
-    Context 'a display name that more than one definition carries (decision D1)' {
+    Context 'a display name that more than one definition carries' {
         # Graph does not enforce unique access review definition display names, and the callers
         # DELETE (Remove-OERAccessReviewDefinition), PUT (Set-OERAccessReviewDefinition) or act on an
         # instance of whatever this returns. Returning the first match acted on an arbitrary one of

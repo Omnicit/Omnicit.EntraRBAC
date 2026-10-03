@@ -683,7 +683,7 @@ Describe 'Set-OERAccessReviewDefinition -- a failed reviewer lookup is not a not
     }
 }
 
-Describe 'Set-OERAccessReviewDefinition refuses an ambiguous display name (decision D1)' {
+Describe 'Set-OERAccessReviewDefinition refuses an ambiguous display name' {
     # Graph does not enforce unique access review definition display names, so an -Id given as a name
     # used to overwrite whichever of several same-named definitions the lookup listed first. These Its
     # leave the resolver REAL and mock only the Graph boundary, so they prove the refusal end to end:

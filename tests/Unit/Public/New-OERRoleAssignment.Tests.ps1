@@ -603,7 +603,7 @@ Describe 'New-OERRoleAssignment piped principal ambiguity guard' {
     }
 }
 
-Describe 'New-OERRoleAssignment with an ambiguous subscription display name (decision D4)' {
+Describe 'New-OERRoleAssignment with an ambiguous subscription display name' {
     # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and its subscription
     # list answers with two subscriptions that share the display name 'Dup Sub'. Subscription display
     # names are not unique, so the cmdlet must refuse the name -- an arbitrary one of the two must

@@ -2902,10 +2902,16 @@ Describe 'Sync-OERStructureAccessReview create-path declared value family (issue
 # carries the full live shape the update diff reads: a handler that wrongly took the first match then
 # reaches Set-OERAccessReviewDefinition (the drifted durationInDays is the write) instead of failing for
 # an unrelated reason.
-Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name (decision D2)' {
+Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name' {
 
     BeforeAll {
         $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    BeforeEach {
+        # Catch-all for the transport: a request no test mocked itself fails loudly instead of reaching
+        # the real wrapper. A test's own Mock of Invoke-OERGraphRequest, defined after this one, wins.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
     }
 
     It 'creates, updates and reads nothing further for the entry when two definitions share the declared name' {

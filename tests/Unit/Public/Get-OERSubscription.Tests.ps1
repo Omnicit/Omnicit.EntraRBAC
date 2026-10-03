@@ -147,7 +147,7 @@ Describe 'Get-OERSubscription' {
     }
 }
 
-Describe 'Get-OERSubscription with an ambiguous management group display name (decision D4)' {
+Describe 'Get-OERSubscription with an ambiguous management group display name' {
     # Resolve-OERScope runs for REAL here: only the ARM transport is mocked, and the management group
     # list answers with two management groups that share the display name 'Platform'. Management group
     # display names are not unique, so the name is refused and the candidates reach the operator in the

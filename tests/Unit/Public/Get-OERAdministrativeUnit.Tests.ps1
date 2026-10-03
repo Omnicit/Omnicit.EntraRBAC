@@ -261,6 +261,9 @@ Describe 'Get-OERAdministrativeUnit' {
         # declared role by NAME and, under -Prune, would remove a role it then reads as undeclared.
         Context 'a directory role name map that cannot be read leaves the scoped roles unread' {
             BeforeEach {
+                # Catch-all for the transport: a request no mock below covers fails loudly instead of
+                # reaching the real wrapper. The filtered mocks that follow win for the URIs they name.
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { param($Uri) throw "Unexpected Graph request: $Uri" }
                 Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                     @{ value = @(@{ id = 'srm-1'; roleId = 'r-1'; roleMemberInfo = @{ id = 'u-1'; displayName = 'Jane' } }) }
                 } -ParameterFilter { $Uri -eq 'v1.0/directory/administrativeUnits/cccccccc-1111-1111-1111-111111111111/scopedRoleMembers' }
