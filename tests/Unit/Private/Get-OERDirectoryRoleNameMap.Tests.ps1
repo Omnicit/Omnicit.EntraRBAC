@@ -18,6 +18,18 @@ Describe 'Get-OERDirectoryRoleNameMap' {
         }
     }
 
+    It 'returns an empty map, without throwing, when the read succeeds and lists no activated role and -ThrowOnFailure is not set' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+        InModuleScope $script:moduleName {
+            $Map = Get-OERDirectoryRoleNameMap
+            $Map       | Should -BeOfType [hashtable]
+            $Map.Count | Should -Be 0
+        }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+    }
+
     It 'returns an empty map when the Graph call fails' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw 'graph down' }
         InModuleScope $script:moduleName {
@@ -57,12 +69,41 @@ Describe 'Get-OERDirectoryRoleNameMap' {
             }
         }
 
-        It 'returns an empty map without throwing when the read succeeds and lists no activated role' {
+        # The map is read only for a unit that has at least one scoped role, so at least one directory
+        # role is activated (Global Administrator and the implicit user roles always are). A listing
+        # that succeeds with none is evidence of a bad read, and an empty map there would name every
+        # scoped role '' and bring back the prune of the roles a document declared by name.
+        It 'throws when the read succeeds but lists no activated role, naming the read and saying the listing came back empty' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
             InModuleScope $script:moduleName {
-                $Map = Get-OERDirectoryRoleNameMap -ThrowOnFailure
-                $Map       | Should -BeOfType [hashtable]
-                $Map.Count | Should -Be 0
+                $Thrown = $null
+                $Map = 'sentinel: the call did not return'
+                try { $Map = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                # Positive proof first: the failure surfaced, and no map (empty or otherwise) came back.
+                $null -ne $Thrown | Should -BeTrue
+                $Map | Should -BeExactly 'sentinel: the call did not return'
+                $Thrown.Exception.Message | Should -Match 'v1\.0/directoryRoles'
+                $Thrown.Exception.Message | Should -Match 'came back empty'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/directoryRoles' -and $All
+            }
+        }
+
+        It 'throws for a read that succeeds with no value collection at all, or only null entries' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                $null -ne $Thrown | Should -BeTrue
+                $Thrown.Exception.Message | Should -Match 'came back empty'
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @($null, $null) } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+            InModuleScope $script:moduleName {
+                $Thrown = $null
+                try { $null = Get-OERDirectoryRoleNameMap -ThrowOnFailure } catch { $Thrown = $PSItem }
+                $null -ne $Thrown | Should -BeTrue
+                $Thrown.Exception.Message | Should -Match 'came back empty'
             }
         }
 

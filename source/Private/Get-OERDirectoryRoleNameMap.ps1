@@ -49,7 +49,17 @@ function Get-OERDirectoryRoleNameMap {
         }
         return $Map
     }
-    foreach ($Role in @($Roles.value)) {
+    $RoleList = @($Roles.value | Where-Object { $null -ne $_ })
+    if ($ThrowOnFailure -and $RoleList.Count -eq 0) {
+        # The map is read only for a unit that has at least one scoped role, so at least one directory
+        # role is activated (Global Administrator and the implicit user roles always are). A listing that
+        # succeeds with none is evidence of a bad read, not a genuine empty list, and this caller reads an
+        # empty map as roles nobody declared. Thrown outside the try above: it is not a transport error.
+        throw [System.Exception]::new(
+            "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: the listing came back empty, " +
+            'although a directory role must be activated for a scoped role to exist, so it is treated as unread.')
+    }
+    foreach ($Role in $RoleList) {
         if ($Role.id)             { $Map[[string]$Role.id] = [string]$Role.displayName }
         if ($Role.roleTemplateId) { $Map[[string]$Role.roleTemplateId] = [string]$Role.displayName }
     }

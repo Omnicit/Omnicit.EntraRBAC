@@ -46,7 +46,10 @@ function Resolve-OERAccessReviewDefinitionId {
     }
     $Escaped = ConvertTo-OERODataFilterValue -Value $DisplayName
     $Uri = "v1.0/identityGovernance/accessReviews/definitions?`$filter=displayName eq '$Escaped'&`$select=id,displayName"
-    $Response = Invoke-OERGraphRequest -Uri $Uri
+    # -All costs nothing when the filter matches a single definition (no @odata.nextLink, so exactly one
+    # request), and the ambiguity refusal below must see EVERY candidate: a same-named definition that
+    # sat on a later page would otherwise be missed and the first page's lone match acted on.
+    $Response = Invoke-OERGraphRequest -Uri $Uri -All
     $Candidates = @($Response.value | Where-Object { $null -ne $_ })
     if ($Candidates.Count -gt 1) {
         $Ids = ($Candidates | ForEach-Object { [string]$_.id }) -join ', '

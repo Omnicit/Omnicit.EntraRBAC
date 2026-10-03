@@ -79,6 +79,34 @@ Describe 'Resolve-OERAccessReviewDefinitionId' {
             $Caught.Exception.Message | Should -Match "matches 3 definitions \(aaaaaaaa-1111-1111-1111-111111111111, bbbbbbbb-2222-2222-2222-222222222222, cccccccc-3333-3333-3333-333333333333\)\."
         }
 
+        It 'reads every page of the filtered listing, so candidates beyond the first page still make the name ambiguous' {
+            # The wrapper returns ONE aggregated @{ value = <all pages> } under -All and only page 1
+            # without it. Two same-named definitions split across two pages are therefore visible to
+            # the refusal only when the read is made with -All.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Uri, [switch]$All)
+                if ($All) {
+                    @{ value = @(
+                            @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup' },
+                            @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'Dup' }) }
+                } else {
+                    @{ value = @(@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Dup' }) }
+                }
+            }
+            $Caught = InModuleScope Omnicit.EntraRBAC {
+                $Result = $null
+                try { Resolve-OERAccessReviewDefinitionId -DisplayName 'Dup' } catch { $Result = $PSItem }
+                $Result
+            }
+            # Positive proof first: the filtered read was made, and with -All.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like '*definitions?$filter=displayName eq*' -and $All
+            }
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -Be 'AmbiguousName'
+            $Caught.Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+        }
+
         It 'returns the single match unchanged when exactly one definition has the name' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
                 @{ value = @(@{ id = '33333333-3333-3333-3333-333333333333'; displayName = 'Solo' }) }
