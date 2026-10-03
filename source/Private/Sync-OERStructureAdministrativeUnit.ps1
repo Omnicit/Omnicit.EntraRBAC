@@ -77,9 +77,10 @@ function Sync-OERStructureAdministrativeUnit {
     never derived from a read that did not succeed; an empty read that SUCCEEDED still reconciles
     normally. The scoped roles read includes the directory role list that names each live role (a
     declared role is matched by name): when the unit has scoped roles and that list cannot be read, the
-    item is Failed too and no scoped role is added or removed, with or without -Prune. The one exception is the member re-read after a membership-type conversion, which
-    deliberately falls back to the pre-change member list with a warning rather than abandoning an
-    item whose PATCH already succeeded.
+    item is Failed too and no scoped role is added or removed, with or without -Prune. The one
+    exception is the member re-read after a membership-type conversion, which deliberately falls back
+    to the pre-change member list with a warning rather than abandoning an item whose PATCH already
+    succeeded.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the unit itself does not exist and

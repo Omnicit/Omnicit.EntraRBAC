@@ -37,6 +37,8 @@ function Get-OERRoleManagementPolicy {
 
     .PARAMETER Subscription
     A subscription GUID or display name.
+    A display name that several subscriptions share is refused, naming the candidates;
+    use the subscription id.
 
     .PARAMETER ResourceGroup
     A resource group name narrowing the -Subscription scope. Pipeline by property name.
@@ -44,6 +46,8 @@ function Get-OERRoleManagementPolicy {
     .PARAMETER ManagementGroup
     A management group name or display name. Bound from the pipeline by property name
     (ManagementGroupName), so Get-OERManagementGroup output pipes directly in.
+    A display name that several management groups share is refused, naming the candidates;
+    use the management group name.
 
     .PARAMETER PolicyId
     The full ARM id of the role management policy to read directly.

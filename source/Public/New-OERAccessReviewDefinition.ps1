@@ -24,7 +24,9 @@ function New-OERAccessReviewDefinition {
     The access package display name or id to scope the review to.
 
     .PARAMETER AssignmentPolicy
-    The assignment policy display name or id whose assignments are reviewed.
+    The assignment policy display name or id whose assignments are reviewed. A display name that
+    several policies of the access package share is refused with AmbiguousName, naming their ids;
+    the policy id is the way out.
 
     .PARAMETER Catalog
     Optional catalog display name or id. When omitted the catalog is derived from the access package.
@@ -257,8 +259,9 @@ function New-OERAccessReviewDefinition {
             # Resolve-OERAccessReviewScopeTarget populates FailedCategory on EVERY throw out of
             # Resolve-OERAccessPackageId -- 'InvalidArgument' on the ambiguity path and the caught
             # record's own ErrorCategory (PermissionDenied, ObjectNotFound, ...) on every other --
-            # and leaves it $null on every path that does not come out of that catch: the plain
-            # no-match, both catalog paths, and the assignment policy.
+            # and on an ambiguous assignment policy display name ('InvalidArgument'). It leaves it
+            # $null on every path that comes out of neither: the plain no-match, both catalog
+            # paths, and the assignment policy other than that ambiguity.
             # A CONSEQUENCE WORTH KNOWING: 'AmbiguousAccessPackageName' therefore never reaches the
             # elseif below -- the resolver already answered 'InvalidArgument' for it, and the first
             # arm wins. That arm is kept naming it anyway, and is not dead weight: it is what makes

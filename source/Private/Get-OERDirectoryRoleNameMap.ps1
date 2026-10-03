@@ -11,16 +11,22 @@ function Get-OERDirectoryRoleNameMap {
     the error record (bearer-token safety) and returns an empty map rather than throwing, so name
     resolution is a best-effort enrichment that never blocks the primary result. A caller that cannot
     treat an unreadable list as an empty one passes -ThrowOnFailure: the failure is then scrubbed the same
-    way and thrown, instead of being returned as a map with nothing in it.
+    way and thrown, instead of being returned as a map with nothing in it. For such a caller a listing
+    that succeeds with no role at all counts as unread too, and throws.
 
     .PARAMETER ThrowOnFailure
     When set, a failed read of the directory roles throws (after the error record is scrubbed) instead of
     returning an empty map. The exception names the read ('v1.0/directoryRoles'), carries the cause in its
     message and keeps the original exception as its InnerException. Without it the function stays
-    best-effort, which is what the read-only listing cmdlets rely on. Get-OERAdministrativeUnit
-    -IncludeScopedRoles sets it, because an empty map there would give every scoped role an empty RoleName
-    that the apply engine reads as roles nobody declared. A read that SUCCEEDS and lists no activated role
-    is a genuine empty map and is returned as such, with or without this switch.
+    best-effort, which is what the two other callers rely on: Get-OERAdministrativeUnitScopedRole, a read
+    that only enriches its listing, and Add-OERAdministrativeUnitScopedRole, which only names the role in
+    its output after the POST has succeeded. Get-OERAdministrativeUnit -IncludeScopedRoles sets the
+    switch, because an empty map there would give every scoped role an empty RoleName that the apply
+    engine reads as roles nobody declared. With the switch a read that SUCCEEDS and lists no activated
+    role is treated as unread as well, and throws the same way with a message saying the listing came
+    back empty: the map is read only for an administrative unit that has scoped roles, so at least one
+    directory role is activated, and an empty answer is evidence of a bad read. Without the switch that
+    listing is returned as an empty map.
 
     .EXAMPLE
     $Map = Get-OERDirectoryRoleNameMap

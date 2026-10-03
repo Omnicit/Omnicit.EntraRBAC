@@ -19,6 +19,8 @@ function Get-OERResource {
 
     .PARAMETER Subscription
     A subscription GUID or display name. Bound from the pipeline by property name (SubscriptionId).
+    A display name that several subscriptions share is refused, naming the candidates;
+    use the subscription id.
 
     .PARAMETER ResourceGroup
     A resource group name. When omitted, all resources in the subscription are listed. Bound from the
