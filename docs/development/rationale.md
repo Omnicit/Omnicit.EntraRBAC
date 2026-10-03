@@ -393,11 +393,14 @@ empty collection.
 
 ## pim-beta-pin
 
-PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All fifteen call sites, in ten
+PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint. All sixteen call sites, in eleven
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version
 constant. (The count read "eight" until Sprint 6 step 5; it had been counting FILES, and had
 already fallen behind by one -- `Get-OERListedGroupPimPolicy` -- before `Test-OERGroupPimInUse`
-added the tenth. The test below now lists every calling file and fails on one it does not name.)
+added the tenth. Sprint 7 step 3 added the eleventh, `Send-OERNewGroupEligibilityRequest`, the
+apply engine's own time-bound eligibility POST for a group created in the same run, which declares
+a 404 ResourceNotFound to the transport where `Add-OERGroupEligibility` cannot. The test below now
+lists every calling file and fails on one it does not name.)
 
 The v1.0 API reference documents these operations as GA, but
 `learn.microsoft.com/graph/how-to-pim-update-rules` still states that PIM for groups APIs are

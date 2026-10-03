@@ -772,7 +772,7 @@ structured error conversion. `Why: docs/development/rationale.md#graph-wrapper`
 public-cloud path stays byte-identical to what it has always been; the environment name comes from
 `Get-OERCloudEndpoint`, never a literal. `Why: docs/development/rationale.md#sovereign-clouds`
 
-**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All fifteen call sites, in ten
+**PIM-for-Groups is deliberately pinned to the Graph `beta` endpoint.** All sixteen call sites, in eleven
 source files, route through the private `Get-OERPimGroupsGraphPath`, which owns the version constant.
 `tests/Unit/Private/Get-OERPimGroupsGraphPath.Tests.ps1` names every one of those files and fails
 when a new caller is not added to its list. Never hardcode `beta/` at a call site -- change the

@@ -75,6 +75,19 @@ function Sync-OERStructureGroup {
        -Action adminAssign when the eligibility is absent and -Action adminUpdate when it already
        exists and only its window or permanence differs, since Microsoft Graph rejects an adminAssign
        against a principal that is already eligible.
+       For a group THIS RUN created, the request is sent through Send-OERNewGroupEligibilityRequest
+       instead, and a 404 ResourceNotFound counts as replication: PIM for Groups can take a moment to
+       know a brand-new group, so the answer is waited on and the request asked again, from the one
+       shared budget described under step 4 (at most about 30 seconds, 2 + 4 + 8 + 16 s, per group
+       item). The private request declares the 404 to the transport, which is what keeps a run that
+       ends Updated free of error records in the caller's -ErrorVariable -- Add-OERGroupEligibility
+       cannot declare it, and a 404 thrown inside it and caught here would still leave its records
+       there. Once the budget is spent the entry reports Failed with a ResourceNotFound error record
+       and a replication-delay message naming a re-run. Any other failure (a 403, a throttle that
+       outlasted the transport's own retries, a 5xx, the same code under another status) is reported
+       as itself and never waited on. A group that already existed never waits, a 404 included, and
+       keeps the Add-OERGroupEligibility call. The eligibility row stays Updated, as for every other
+       child write: only the group row is Created.
     4. Apply pimPolicy (e.g. ActivationMaxHours, AllowPermanentEligibility, and approval on activation
        via requireApproval/approvers) -- after the time-bound eligibility entries. Microsoft Graph
        lists a group's policies whether or not the group was ever used with PIM for Groups, and the
@@ -107,11 +120,25 @@ function Sync-OERStructureGroup {
        for any group. Set-OERGroupPimPolicy does its own lookup: a 404 inside it, after the wait has
        read the policy, is reported as that call's Failed row and is not waited on. A group that already
        existed never waits, a 404 included: its missing policy is a fact, not a timing issue, and the
-       single read decides it as for any other group.
+       single read decides it as for any other group. That one budget is also spent by the eligibility
+       waits of steps 3 and 5, so a 404 on a new group's eligibility leaves that much less for its
+       policy, and a second entry never gets a fresh 30 seconds of its own.
     5. Reconcile permanent eligibility entries (those without durationDays) -- must come after
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
        selecting adminAssign or adminUpdate from the diff reason as in step 3.
+       For a group THIS RUN created, the entry first waits until Microsoft Graph lists that access
+       type's policy (Get-OERPimGroupPolicyId -NotFoundAsUnlisted, the readiness signal step 4 uses; a
+       404 counts as not listed yet) from the same shared budget, and then calls Add-OERGroupEligibility
+       once. Unlike step 3 it keeps the cmdlet, because the cmdlet's permanent pre-check and policy
+       self-heal (Get-OERGroupPermanentEligibilityState, Enable-OERGroupPermanentEligibility) are
+       behaviour the engine relies on and the cmdlet cannot declare a 404 to the transport; the
+       silent probe is what spares the caller's -ErrorVariable the records a thrown 404 would leave.
+       A budget spent with no policy listed reports Failed with a ResourceNotFound error record and a
+       replication-delay message naming a re-run, and the cmdlet is not called. A refused probe (a
+       403, for example) ends the wait at once and the cmdlet is called as for any group, and a 404
+       from the cmdlet itself after the policy was listed is reported as for any group. A group that
+       already existed never probes and never waits.
 
     When -Prune is set, current members not present in the declared set are removed (with
     Write-Warning) after a ShouldProcess gate. Without -Prune those extra members are reported as
@@ -284,9 +311,10 @@ function Sync-OERStructureGroup {
             }
         }
 
-        # Whether THIS run created the group, consulted only by the step-4 pimPolicy wait below: a
-        # brand-new group's policy assignments can take a moment to be listed by Graph, but a missing
-        # policy on a group that already existed is a fact, not a timing issue, and is never waited for.
+        # Whether THIS run created the group, consulted only by the replication waits of steps 3, 4 and
+        # 5 below: a brand-new group's eligibility requests can be answered 404 and its policy
+        # assignments can take a moment to be listed by Graph, but a 404 or a missing policy on a group
+        # that already existed is a fact, not a timing issue, and is never waited for.
         $CreatedThisRun = $false
 
         # -- Create or update the group object ------------------------------------------
@@ -756,6 +784,14 @@ function Sync-OERStructureGroup {
         # nothing.
         $EligibilityWrittenThisRun = $false
 
+        # ONE wait budget per group item (at most 30 s of waiting in total: 2 + 4 + 8 + 16), shared by
+        # step 3 (a time-bound eligibility on a new group), step 4 (the pimPolicy of the member and the
+        # owner access type) and step 5 (a permanent eligibility on a new group) -- not one budget per
+        # step, entry or access type. Consumed only for a group THIS run created: all three steps wait
+        # for the same thing, Microsoft Graph and PIM for Groups coming to know a brand-new group, and
+        # a group that already existed never waits.
+        $ReplicationRetryDelays = [System.Collections.Generic.Queue[int]]::new([int[]]@(2, 4, 8, 16))
+
         # Step 3: time-bound eligibility
         foreach ($EEntry in $TimeBoundEntries) {
             $EPrinRef = $EEntry.principal
@@ -785,15 +821,67 @@ function Sync-OERStructureGroup {
 
             $EAction = if ($EChange.Reason -eq 'Absent') { 'adminAssign' } else { 'adminUpdate' }
             if ($Caller.ShouldProcess($Name, "Add time-bound $($EChange.AccessType) eligibility for '$EPrinId' ($($EChange.DurationDays) days)")) {
-                try {
-                    # Discarded: the request object Add-OERGroupEligibility returns is not a result row,
-                    # and this handler's output IS Invoke-OERStructure's result list.
-                    $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction -Confirm:$false -ErrorAction Stop
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $Caller.WriteError($PSItem)
-                    ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
-                    continue
+                if ($CreatedThisRun) {
+                    # A group THIS RUN created may not be known to PIM for Groups yet: the first
+                    # eligibility request can be answered 404 ResourceNotFound while the group's replicas
+                    # do not agree, and for such a group that is replication, not a failed write. The
+                    # request goes through Send-OERNewGroupEligibilityRequest, which declares the 404 to
+                    # the transport and hands it back as a silent $null -- Add-OERGroupEligibility cannot
+                    # do that, and a 404 thrown and then caught here would still have left its records in
+                    # the caller's -ErrorVariable, since the engine collects them as they are raised,
+                    # before any catch runs. A $null answer is waited on from the one shared
+                    # $ReplicationRetryDelays budget and asked again; a non-null answer is the applied
+                    # request. Every throw -- a refusal (403), a throttle that outlasted the transport's
+                    # own retries, a 5xx, a ResourceNotFound that is not a 404 -- is reported as itself
+                    # and never waited on. A group that already existed takes the cmdlet below and never
+                    # waits, a 404 included: there it is a fact, not a timing issue.
+                    $EligibilityApplied = $false
+                    $Waits = 0
+                    while ($true) {
+                        $EligibilityRequest = $null
+                        try {
+                            $EligibilityRequest = Send-OERNewGroupEligibilityRequest -GroupId $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction
+                        } catch {
+                            Remove-OERErrorRecord -Record $PSItem
+                            $Caller.WriteError($PSItem)
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                            break
+                        }
+                        if ($null -ne $EligibilityRequest) {
+                            $EligibilityApplied = $true
+                            break
+                        }
+                        if ($ReplicationRetryDelays.Count -eq 0) {
+                            # The record carries the code Graph gave. No retry count: the budget is shared,
+                            # so a second entry that finds it spent would otherwise read "after 0 retries".
+                            $Message = "eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: Microsoft Graph answered 404 ResourceNotFound for group '$Name', created in this run, throughout the 30-second wait. A new group can take a while to be known to PIM for Groups (replication delay); re-running the same document usually applies it."
+                            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new($Message),
+                                'ResourceNotFound',
+                                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                                $Name)
+                            $Caller.WriteError($ErrRec)
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail $Message -ErrorRecord $ErrRec
+                            break
+                        }
+                        $Delay = $ReplicationRetryDelays.Dequeue()
+                        $Waits++
+                        Write-Verbose "Sync-OERStructureGroup: eligibility for '$EPrinRef' ($($EChange.AccessType)) on new group '$Name' answers 404 (not known to PIM for Groups yet); retry $Waits in $Delay s."
+                        Start-Sleep -Seconds $Delay
+                    }
+                    # A bare continue inside the loop above would continue the WHILE, not this foreach.
+                    if (-not $EligibilityApplied) { continue }
+                } else {
+                    try {
+                        # Discarded: the request object Add-OERGroupEligibility returns is not a result row,
+                        # and this handler's output IS Invoke-OERStructure's result list.
+                        $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction -Confirm:$false -ErrorAction Stop
+                    } catch {
+                        Remove-OERErrorRecord -Record $PSItem
+                        $Caller.WriteError($PSItem)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                        continue
+                    }
                 }
                 $EligibilityWrittenThisRun = $true
                 ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Updated' -Detail "set time-bound $($EChange.AccessType) eligibility for '$EPrinRef' ($($EChange.DurationDays) days): $($EChange.Detail)"
@@ -828,9 +916,9 @@ function Sync-OERStructureGroup {
                 $DesiredByAccess['member'] = $Pp
             }
 
-            # ONE wait budget for the whole group item (at most 30 s of waiting total: 2 + 4 + 8 +
-            # 16), shared by the member and owner access types below -- not one budget each.
-            $PolicyRetryDelays = [System.Collections.Generic.Queue[int]]::new([int[]]@(2, 4, 8, 16))
+            # The wait budget is $ReplicationRetryDelays, declared before step 3: ONE per group item,
+            # shared by the member and owner access types below and by the eligibility waits of steps
+            # 3 and 5 -- not one budget each.
 
             # Whether this item has already asked Test-OERGroupPimInUse. Asked at most ONCE per item,
             # at the first access type whose diff is Changed: one question and one warning cover both
@@ -872,7 +960,7 @@ function Sync-OERStructureGroup {
                 # Get-OERListedGroupPimPolicy, which declares the 404 the same way: a listed policy can
                 # still answer 404 a second later (measured live, replicas that do not agree yet), and a
                 # 404 there starts the poll over from the listing. Both spend the one shared
-                # $PolicyRetryDelays budget, until the policy is read or the budget is empty. Every
+                # $ReplicationRetryDelays budget, until the policy is read or the budget is empty. Every
                 # other throw (403, 429, ...) from either call is a refusal, not replication: the wait
                 # stops at once and the read below reports as for any group. A group that already
                 # existed never polls and never sleeps, a 404 included: its missing policy is a fact,
@@ -902,8 +990,8 @@ function Sync-OERStructureGroup {
                             }
                             if ($CurrentPolicy) { break }
                         }
-                        if ($PolicyRetryDelays.Count -eq 0) { break }
-                        $Delay = $PolicyRetryDelays.Dequeue()
+                        if ($ReplicationRetryDelays.Count -eq 0) { break }
+                        $Delay = $ReplicationRetryDelays.Dequeue()
                         $Waits++
                         $NotYet = if ($ListedPolicyId) { 'is listed but its read answers 404' } else { 'is not listed yet' }
                         Write-Verbose "Sync-OERStructureGroup: pimPolicy ($AccessType) of new group '$Name' $NotYet; retry $Waits in $Delay s."
@@ -1033,6 +1121,50 @@ function Sync-OERStructureGroup {
 
             $EAction = if ($EChange.Reason -eq 'Absent') { 'adminAssign' } else { 'adminUpdate' }
             if ($Caller.ShouldProcess($Name, "Add permanent $($EChange.AccessType) eligibility for '$EPrinId'")) {
+                if ($CreatedThisRun) {
+                    # A group THIS RUN created may not be known to PIM for Groups yet. Unlike step 3 this
+                    # step keeps Add-OERGroupEligibility, whose permanent pre-check and policy self-heal
+                    # (Get-OERGroupPermanentEligibilityState, Enable-OERGroupPermanentEligibility) the
+                    # engine relies on, and the cmdlet cannot declare a 404 to the transport: a 404 thrown
+                    # inside it and caught here would leave its records in the caller's -ErrorVariable.
+                    # So wait FIRST, silently, until Graph lists the group's policy for this access type
+                    # -- the readiness signal step 4 uses, asked with -NotFoundAsUnlisted so a 404 comes
+                    # back as the same quiet $null -- and then call the cmdlet once. The wait spends the
+                    # one shared $ReplicationRetryDelays budget. A throw from the poll is a refusal, not
+                    # replication: it is scrubbed, logged and ends the poll, and the cmdlet is called as
+                    # for any group (as step 4 does). A 404 from the cmdlet itself after the policy was
+                    # listed is reported as it is today. A group that already existed never polls.
+                    $PollRefused = $false
+                    $ListedPolicyId = $null
+                    $Waits = 0
+                    while ($true) {
+                        try {
+                            $ListedPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $EChange.AccessType -NotFoundAsUnlisted
+                        } catch {
+                            Remove-OERErrorRecord -Record $PSItem
+                            $PollRefused = $true
+                            Write-Verbose "Sync-OERStructureGroup: could not ask whether the $($EChange.AccessType) policy of new group '$Name' is listed ($($PSItem.Exception.Message)); adding the permanent eligibility for '$EPrinRef' directly."
+                            break
+                        }
+                        if ($ListedPolicyId) { break }
+                        if ($ReplicationRetryDelays.Count -eq 0) { break }
+                        $Delay = $ReplicationRetryDelays.Dequeue()
+                        $Waits++
+                        Write-Verbose "Sync-OERStructureGroup: the $($EChange.AccessType) policy of new group '$Name' is not listed yet, so its permanent eligibility for '$EPrinRef' waits; retry $Waits in $Delay s."
+                        Start-Sleep -Seconds $Delay
+                    }
+                    if (-not $PollRefused -and -not $ListedPolicyId) {
+                        $Message = "permanent eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: Microsoft Graph does not list a PIM-for-groups policy for '$($EChange.AccessType)' access on group '$Name', created in this run, within the 30-second wait. A new group can take a while to be known to PIM for Groups (replication delay); re-running the same document usually applies it."
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($Message),
+                            'ResourceNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $Name)
+                        $Caller.WriteError($ErrRec)
+                        ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail $Message -ErrorRecord $ErrRec
+                        continue
+                    }
+                }
                 try {
                     # Discarded, as in step 3: the returned request object is not a result row.
                     $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
