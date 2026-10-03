@@ -44,11 +44,19 @@ function Sync-OERStructureAccessPackage {
        enforce unique resource display names), and so is a name a group resolves to while a resource
        that is not a group (an application, a site) is recorded under the same name in the catalog:
        that entry gets one Failed row and one AmbiguousName error naming every candidate origin id,
-       no binding is added for it, and it counts as unresolved for the withheld prune below. Declare
-       a group or an application by its object id instead, or rename one of the resources in the
-       catalog (a SharePoint site has no object id; its origin id is its URL). A group id that is
-       not a resource of the catalog is still tried, so the add fails with the real reason, but that
-       entry counts as unresolved too: no live binding can belong to it.
+       no binding is added for it, and it counts as unresolved for the withheld prune below. The same
+       goes for a name that a group OUTSIDE the catalog carries now while the one catalog resource
+       recorded under it is another group (the catalog keeps the name a group had when it was
+       added, so that group may since have been renamed): both ids are named. Declare a group or an
+       application by one of the origin ids listed, or refresh or remove and re-add one of the
+       resources in the catalog so their recorded names differ (renaming a resource at its source
+       does not change the name the catalog recorded; a SharePoint site's origin id is its URL, which
+       a document cannot name). A group id that is not a resource of the catalog is still tried, so the
+       add fails with the real reason, but that entry counts as unresolved too: no live binding can
+       belong to it. Under -WhatIf a group that the same run would add to the catalog is not in the
+       catalog yet when this handler reads it, so it reads as that case and the plan withholds the
+       binding prune, while the real run (the group then in the catalog) prunes -- the engine's
+       existing precedent for objects the same run would create.
        Existing bindings are read via a raw Graph call against resourceRoleScopes.
        NOTE: the $expand shape used for resourceRoleScopes is a live-verify item -- the mock tests
        fix the shape and live testing confirms it.
@@ -88,8 +96,11 @@ function Sync-OERStructureAccessPackage {
 
     Withheld prune: a declared resourceRoles entry is unresolved when its resource name matches no
     resource in the catalog by display name and Resolve-OERGroupId finds no group by that name
-    either, when it matches SEVERAL catalog resources or a group plus a non-group resource (refused,
-    see above), and when it resolves to a group that is not in the catalog (its add fails). Such an
+    either, when it matches SEVERAL catalog resources, a group plus a non-group resource, or a group
+    outside the catalog plus another group the catalog recorded under that name (refused, see
+    above), and when it resolves to a group that is not in the catalog (its add fails; under -WhatIf
+    that includes a group the same run would add to the catalog, so the plan withholds a prune the
+    real run performs). Such an
     entry carries no origin id of a live binding, so the pass cannot tell which live binding it names,
     and its live counterpart would otherwise look undeclared. While any declared entry is unresolved,
     every undeclared live binding of the package is reported Skipped, with a Detail that starts
@@ -97,8 +108,11 @@ function Sync-OERStructureAccessPackage {
     "declared entries '<resource1>', '<resource2>' could not be resolved"), with or without -Prune;
     no warning is written, no ShouldProcess prompt is issued, and no binding is removed until the
     entry is fixed or removed from the document (ConvertTo-OERPruneWithheldResult owns the rule and
-    the text). The unresolved entry keeps its own Failed record (the record is lost only when the
-    handler later throws for the same item, see below). A Resolve-OERGroupId lookup that THROWS, rather than
+    the text). The unresolved entry keeps its own record: Failed when it was refused or could not be
+    resolved, and for a group outside the catalog whatever its attempted add reports (Failed
+    normally, Skipped under -WhatIf, Unchanged when that binding is already live, Created if the add
+    succeeds) -- the record is lost only when the
+    handler later throws for the same item, see below. A Resolve-OERGroupId lookup that THROWS, rather than
     finding nothing, is not caught by this handler (a name matching several groups, once no catalog
     resource carries that name either): it ends the item where it is thrown, neither the
     resource role prune nor the assignment policy step runs, and the engine reports the item as one
@@ -428,7 +442,8 @@ function Sync-OERStructureAccessPackage {
                 #    resource that is not a group is recorded under that name too: see the refusal below.
                 # 2. The catalog resource recorded under that display name (an application, a
                 #    SharePoint site, or a group under the name the catalog recorded), when exactly
-                #    one resource carries it. Several do not decide: see the refusal below.
+                #    one resource carries it. Several do not decide: see the refusal below. Nor does
+                #    one other GROUP while a group outside the catalog carries the name now.
                 # 3. The group's id even when it is not in the catalog (adding the binding then fails,
                 #    so the entry counts as unresolved and the prune is withheld).
                 # A name matching several groups is set aside while step 2 can still decide; it is
@@ -483,7 +498,22 @@ function Sync-OERStructureAccessPackage {
                         $AmbiguousIds = @($MatchedCatRes | ForEach-Object { [string]$_.OriginId })
                     }
                     if ($MatchedCatRes.Count -eq 1) {
-                        $OriginId = $MatchedCatRes[0].OriginId
+                        # A group that currently carries the declared name but is NOT a resource of the
+                        # catalog (step 1 would have decided otherwise) is a second candidate when the one
+                        # catalog resource under that name is ANOTHER GROUP: the catalog keeps the name a
+                        # group had when it was added, so that group may since have been renamed, and the
+                        # name now belongs to the group outside the catalog. Binding the role to the
+                        # catalog's group would be a silent wrong write, so this is refused like the
+                        # others, listing both ids. Only a positively identified AadGroup counts: widening
+                        # it to a non-group match would refuse an application that shares its name with
+                        # any group of the tenant, which the inventory round trip produces. The match can
+                        # never carry the group's own id here, since that group would have decided at
+                        # step 1.
+                        if ($GroupOriginId -and [string]$MatchedCatRes[0].OriginSystem -eq 'AadGroup') {
+                            $AmbiguousIds = @([string]$GroupOriginId, [string]$MatchedCatRes[0].OriginId)
+                        } else {
+                            $OriginId = $MatchedCatRes[0].OriginId
+                        }
                     }
                 }
 
@@ -494,15 +524,18 @@ function Sync-OERStructureAccessPackage {
                     # (ConvertTo-OERPruneWithheldResult owns that rule, and this refusal does not touch
                     # it). It sits before ShouldProcess, so it reads the same under -WhatIf, and the
                     # package's other declared entries carry on. The last sentence of the message has to
-                    # be followable for every resource type: a group or an application has an object
-                    # id, a SharePoint site's origin id is its URL, which a document cannot name.
+                    # be followable for every resource type, and renaming a resource at its source is not
+                    # a way out: a catalog keeps the name a resource had when it was added. A group or an
+                    # application can be declared by one of the origin ids listed (a SharePoint site's
+                    # origin id is its URL, which a document cannot name), and any resource can be
+                    # refreshed, or removed and added again, so that the recorded names differ.
                     $AmbiguousList = $AmbiguousIds -join ', '
                     $AmbiguousRecord = [System.Management.Automation.ErrorRecord]::new(
                         [System.Exception]::new(
                             "Resource name '$ResName' matches $($AmbiguousIds.Count) resources of catalog '$($Item.catalog)' ($AmbiguousList). " +
                             'A catalog does not enforce unique resource display names, so this name ' +
-                            'cannot identify a single resource. Declare a group or an application by its object id instead, ' +
-                            'or rename one of the resources in the catalog (a SharePoint site has no object id; its origin id is its URL).'),
+                            'cannot identify a single resource. Declare a group or an application by one of the origin ids listed above, ' +
+                            'or refresh or remove and re-add one of the resources in the catalog so their recorded names differ.'),
                         'AmbiguousName',
                         [System.Management.Automation.ErrorCategory]::InvalidArgument,
                         $ResName)
