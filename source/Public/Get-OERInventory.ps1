@@ -782,9 +782,11 @@ function Get-OERInventory {
                 if ($Au.PSObject.Properties.Name -contains 'ScopedRoles') {
                     # Scoped-role principals project as the object id: the Graph scopedRoleMembership carries
                     # no UPN for the role member, and the id resolves verbatim (a display name does not).
-                    # The role projects as its friendly name when the best-effort directory-role name map
-                    # resolved it, and otherwise falls back to the role id -- emitting role:null would fail
-                    # schema validation and make the unit un-appliable.
+                    # The role projects as its friendly name when the directory-role name map has one for
+                    # it, and otherwise falls back to the role id -- emitting role:null would fail schema
+                    # validation and make the unit un-appliable. A name map that could not be READ at all
+                    # never gets here: Get-OERAdministrativeUnit then omits ScopedRoles, and the branch
+                    # below reports it unread.
                     $Proj.scopedRoles = @(foreach ($S in @($Au.ScopedRoles)) {
                         if (-not $S) { continue }
                         $SrPrincipal = if ($S.PrincipalId) { [string]$S.PrincipalId } else { [string]$S.PrincipalDisplayName }

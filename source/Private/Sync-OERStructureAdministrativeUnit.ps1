@@ -75,7 +75,9 @@ function Sync-OERStructureAdministrativeUnit {
     A failed read of the live unit -- its properties, members or scoped roles -- reports Failed with
     the underlying ErrorRecord and reconciles nothing further for that item, so a Created row is
     never derived from a read that did not succeed; an empty read that SUCCEEDED still reconciles
-    normally. The one exception is the member re-read after a membership-type conversion, which
+    normally. The scoped roles read includes the directory role list that names each live role (a
+    declared role is matched by name): when the unit has scoped roles and that list cannot be read, the
+    item is Failed too and no scoped role is added or removed, with or without -Prune. The one exception is the member re-read after a membership-type conversion, which
     deliberately falls back to the pre-change member list with a warning rather than abandoning an
     item whose PATCH already succeeded.
 
@@ -548,9 +550,11 @@ function Sync-OERStructureAdministrativeUnit {
                     continue
                 }
 
-                # A directory role is declared either by display name or -- when the best-effort role
-                # name map could not resolve it on read -- by its role id. Match on whichever the live
-                # membership exposes so a GUID-declared role is never re-added or pruned.
+                # A directory role is declared either by display name or -- when the directory role name
+                # map has no name for it -- by its role id. Match on whichever the live membership
+                # exposes so a GUID-declared role is never re-added or pruned. A name map that cannot be
+                # read at all never reaches this match: Get-OERAdministrativeUnit then leaves ScopedRoles
+                # unread and the read above fails the item, so no role is pruned for want of a name.
                 $SrIsGuid = Test-OERGuid -Value ([string]$SrRole)
 
                 $DeclaredScopedRoles.Add([PSCustomObject]@{ Role = $SrRole; PrincipalId = $SrId })

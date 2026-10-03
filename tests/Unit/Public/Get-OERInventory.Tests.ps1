@@ -5225,3 +5225,89 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
         }
     }
 }
+
+Describe 'Get-OERInventory administrative unit scoped roles, driven with the real readers and only the transport mocked' {
+    <#
+        WHY THIS EXISTS SEPARATELY FROM THE MOCKED SUITE ABOVE. Every administrative unit test above mocks
+        Get-OERAdministrativeUnit, so none of them can say what a failed directory-role NAME map does to an
+        export: that failure is raised inside the reader, not by it. Here the REAL Get-OERAdministrativeUnit
+        and the REAL Get-OERDirectoryRoleNameMap run and only Invoke-OERGraphRequest answers. A name map
+        that cannot be read must reach the inventory as an unread scopedRoles collection (explicit null plus
+        InventoryPartial), never as scoped roles whose names silently became role ids.
+    #>
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+        Import-Module $script:moduleName -Force
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+    }
+
+    It 'exports scopedRoles as explicit null and reports it unread, naming the directory roles read, when the name map cannot be read' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -eq 'v1.0/directoryRoles') { throw 'TooManyRequests (injected map failure)' }
+            if ($Uri -like '*/scopedRoleMembers') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                            id = 'srm-1'; administrativeUnitId = '11111111-1111-1111-1111-111111111111'; roleId = 'dirrole-1'
+                            roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                        }) }
+            }
+            if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+            if ($Uri -eq 'v1.0/directory/administrativeUnits') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AU-One' }) }
+            }
+            throw "unexpected Graph call $Uri"
+        }
+
+        $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Au = @($Inv.administrativeUnits)[0]
+
+        # Positive proof first: the unit was exported and the name map read was attempted.
+        $Au | Should -Not -BeNullOrEmpty
+        $Au.displayName | Should -Be 'AU-One'
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+        $Au.PSObject.Properties.Name -contains 'scopedRoles' | Should -BeTrue
+        $null -eq $Au.scopedRoles |
+            Should -BeTrue -Because 'an omitted scopedRoles key still reconciles and still prunes, and role ids are not what the name map failed to give'
+        $Au.members.Count | Should -Be 0
+        $Published = @($InvErr) | Where-Object {
+            $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory'
+        }
+        $Msg = @($Published | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })[0].Exception.Message
+        $Msg | Should -Match 'administrativeUnits/AU-One/scopedRoles'
+        $Msg | Should -Not -Match 'administrativeUnits/AU-One/members'
+        $Msg | Should -Match 'v1\.0/directoryRoles'
+        $Msg | Should -Match 'injected map failure'
+    }
+
+    It 'control: exports the scoped role under its name, and no InventoryPartial, when the name map is readable' {
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -eq 'v1.0/directoryRoles') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'dirrole-1'; roleTemplateId = 'tmpl-1'; displayName = 'User Administrator' }) }
+            }
+            if ($Uri -like '*/scopedRoleMembers') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                            id = 'srm-1'; administrativeUnitId = '11111111-1111-1111-1111-111111111111'; roleId = 'dirrole-1'
+                            roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                        }) }
+            }
+            if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+            if ($Uri -eq 'v1.0/directory/administrativeUnits') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AU-One' }) }
+            }
+            throw "unexpected Graph call $Uri"
+        }
+
+        $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Au = @($Inv.administrativeUnits)[0]
+
+        $Au | Should -Not -BeNullOrEmpty
+        @($Au.scopedRoles).Count | Should -Be 1
+        $Au.scopedRoles[0].role | Should -Be 'User Administrator'
+        $Au.scopedRoles[0].principal | Should -Be 'p-1'
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+}

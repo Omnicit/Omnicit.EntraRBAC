@@ -14,7 +14,9 @@ function Get-OERAdministrativeUnit {
     non-terminating AdministrativeUnitNotFound error. For each of those two collections, the property
     is attached only when its read succeeds; a failed read omits the property entirely and raises a
     non-terminating error instead, so an empty array in the result always means the unit genuinely
-    has none.
+    has none. The scoped roles read includes the directory role list that names each role: when the
+    unit has scoped roles and that list cannot be read, the whole ScopedRoles read counts as failed,
+    since roles without their names would be read by the apply engine as roles nobody declared.
 
     .PARAMETER AdministrativeUnit
     The administrative unit to read, given as either its object id (GUID) or its exact display name --
@@ -37,7 +39,9 @@ function Get-OERAdministrativeUnit {
     When set, attaches the unit's scoped role members as a ScopedRoles property on the returned object.
     The property is present only when the read succeeds; a failed read is reported as a
     non-terminating AdministrativeUnitScopedRoleReadFailed error and the ScopedRoles property is
-    omitted, so a returned empty array always means the unit has no scoped role members.
+    omitted, so a returned empty array always means the unit has no scoped role members. Failing to
+    read the directory role list that supplies each role's name (needed only when the unit has scoped
+    roles) is a failed read too, and the error names that read.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -151,7 +155,14 @@ function Get-OERAdministrativeUnit {
                 $ScopedRead = $true
                 try {
                     $Scoped = @((Invoke-OERGraphRequest -Uri ("v1.0/directory/administrativeUnits/{0}/scopedRoleMembers" -f $Au.Id) -All).value)
-                    $RoleMap = Get-OERDirectoryRoleNameMap
+                    # A scoped role member carries only a role id, and the directory role list is what
+                    # names it. An unreadable list is NOT an empty one: every RoleName would be '' and the
+                    # apply engine, which matches a declared role by name, would read the declared roles as
+                    # undeclared and remove them under -Prune. -ThrowOnFailure makes the failure reach the
+                    # catch below, which omits ScopedRoles and publishes the read error. A unit with no
+                    # scoped role has nothing to name, so its (empty) answer does not wait on the list.
+                    $RoleMap = @{}
+                    if ($Scoped.Count -gt 0) { $RoleMap = Get-OERDirectoryRoleNameMap -ThrowOnFailure }
                     $Scoped = @($Scoped | ForEach-Object { ConvertTo-OERScopedRoleMember -InputObject $_ -RoleName ([string]$RoleMap[[string]$_.roleId]) })
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
