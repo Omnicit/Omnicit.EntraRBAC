@@ -36,9 +36,9 @@ delete, and `Set-OERAccessReviewDefinition` overwrite, another one), an access p
 policy, a catalog resource's role (`Add-OERAccessPackageResourceRole`), and a subscription or
 management group name in the Azure cmdlets (reported as `InvalidScope`, or
 `ManagementGroupNotFound` by `Get-OERSubscription`, as a missing name is). `Invoke-OERStructure`
-reports such an entry `Failed` and writes nothing; a binding whose resource name can match several
-resources, or only a group outside the catalog, is `Failed` too, and the package's binding prune is
-withheld.
+reports such an entry `Failed` and writes nothing for it; a binding whose resource name can match
+several resources, or only a group outside the catalog, is `Failed` too, and the package's binding
+prune is withheld.
 
 `Invoke-OERStructure -Prune` no longer removes an administrative unit's scoped roles when directory
 role names cannot be read: the unit is `Failed`, where earlier versions removed every scoped role
@@ -50,9 +50,9 @@ assignment.
 creates. Graph can answer a new group's first eligibility request with 404 `ResourceNotFound` until
 PIM for Groups knows the group; earlier versions could then fail with many error records until a
 re-run. The engine waits it out within the same 30-second budget per group it spends on the
-group's PIM policy, so an applied eligibility leaves no error records; once the budget is spent the
-row is `Failed`, saying a re-run applies it. A permanent eligibility first waits likewise until the
-group's policy is listed; an existing group never waits.
+group's PIM policy, so the wait itself leaves no error records; once the budget is spent the row is
+`Failed`, saying a re-run usually applies it. A permanent eligibility first waits likewise until
+the group's policy is listed and readable; an existing group never waits.
 
 ## [1.1.0] - 2026-10-01
 
