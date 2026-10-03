@@ -226,6 +226,40 @@ Describe 'Sync-OERStructureRoleAssignment' {
         }
     }
 
+    It 'streams only its own warning for the scope prune, silencing the duplicate the real Remove cmdlet writes' {
+        # Remove-OERRoleAssignment runs for REAL: only auth and the ARM transport are mocked, so its own
+        # "Deleting Azure role assignment" warning is written inside its gate. The warning stream itself
+        # is captured (3>&1): -WarningVariable would also collect a warning the cmdlet writes under a
+        # call-site SilentlyContinue, which never reaches the stream.
+        InModuleScope $script:moduleName {
+            function Invoke-SyncRaViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+            }
+            Mock Resolve-OERScope { '/subscriptions/sub-1' }
+            Mock Resolve-OERStructurePrincipal { 'p-1' }
+            Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+            Mock Get-OERRoleAssignment {
+                @(
+                    [PSCustomObject]@{ PrincipalId = 'p-1';     RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1'; RoleAssignmentId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleAssignments/ra-declared' },
+                    [PSCustomObject]@{ PrincipalId = 'other-p'; RoleDefinitionId = 'other-rd'; RoleAssignmentId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleAssignments/ra-extra' }
+                )
+            }
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERArmRequest { if ($Method -eq 'DELETE') { return [PSCustomObject]@{ id = 'ra-extra' } }; throw "unexpected $Method $Path" }
+            $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
+            $All = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -ErrorAction Stop 3>&1)
+            $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+            $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+            @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
+            # The DELETE ran, so the cmdlet passed its own gate and reached its own warning.
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' -and $Path -like '*/roleAssignments/ra-extra?api-version=*' }
+            $Streamed.Count | Should -Be 1
+            $Streamed[0] | Should -BeLike "Sync-OERStructureRoleAssignment: removing undeclared assignment 'other-rd'*"
+        }
+    }
+
     It 'with -ReconcileScope without -Prune reports undeclared assignment as Extra and does not call Remove-OERRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
