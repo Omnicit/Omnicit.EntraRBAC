@@ -10,7 +10,8 @@ function Add-OERAccessPackageResourceRole {
     located in -Catalog and identified by exactly one of -ResourceOriginId (the directory object id or
     site identifier, used verbatim), -Group (a group display name or id, resolved via Resolve-OERGroupId),
     or -Application (an enterprise application display name or service principal id, resolved via
-    Resolve-OERApplicationId). -Role names the role to bind. Graph's create response carries only the
+    Resolve-OERApplicationId). -Role names the role to bind; a role name that more than one role of the
+    resource carries is refused, never bound to the first of them. Graph's create response carries only the
     binding id, so after the POST succeeds this cmdlet re-reads the binding through
     Get-OERAccessPackageResourceRole and emits that object -- making create output match read output BY
     CONSTRUCTION rather than by hand-composing the same fields twice. If the confirmation read fails or
@@ -32,7 +33,10 @@ function Add-OERAccessPackageResourceRole {
     of the three.
 
     .PARAMETER Role
-    The display name of the resource role to bind (for example 'Member' or 'Owner').
+    The display name of the resource role to bind (for example 'Member' or 'Owner'). A resource does not
+    enforce unique role display names (two application roles can both be called 'User'), so a name that
+    more than one role of the resource carries is refused with AmbiguousName, naming the origin id of
+    each, and nothing is bound.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -245,7 +249,25 @@ function Add-OERAccessPackageResourceRole {
             return
         }
 
-        $ResourceRole = @($Resource.roles) | Where-Object { $_.displayName -eq $Role } | Select-Object -First 1
+        # Every role carrying the requested display name is kept, never just the first. A catalog
+        # resource does not enforce unique role display names -- Graph documents appRole.id as unique
+        # and states no uniqueness for displayName, so an application can carry two roles both called
+        # 'User' -- and binding the first of several would grant the access package an arbitrary one of
+        # them. More than one match makes the name ambiguous: refused before the POST, and before
+        # ShouldProcess, so a -WhatIf preview reads the same as the run. One match and no match are
+        # exactly what they were.
+        $ResourceRoleMatches = @(@($Resource.roles) | Where-Object { $_.displayName -eq $Role })
+        if ($ResourceRoleMatches.Count -gt 1) {
+            $ResourceLabel = if ($Resource.displayName) { [string]$Resource.displayName } else { $EffectiveOriginId }
+            $RoleOriginIds = ($ResourceRoleMatches | ForEach-Object { [string]$_.originId }) -join ', '
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Role '$Role' matches $($ResourceRoleMatches.Count) roles of resource '$ResourceLabel' ($RoleOriginIds). " +
+                    'A resource does not enforce unique role display names, so this name cannot identify a single role.')) `
+                -ErrorId 'AmbiguousName' -Category InvalidArgument -TargetObject $Role -Cmdlet $PSCmdlet
+            return
+        }
+        $ResourceRole = $ResourceRoleMatches | Select-Object -First 1
         if (-not $ResourceRole) {
             Write-CmdletError `
                 -Message ([System.Exception]::new("Role '$Role' not found on resource '$EffectiveOriginId'.")) `

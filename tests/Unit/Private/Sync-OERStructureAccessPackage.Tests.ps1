@@ -4792,4 +4792,108 @@ Describe 'Sync-OERStructureAccessPackage' {
             }
         }
     }
+
+    Context 'a role name several roles of the resource share is refused by the real cmdlet, and the engine reports it as a Failed row (Task 16)' {
+        # Application roles do not have unique display names. Add-OERAccessPackageResourceRole used to bind
+        # the FIRST role carrying the name, so an access package granted an arbitrary one of them. It now
+        # refuses, and the engine -- which calls it with -ErrorAction Stop -- turns the refusal into a Failed
+        # row. The cmdlet under test here is the REAL one: only the reads and the transport are mocked.
+
+        It 'reports a Failed row carrying the ambiguity message and posts no binding' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERAccessPackageResourceRole { $null }
+                # The cmdlet reads the resource itself, with its roles: two application roles named 'User'.
+                Mock Resolve-OERCatalogResource {
+                    [PSCustomObject]@{
+                        id           = 'res-a'
+                        displayName  = 'Payroll'
+                        originId     = '22222222-2222-2222-2222-222222222222'
+                        originSystem = 'AadApplication'
+                        roles        = @(
+                            [PSCustomObject]@{ id = 'role-1'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a001' }
+                            [PSCustomObject]@{ id = 'role-2'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a002' }
+                        )
+                    }
+                }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'rrs-posted' } } -ParameterFilter { $Method -eq 'POST' }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'User' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The cmdlet was reached and read the resource (the positive proof), then refused.
+                Should -Invoke Resolve-OERCatalogResource -Times 1 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                @($r | Where-Object { $_.Action -eq 'Created' }).Count | Should -Be 0
+
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike "failed to add resourceRole 'User' on 'Payroll': Role 'User' matches 2 roles of resource 'Payroll' (*"
+                $Failed[0].Detail | Should -BeLike '*aaaaaaaa-0000-0000-0000-00000000a001*'
+                $Failed[0].Detail | Should -BeLike '*aaaaaaaa-0000-0000-0000-00000000a002*'
+                $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'AmbiguousName*'
+            }
+        }
+
+        It 'binds the role once when only one role of the resource carries the name (control)' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAccessPackageId { 'ap-1' }
+                Mock Resolve-OERCatalogId { 'cat-1' }
+                Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Payroll'; Description = $null } }
+                Mock Get-OERCatalogResource {
+                    @([PSCustomObject]@{ Id = 'res-a'; OriginId = '22222222-2222-2222-2222-222222222222'; DisplayName = 'Payroll'; OriginSystem = 'AadApplication' })
+                }
+                Mock Resolve-OERGroupId { $null }
+                Mock Get-OERAccessPackageAssignmentPolicy { @() }
+                Mock Get-OERAccessPackageResourceRole { $null }
+                Mock Resolve-OERCatalogResource {
+                    [PSCustomObject]@{
+                        id           = 'res-a'
+                        displayName  = 'Payroll'
+                        originId     = '22222222-2222-2222-2222-222222222222'
+                        originSystem = 'AadApplication'
+                        roles        = @(
+                            [PSCustomObject]@{ id = 'role-1'; displayName = 'User'; originId = 'aaaaaaaa-0000-0000-0000-00000000a001' }
+                            [PSCustomObject]@{ id = 'role-3'; displayName = 'Admin'; originId = 'aaaaaaaa-0000-0000-0000-00000000a003' }
+                        )
+                    }
+                }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+                Mock Invoke-OERGraphRequest { [PSCustomObject]@{ id = 'rrs-posted' } } -ParameterFilter { $Method -eq 'POST' }
+                $Item = [PSCustomObject]@{
+                    displayName = 'AP-Payroll'; catalog = 'CAT-IT'
+                    resourceRoles = @([PSCustomObject]@{ resource = 'Payroll'; role = 'User' })
+                }
+                $r = @(Invoke-SyncApViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.role.originId -eq 'aaaaaaaa-0000-0000-0000-00000000a001'
+                }
+                @($r | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq "added resourceRole 'User' on 'Payroll'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            }
+        }
+    }
 }
