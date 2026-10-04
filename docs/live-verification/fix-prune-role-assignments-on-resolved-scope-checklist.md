@@ -10,7 +10,7 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 prerequisite script creates the resource group `oer-s81-rg` in the test subscription, the two plain
 security groups `oer-s81-grp1` and `oer-s81-grp2`, and one Azure role assignment: the built-in Reader
 role for `oer-s81-grp1`, defined at `oer-s81-rg`. The checklist itself then writes through the module
-at that resource group only (1.2): `Invoke-OERStructure` gives `oer-s81-grp2` the Reader role there.
+at that resource group only (1.4): `Invoke-OERStructure` gives `oer-s81-grp2` the Reader role there.
 **Nothing is ever written at the subscription scope.** The identity is Owner of the test subscription,
 and the role assignment prune has no guard for its own assignment, so section 2 runs at the
 subscription with `-WhatIf` and WITHOUT `-Prune`, behind a read-only fence that refuses every request
@@ -22,7 +22,7 @@ file outside the repository ([README.md](README.md), first paragraph). Every sig
 nothing here signs in as a person.
 
 **Every write is preceded by its `-WhatIf` plan.** The prerequisite script's setup and teardown run
-first with `-WhatIf`; every apply that writes (1.2, 1.4) runs its own `-WhatIf` plan first, in the same
+first with `-WhatIf`; the one apply that writes (1.4) runs its own `-WhatIf` plan first, in the same
 process, and writes only when that plan removes nothing and names only `oer-s81-` objects.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s81/` -- the
@@ -46,12 +46,12 @@ before it merges.
 - **A. Role assignments are grouped on the scope the engine resolves** ("group role assignments on
   the resolved scope"). `Invoke-OERStructure` resolves every `roleAssignments` entry's scope once,
   before the first entry is dispatched, and groups the entries on that resolved scope, in a canonical
-  form compared without regard to letter case and without a trailing `/`. `sub:` and
-  `subscription:` with an id, `/subscriptions/` with that id, the subscription's name, `mg:` with a
-  management group's name or display name and its path are one scope. Before, each spelling was its
-  own group, and under `-Prune` each group's pass removed the other group's assignments, on every
-  run; a path with a trailing `/` never pruned and drew a false "inherited" row. The handler now
-  takes the resolved scope and never resolves it again.
+  form compared without regard to letter case. `sub:` and `subscription:` with an id,
+  `/subscriptions/` with that id, the subscription's name, `mg:` with a management group's name or
+  display name and its path are one scope. Before, each spelling was its own group, and under
+  `-Prune` each group's pass removed the other group's assignments, on every run; a path with a
+  trailing `/` never pruned and drew a false "inherited" row, and is now refused (G). The handler
+  now takes the resolved scope and never resolves it again.
 - **B. A role definition matches on its GUID** ("match role assignments on the role definition
   GUID"). A live assignment at a resource group carries the role definition id anchored at the
   subscription, so a role given by its GUID (anchored by the module at the resource group) never
@@ -65,6 +65,35 @@ before it merges.
 - **F. The export never writes a duplicate** ("never export a duplicate entry"): objects that share
   a name are left out and named in `InventoryPartial`, and role assignment principals that share a
   name are written by object id.
+- **G. A scope written with a trailing or doubled `/` is refused** ("refuse a role scope written
+  with a trailing or doubled slash", round 1, A15). `Test-OERStructureSchema` reports a
+  `roleAssignments` or `roleManagementPolicies` scope that ends with `/` (other than `/` itself) or
+  contains `//` as an Error at the entry's scope path, and `Invoke-OERStructure` refuses the
+  document before it signs in. Round 0 merged such a scope with the scope written without the `/`,
+  so a scope written only that way started to be pruned, and `//` became the root `/`.
+- **H. A failed read of the assignments at a scope is `Failed`** ("report a failed read of the
+  assignments at a scope as Failed", round 1, A14). The handler reads with `-ErrorAction Stop`: an
+  entry whose scope cannot be read is `Failed` with the read error, nothing is planned for it, and
+  no prune pass runs for that scope. Round 0 took the failed read for an empty list and planned to
+  create assignments that exist (4.3).
+
+### Round 1: what was run again, and why
+
+Round 1 (A14, A15) changed what a scope with a trailing `/` does, so every check whose document
+had one was run again: 1.1-1.3 were that check and are now an offline refusal; 1.4, 1.6 and 3.1 had
+the `/` only on the side and ran again with the same scope written without it. 1.4 now also gives
+`oer-s81-grp2` its Reader assignment, which 1.2 used to create. 4.4 is new and measures H. S.1, the
+preparation (0.1-0.3) and the teardown (T.1-T.3) ran again around them. Checks 1.5, 2.1, 2.2 and
+4.1-4.3 were not run again: their documents carry no trailing `/`, and their results below are round
+0's, measured with the build of "read a role definition's built-in type from properties.type".
+
+Round 1 loads the module from the step's own worktree, never by checking the main clone out on
+another commit (G12): every block sets the session's `Repo` to the worktree named by
+`OER_LIVE_REPO` after the config is loaded, and the prerequisite script does the same. The raw
+folder, the baseline and the residue stay in the main clone's git-ignored `raw\` folder. Round 0's
+redaction map was deleted after its write-up, so round 1's placeholders are numbered afresh: the same
+`00000000-0000-0000-0000-0000000000NN` can name one object in a round-0 result and another in a
+round-1 result.
 
 A live tenant is needed for what mocks cannot show: how Azure Resource Manager really returns the
 scope and the role definition id of an assignment at a resource group and at the subscription, and
@@ -92,70 +121,68 @@ tenant's export validates and applies without a planned removal (section 4).
 - The **test tenant** -- never a customer tenant -- with the test subscription, and the two
   configuration files OerLive reads beside it (tenant values live there and nowhere else).
 - **OerLive 1.0.2** and `Initialize-OerS81Prereq.ps1` in the same folder; `$VaultDir` below is that
-  folder (the environment variable `OER_LIVE_DIR`). Every block starts with the same four lines, so
+  folder (the environment variable `OER_LIVE_DIR`). Every block starts with the same five lines, so
   each block also runs on its own in a fresh window.
 - The **dedicated certificate identity** `oer-live-cc` enabled for the run. It creates and deletes
   groups and a resource group and writes role assignments at that resource group, with the
   permissions it already holds (Owner on the test subscription); this file adds none.
-- The **built module of this branch** in the clone OerLive loads from (S.1 does it; T.3 puts the
-  clone back on `main`).
+- The **built module of this branch** in the step's own worktree, built there with
+  `./build.ps1 -Tasks build`, and the environment variable `OER_LIVE_REPO` naming that worktree. Each
+  block's fifth line sets the session's `Repo` to it, so the module loads from the worktree's build;
+  the main clone is never checked out on another commit or branch (S.1 and T.3 read that it was not).
 
 **The fence.** The blocks marked read-only replace the module's two transports, in the module's own
 scope, with thin wrappers that refuse every request that is not a read (a Microsoft Graph
 `getByIds`/`getMemberGroups` post excepted, which only reads), with an error naming the method and
 path.
 
-### S.1. Point the clone at this branch and build it
+### S.1. The module loads from this branch's build in the step's own worktree
 
-- [x] **S.1** The clone OerLive loads from holds this branch's build.
+- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries round 1, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
-Write-OerLiveStep "Tracked changes in the clone before the switch: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count); branch before the switch: $(git -C $Cfg.Repo branch --show-current)"
-$null = git -C $Cfg.Repo fetch origin fix/prune-role-assignments-on-resolved-scope 2>&1
-$null = git -C $Cfg.Repo switch --detach FETCH_HEAD 2>&1
-Write-OerLiveStep "Clone at: $(git -C $Cfg.Repo log -1 --format='%h %s')"
-Push-Location -LiteralPath $Cfg.Repo
-try { ./build.ps1 -Tasks build *> (Join-Path $env:TEMP 'oer-s81-build.log'); $Code = $LASTEXITCODE } finally { Pop-Location }
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainPath = [System.IO.Path]::GetFullPath(($List[0] -replace '^worktree ', '')).TrimEnd('\', '/')
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "The module loads from a worktree that is not the main clone: $([System.IO.Path]::GetFullPath($Cfg.Repo).TrimEnd('\', '/') -ne $MainPath)"
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
 $Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-$Fix = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch 'function Resolve-OERStructureRoleAssignmentScope' -Quiet)
-Write-OerLiveStep "Build exit code: $Code; the built module carries this branch's fix: $Fix"
+$A14 = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch 'Get-OERRoleAssignment -Scope $RawScope -AtScope -ErrorAction Stop' -Quiet)
+$A15 = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch "must be written without a trailing or doubled '/'" -Quiet)
+Write-OerLiveStep "The worktree's build carries A14: $A14; A15: $A15"
 ```
 
-**Expect:** `Tracked changes in the clone before the switch: 0` and the branch it was on (T.3 puts
-it back); the clone at the branch head; `Build exit code: 0; the built module carries this branch's
-fix: True`.
-**Failure looks like:** tracked changes in the clone -- stop, the clone is someone's work; a build
-exit code other than 0; `False` -- the clone did not get this branch, and every check below would
-measure `main`.
+**Expect:** `The module loads from a worktree that is not the main clone: True`; the main clone on
+`main` (its HEAD recorded, and read again in T.3); the worktree at this branch's head with 0 tracked
+changes; `The worktree's build carries A14: True; A15: True`.
+**Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main
+clone, and the run would load whatever the main clone last built; `A14: False` or `A15: False` --
+build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result: 2026-10-04 14:28 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
-
-```text
-Verdict: PASS. 0 tracked changes in the clone, which was on main; the clone at the branch head c1aced8; build exit code 0; the built module carries this branch's fix: True.
-
-[oer-s81] Tracked changes in the clone before the switch: 0; branch before the switch: main
-[oer-s81] Clone at: c1aced8 docs: add the live-verification checklist for the resolved-scope prune
-[oer-s81] Build exit code: 0; the built module carries this branch's fix: True
-```
+Result:
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 $M = Get-Module -Name Omnicit.EntraRBAC
-Write-OerLiveStep "The module is the clone's build: $($M.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+Write-OerLiveStep "The module is the worktree's build: $($M.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
 Disconnect-OerLive
 ```
 
@@ -163,8 +190,8 @@ Disconnect-OerLive
 the app name `oer-live-cc`, the test tenant, the service principal of that app id named
 `oer-live-cc` and the token's signed-in object; the organization name, a verified domain and the
 organization id; the ARM token from the certificate; the test subscription belongs to the test
-tenant and is Enabled), ending `identity check passed: True`, and `The module is the clone's build:
-True`.
+tenant and is Enabled), ending `identity check passed: True`, and `The module is the worktree's
+build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
@@ -188,13 +215,14 @@ Verdict: PASS. Every identity line True for the module session (app-only certifi
 
 ### 0.2. The prerequisite script's plan
 
-- [x] **0.2** `-WhatIf` plans only `oer-s81-` objects in the tenant.
+- [ ] **0.2** `-WhatIf` plans only `oer-s81-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS81Prereq.ps1') -WhatIf 2>&1 | ForEach-Object { "$_" })
 $Code = $LASTEXITCODE
 Write-OerLiveRaw -InputObject ($Out -join "`n")
@@ -246,13 +274,14 @@ What if: Performing the operation "Assign the built-in Reader role at the resour
 
 ### 0.3. The prerequisite script, for real
 
-- [x] **0.3** The resource group, the two groups and the Reader assignment of `oer-s81-grp1` exist.
+- [ ] **0.3** The resource group, the two groups and the Reader assignment of `oer-s81-grp1` exist.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS81Prereq.ps1') -Unattended 2>&1 | ForEach-Object { "$_" })
 $Code = $LASTEXITCODE
 Write-OerLiveRaw -InputObject ($Out -join "`n")
@@ -313,185 +342,138 @@ Verdict: PASS. The baseline written and read back before the first write (groups
 Every document in this section names the resource group `oer-s81-rg` and the two `oer-s81-` groups,
 and nothing else. The only role assignments DEFINED at that resource group are the two this file
 makes; the identity's own Owner assignment is defined at the subscription, so the prune pass at the
-resource group never sees it (it is inherited there, and skipped).
+resource group never sees it (it is inherited there, and skipped). Checks 1.1-1.3 are offline since
+round 1: a scope written with a trailing or doubled `/` is refused before any sign-in, so they load
+the worktree's build without signing in and replace `Initialize-OERAuth` with a stub that counts its
+calls and throws.
 
-### 1.1. Two spellings of one scope: the plan
+### 1.1. A trailing `/`: refused offline, before the sign-in
 
-- [x] **1.1** The resource group's path and the same path with a trailing `/` form one group: `-Prune -WhatIf` plans `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` created, and no removal.
+- [ ] **1.1** A document with the resource group's path and the same path with a trailing `/` is refused: `Test-OERStructure` reports one Error at the second entry's scope, and `Invoke-OERStructure -Prune -WhatIf` refuses with `StructureValidationFailed` without calling `Initialize-OERAuth`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
-Connect-OerLive -Arm
-$RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
-$Doc = [ordered]@{ version = '1.0'; roleAssignments = @(
-        [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }
-        [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }) }
-$Rows = @(Invoke-OERStructure -Json (ConvertTo-Json -InputObject $Doc -Depth 10) -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn)
-foreach ($R in $Rows) { Write-OerLiveStep "Row: $($R.Item) | $($R.Action) | $($R.Detail)" }
-foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
-foreach ($W in @($Warn)) { Write-OerLiveStep "Warning: $W" }
-$Remove = @($Rows | Where-Object { $_.Action -eq 'Removed' -or ($_.Action -eq 'Skipped' -and $_.Detail -like 'would remove*') })
-Write-OerLiveStep "Rows: $($Rows.Count); by action: $(($Rows | Group-Object Action | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '); planned removals: $($Remove.Count); records: $(@($Err).Count)"
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Disconnect-OerLive
-```
-
-**Expect:** two rows: `Reader -> oer-s81-grp1 @ .../oer-s81-rg | Unchanged | role assignment already
-exists at '.../oer-s81-rg'` and `Reader -> oer-s81-grp2 @ .../oer-s81-rg/ | Skipped | would create
-role assignment 'Reader' for 'oer-s81-grp2' at '.../oer-s81-rg'` -- the second at the path WITHOUT
-the trailing `/`; `planned removals: 0`; no record, no warning.
-**Failure looks like:** a planned removal; `oer-s81-grp1` reported `Skipped` as inherited, or
-`Extra` -- the two spellings formed two groups (the defect this branch fixes); a would-create target
-ending in `/`.
-
-Result: 2026-10-04 14:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
-
-```text
-Verdict: PASS. Two rows: oer-s81-grp1 at the resource group path Unchanged (role assignment already exists); oer-s81-grp2 at the same path with a trailing slash Skipped, would create at the path WITHOUT the trailing slash (the What-if target too); planned removals 0; 0 records; no warning. The two spellings formed one group.
-
-[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp2'" on target "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg".
-[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Skipped | would create role assignment 'Reader' for 'oer-s81-grp2' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Rows: 2; by action: Skipped 1, Unchanged 1; planned removals: 0; records: 0
-```
-
-### 1.2. The same document, for real, after its own plan
-
-- [x] **1.2** `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` `Created`, 0 `Removed`; the new assignment is defined at the resource group's path without a trailing `/`.
-
-```powershell
-$VaultDir = $env:OER_LIVE_DIR
-Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
-$Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
-$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
-Connect-OerLive -Arm
+$Built = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
+Import-Module $Built.FullName -Force
+& (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls = 0; function script:Initialize-OERAuth { $script:S81AuthCalls++; throw 'S81: no sign-in in 1.1' } }
+Write-OerLiveStep "The module is the worktree's build: $((Get-Module Omnicit.EntraRBAC).ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
             [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }
             [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }) })
-$Plan = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
-$PlanRemove = @($Plan | Where-Object { $_.Action -eq 'Removed' -or $_.Detail -like 'would remove*' })
-$PlanForeign = @($Plan | Where-Object { $_.Item -notmatch ' -> oer-s81-grp[12] @ ' })
-$Ok = ($Plan.Count -eq 2) -and ($PlanRemove.Count -eq 0) -and ($PlanForeign.Count -eq 0)
-Write-OerLiveStep "Plan: rows $($Plan.Count), planned removals $($PlanRemove.Count), rows not about an oer-s81- group $($PlanForeign.Count); writing: $Ok"
-if ($Ok) {
-    $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn)
-    foreach ($R in $Rows) { Write-OerLiveStep "Row: $($R.Item) | $($R.Action) | $($R.Detail)" }
-    foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
-    foreach ($W in @($Warn)) { Write-OerLiveStep "Warning: $W" }
-    Write-OerLiveStep "Rows: $($Rows.Count); by action: $(($Rows | Group-Object Action | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '); records: $(@($Err).Count)"
-    $AtRg = Wait-OerLiveConverged -Activity 'two Reader assignments are defined at oer-s81-rg' -Read {
-        $L = Invoke-OerLiveArm -All -Path "$RgScope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
-        , @(@($L.Body.value) | Where-Object { $null -ne $_ -and ([string]$_.properties.scope).TrimEnd('/') -ieq $RgScope })
-    } -Test { @($args[0]).Count -eq 2 }
-    foreach ($A in @($AtRg.Value)) { Write-OerLiveStep "Defined at the resource group: principal $($A.properties.principalId), scope ends without '/': $(-not ([string]$A.properties.scope).EndsWith('/')), scope equals the path exactly: $([string]$A.properties.scope -ceq $RgScope)" }
-}
-Disconnect-OerLive
+$V = Test-OERStructure -Json $Json -WarningAction SilentlyContinue
+foreach ($F in @($V.Errors | Where-Object Severity -eq 'Error')) { Write-OerLiveStep "Error: $($F.Path) | $($F.Message)" }
+Write-OerLiveStep "Valid: $($V.Valid); Errors: $(@($V.Errors | Where-Object Severity -eq 'Error').Count)"
+$Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+$Calls = & (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls }
+Write-OerLiveStep "Invoke-OERStructure -Prune -WhatIf: rows $($Rows.Count); errors: $((@($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) | ForEach-Object { ($_.FullyQualifiedErrorId -split ',')[0] }) -join ', '); Initialize-OERAuth calls: $Calls; a Graph session exists: $([bool](Get-MgContext))"
 ```
 
-**Expect:** `Plan: rows 2, planned removals 0, rows not about an oer-s81- group 0; writing: True`;
-then `oer-s81-grp1 | Unchanged` and `oer-s81-grp2 | Created | created role assignment 'Reader' for
-'oer-s81-grp2' at '.../oer-s81-rg'`; no `Removed` row; 0 records; two assignments defined at the
-resource group, each with `scope ends without '/': True`.
-**Failure looks like:** `writing: False` -- read the plan, nothing was written; a `Removed` row; a
-`Failed` row for `oer-s81-grp2` -- record its message (ARM's answer to the create).
+**Expect:** `The module is the worktree's build: True`; one Error, `roleAssignments[1].scope | 'scope'
+at roleAssignments[1] must be written without a trailing or doubled '/'. Got: '.../oer-s81-rg/'.`;
+`Valid: False; Errors: 1`; `rows 0; errors: StructureValidationFailed; Initialize-OERAuth calls: 0;
+a Graph session exists: False`.
+**Failure looks like:** `Valid: True` or a row -- the two spellings are merged as in round 0, and a
+scope written only with the `/` would be pruned; an `Initialize-OERAuth` call -- the refusal came
+after the sign-in.
 
-Result: 2026-10-04 14:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+Result:
 
-```text
-Verdict: PASS. Plan in the same process: 2 rows, 0 planned removals, every row about an oer-s81- group, so the run wrote. oer-s81-grp1 Unchanged; oer-s81-grp2 Created at the resource group path without the trailing slash; no Removed row; 0 records. Read back: exactly two assignments defined at oer-s81-rg, both with a scope that ends without a slash and equals the path exactly.
+### 1.2. The same document for real: refused, nothing written
 
-[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp2'" on target "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg".
-[oer-s81] Plan: rows 2, planned removals 0, rows not about an oer-s81- group 0; writing: True
-[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Created | created role assignment 'Reader' for 'oer-s81-grp2' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Rows: 2; by action: Created 1, Unchanged 1; records: 0
-[oer-s81] two Reader assignments are defined at oer-s81-rg: converged after 1 read(s), 0.2 s.
-[oer-s81] Defined at the resource group: principal 00000000-0000-0000-0000-000000000004, scope ends without '/': True, scope equals the path exactly: True
-[oer-s81] Defined at the resource group: principal 00000000-0000-0000-0000-000000000005, scope ends without '/': True, scope equals the path exactly: True
-```
-
-### 1.3. The same document again: only Unchanged (G8)
-
-- [x] **1.3** A second run gives `Unchanged` for both entries and writes nothing.
+- [ ] **1.2** The same document applied for real (`-Prune`, no `-WhatIf`) is refused the same way: no row, `StructureValidationFailed` naming the scope, and `Initialize-OERAuth` never called.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
-Connect-OerLive -Arm
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Disconnect-OerLive
+$Built = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
+Import-Module $Built.FullName -Force
+& (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls = 0; function script:Initialize-OERAuth { $script:S81AuthCalls++; throw 'S81: no sign-in in 1.2' } }
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
             [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }
             [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }) })
-$Plan = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
-$Ok = ($Plan.Count -eq 2) -and (@($Plan | Where-Object { $_.Action -ne 'Unchanged' }).Count -eq 0)
-Write-OerLiveStep "Plan: rows $($Plan.Count), all Unchanged: $Ok"
-if ($Ok) {
-    $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn)
-    foreach ($R in $Rows) { Write-OerLiveStep "Row: $($R.Item) | $($R.Action) | $($R.Detail)" }
-    Write-OerLiveStep "Rows: $($Rows.Count); by action: $(($Rows | Group-Object Action | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '); records: $(@($Err).Count); warnings: $(@($Warn).Count)"
-}
-Disconnect-OerLive
+$Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+$Calls = & (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls }
+foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $(($E.FullyQualifiedErrorId -split ',')[0]) -- $($E.Exception.Message)" }
+Write-OerLiveStep "Invoke-OERStructure -Prune: rows $($Rows.Count); Initialize-OERAuth calls: $Calls; a Graph session exists: $([bool](Get-MgContext))"
 ```
 
-**Expect:** `Plan: rows 2, all Unchanged: True`; the real run's two rows `Unchanged`; 0 records, 0
-warnings.
-**Failure looks like:** anything but `Unchanged` -- the document does not converge.
+**Expect:** one record, `StructureValidationFailed -- Structure document failed validation:
+roleAssignments[1].scope: 'scope' at roleAssignments[1] must be written without a trailing or
+doubled '/'. Got: '.../oer-s81-rg/'.`; `rows 0; Initialize-OERAuth calls: 0; a Graph session
+exists: False`. Since round 1 this check writes nothing: `oer-s81-grp2`'s Reader assignment is
+created in 1.4 instead.
+**Failure looks like:** a row, or an `Initialize-OERAuth` call.
 
-Result: 2026-10-04 14:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+Result:
 
-```text
-Verdict: PASS (G8). The plan: 2 rows, all Unchanged; the real run: both entries Unchanged (the trailing-slash entry included), 0 records, 0 warnings; nothing written.
+### 1.3. A doubled `/`, and the policy section: refused the same way; the root `/` is not
 
-[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s81] Plan: rows 2, all Unchanged: True
-[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Rows: 2; by action: Unchanged 2; records: 0; warnings: 0
-```
-
-### 1.4. The role as the Reader role's GUID: Unchanged, twice
-
-- [x] **1.4** With `oer-s81-grp1`'s role given as the Reader role's definition GUID, `-Prune` gives `Unchanged` and removes nothing, on two runs.
+- [ ] **1.3** A scope with `//` inside the path, a scope that is only `//`, and a `roleManagementPolicies` scope with a trailing `/` are each refused before the sign-in; the root `/` alone still validates.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Disconnect-OerLive
+$Built = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
+Import-Module $Built.FullName -Force
+& (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls = 0; function script:Initialize-OERAuth { $script:S81AuthCalls++; throw 'S81: no sign-in in 1.3' } }
+$Sub = $Cfg.SubscriptionId
+$Cases = [ordered]@{
+    'roleAssignments, // inside the path' = [ordered]@{ version = '1.0'; roleAssignments = @([ordered]@{ scope = "/subscriptions/$Sub//resourceGroups/oer-s81-rg"; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }) }
+    'roleAssignments, only //'           = [ordered]@{ version = '1.0'; roleAssignments = @([ordered]@{ scope = '//'; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }) }
+    'roleManagementPolicies, trailing /' = [ordered]@{ version = '1.0'; roleManagementPolicies = @([ordered]@{ scope = "/subscriptions/$Sub/resourceGroups/oer-s81-rg/"; role = 'Reader' }) }
+}
+foreach ($Name in $Cases.Keys) {
+    $Json = ConvertTo-Json -Depth 10 -InputObject $Cases[$Name]
+    $V = Test-OERStructure -Json $Json -WarningAction SilentlyContinue
+    $Errs = @($V.Errors | Where-Object Severity -eq 'Error')
+    $Err = $null
+    $Include = if ($Cases[$Name].Contains('roleAssignments')) { 'RoleAssignments' } else { 'RoleManagementPolicies' }
+    $Rows = @(Invoke-OERStructure -Json $Json -Include $Include -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+    Write-OerLiveStep "${Name}: Valid $($V.Valid); Errors $($Errs.Count) at $(@($Errs.Path) -join ', '); apply rows $($Rows.Count); errors: $((@($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) | ForEach-Object { ($_.FullyQualifiedErrorId -split ',')[0] }) -join ', ')"
+}
+$Root = Test-OERStructure -Json (ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @([ordered]@{ scope = '/'; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }) })) -WarningAction SilentlyContinue
+Write-OerLiveStep "The root '/' alone, validated only and never applied: Valid $($Root.Valid); Errors $(@($Root.Errors | Where-Object Severity -eq 'Error').Count)"
+$Calls = & (Get-Module Omnicit.EntraRBAC) { $script:S81AuthCalls }
+Write-OerLiveStep "Initialize-OERAuth calls: $Calls; a Graph session exists: $([bool](Get-MgContext))"
+```
+
+**Expect:** each of the three cases `Valid False; Errors 1` at `roleAssignments[0].scope` or
+`roleManagementPolicies[0].scope`; `apply rows 0; errors: StructureValidationFailed`; the root `/`
+`Valid True; Errors 0` (it is never applied here); `Initialize-OERAuth calls: 0; a Graph session
+exists: False`.
+**Failure looks like:** `Valid True` for a case -- `//` would become the root `/` as in round 0; an
+Error for the root `/` -- the rule refuses more than A15 decided.
+
+Result:
+
+### 1.4. The role as the Reader role's GUID: Unchanged on two runs, beside the second group's new assignment
+
+- [ ] **1.4** With `oer-s81-grp1`'s role given as the Reader role's definition GUID and `oer-s81-grp2` declared at the same path, without a trailing `/`, `-Prune` keeps `oer-s81-grp1` `Unchanged` on both runs, creates `oer-s81-grp2`'s assignment on the first and removes nothing; the second run is all `Unchanged` (G8).
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Filter = [uri]::EscapeDataString("roleName eq 'Reader'")
@@ -499,55 +481,46 @@ $Defs = Invoke-OerLiveArm -Path "/subscriptions/$($Cfg.SubscriptionId)/providers
 $ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.type -eq 'BuiltInRole' })[0].name)
 $Live = Invoke-OerLiveArm -All -Path "$RgScope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
 foreach ($A in @($Live.Body.value | Where-Object { ([string]$_.properties.scope).TrimEnd('/') -ieq $RgScope })) {
-    Write-OerLiveStep "Live at the resource group: role definition id anchored at the subscription, not the resource group: $(([string]$A.properties.roleDefinitionId).StartsWith("/subscriptions/$($Cfg.SubscriptionId)/providers/", [System.StringComparison]::OrdinalIgnoreCase)); its GUID is the Reader GUID: $(([string]$A.properties.roleDefinitionId).EndsWith("/$ReaderGuid", [System.StringComparison]::OrdinalIgnoreCase))"
+    Write-OerLiveStep "Live at the resource group before the run: role definition id anchored at the subscription, not the resource group: $(([string]$A.properties.roleDefinitionId).StartsWith("/subscriptions/$($Cfg.SubscriptionId)/providers/", [System.StringComparison]::OrdinalIgnoreCase)); its GUID is the Reader GUID: $(([string]$A.properties.roleDefinitionId).EndsWith("/$ReaderGuid", [System.StringComparison]::OrdinalIgnoreCase))"
 }
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
             [ordered]@{ scope = $RgScope; role = $ReaderGuid; principal = 'oer-s81-grp1'; principalType = 'Group' }
-            [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }) })
+            [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }) })
 $Plan = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
-$Ok = ($Plan.Count -eq 2) -and (@($Plan | Where-Object { $_.Action -ne 'Unchanged' }).Count -eq 0)
 foreach ($R in $Plan) { Write-OerLiveStep "Plan row: $($R.Item) | $($R.Action) | $($R.Detail)" }
-Write-OerLiveStep "Plan: rows $($Plan.Count), all Unchanged: $Ok"
+$PlanRemove = @($Plan | Where-Object { $_.Action -eq 'Removed' -or $_.Detail -like 'would remove*' })
+$PlanForeign = @($Plan | Where-Object { $_.Item -notmatch ' -> oer-s81-grp[12] @ ' })
+$PlanGuid = @($Plan | Where-Object { $_.Item -like '* -> oer-s81-grp1 @ *' })
+$GuidUnchanged = ($PlanGuid.Count -eq 1) -and ($PlanGuid[0].Action -eq 'Unchanged')
+$Ok = ($Plan.Count -eq 2) -and ($PlanRemove.Count -eq 0) -and ($PlanForeign.Count -eq 0) -and $GuidUnchanged
+Write-OerLiveStep "Plan: rows $($Plan.Count), planned removals $($PlanRemove.Count), rows not about an oer-s81- group $($PlanForeign.Count), the GUID entry Unchanged: $GuidUnchanged; writing: $Ok"
 if ($Ok) {
     foreach ($Run in 1, 2) {
         $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn)
+        foreach ($R in $Rows) { Write-OerLiveStep "Run ${Run} row: $($R.Item) | $($R.Action) | $($R.Detail)" }
         Write-OerLiveStep "Run ${Run}: rows $($Rows.Count); by action: $(($Rows | Group-Object Action | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '); records: $(@($Err).Count); warnings: $(@($Warn).Count)"
     }
+    $AtRg = Wait-OerLiveConverged -Activity 'two Reader assignments are defined at oer-s81-rg' -Read {
+        $L = Invoke-OerLiveArm -All -Path "$RgScope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
+        , @(@($L.Body.value) | Where-Object { $null -ne $_ -and ([string]$_.properties.scope).TrimEnd('/') -ieq $RgScope })
+    } -Test { @($args[0]).Count -eq 2 }
+    foreach ($A in @($AtRg.Value)) { Write-OerLiveStep "Defined at the resource group: principal $($A.properties.principalId), scope equals the path exactly: $([string]$A.properties.scope -ceq $RgScope)" }
 }
 Disconnect-OerLive
 ```
 
-**Expect:** both live assignments with `anchored at the subscription, not the resource group: True`
-and `its GUID is the Reader GUID: True` -- the shape that made a GUID never match before; the plan's
-two rows `Unchanged` (the first naming the GUID, redacted to a placeholder); `Run 1` and `Run 2`:
-rows 2, `Unchanged 2`, 0 records, 0 warnings.
-**Failure looks like:** the GUID entry planned as `would create` with `oer-s81-grp1`'s live
-assignment as a candidate -- the role key still compares the whole path (the defect this branch
-fixes); `writing` skipped because the plan was not all `Unchanged`.
+**Expect:** one live assignment before the run (`oer-s81-grp1`'s, from 0.3) with `anchored at the
+subscription, not the resource group: True` and `its GUID is the Reader GUID: True`; the plan's two
+rows: the GUID entry (redacted to a placeholder) `-> oer-s81-grp1` `Unchanged`, and `Reader ->
+oer-s81-grp2` `Skipped | would create ... at '.../oer-s81-rg'`; `Plan: rows 2, planned removals 0,
+rows not about an oer-s81- group 0, the GUID entry Unchanged: True; writing: True`; `Run 1`:
+`Unchanged 1, Created 1`; `Run 2`: `Unchanged 2`; 0 records and 0 warnings on both runs; two
+assignments defined at the resource group, each with `scope equals the path exactly: True`.
+**Failure looks like:** the GUID entry planned as `would create`, or `oer-s81-grp1`'s live assignment
+as a candidate -- the role key compares the whole path (BL-35); `writing: False` -- read the plan,
+nothing was written; a `Removed` row; anything but `Unchanged` in `Run 2`.
 
-Result: 2026-10-04 14:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
-
-```text
-Verdict: PASS. Measured: both live assignments at oer-s81-rg carry the role definition id anchored at the SUBSCRIPTION, not the resource group, and its GUID is the Reader GUID -- the shape that made a GUID-anchored role never match before (BL-35). With oer-s81-grp1's role given as the Reader GUID: the plan is 2 rows, all Unchanged; Run 1 and Run 2 under -Prune: 2 rows, Unchanged 2, 0 records, 0 warnings; nothing removed or re-created.
-
-[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s81] Live at the resource group: role definition id anchored at the subscription, not the resource group: True; its GUID is the Reader GUID: True
-[oer-s81] Live at the resource group: role definition id anchored at the subscription, not the resource group: True; its GUID is the Reader GUID: True
-[oer-s81] Plan row: 00000000-0000-0000-0000-000000000006 -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Plan row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
-[oer-s81] Plan: rows 2, all Unchanged: True
-[oer-s81] Run 1: rows 2; by action: Unchanged 2; records: 0; warnings: 0
-[oer-s81] Run 2: rows 2; by action: Unchanged 2; records: 0; warnings: 0
-```
+Result:
 
 ### 1.5. A scope that cannot be resolved withholds the prune: the plan
 
@@ -558,6 +531,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
@@ -603,13 +577,14 @@ Verdict: PASS. Three rows: oer-s81-grp1 Unchanged; oer-s81-grp2's live assignmen
 
 ### 1.6. A second entry for the same assignment: Failed, not written
 
-- [x] **1.6** An entry that resolves to the same scope, principal and role as an earlier one is `Failed` naming the earlier index, and the plan removes nothing.
+- [ ] **1.6** An entry that resolves to the same scope, principal and role as an earlier one is `Failed` naming the earlier index, and the plan removes nothing.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Filter = [uri]::EscapeDataString("roleName eq 'Reader'")
@@ -617,7 +592,7 @@ $Defs = Invoke-OerLiveArm -Path "/subscriptions/$($Cfg.SubscriptionId)/providers
 $ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.type -eq 'BuiltInRole' })[0].name)
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
             [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }
-            [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }
+            [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }
             [ordered]@{ scope = ($RgScope -replace '/resourceGroups/oer-s81-rg$', '/RESOURCEGROUPS/OER-S81-RG'); role = $ReaderGuid; principal = 'oer-s81-grp1'; principalType = 'Group' }) })
 $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn)
 foreach ($R in $Rows) { Write-OerLiveStep "Row: $($R.Item) | $($R.Action) | $($R.Detail)" }
@@ -667,6 +642,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 & (Get-Module Omnicit.EntraRBAC) {
     $script:S81Refused = [System.Collections.Generic.List[string]]::new()
@@ -738,6 +714,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 & (Get-Module Omnicit.EntraRBAC) {
     $script:S81Refused = [System.Collections.Generic.List[string]]::new()
@@ -809,13 +786,14 @@ What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-
 
 ### 3.1. One duplicate per section: an Error each, and the apply refuses before it signs in
 
-- [x] **3.1** `Test-OERStructure` reports one duplicate Error per section, nine in all, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
+- [ ] **3.1** `Test-OERStructure` reports one duplicate Error per section, nine in all, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Disconnect-OerLive
 $Built = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psd1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $env:PSModulePath = (Join-Path $Cfg.Repo 'output\RequiredModules') + [System.IO.Path]::PathSeparator + $env:PSModulePath
@@ -829,7 +807,7 @@ $Doc = [ordered]@{
     catalogs                        = @([ordered]@{ displayName = 'oer-s81-dup-catalog'; resources = $null }, [ordered]@{ displayName = 'OER-S81-DUP-CATALOG'; resources = $null })
     accessPackages                  = @([ordered]@{ displayName = 'oer-s81-dup-ap'; catalog = 'oer-s81-dup-catalog'; resourceRoles = $null }, [ordered]@{ displayName = 'OER-S81-DUP-AP'; catalog = 'OER-S81-DUP-CATALOG'; resourceRoles = $null })
     accessReviews                   = @([ordered]@{ displayName = 'oer-s81-dup-review'; accessPackage = 'oer-s81-dup-ap'; assignmentPolicy = 'oer-s81-policy'; reviewers = @() }, [ordered]@{ displayName = 'OER-S81-DUP-REVIEW'; accessPackage = 'oer-s81-dup-ap'; assignmentPolicy = 'oer-s81-policy'; reviewers = @() })
-    roleAssignments                 = @([ordered]@{ scope = "sub:$Sub"; role = 'Reader'; principal = 'oer-s81-grp1' }, [ordered]@{ scope = "/subscriptions/$Sub/"; role = 'READER'; principal = 'OER-S81-GRP1' })
+    roleAssignments                 = @([ordered]@{ scope = "sub:$Sub"; role = 'Reader'; principal = 'oer-s81-grp1' }, [ordered]@{ scope = "/subscriptions/$Sub"; role = 'READER'; principal = 'OER-S81-GRP1' })
     roleManagementPolicies          = @([ordered]@{ scope = "subscription:$Sub"; role = 'Reader' }, [ordered]@{ scope = "/SUBSCRIPTIONS/$Sub"; role = 'reader' })
     directoryRoleManagementPolicies = @([ordered]@{ role = 'Reports Reader' }, [ordered]@{ role = 'reports reader' })
     directoryRoleAssignments        = @([ordered]@{ role = 'Reports Reader'; principal = 'oer-s81-grp1'; assignmentType = 'Eligible' }, [ordered]@{ role = 'REPORTS READER'; principal = 'oer-s81-grp1'; assignmentType = 'Eligible' })
@@ -847,7 +825,8 @@ Write-OerLiveStep "Invoke-OERStructure rows: $($Rows.Count); errors: $((@($Err |
 **Expect:** `Valid: False`; nine duplicate Errors, one per section, each at the LATER entry's path
 (`groups[1]`, `administrativeUnits[1]`, ..., `directoryRoleAssignments[1]`) and naming `...[0]`; the
 roleAssignments and roleManagementPolicies ones although the two entries spell the scope differently
-(`sub:`/`subscription:` with the id against the path with a trailing `/` or in upper case);
+(`sub:`/`subscription:` with the id against the path, the second in upper case; since round 1 the
+path carries no trailing `/`, which would add an Error of its own);
 `Invoke-OERStructure rows: 0; errors: StructureValidationFailed; Initialize-OERAuth calls: 0; a Graph
 session exists: False`.
 **Failure looks like:** fewer than nine duplicate Errors, or one at the earlier entry's path; a
@@ -883,6 +862,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 & (Get-Module Omnicit.EntraRBAC) {
     $script:S81Seen = 0
@@ -970,6 +950,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 $BundlePath = (Get-ChildItem -LiteralPath (Join-Path $Raw 'export-4.1') -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName
 $Json = Get-Content -LiteralPath (Join-Path $BundlePath 'inventory.json') -Raw
@@ -1013,6 +994,7 @@ $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 Connect-OerLive -Arm
 & (Get-Module Omnicit.EntraRBAC) {
     $script:S81Refused = [System.Collections.Generic.List[string]]::new()
@@ -1051,6 +1033,8 @@ Disconnect-OerLive
 guard working, not a planned removal); `refused by the fence: 0`.
 **Failure looks like:** an `Extra` row -- an assignment the export wrote is not matched by its own
 entry, so `-Prune` would remove it: record its section and detail.
+**Round 1:** not run again. Its six management-group rows are the finding A14 corrects; 4.4
+measures them again with the corrected read.
 
 Result: 2026-10-04 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
 
@@ -1099,17 +1083,82 @@ What if: Performing the operation "Create role assignment 'Log Analytics Contrib
 [oer-s81] Rows: Skipped 6, Unchanged 9
 ```
 
-## Teardown
+### 4.4. The export's management-group assignments with -WhatIf: a failed read is Failed, never a create (A14)
 
-### T.1. The teardown's plan
-
-- [x] **T.1** `-Teardown -WhatIf` plans the removal of the two role assignments at `oer-s81-rg`, the two groups and the resource group, and nothing else.
+- [ ] **4.4** The export's role assignments at a management-group scope, which `oer-live-cc` cannot read there, applied with `-WhatIf` WITHOUT `-Prune` behind the fence: every row is `Failed` with the read error, 0 creates are planned, and 0 prune candidates are reported.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:S81Seen = 0
+    $script:S81Refused = [System.Collections.Generic.List[string]]::new()
+    if (-not $script:S81Graph) { $script:S81Graph = ${function:Invoke-OERGraphRequest} }
+    if (-not $script:S81Arm) { $script:S81Arm = ${function:Invoke-OERArmRequest} }
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $script:S81Seen++
+        $Path = ($Uri -replace '^https://[^/]+/', '') -replace '\?.*$', ''
+        if ($Method -ne 'GET' -and $Path -notmatch '^v1\.0/directoryObjects/(getByIds|[^/]+/getMemberGroups)$') { $script:S81Refused.Add("$Method $Path"); throw "S81 read-only fence: refused $Method $Path" }
+        & $script:S81Graph @PSBoundParameters
+    }
+    function script:Invoke-OERArmRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Path, [hashtable]$Body, [switch]$All)
+        $script:S81Seen++
+        if ($Method -ne 'GET') { $script:S81Refused.Add("$Method $($Path -replace '\?.*$', '')"); throw "S81 read-only fence: refused $Method $Path" }
+        & $script:S81Arm @PSBoundParameters
+    }
+}
+$Out = Join-Path $Raw 'export-4.4'
+$null = New-Item -ItemType Directory -Force -Path $Out
+$Bundle = Export-OERInventory -OutputPath $Out -Include RoleAssignments -ErrorAction SilentlyContinue -ErrorVariable ExpErr -WarningAction SilentlyContinue
+$Doc = Get-Content -LiteralPath (Join-Path $Bundle.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+$MgEntries = @($Doc.roleAssignments | Where-Object { [string]$_.scope -like '/providers/Microsoft.Management/managementGroups/*' })
+Write-OerLiveStep "Export: role assignments $(@($Doc.roleAssignments).Count); at a management-group scope $($MgEntries.Count); distinct such scopes $(@($MgEntries | ForEach-Object { ([string]$_.scope).ToLowerInvariant() } | Sort-Object -Unique).Count); SkippedScopes $(@($Bundle.SkippedScopes).Count)"
+$Path44 = Join-Path $Raw 'apply-4.4.json'
+[System.IO.File]::WriteAllText($Path44, (ConvertTo-Json -InputObject ([ordered]@{ version = $Doc.version; roleAssignments = $MgEntries }) -Depth 30), [System.Text.UTF8Encoding]::new($false))
+$Rows = @(Invoke-OERStructure -Path $Path44 -Include RoleAssignments -WhatIf -ErrorAction SilentlyContinue -ErrorVariable ApErr -WarningAction SilentlyContinue -WarningVariable ApWarn)
+$Fence = & (Get-Module Omnicit.EntraRBAC) { [PSCustomObject]@{ Seen = $script:S81Seen; Refused = @($script:S81Refused) } }
+foreach ($G in @($Rows | Group-Object Action | Sort-Object Name)) { Write-OerLiveStep "Rows: $($G.Name) = $($G.Count)" }
+foreach ($R in $Rows) {
+    Write-OerLiveStep "Row: $($R.Action) | the read failed: $($R.Detail -like 'could not read role assignments at scope*') | AuthorizationFailed: $($R.Detail -match 'AuthorizationFailed') | its record: $(if ($R.Error) { ($R.Error.FullyQualifiedErrorId -split ',')[0] } else { 'none' })"
+}
+$Creates = @($Rows | Where-Object { $_.Action -eq 'Created' -or $_.Detail -like 'would create*' })
+$Records = @($ApErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+foreach ($G in @($Records | Group-Object { "$($_.FullyQualifiedErrorId) | $($_.InvocationInfo.MyCommand.Name)" } | Sort-Object Name)) { Write-OerLiveStep "Records: $($G.Name) = $($G.Count)" }
+Write-OerLiveStep "Entries: $($MgEntries.Count); rows: $($Rows.Count); Failed with the read error: $(@($Rows | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'could not read role assignments at scope*' }).Count); planned creates: $($Creates.Count); Extra: $(@($Rows | Where-Object Action -eq 'Extra').Count); error records: $($Records.Count); warnings: $(@($ApWarn).Count); fence: requests $($Fence.Seen), refused $($Fence.Refused.Count)"
+Disconnect-OerLive
+```
+
+**Expect:** the export's role assignments counted, with the entries at a management-group scope
+(round 0 measured 6 at 2 scopes; the tenant may have changed since) and `SkippedScopes 1`; every row
+`Failed`, with `the read failed: True | AuthorizationFailed: True | its record: AuthorizationFailed`;
+`Failed with the read error` equal to the number of entries; `planned creates: 0`; `Extra: 0`; the
+records grouped by error id and command; `refused 0`. The row's Detail carries the management
+group's name and is therefore not printed, and neither are the entries' principals.
+**Failure looks like:** a `Skipped` row with `would create` -- the failed read is taken for an empty
+list, as in round 0 (4.3); a refused request -- a read path tried to write.
+
+Result:
+
+## Teardown
+
+### T.1. The teardown's plan
+
+- [ ] **T.1** `-Teardown -WhatIf` plans the removal of the two role assignments at `oer-s81-rg`, the two groups and the resource group, and nothing else.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS81Prereq.ps1') -Teardown -WhatIf 2>&1 | ForEach-Object { "$_" })
 $Code = $LASTEXITCODE
 Write-OerLiveRaw -InputObject ($Out -join "`n")
@@ -1160,13 +1209,14 @@ What if: Performing the operation "Delete the resource group (Azure Resource Man
 
 ### T.2. The teardown
 
-- [x] **T.2** Everything with the prefix is gone, and the counts equal the baseline.
+- [ ] **T.2** Everything with the prefix is gone, and the counts equal the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS81Prereq.ps1') -Teardown -Unattended 2>&1 | ForEach-Object { "$_" })
 $Code = $LASTEXITCODE
 Write-OerLiveRaw -InputObject ($Out -join "`n")
@@ -1224,46 +1274,26 @@ Verdict: PASS. Both role assignments at oer-s81-rg removed (OK); both groups del
 
 ### T.3. Read back, and clean up
 
-- [x] **T.3** A later read-back finds nothing, the clone is back on the branch it was on, and the raw folder and the redaction map are deleted after the write-up.
+- [ ] **T.3** A later read-back finds nothing, the main clone is still on `main` at the HEAD S.1 read, and the raw folder and the redaction map are deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
 Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
 $Cfg = Import-OerLiveConfig -Prefix 'oer-s81-' -ConfigDirectory $VaultDir
 $Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s81'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS81Prereq.ps1') -ReadBack 2>&1 | ForEach-Object { "$_" })
 Write-OerLiveRaw -InputObject ($Out -join "`n")
-$null = git -C $Cfg.Repo switch main 2>&1
-Write-OerLiveStep "Clone branch after the switch back: $(git -C $Cfg.Repo branch --show-current); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Main clone after the run: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
 ```
 
 **Expect:** `prefixed objects left: 0; unread collections: 0`; `Resource group oer-s81-rg exists:
-False`; both counts equal; the clone on `main` with 0 tracked changes. After the results are copied
-into the repository checklist: delete `raw\s81\` and run `Clear-OerLiveRedactionMap`.
-**Failure looks like:** a prefixed object left -- run T.2 again.
+False`; both counts equal; the main clone on `main` at the HEAD S.1 read. After the results are
+copied into the repository checklist: delete `raw\s81\` and run `Clear-OerLiveRedactionMap`.
+**Failure looks like:** a prefixed object left -- run T.2 again; the main clone on another branch or
+HEAD -- something switched it during the run (G12).
 
-Result: 2026-10-04 14:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
-
-```text
-Verdict: PASS. Read back about a minute after T.2: the sweep finds no oer-s81- object; oer-s81-rg exists: False; both counts equal to the baseline; prefixed objects left 0, unread collections 0, residue rows 0. The clone is back on main with 0 tracked changes. raw\s81 and the redaction map are deleted after the write-up.
-
-[oer-s81] Transcript (redacted): raw\s81\readback-20261004-143944Z.log; OerLive 1.0.2.
-[oer-s81] Mode: READ BACK. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
-[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
-[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s81] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s81-' is left.
-[oer-s81] Read-back: resource group oer-s81-rg exists: False
-[oer-s81] Counts: groups now 97, at the baseline 97; equal: True
-[oer-s81] Counts: subscriptionRoleAssignments now 6, at the baseline 6; equal: True
-[oer-s81] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
-[oer-s81] Done.
-[oer-s81] Clone branch after the switch back: main; tracked changes: 0
-```
+Result:
