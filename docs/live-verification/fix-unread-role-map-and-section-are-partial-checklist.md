@@ -123,7 +123,7 @@ and refuses everything else with an error naming the method and path. It counts 
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -152,13 +152,22 @@ changes; `The worktree's build carries A: True; B: True; C: True`.
 clone, and the run would load whatever the main clone last built; any `False` on the last line --
 build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-04 20:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 2a86120, never switched; the worktree on fix/unread-role-map-and-section-are-partial at f9a7e13 with 0 tracked changes; the worktree's build carries A, B and C.
+
+[oer-s82] The module loads from a worktree that is not the main clone: True
+[oer-s82] Main clone: branch main; HEAD 2a86120
+[oer-s82] Worktree: branch fix/unread-role-map-and-section-are-partial; HEAD f9a7e13 docs: add the live-verification checklist for unread role maps and sections; tracked changes: 0
+[oer-s82] The worktree's build carries A: True; B: True; C: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -180,11 +189,27 @@ tenant and is Enabled), `identity check passed: True`, and `The module is the wo
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-04 20:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the module session (app-only certificate session with the identity's app id, app name oer-live-cc, test tenant, the service principal named oer-live-cc and the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the test subscription belongs to the test tenant and is Enabled); identity check passed; the module is the worktree's build (1.1.2).
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] The module is the worktree's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, the module session
 
-- [ ] **0.2** The no-permission identity signs in to a module session.
+- [x] **0.2** The no-permission identity signs in to a module session.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -204,11 +229,24 @@ session is `oer-live-cc-noperm`: `True`, the test tenant `True`, the ARM token f
 name through the session, since it can read nothing.
 **Failure looks like:** any `False` -- STOP; section 1 needs this session.
 
-Result:
+Result: 2026-10-04 20:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. oer-live-cc-noperm: app-only with its app id, app name oer-live-cc-noperm, test tenant, ARM token from the certificate: all True; identity check passed; the module is the worktree's build.
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s82] The module is the worktree's build: True
+```
 
 ### 0.3. The prerequisite script's plan
 
-- [ ] **0.3** `-WhatIf` plans only `oer-s82-` objects in the tenant.
+- [x] **0.3** `-WhatIf` plans only `oer-s82-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -233,11 +271,40 @@ created, removed or written`; exit code `0`.
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
-Result:
+Result: 2026-10-04 20:41 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; the sweep read all six collections and found no oer-s82- object; 5 What-if targets: 2 local files under raw\s82\ (the transcript and the baseline) and 3 in the tenant (oer-s82-grp, oer-s82-au, oer-s82-au: member oer-s82-grp), every tenant target with the prefix; nothing written; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s82\prereq-20261004-204100Z.log".
+[oer-s82] Mode: CREATE or complete. Prefix 'oer-s82-'. Objects (fixed): oer-s82-grp; oer-s82-au (hidden membership) with oer-s82-grp as its member. OerLive 1.0.2.
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Residue: raw\residue.json holds no rows.
+[oer-s82] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s82-' is left.
+[oer-s82] Found: oer-s82-grp exists: False; oer-s82-au exists: False.
+[oer-s82] No baseline yet: it is written now, before the first write to the tenant (groups 97, administrative units 1).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s82\baseline-s82.json".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member)" on target "oer-s82-grp".
+What if: Performing the operation "Create an administrative unit with hidden membership (Graph v1.0 POST directory/administrativeUnits: visibility HiddenMembership, assigned, not restricted)" on target "oer-s82-au".
+What if: Performing the operation "Add the group as a member of the administrative unit (Graph v1.0 POST administrativeUnits/members/$ref)" on target "oer-s82-au: member oer-s82-grp".
+[oer-s82] Summary: oer-s82-grp absent; oer-s82-au absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s82] WhatIf: nothing was created, removed or written.
+[oer-s82] Done.
+[oer-s82] What-if targets: 5; in the tenant: 3; every tenant target starts with oer-s82-: True; exit code: 0
+```
 
 ### 0.4. The prerequisite script, for real
 
-- [ ] **0.4** The test objects exist: the group, and the hidden administrative unit with the group as its member.
+- [x] **0.4** The test objects exist: the group, and the hidden administrative unit with the group as its member.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -258,13 +325,41 @@ delay` line on a fresh object is expected, and is not a failure.
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.4 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-04 20:43 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the third run. Run 1 wrote the baseline (groups 97, administrative units 1), created oer-s82-grp (201) and oer-s82-au (201, readable as HiddenMembership after 3 reads, 6.2 s) and added the group (204), then stopped: the member listing of the unit, read at once, answered 404 Request_ResourceNotFound (replication), and the script's convergence read took a 404 as a stop. Run 2 stopped before writing anything new: a defect in the prerequisite script (its member read returned a list nested in a second array, so the group was not seen as a member), which tried the add again and got 400 'A conflicting object ... is present'. Both are defects of the prerequisite script, not of the module, and are fixed (a 404 while converging is 'not yet'; the member list is returned unwrapped; a conflict on the add means the membership exists). A read-only probe between the runs listed the group as the unit's member through all three member paths, the group's memberOf, and Get-OERAdministrativeUnit -IncludeMembers. Run 3 below completed: both objects present, the group listed as the member on the first read; exit code 0.
+
+[oer-s82] Transcript (redacted): raw\s82\prereq-20261004-204246Z.log; OerLive 1.0.2.
+[oer-s82] Mode: CREATE or complete. Prefix 'oer-s82-'. Objects (fixed): oer-s82-grp; oer-s82-au (hidden membership) with oer-s82-grp as its member. OerLive 1.0.2.
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s82] Residue: raw\residue.json holds no rows.
+[oer-s82] Found: oer-s82-grp exists: True; oer-s82-au exists: True.
+[oer-s82] The baseline exists (groups 97, administrative units 1 when it was written).
+[oer-s82] Group oer-s82-grp exists.
+[oer-s82] Administrative unit oer-s82-au exists.
+[oer-s82] Adding oer-s82-grp to oer-s82-au answered 400 Request_BadRequest (the membership exists already; the read below confirms it).
+[oer-s82] oer-s82-au lists oer-s82-grp as a member: converged after 1 read(s), 0.1 s.
+[oer-s82] Summary: oer-s82-grp present; oer-s82-au present; written to the tenant: True.
+[oer-s82] Done.
+[oer-s82] Exit code: 0
+```
 
 ### 1. The export, read as oer-live-cc-noperm
 
 ### 1.1. Every section refused: each one named as partial, written as `[]`
 
-- [ ] **1.1** The no-permission export of groups, administrative units and access reviews names each of the three sections, and the group roster, as partial; the sections are written as `[]`, never `null`.
+- [x] **1.1** The no-permission export of groups, administrative units and access reviews names each of the three sections, and the group roster, as partial; the sections are written as `[]`, never `null`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -324,13 +419,75 @@ empty array, and one from `Export-OERInventory`; each of the three sections pres
 branch); a section `null` in `inventory.json` -- a top-level section must stay an array; `refused`
 above 0.
 
-Result:
+Result: 2026-10-04 20:43 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 4 requests, 0 not a GET, refused 0. Every read refused (403, the expected answer for this identity). The same four warnings as the baseline (groups, administrative units, access reviews, the group roster). NEW against the baseline (check 3.1 of the unread-collection checklist, where no InventoryPartial and no IncompleteReads entry named these sections): IncompleteReads holds 2 entries, 'groups, administrativeUnits, accessReviews' and 'groupsRoster'; 2 InventoryPartial errors, the one from Get-OERInventory with the target exactly 'groups, administrativeUnits, accessReviews' and the sentence that such a section is written as an empty array, and one from Export-OERInventory naming groupsRoster; each of the three sections present in inventory.json, not null, with 0 entries; groupsRoster.json with 0 entries. The other error records are the transport's nested records of the same refusals, as in the baseline.
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s82] Fence: requests 4, not a GET 0, refused 0
+[oer-s82] Warnings: 4
+[oer-s82] Warning: Could not read groups: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Warning: Could not read administrative units: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Warning: Could not read access reviews: Forbidden: Attempted to perform an unauthorized operation.
+[oer-s82] Warning: Could not read the group roster: Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] IncompleteReads: 2 [groups, administrativeUnits, accessReviews; groupsRoster]
+[oer-s82] InventoryPartial errors: 2 [InventoryPartial,Get-OERInventory; InventoryPartial,Export-OERInventory]
+[oer-s82] InventoryPartial (InventoryPartial,Get-OERInventory) target: groups, administrativeUnits, accessReviews
+[oer-s82] InventoryPartial (InventoryPartial,Export-OERInventory) target: REPO\docs\live-verification\raw\s82\export-1.1\oer-inventory-00000000-0000-0000-0000-000000000005-20261004-224338
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied,Get-OERAdministrativeUnit -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: InventoryPartial,Get-OERInventory -- This inventory is PARTIAL: 3 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). Unread: groups, administrativeUnits, accessReviews. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot. Causes: Could not read groups: Authorization_RequestDenied: Insufficient privileges to complete the operation.; Could not read administrative units: Authorization_RequestDenied: Insufficient privileges to complete the operation.; Could not read access reviews: Forbidden: Attempted to perform an unauthorized operation..
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: Authorization_RequestDenied,Get-OERGroup -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s82] Error: InventoryPartial,Export-OERInventory -- This inventory bundle is PARTIAL: 2 partial Entra ID read entry(ies) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: groups, administrativeUnits, accessReviews; groupsRoster. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read. Do not treat it as a full tenant snapshot.
+[oer-s82] inventory.json groups: present True; null False; entries 0
+[oer-s82] inventory.json administrativeUnits: present True; null False; entries 0
+[oer-s82] inventory.json accessReviews: present True; null False; entries 0
+[oer-s82] groupsRoster.json entries: 0
+```
 
 ### 2. The export and the apply, read as oer-live-cc
 
 ### 2.1. The same export: no partial, and the test objects in the bundle
 
-- [ ] **2.1** The same export as 1.1 is complete (no `InventoryPartial`, no `IncompleteReads`), and the bundle carries `oer-s82-au` with its member and `oer-s82-grp` in the roster.
+- [x] **2.1** The same export as 1.1 is complete (no `InventoryPartial`, no `IncompleteReads`), and the bundle carries `oer-s82-au` with its member and `oer-s82-grp` in the roster.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -389,11 +546,36 @@ skipped review is not an unread one); `oer-s82-au entries: 1` with `"hiddenMembe
 do was reported as unread; `members` or `scopedRoles` `null` on `oer-s82-au` -- the hidden unit's
 membership was not readable (record it, it is a finding, not a pass); `refused` above 0.
 
-Result:
+Result: 2026-10-04 20:46 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 405 requests, 3 not a GET (getByIds), refused 0. IncompleteReads 0 and no InventoryPartial: the same export as 1.1 is complete for this identity. The only warning is the known aggregate for 1 access review that is not access-package-scoped (skipped, not unread). oer-s82-au: 1 entry, hiddenMembership true, dynamic false, restricted false, members holding the group's id, scopedRoles [] -- the hidden unit's membership is readable app-only; groupsRoster.json lists oer-s82-grp once; inventory.json validates (0 Errors). Summary: groups 10 (RBAC-relevant only), administrative units 2, access reviews 5, roster 98.
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Fence: requests 405, not a GET 3, refused 0
+[oer-s82] Summary: groups 10, administrative units 2, access reviews 5, roster 98
+[oer-s82] Warnings: 1
+[oer-s82] Warning: Get-OERInventory: skipped 1 access review definition(s) that are not access-package-scoped. Only access-package reviews round-trip through Invoke-OERStructure; group, application and directory-role reviews are not captured.
+[oer-s82] IncompleteReads: 0 []
+[oer-s82] InventoryPartial errors: 0
+[oer-s82] oer-s82-au entries: 1; {"displayName":"oer-s82-au","description":"Omnicit.EntraRBAC live verification (oer-s82-): an unread section is never empty.","restricted":false,"dynamic":false,"hiddenMembership":true,"members":["00000000-0000-0000-0000-000000000004"],"scopedRoles":[]}
+[oer-s82] oer-s82-au lists oer-s82-grp (00000000-0000-0000-0000-000000000004) as its member: True
+[oer-s82] groupsRoster.json entries named oer-s82-grp: 1
+[oer-s82] inventory.json validates: True; Errors: 0
+```
 
 ### 2.2. The unchanged export applied with -Prune -WhatIf: no removal planned for the test objects
 
-- [ ] **2.2** An export with every security group in full detail, applied unchanged with `-Prune -WhatIf`, plans 0 removals for `oer-s82-` objects; the rows per section are recorded.
+- [x] **2.2** An export with every security group in full detail, applied unchanged with `-Prune -WhatIf`, plans 0 removals for `oer-s82-` objects; the rows per section are recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -447,13 +629,40 @@ branch changes no prune of the group or unit handlers; a planned removal there i
 **Failure looks like:** a would-remove row for an `oer-s82-` object; an `oer-s82-` row other than
 `Unchanged`; `refused` above 0.
 
-Result:
+Result: 2026-10-04 20:51 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The export with every security group in full detail: groups 92, administrative units 2, access reviews 5, no IncompleteReads and no InventoryPartial; both test objects in inventory.json. Applied unchanged with -Prune -WhatIf behind the fence (899 requests, 3 getByIds, refused 0): 0 would-remove rows in all, 0 for oer-s82- objects, 0 would-remove warnings; every oer-s82- row Unchanged (the group's properties; the unit's properties and its member). Rows per section: accessReviews Unchanged 5, administrativeUnits Unchanged 3, groups Unchanged 254 and Skipped 67. A follow-up read-only plan grouped the 67 Skipped rows by their text with every quoted value masked: all 67 are one shape, a member of a dynamic group that the handler does not reconcile since the membership rule owns it (no write planned; recorded as a finding outside this step's scope: the export writes the members of a dynamic group, which the apply can only skip).
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Export: groups 92, administrative units 2, access reviews 5; IncompleteReads 0; InventoryPartial errors 0
+[oer-s82] oer-s82-grp in inventory.json: 1; oer-s82-au: 1
+[oer-s82] Fence: requests 899, not a GET 3, refused 0
+[oer-s82] Rows: accessReviews, Unchanged: 5
+[oer-s82] Rows: administrativeUnits, Unchanged: 3
+[oer-s82] Rows: groups, Skipped: 67
+[oer-s82] Rows: groups, Unchanged: 254
+[oer-s82] Would-remove rows: 0; for oer-s82- objects: 0
+[oer-s82] oer-s82 row: groups | oer-s82-grp | Unchanged | group properties match
+[oer-s82] oer-s82 row: administrativeUnits | oer-s82-au | Unchanged | administrative unit properties match
+[oer-s82] oer-s82 row: administrativeUnits | oer-s82-au | Unchanged | member '00000000-0000-0000-0000-000000000004' already present
+[oer-s82] Would-remove warnings: 0
+```
 
 ### 3. The validator, offline
 
 ### 3.1. An empty name in each of the five fields: an Error each, and the apply refuses before it signs in
 
-- [ ] **3.1** `Test-OERStructure` reports an Error for `""` in `scopedRoles[].role`, `scopedRoles[].principal`, `resources[].name`, `resourceRoles[].resource` and `resourceRoles[].role`, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
+- [x] **3.1** `Test-OERStructure` reports an Error for `""` in `scopedRoles[].role`, `scopedRoles[].principal`, `resources[].name`, `resourceRoles[].resource` and `resourceRoles[].role`, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -491,13 +700,25 @@ StructureValidationFailed; Initialize-OERAuth calls: 0; a Graph session exists: 
 declared name, and the apply would throw on it or match an unnamed live role; `Initialize-OERAuth
 calls` above 0.
 
-Result:
+Result: 2026-10-04 20:51 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (offline). Test-OERStructure: Valid False, 5 Errors, all 5 blank-name Errors at the five paths (the scoped role's role and its blank '  ' principal, the catalog resource name, the binding's resource and its blank ' ' role). Invoke-OERStructure: 0 rows, StructureValidationFailed, Initialize-OERAuth calls 0, no Graph session.
+
+[oer-s82] Blank: administrativeUnits | administrativeUnits[0].scopedRoles[0].role | 'role' at administrativeUnits[0].scopedRoles[0] must be a non-empty string.
+[oer-s82] Blank: administrativeUnits | administrativeUnits[0].scopedRoles[0].principal | 'principal' at administrativeUnits[0].scopedRoles[0] must be a non-empty string.
+[oer-s82] Blank: catalogs | catalogs[0].resources[0].name | 'name' at catalogs[0].resources[0] must be a non-empty string.
+[oer-s82] Blank: accessPackages | accessPackages[0].resourceRoles[0].resource | 'resource' at accessPackages[0].resourceRoles[0] must be a non-empty string.
+[oer-s82] Blank: accessPackages | accessPackages[0].resourceRoles[0].role | 'role' at accessPackages[0].resourceRoles[0] must be a non-empty string.
+[oer-s82] Valid: False; Errors: 5; blank-name Errors: 5
+[oer-s82] Invoke-OERStructure rows: 0; errors: StructureValidationFailed; Initialize-OERAuth calls: 0; a Graph session exists: False
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans only `oer-s82-` objects.
+- [x] **T.1** `-Teardown -WhatIf` plans only `oer-s82-` objects.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -518,11 +739,42 @@ tenant target starting with `oer-s82-`; `WhatIf: nothing was created, removed or
 `0`.
 **Failure looks like:** a tenant target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-04 20:51 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; 3 What-if targets: the transcript under raw\s82\ and 2 in the tenant, the deletion of oer-s82-au (this script) and of the group oer-s82-grp (the library, step 5 of 6), both with the prefix; nothing removed; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s82\teardown-20261004-205135Z.log".
+[oer-s82] Mode: REMOVE. Prefix 'oer-s82-'. Objects (fixed): oer-s82-grp; oer-s82-au (hidden membership) with oer-s82-grp as its member. OerLive 1.0.2.
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Residue: raw\residue.json holds no rows.
+What if: Performing the operation "Delete the administrative unit (Graph v1.0 DELETE directory/administrativeUnits)" on target "oer-s82-au".
+[oer-s82] Teardown of 'oer-s82-': users 0, groups 1, access packages 0, catalogs 0; administrative units 1 and app registrations 0 are reported only.
+[oer-s82] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s82] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s82] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s82] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s82] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s82-grp".
+[oer-s82] Teardown 6/6: the prefixed users.
+[oer-s82] Teardown of 'oer-s82-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s82] WhatIf: nothing was created, removed or written.
+[oer-s82] Done.
+[oer-s82] What-if targets: 3; in the tenant: 2; every tenant target starts with oer-s82-: True; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Every `oer-s82-` object is gone, and the counts match the baseline.
+- [x] **T.2** Every `oer-s82-` object is gone, and the counts match the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -542,11 +794,47 @@ listing for a few seconds -- T.3 reads again); `Counts: groups ... equal: True` 
 `administrativeUnits ... equal: True`; exit code `0`.
 **Failure looks like:** a `RESIDUE` line or exit code `3` -- record it in the report; exit code `1`.
 
-Result:
+Result: 2026-10-04 20:52 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, with the known listing delay. oer-s82-au deleted (204; gone by its id after 2 reads, 2.2 s), the library deleted oer-s82-grp (204): removed 1, residue 0, unreadable 0; exit code 0. The sweep right after still listed the group, and both counts were one above the baseline (groups 98 against 97, administrative units 2 against 1): the startswith and list reads lag a DELETE by seconds to minutes (measured in earlier steps). T.3 reads again minutes later.
+
+[oer-s82] Transcript (redacted): raw\s82\teardown-20261004-205154Z.log; OerLive 1.0.2.
+[oer-s82] Mode: REMOVE. Prefix 'oer-s82-'. Objects (fixed): oer-s82-grp; oer-s82-au (hidden membership) with oer-s82-grp as its member. OerLive 1.0.2.
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s82] Residue: raw\residue.json holds no rows.
+[oer-s82] Teardown AU: deleted oer-s82-au (204).
+[oer-s82] oer-s82-au is gone: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s82] oer-s82-au is gone: converged after 2 read(s), 2.2 s.
+[oer-s82] Teardown of 'oer-s82-': users 0, groups 1, access packages 0, catalogs 0; administrative units 1 and app registrations 0 are reported only.
+[oer-s82] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s82] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s82] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s82] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s82] Teardown 5/6: the prefixed groups.
+[oer-s82] Deleted: group oer-s82-grp (204).
+[oer-s82] Teardown 6/6: the prefixed users.
+[oer-s82] Teardown of 'oer-s82-': removed 1, residue 0, unreadable 0.
+[oer-s82] Sweep: group 'oer-s82-grp' (00000000-0000-0000-0000-000000000004) carries the prefix.
+[oer-s82] Counts: groups now 98, at the baseline 97; equal: False
+[oer-s82] Counts: administrativeUnits now 2, at the baseline 1; equal: False
+[oer-s82] Done.
+[oer-s82] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** Minutes later the sweep is clean, the counts match the baseline, the main clone is still on `main` at the HEAD S.1 recorded, and the redaction map is deleted after the write-up.
+- [x] **T.3** Minutes later the sweep is clean, the counts match the baseline, the main clone is still on `main` at the HEAD S.1 recorded, and the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -569,4 +857,27 @@ copied into this file: `Clear-OerLiveRedactionMap`, and `raw\s82\` deleted.
 **Failure looks like:** a prefixed object left, or a residue row -- the teardown did not finish;
 record it in the report.
 
-Result:
+Result: 2026-10-04 20:53 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Minutes after T.2 the sweep finds no oer-s82- object in any of the six collections; prefixed objects left 0, unread collections 0, residue rows 0; groups 97 and administrative units 1, both equal to the baseline; the main clone on main at 2a86120, the HEAD S.1 recorded, never switched; exit code 0. The redaction map is cleared and raw\s82\ deleted after this write-up.
+
+[oer-s82] Transcript (redacted): raw\s82\readback-20261004-205247Z.log; OerLive 1.0.2.
+[oer-s82] Mode: READ BACK. Prefix 'oer-s82-'. Objects (fixed): oer-s82-grp; oer-s82-au (hidden membership) with oer-s82-grp as its member. OerLive 1.0.2.
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s82-' is left.
+[oer-s82] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s82] Counts: administrativeUnits now 1, at the baseline 1; equal: True
+[oer-s82] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s82] Done.
+[oer-s82] Main clone: branch main; HEAD 2a86120; exit code: 0
+```
