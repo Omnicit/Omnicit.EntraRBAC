@@ -2546,6 +2546,49 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        It 'counts an access package collision on the validator''s key, so catalog A|B with package C and catalog A with package B|C are both left out' {
+            # The validator keys a package on '<catalog>|<name>', so these two are one package to it
+            # although no single separator character makes them look alike to a reader. A '/'-joined
+            # key here saw two different packages, wrote both, and the document it exported was
+            # refused by the validator it is meant to pass.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'A|B'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'A'; Description = 'two' }
+            )
+            $script:DupAccessPackages = @{
+                'cat-1' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'C'; Description = $null })
+                'cat-2' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'B|C'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+
+            # Positive proof first: the collision was seen and named, with the reported name keeping its
+            # '<catalog>/<name>' shape.
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/A|B/C'
+            $Partial[0].Exception.Message | Should -Match 'share the name accessPackages/A\|B/C'
+            @($Inv.accessPackages).Count | Should -Be 0
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
+        It 'keeps two access packages whose catalog and name differ only in where a slash falls' {
+            # The reverse of the case above: a '/'-joined key would call these two a collision, and the
+            # validator does not. Catalog 'A/B' with package 'C' and catalog 'A' with package 'B/C' are
+            # two packages, so both are written.
+            $script:DupCatalogs = @(
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'A/B'; Description = 'one' }
+                [PSCustomObject]@{ Id = 'cat-2'; DisplayName = 'A'; Description = 'two' }
+            )
+            $script:DupAccessPackages = @{
+                'cat-1' = @([PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'C'; Description = $null })
+                'cat-2' = @([PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'B/C'; Description = $null })
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.accessPackages | ForEach-Object { "$($_.catalog)|$($_.displayName)" }) | Should -Be @('A/B|C', 'A|B/C')
+            (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
         It 'leaves out two access reviews that share a name without regard to letter case' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {
                 foreach ($Name in 'Quarterly', 'quarterly', 'Solo Review') {

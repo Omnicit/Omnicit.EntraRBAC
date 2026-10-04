@@ -327,8 +327,13 @@ function Get-OERInventory {
         # InventoryPartial (the unread entry is '<section>/<name>', the cause says why), so the document is
         # never mistaken for a full snapshot. A top-level entry left out of the document removes nothing:
         # Invoke-OERStructure prunes child collections only.
+        #
+        # -KeyOf must build the SAME key the validator (Test-OERStructureSchema) refuses a duplicate on,
+        # or a pair the validator refuses is written. An access package is keyed '<catalog>|<name>'
+        # there, so it is keyed that way here. -NameOf, when given, builds the name that is REPORTED
+        # for an entry ('<catalog>/<name>', the path an operator reads); without it the key is the name.
         function Select-UniqueNamedEntry {
-            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf)
+            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf)
             $Count = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             foreach ($E in $Entry) {
                 $K = [string](& $KeyOf $E)
@@ -339,7 +344,8 @@ function Get-OERInventory {
                 $K = [string](& $KeyOf $E)
                 if ($Count[$K] -gt 1) {
                     if ($Reported.Add($K)) {
-                        $Unread = "$Section/$K"
+                        $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
+                        $Unread = "$Section/$ReportedName"
                         $UnreadCollections.Add($Unread)
                         $NameCause = "Two or more live objects share the name $Unread (compared without regard to letter case), " +
                             'so none of them is written: the apply engine refuses an ambiguous name.'
@@ -1824,7 +1830,7 @@ function Get-OERInventory {
             -Groups @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName }) `
             -AdministrativeUnits @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName }) `
             -Catalogs @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName }) `
-            -AccessPackages @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)/$($E.displayName)" }) `
+            -AccessPackages @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" }) `
             -AccessReviews @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName }) `
             -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
             -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
