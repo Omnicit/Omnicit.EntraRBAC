@@ -979,3 +979,43 @@ Describe 'Get-OERStructureSchemaJson group previousDisplayName' {
         }
     }
 }
+
+Describe 'Get-OERStructureSchemaJson refuses an empty name (A10)' {
+    # The five names an entry is identified by (an access package binding's resource and role, a catalog
+    # resource's name, an administrative unit scoped role's role and principal) are non-empty strings,
+    # exactly as Test-OERStructureSchema refuses them. draft-07 minLength 1 cannot see a whitespace-only
+    # value, which only the offline validator refuses, so the schema is the looser of the two.
+    It 'declares minLength 1 on the five name properties, still as strings' {
+        InModuleScope $script:moduleName {
+            $Props = (Get-OERStructureSchemaJson | ConvertFrom-Json).properties
+            $Named = [ordered]@{
+                'scopedRoles.role'       = $Props.administrativeUnits.items.properties.scopedRoles.items.properties.role
+                'scopedRoles.principal'  = $Props.administrativeUnits.items.properties.scopedRoles.items.properties.principal
+                'resources.name'         = $Props.catalogs.items.properties.resources.items.properties.name
+                'resourceRoles.resource' = $Props.accessPackages.items.properties.resourceRoles.items.properties.resource
+                'resourceRoles.role'     = $Props.accessPackages.items.properties.resourceRoles.items.properties.role
+            }
+            $Named.Count | Should -Be 5
+            foreach ($Key in $Named.Keys) {
+                $Named[$Key] | Should -Not -BeNullOrEmpty -Because "the property $Key must exist for its minLength to be read"
+                $Named[$Key].type | Should -BeExactly 'string'
+                $Named[$Key].minLength | Should -Be 1 -Because "$Key is refused when empty"
+            }
+        }
+    }
+
+    It 'refuses an empty <Label> and accepts a named one' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) -ForEach @(
+        @{ Label = 'scoped role role'; Section = 'administrativeUnits'; Good = '{ "displayName": "AU-One", "scopedRoles": [ { "role": "User Administrator", "principal": "p-1" } ] }'; Empty = '{ "displayName": "AU-One", "scopedRoles": [ { "role": "", "principal": "p-1" } ] }' }
+        @{ Label = 'scoped role principal'; Section = 'administrativeUnits'; Good = '{ "displayName": "AU-One", "scopedRoles": [ { "role": "User Administrator", "principal": "p-1" } ] }'; Empty = '{ "displayName": "AU-One", "scopedRoles": [ { "role": "User Administrator", "principal": "" } ] }' }
+        @{ Label = 'catalog resource name'; Section = 'catalogs'; Good = '{ "displayName": "CAT-One", "resources": [ { "name": "role_sec_x", "type": "Group" } ] }'; Empty = '{ "displayName": "CAT-One", "resources": [ { "name": "", "type": "Group" } ] }' }
+        @{ Label = 'binding resource'; Section = 'accessPackages'; Good = '{ "displayName": "AP-One", "catalog": "CAT-One", "resourceRoles": [ { "resource": "role_sec_x", "role": "Member" } ] }'; Empty = '{ "displayName": "AP-One", "catalog": "CAT-One", "resourceRoles": [ { "resource": "", "role": "Member" } ] }' }
+        @{ Label = 'binding role'; Section = 'accessPackages'; Good = '{ "displayName": "AP-One", "catalog": "CAT-One", "resourceRoles": [ { "resource": "role_sec_x", "role": "Member" } ] }'; Empty = '{ "displayName": "AP-One", "catalog": "CAT-One", "resourceRoles": [ { "resource": "role_sec_x", "role": "" } ] }' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Section = $Section; Good = $Good; Empty = $Empty } {
+            param($Section, $Good, $Empty)
+            $Schema = Get-OERStructureSchemaJson
+            Test-Json -Json ("{ `"version`": `"1.0`", `"$Section`": [ $Good ] }") -Schema $Schema | Should -BeTrue
+            Test-Json -Json ("{ `"version`": `"1.0`", `"$Section`": [ $Empty ] }") -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+}

@@ -64,6 +64,28 @@ Describe 'ConvertTo-OERAccessPackageResourceRole' {
         }
     }
 
+    It 'emits a null, never an empty string, for ResourceDisplayName when none is supplied or an empty one is' {
+        # P8 / A10: the help of this converter and of Get-OERAccessPackageResourceRole promise $null,
+        # and an empty string is what an export would otherwise write as a binding's resource name.
+        InModuleScope $script:moduleName {
+            $Raw = @{
+                id    = 'rrs-3'
+                role  = @{ displayName = 'Member' }
+                scope = @{ originId = 'g3'; originSystem = 'AadGroup'; displayName = 'Root' }
+            }
+            $Without = ConvertTo-OERAccessPackageResourceRole -InputObject $Raw -AccessPackageId 'ap-1'
+            $Empty = ConvertTo-OERAccessPackageResourceRole -InputObject $Raw -AccessPackageId 'ap-1' -ResourceDisplayName ''
+
+            # Reached: both calls produced the tagged shape, with the property present.
+            $Without.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessPackageResourceRole'
+            $Empty.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessPackageResourceRole'
+            $Without.PSObject.Properties.Name | Should -Contain 'ResourceDisplayName'
+            $Empty.PSObject.Properties.Name | Should -Contain 'ResourceDisplayName'
+            $null -eq $Without.ResourceDisplayName | Should -BeTrue -Because 'no name was supplied'
+            $null -eq $Empty.ResourceDisplayName | Should -BeTrue -Because 'an empty name is no name'
+        }
+    }
+
     It 'stamps a caller-supplied ResourceDisplayName distinctly from the scope label' {
         InModuleScope $script:moduleName {
             $Raw = @{

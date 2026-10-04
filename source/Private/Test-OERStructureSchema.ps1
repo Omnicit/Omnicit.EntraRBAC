@@ -12,7 +12,12 @@ function Test-OERStructureSchema {
     without a conditionVersion is a Warning (Azure Resource Manager defaults it to 2.0). A catalog
     resource's url, when present, must be a non-empty string (Error); a SharePointSite resource with
     neither a url nor a URL-shaped name is a Warning, since the site cannot be onboarded from a
-    display name alone. Intra-document
+    display name alone. The five names an entry is identified by -- an administrative unit
+    scopedRoles entry's role and principal, a catalog resource's name, and an access package
+    resourceRoles entry's resource and role -- must be non-empty strings: one that is present but
+    empty or only whitespace is an Error at its own path ("must be a non-empty string"), while an
+    absent one is still reported as required, since an empty name identifies nothing and would
+    throw at apply (Get-OERInventory never writes one). Intra-document
     cross-reference gaps (for example an access package whose catalog is not declared) are reported as
     Warning-severity entries that do not fail validation, since the referenced object may already exist
     in the tenant. A roleManagementPolicies item validates the settable Azure PIM policy surface except
@@ -680,11 +685,19 @@ function Test-OERStructureSchema {
                                 Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                                     -Path "$SRPath.role" `
                                     -Message "'role' is required at $SRPath."
+                            } elseif ([string]::IsNullOrWhiteSpace([string]$SR.role)) {
+                                Add-Finding -Section 'administrativeUnits' -Item $AUItem `
+                                    -Path "$SRPath.role" `
+                                    -Message "'role' at $SRPath must be a non-empty string."
                             }
                             if (-not (Test-HasProp -Node $SR -Name 'principal')) {
                                 Add-Finding -Section 'administrativeUnits' -Item $AUItem `
                                     -Path "$SRPath.principal" `
                                     -Message "'principal' is required at $SRPath."
+                            } elseif ([string]::IsNullOrWhiteSpace([string]$SR.principal)) {
+                                Add-Finding -Section 'administrativeUnits' -Item $AUItem `
+                                    -Path "$SRPath.principal" `
+                                    -Message "'principal' at $SRPath must be a non-empty string."
                             }
                         }
                     }
@@ -736,6 +749,10 @@ function Test-OERStructureSchema {
                                 Add-Finding -Section 'catalogs' -Item $CatItem `
                                     -Path "$RPath.name" `
                                     -Message "'name' is required at $RPath."
+                            } elseif ([string]::IsNullOrWhiteSpace([string]$R.name)) {
+                                Add-Finding -Section 'catalogs' -Item $CatItem `
+                                    -Path "$RPath.name" `
+                                    -Message "'name' at $RPath must be a non-empty string."
                             }
                             if (Test-HasProp -Node $R -Name 'type') {
                                 if ($ValidResourceTypes -inotcontains $R.type) {
@@ -822,11 +839,19 @@ function Test-OERStructureSchema {
                                 Add-Finding -Section 'accessPackages' -Item $APItem `
                                     -Path "$RRPath.resource" `
                                     -Message "'resource' is required at $RRPath."
+                            } elseif ([string]::IsNullOrWhiteSpace([string]$RR.resource)) {
+                                Add-Finding -Section 'accessPackages' -Item $APItem `
+                                    -Path "$RRPath.resource" `
+                                    -Message "'resource' at $RRPath must be a non-empty string."
                             }
                             if (-not (Test-HasProp -Node $RR -Name 'role')) {
                                 Add-Finding -Section 'accessPackages' -Item $APItem `
                                     -Path "$RRPath.role" `
                                     -Message "'role' is required at $RRPath."
+                            } elseif ([string]::IsNullOrWhiteSpace([string]$RR.role)) {
+                                Add-Finding -Section 'accessPackages' -Item $APItem `
+                                    -Path "$RRPath.role" `
+                                    -Message "'role' at $RRPath must be a non-empty string."
                             }
                         }
                     }

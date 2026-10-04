@@ -55,10 +55,19 @@ function Get-OERInventory {
     InventoryPartial error when their read fails, and are written as far as they were read: a
     failed catalog list leaves the catalogs and accessPackages sections empty, a failed package
     list leaves a catalog with no access packages, a failed policy read leaves a package with no
-    assignment policies, and when the names cannot be read a group's binding is written under the
-    group's object id and any other binding under the name the access package reader could join
-    (the name the catalog recorded, or none). Invoke-OERStructure never removes a catalog, access
-    package or assignment policy that is absent from the document.
+    assignment policies, and when the names cannot be read a group's or an application's binding is
+    written under its object id and any other binding under the name the access package reader
+    could join (the name the catalog recorded, or none). Invoke-OERStructure never removes a
+    catalog, access package or assignment policy that is absent from the document.
+    An entry is never written with an empty name, since the validator and schema.json refuse one. A
+    binding, catalog resource or scoped role whose name is blank is written under an object id the
+    apply engine accepts when it has one: a group's or an application's binding by its object id,
+    and a catalog resource by its origin id (a SharePoint site's URL). When it has none -- a
+    SharePoint binding with no name, a binding with no role, a catalog resource with neither a
+    title nor an origin id, a scoped role with no role or no principal -- the whole collection (the
+    package's resourceRoles, the catalog's resources or the unit's scopedRoles) is written as an
+    explicit null and named in the InventoryPartial error, the way an unread collection is, since
+    a declared set that quietly left the entry out would have Invoke-OERStructure -Prune remove it.
     A group, administrative unit or access review LIST that could not be read at all is reported
     through the same InventoryPartial error by the section's own name alone (groups,
     administrativeUnits or accessReviews) and is written as an empty array, which does not mean the
@@ -295,20 +304,21 @@ function Get-OERInventory {
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits
-        # twenty-two cause message shapes (group members, group owners, group PIM eligibility,
+        # twenty-three cause message shapes (group members, group owners, group PIM eligibility,
         # group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
         # access package resource role bindings, catalog resources, the catalog resource-name map,
         # the catalog list, a catalog's package list, an access package's assignment policies, an
         # access review's access package name, an access review's assignment policy name, objects
         # not written because two of them share a name, the group list, the administrative unit
-        # list and the access review list), so twenty-two admits one of each
+        # list, the access review list and an entry written as null because it has no name), so
+        # twenty-three admits one of each
         # and a normal partial run is still reported in full; only a genuinely heterogeneous
         # large-tenant failure is truncated, and the dropped count is stated rather than silently
         # lost. Nothing is discarded either way -- every cause is written to the verbose stream as
-        # it is seen. Raise this with the shape count when a twenty-third cause message is added, or
+        # it is seen. Raise this with the shape count when a twenty-fourth cause message is added, or
         # one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 22
+        $UnreadCauseCap = 23
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -337,6 +347,18 @@ function Get-OERInventory {
             Write-Verbose "Get-OERInventory: $Cause"
             Add-UnreadCause -Cause $Cause
             if (-not $UnreadCollections.Contains($Key)) { $UnreadCollections.Add($Key) }
+        }
+
+        # An entry the export can name by nothing the apply engine accepts is never written with an empty
+        # name: '' is refused by the validator (A10) and would throw at apply. Its collection is written as
+        # an explicit null instead -- the documented "leave untouched" signal -- and named here, the
+        # mechanism an unread collection uses. -Path is the collection's own path ('<section>/<name>/<key>').
+        function Add-NamelessCollection {
+            param([string]$Path)
+            $NamelessCause = "An entry of $Path has no name, and no object id the apply engine accepts, so the collection is written as null rather than with an empty name."
+            Write-Verbose "Get-OERInventory: $NamelessCause"
+            Add-UnreadCause -Cause $NamelessCause -Target $Path
+            $UnreadCollections.Add($Path)
         }
 
         # Two live objects whose names match without regard to letter case would be two document entries
@@ -862,13 +884,26 @@ function Get-OERInventory {
                     # it, and otherwise falls back to the role id -- emitting role:null would fail schema
                     # validation and make the unit un-appliable. A name map that could not be READ at all
                     # never gets here: Get-OERAdministrativeUnit then omits ScopedRoles, and the branch
-                    # below reports it unread.
-                    $Proj.scopedRoles = @(foreach ($S in @($Au.ScopedRoles)) {
+                    # below reports it unread. A role or principal that is STILL blank after those
+                    # fallbacks cannot be written either (an empty name is refused by the validator), so
+                    # the collection is written as an explicit null and named, never with an empty name.
+                    $SrNameless = $false
+                    $SrProjected = @(foreach ($S in @($Au.ScopedRoles)) {
                         if (-not $S) { continue }
                         $SrPrincipal = if ($S.PrincipalId) { [string]$S.PrincipalId } else { [string]$S.PrincipalDisplayName }
                         $SrRole = if ($S.RoleName) { [string]$S.RoleName } else { [string]$S.RoleId }
+                        if ([string]::IsNullOrWhiteSpace($SrRole) -or [string]::IsNullOrWhiteSpace($SrPrincipal)) {
+                            $SrNameless = $true
+                            continue
+                        }
                         [PSCustomObject]@{ role = $SrRole; principal = $SrPrincipal }
                     })
+                    if ($SrNameless) {
+                        $Proj.scopedRoles = $null
+                        Add-NamelessCollection -Path "administrativeUnits/$($Au.DisplayName)/scopedRoles"
+                    } else {
+                        $Proj.scopedRoles = $SrProjected
+                    }
                 } else {
                     # Explicit null for the same reason as members: an omitted scopedRoles key prunes.
                     $Proj.scopedRoles = $null
@@ -974,7 +1009,8 @@ function Get-OERInventory {
                     $Proj.resources = $null
                 } else {
                     $CurrentNames = & $GetCatalogResourceNames ([string]$Cat.Id) $CatRes
-                    $Proj.resources = @(foreach ($R in $CatRes) {
+                    $CatResNameless = $false
+                    $CatResProjected = @(foreach ($R in $CatRes) {
                         # Map the resource type to the schema enum from the stable originSystem (the raw
                         # Graph resourceType is a display label, e.g. 'SharePoint Online Site', that the
                         # schema/apply do not accept). Falls back to the raw value for unknown systems.
@@ -996,12 +1032,30 @@ function Get-OERInventory {
                         } else {
                             $R.DisplayName
                         }
+                        # A resource whose name is blank is written under its origin id when it has one
+                        # (a site URL, or a group's or application's object id -- the validator accepts
+                        # both as a name and the apply engine resolves them), since an empty name is
+                        # refused. With no origin id either it cannot be named at all: see below.
+                        if ([string]::IsNullOrWhiteSpace([string]$ResName) -and $R.OriginId) { $ResName = [string]$R.OriginId }
+                        if ([string]::IsNullOrWhiteSpace([string]$ResName)) {
+                            $CatResNameless = $true
+                            continue
+                        }
                         $ResProj = [ordered]@{ type = $ResType; name = $ResName }
                         if ($ResType -eq 'SharePointSite' -and $R.OriginId) {
                             $ResProj.url = [string]$R.OriginId
                         }
                         [PSCustomObject]$ResProj
                     })
+                    if ($CatResNameless) {
+                        # All or nothing, as for an unread set: a declared set that quietly left the
+                        # unnamed resource out would have -Prune remove it. An explicit null is the
+                        # documented "leave the resources untouched" signal.
+                        $Proj.resources = $null
+                        Add-NamelessCollection -Path "catalogs/$($Cat.DisplayName)/resources"
+                    } else {
+                        $Proj.resources = $CatResProjected
+                    }
                 }
                 $Catalogs.Add([PSCustomObject]$Proj)
             }
@@ -1085,12 +1139,18 @@ function Get-OERInventory {
 
                     # D4: resource role bindings via M1. Recover the resource's real display name by
                     # joining the binding OriginId to the catalog resource map (the apply engine matches
-                    # on that name). When the map was NOT read, a group binding is written under its
-                    # OriginId instead -- the group's object id, which the apply engine resolves
-                    # verbatim -- since the only name left is the one the catalog recorded, and that
-                    # can name another group after a rename. Any other binding (an application or a
-                    # SharePoint one, or a group with no OriginId) falls back to the name the access
-                    # package reader could join, which is the name the catalog recorded or none.
+                    # on that name). A group or application binding is written under its OriginId -- the
+                    # object id, which the apply engine resolves verbatim (Resolve-OERGroupId returns a
+                    # GUID as it is) and matches against the catalog resource's OriginId -- both when
+                    # the map was NOT read, since the only name left is the one the catalog recorded and
+                    # that can name another object after a rename, and when the name it has is blank,
+                    # since an empty name is refused by the validator (A10). Any other binding falls
+                    # back to the name the access package reader could join, which is the name the
+                    # catalog recorded or none. A binding with no usable name and no such id (a
+                    # SharePoint site, whose OriginId is its URL, a group with no OriginId, or a blank
+                    # role) cannot be named at all, so the package's resourceRoles is written as an
+                    # explicit null and named in InventoryPartial: all or nothing, since a declared set
+                    # that quietly left the binding out would have -Prune remove it.
                     # A FAILED read is never projected as []: under -Prune an empty declared binding set
                     # removes every binding of the package, and an omitted key still reconciles the
                     # same way. An explicit null is the documented "leave the bindings untouched"
@@ -1113,16 +1173,31 @@ function Get-OERInventory {
                     if ($null -eq $ApRoles) {
                         $Proj.resourceRoles = $null
                     } else {
-                        $Proj.resourceRoles = @(foreach ($Rr in $ApRoles) {
+                        $RrNameless = $false
+                        $RrProjected = @(foreach ($Rr in $ApRoles) {
+                            $IsDirectoryObject = [string]$Rr.OriginSystem -in @('AadGroup', 'AadApplication')
                             $ResName = if ($Rr.OriginId -and $ApCatResMap.ContainsKey([string]$Rr.OriginId)) {
-                                $ApCatResMap[[string]$Rr.OriginId]
-                            } elseif (-not $ApCatResRead -and [string]$Rr.OriginSystem -eq 'AadGroup' -and $Rr.OriginId) {
+                                [string]$ApCatResMap[[string]$Rr.OriginId]
+                            } elseif (-not $ApCatResRead -and $IsDirectoryObject -and $Rr.OriginId) {
                                 [string]$Rr.OriginId
                             } else {
-                                $Rr.ResourceDisplayName
+                                [string]$Rr.ResourceDisplayName
                             }
-                            [PSCustomObject]@{ resource = $ResName; role = $Rr.RoleName }
+                            if ([string]::IsNullOrWhiteSpace($ResName) -and $IsDirectoryObject -and $Rr.OriginId) {
+                                $ResName = [string]$Rr.OriginId
+                            }
+                            if ([string]::IsNullOrWhiteSpace($ResName) -or [string]::IsNullOrWhiteSpace([string]$Rr.RoleName)) {
+                                $RrNameless = $true
+                                continue
+                            }
+                            [PSCustomObject]@{ resource = $ResName; role = [string]$Rr.RoleName }
                         })
+                        if ($RrNameless) {
+                            $Proj.resourceRoles = $null
+                            Add-NamelessCollection -Path "accessPackages/$($Ap.DisplayName)/resourceRoles"
+                        } else {
+                            $Proj.resourceRoles = $RrProjected
+                        }
                     }
 
                     # D5: assignment policy internals -- full granular projection for round-trip fidelity.

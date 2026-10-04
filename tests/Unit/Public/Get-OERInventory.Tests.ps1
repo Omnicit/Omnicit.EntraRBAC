@@ -3944,27 +3944,27 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER CAUSE SHAPE the module can emit -- twenty-two of them since a section whose
-            # list could not be read began to be reported (group members, group owners, group PIM
+            # ONE PER CAUSE SHAPE the module can emit -- twenty-three of them since an entry that has
+            # no name began to be written as null (group members, group owners, group PIM
             # eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles,
             # directory role eligibility schedules, directory role assignment schedules, directory
             # role policies, access package resource role bindings, catalog resources, the catalog
             # resource-name map, the catalog list, a catalog's package list, an access package's
             # assignment policies, an access review's access package name, an access review's
             # assignment policy name, objects not written because two of them share a name, the group
-            # list, the administrative unit list, the access review list) -- and the remainder is
-            # counted rather than silently lost.
+            # list, the administrative unit list, the access review list, an entry written as null
+            # because it has no name) -- and the remainder is counted rather than silently lost.
             # Raise the numbers here and $UnreadCauseCap together, or a whole shape can be crowded
             # out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 [CmdletBinding()] param([switch]$IncludeMembers, [switch]$IncludeScopedRoles)
-                foreach ($N in 1..23) {
+                foreach ($N in 1..24) {
                     $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new("Could not read scoped roles for administrative unit au-${N}: reason-${N}."),
                             'AdministrativeUnitScopedRoleReadFailed',
                             [System.Management.Automation.ErrorCategory]::PermissionDenied, "au-$N"))
                 }
-                foreach ($N in 1..23) {
+                foreach ($N in 1..24) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3981,10 +3981,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 22 -Because 'the clause names at most twenty-two distinct causes, one per cause shape'
+                Should -Be 23 -Because 'the clause names at most twenty-three distinct causes, one per cause shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All twenty-three units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..23) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All twenty-four units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..24) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -4495,9 +4495,14 @@ Describe 'Get-OERInventory' {
             $Partial[0].Exception.Message | Should -Match "Could not read a catalog's resources to name its access packages' bindings"
         }
 
-        It 'keeps the name the access package reader joined for a non-group binding when the names are unread (non-terminating)' {
-            # Only a group can be written under an object id the apply engine resolves verbatim; an
-            # application or a SharePoint binding keeps the fallback it always had.
+        It 'writes an application binding under its object id when the names are unread (non-terminating)' {
+            # An application object id is accepted at apply exactly as a group's is: Resolve-OERGroupId
+            # returns a GUID verbatim with no Graph call, and Sync-OERStructureAccessPackage matches it
+            # against the catalog resource's OriginId (proof: Sync-OERStructureAccessPackage.Tests.ps1,
+            # 'binds a declared object id even when two catalog resources share a display name ...').
+            # With the map unread the only other name is the one the catalog RECORDED, which Graph
+            # keeps after a rename, so the object id is the safe key for an application too. A
+            # SharePoint binding has no such id (its OriginId is its URL) and is covered below.
             Mock -ModuleName $script:moduleName Get-OERCatalogResource {
                 [CmdletBinding()] param($Catalog)
                 $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
@@ -4511,7 +4516,8 @@ Describe 'Get-OERInventory' {
             Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
             Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
             $Ap = @($Inv.AccessPackages)[0]
-            $Ap.resourceRoles[0].resource | Should -Be 'app_x' -Because 'an application binding keeps the name the reader joined, as before'
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -Be '11111111-1111-1111-1111-111111111111' -Because 'the recorded name can name another application after a rename; the object id cannot'
             $Ap.resourceRoles[0].role | Should -Be 'Member'
             $Partial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
             $Partial.Count | Should -Be 1
@@ -4794,6 +4800,274 @@ Describe 'Get-OERInventory' {
             @(@($Inv.AccessPackages)[0].assignmentPolicies).Count | Should -Be 1
             @(@($Inv.AccessPackages)[0].assignmentPolicies)[0].displayName | Should -Be 'Default'
             @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        }
+    }
+
+    Context 'a name the export cannot give is never written empty' {
+        # BL-06 / decision A10. The validator and schema.json now refuse an empty name (a binding's
+        # resource or role, a catalog resource's name, an administrative unit scoped role's role or
+        # principal), so the export must never write one. A name that is blank falls back to an
+        # object id the apply engine accepts (a group or application binding by its OriginId, a
+        # catalog resource by its OriginId); when there is no such id the entry cannot be named at
+        # all, so its collection is written as an explicit null -- the documented "leave untouched"
+        # signal -- and named in InventoryPartial, the way an unread collection is. Every id below
+        # is a placeholder, none of it version-4 shaped.
+        BeforeAll {
+            function Select-InvPartial {
+                param($ErrorList)
+                @(@($ErrorList) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERInventory' })
+            }
+        }
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Get-OERCatalog {
+                [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; CatalogId = 'cat-1' }
+            }
+            # The catalog read SUCCEEDS and lists one resource, which is NOT the binding's: the name
+            # map is read, and it has no entry for the binding's origin id.
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ Id = 'res-x'; OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = $null; RoleName = 'Member'; OriginId = '22222222-2222-2222-2222-222222222222'; OriginSystem = 'AadApplication' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+        }
+
+        It 'writes an application binding whose name is blank under its object id when the names were read' {
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -BeExactly '22222222-2222-2222-2222-222222222222' -Because 'an empty name is refused by the validator; the object id is accepted at apply'
+            $Ap.resourceRoles[0].role | Should -BeExactly 'Member'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 0
+        }
+
+        It 'writes a group binding whose name is blank under its object id when the names were read' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = $null; RoleName = 'Member'; OriginId = '22222222-2222-2222-2222-222222222222'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            $Ap.resourceRoles[0].role | Should -BeExactly 'Member'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 0
+        }
+
+        It 'treats a whitespace-only binding name as blank and writes the object id' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = '   '; RoleName = 'Member'; OriginId = '22222222-2222-2222-2222-222222222222'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            @($Ap.resourceRoles).Count | Should -Be 1
+            $Ap.resourceRoles[0].resource | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 0
+        }
+
+        It 'writes the package''s resourceRoles as an explicit null, and names it, when a SharePoint binding has no name' {
+            # A SharePoint binding's OriginId is its site URL, which the apply engine does not take as
+            # a resource name, so there is no id to fall back to. The package also holds a perfectly
+            # nameable group binding: the collection is all or nothing, since a declared set that
+            # silently left the SharePoint binding out would have -Prune remove it.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = ''; RoleName = 'Member'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline' }
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = 'Member'; OriginId = 'orig-x'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.displayName | Should -Be 'AP-Sales'
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' |
+                Should -BeTrue -Because 'an omitted resourceRoles key still reconciles and prunes; only an explicit null is hands-off'
+            $null -eq $Ap.resourceRoles | Should -BeTrue
+            InModuleScope $script:moduleName -Parameters @{ Node = $Ap } {
+                param($Node)
+                Test-OERDeclaredNull -Node $Node -Name 'resourceRoles' | Should -BeTrue -Because 'this is the gate the handler consults before its prune pass'
+            }
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/AP-Sales/resourceRoles'
+            $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+        }
+
+        It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = 'Root'; RoleName = ''; OriginId = 'orig-x'; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' | Should -BeTrue
+            $null -eq $Ap.resourceRoles | Should -BeTrue -Because 'a binding with no role cannot be named, and an empty role is refused by the validator'
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/AP-Sales/resourceRoles'
+            $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+        }
+
+        It 'writes the collection as an explicit null when a group binding has neither a name nor an origin id' {
+            # With no OriginId there is no object id to write, so the blank name cannot be rescued.
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = ''; RoleName = 'Member'; OriginId = $null; OriginSystem = 'AadGroup' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+            $Ap = @($Inv.AccessPackages)[0]
+            $Ap.PSObject.Properties.Name -contains 'resourceRoles' | Should -BeTrue
+            $null -eq $Ap.resourceRoles | Should -BeTrue
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/AP-Sales/resourceRoles'
+        }
+
+        It 'names every package whose bindings it cannot name, and states the cause once' {
+            Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; CatalogId = 'cat-1' }
+                [PSCustomObject]@{ Id = 'ap-2'; DisplayName = 'AP-Ops'; Description = 'Ops'; CatalogId = 'cat-1' }
+            }
+            Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+                [PSCustomObject]@{ ResourceDisplayName = ''; RoleName = 'Member'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline' }
+            }
+            $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 2 -Exactly
+            @($Inv.AccessPackages).Count | Should -Be 2
+            foreach ($Ap in @($Inv.AccessPackages)) { $null -eq $Ap.resourceRoles | Should -BeTrue }
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            @(([string]$Partial[0].TargetObject) -split ', ' | Sort-Object) | Should -Be @('accessPackages/AP-Ops/resourceRoles', 'accessPackages/AP-Sales/resourceRoles')
+            @([regex]::Matches($Partial[0].Exception.Message, 'has no name, and no object id the apply engine accepts')).Count |
+                Should -Be 1 -Because 'one reason repeated once per package is stated once, the way every other cause is'
+        }
+
+        It 'writes a SharePoint resource whose title is blank under its site URL' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ Id = 'res-s'; DisplayName = ''; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline'; ResourceType = 'SharePoint Online Site' }
+            }
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            @($Cat.resources).Count | Should -Be 1
+            $Cat.resources[0].type | Should -BeExactly 'SharePointSite'
+            $Cat.resources[0].name | Should -BeExactly 'https://contoso.sharepoint.com/sites/finance' -Because 'a SharePoint site is also identified by its URL, which the validator accepts as a name'
+            $Cat.resources[0].url | Should -BeExactly 'https://contoso.sharepoint.com/sites/finance'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 0
+        }
+
+        It 'writes a catalog''s resources as an explicit null, and names it, when a resource has neither a title nor an origin id' {
+            Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+                [PSCustomObject]@{ Id = 'res-f'; DisplayName = 'Finance'; OriginId = 'https://contoso.sharepoint.com/sites/finance'; OriginSystem = 'SharePointOnline'; ResourceType = 'SharePoint Online Site' }
+                [PSCustomObject]@{ Id = 'res-n'; DisplayName = ''; OriginId = $null; OriginSystem = 'SharePointOnline'; ResourceType = 'SharePoint Online Site' }
+            }
+            $Inv = Get-OERInventory -Include Catalogs -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERCatalogResource -Times 1 -Exactly
+            $Cat = @($Inv.Catalogs)[0]
+            $Cat.displayName | Should -Be 'CAT-IT-Core'
+            $Cat.PSObject.Properties.Name -contains 'resources' |
+                Should -BeTrue -Because 'an omitted resources key still reconciles and prunes; only an explicit null is hands-off'
+            $null -eq $Cat.resources | Should -BeTrue -Because 'the collection is all or nothing, so the nameable resource is not written either'
+            InModuleScope $script:moduleName -Parameters @{ Node = $Cat } {
+                param($Node)
+                Test-OERDeclaredNull -Node $Node -Name 'resources' | Should -BeTrue
+            }
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'catalogs/CAT-IT-Core/resources'
+            $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+        }
+
+        It 'writes an administrative unit''s scopedRoles as an explicit null, and names it, when a scoped role has no role name and no role id' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @()
+                    ScopedRoles = @([PSCustomObject]@{ RoleName = ''; RoleId = $null; PrincipalId = 'p-1'; PrincipalDisplayName = 'Person One' })
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            $Au = @($Inv.AdministrativeUnits)[0]
+            $Au.displayName | Should -Be 'AU-One'
+            $Au.PSObject.Properties.Name -contains 'scopedRoles' |
+                Should -BeTrue -Because 'an omitted scopedRoles key still reconciles and prunes; only an explicit null is hands-off'
+            $null -eq $Au.scopedRoles | Should -BeTrue
+            InModuleScope $script:moduleName -Parameters @{ Node = $Au } {
+                param($Node)
+                Test-OERDeclaredNull -Node $Node -Name 'scopedRoles' | Should -BeTrue
+            }
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-One/scopedRoles'
+            $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+        }
+
+        It 'writes an administrative unit''s scopedRoles as an explicit null, and names it, when a scoped role has no principal' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @()
+                    ScopedRoles = @([PSCustomObject]@{ RoleName = 'User Administrator'; RoleId = 'r-1'; PrincipalId = $null; PrincipalDisplayName = '' })
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            $Au = @($Inv.AdministrativeUnits)[0]
+            $Au.PSObject.Properties.Name -contains 'scopedRoles' | Should -BeTrue
+            $null -eq $Au.scopedRoles | Should -BeTrue
+            $Partial = @(Select-InvPartial -ErrorList $InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/AU-One/scopedRoles'
+            $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+        }
+
+        It 'does not write the named scoped roles of a unit when another of its scoped roles has no name' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @()
+                    ScopedRoles = @(
+                        [PSCustomObject]@{ RoleName = 'User Administrator'; RoleId = 'r-1'; PrincipalId = 'p-1'; PrincipalDisplayName = 'Person One' }
+                        [PSCustomObject]@{ RoleName = ''; RoleId = $null; PrincipalId = 'p-2'; PrincipalDisplayName = 'Person Two' }
+                    )
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            $Au = @($Inv.AdministrativeUnits)[0]
+            $Au.PSObject.Properties.Name -contains 'scopedRoles' | Should -BeTrue
+            $null -eq $Au.scopedRoles | Should -BeTrue -Because 'a declared set missing the unnamed role would have -Prune remove it'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 1
+        }
+
+        It 'still writes scoped roles that are all named, with no partial' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'AU-One'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @()
+                    ScopedRoles = @([PSCustomObject]@{ RoleName = 'User Administrator'; RoleId = 'r-1'; PrincipalId = 'p-1'; PrincipalDisplayName = 'Person One' })
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            $Au = @($Inv.AdministrativeUnits)[0]
+            @($Au.scopedRoles).Count | Should -Be 1
+            $Au.scopedRoles[0].role | Should -BeExactly 'User Administrator'
+            $Au.scopedRoles[0].principal | Should -BeExactly 'p-1'
+            @(Select-InvPartial -ErrorList $InvErr).Count | Should -Be 0
         }
     }
 
@@ -6070,5 +6344,92 @@ Describe 'Get-OERInventory administrative unit scoped roles, driven with the rea
         $Au.scopedRoles[0].role | Should -BeExactly 'dirrole-1'
         $Au.scopedRoles[0].principal | Should -BeExactly 'p-1'
         @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'an application binding with no readable name round-trips by its object id' {
+    # BL-06 / decision A10, the acceptance test: an access package binding whose resource name the
+    # export cannot read is written under the application's OBJECT ID, and that exported entry is
+    # applied back, through the real Sync-OERStructureAccessPackage, as the SAME binding -- not as a
+    # refusal, a failure or a binding to remove. Before the fix the entry carried an empty resource,
+    # which the validator now refuses and which would have thrown at apply. Every id below is a
+    # placeholder, none of it version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERCatalog {
+            [PSCustomObject]@{ Id = 'cat-1'; DisplayName = 'CAT-IT-Core'; Description = 'Core' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackage {
+            [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; IsHidden = $false; CatalogId = 'cat-1' }
+        }
+        # Export side: the name map is READ, and it does not hold the binding's origin id.
+        Mock -ModuleName $script:moduleName Get-OERCatalogResource {
+            [PSCustomObject]@{ Id = 'res-x'; OriginId = 'orig-x'; DisplayName = 'role_sec_x'; OriginSystem = 'AadGroup'; ResourceType = 'Group' }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { $M = @{}; foreach ($I in $Id) { $M[$I] = 'role_sec_x' }; $M }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole {
+            [PSCustomObject]@{ ResourceDisplayName = $null; RoleName = 'Member'; OriginId = '22222222-2222-2222-2222-222222222222'; OriginSystem = 'AadApplication' }
+        }
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy { @() }
+    }
+
+    It 'applies the exported entry as an already bound binding, removing and adding nothing, under -Prune' {
+        $Inv = Get-OERInventory -Include AccessPackages -ErrorAction SilentlyContinue -ErrorVariable InvErr
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count |
+            Should -Be 0 -Because 'the application is named by its object id, so nothing was left unread'
+        $Exported = @($Inv.accessPackages)[0]
+        @($Exported.resourceRoles).Count | Should -Be 1
+        $Exported.resourceRoles[0].resource | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+
+        # What a file on disk gives the apply engine: the document written and read back.
+        $Entry = @((@($Inv.accessPackages) | ConvertTo-Json -Depth 12 -AsArray) | ConvertFrom-Json)[0]
+        $Entry.resourceRoles[0].resource | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+
+        InModuleScope $script:moduleName -Parameters @{ Entry = $Entry } {
+            param($Entry)
+            function Invoke-SyncApViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune)
+                Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune
+            }
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Get-OERAccessPackage { [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP-Sales'; Description = 'Sales'; IsHidden = $false } }
+            # The live catalog DOES list the application resource, under the origin id the entry names.
+            Mock Get-OERCatalogResource {
+                [PSCustomObject]@{ Id = 'res-app'; DisplayName = 'App One'; OriginId = '22222222-2222-2222-2222-222222222222'; OriginSystem = 'AadApplication' }
+            }
+            # Resolve-OERGroupId is deliberately NOT mocked: a GUID is returned verbatim with no Graph
+            # call, which is the path that decides here.
+            Mock Invoke-OERGraphRequest { [PSCustomObject]@{ value = @() } }
+            Mock Invoke-OERGraphRequest {
+                [PSCustomObject]@{
+                    value = @(
+                        [PSCustomObject]@{ id = 'b-live-1'; role = [PSCustomObject]@{ displayName = 'Member' }; scope = [PSCustomObject]@{ originId = '22222222-2222-2222-2222-222222222222' } }
+                    )
+                }
+            } -ParameterFilter { $Uri -like '*resourceRoleScopes*' }
+            Mock Get-OERAccessPackageAssignmentPolicy { @() }
+            Mock Add-OERAccessPackageResourceRole { }
+            Mock Remove-OERAccessPackageResourceRole { }
+
+            $Published = $null
+            $r = @(Invoke-SyncApViaCaller -Item $Entry -Prune -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Published)
+
+            # Positive proof first: the binding rows were reached and read. The export's own read of
+            # the catalog (by id) is in the same mock history, so the apply's read is told apart by
+            # the catalog NAME the entry carries.
+            Should -Invoke Get-OERCatalogResource -Times 1 -Exactly -ParameterFilter { $Catalog -eq 'CAT-IT-Core' }
+            @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "resourceRole 'Member' on '22222222-2222-2222-2222-222222222222' already bound" }).Count |
+                Should -Be 1 -Because 'the exported object id is matched against the catalog resource origin id, so the binding is the live one'
+            @($r | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count | Should -Be 0
+            @($r | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 0
+            @($r | Where-Object { $_.Detail -like 'would remove*' }).Count | Should -Be 0
+            Should -Invoke Remove-OERAccessPackageResourceRole -Times 0
+            Should -Invoke Add-OERAccessPackageResourceRole -Times 0
+        }
     }
 }

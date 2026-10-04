@@ -248,8 +248,8 @@ function Get-OERStructureSchemaJson {
               "type": "object",
               "required": [ "role", "principal" ],
               "properties": {
-                "role": { "type": "string" },
-                "principal": { "type": "string" }
+                "role": { "type": "string", "minLength": 1 },
+                "principal": { "type": "string", "minLength": 1 }
               }
             }
           }
@@ -276,7 +276,7 @@ function Get-OERStructureSchemaJson {
               "type": "object",
               "required": [ "name" ],
               "properties": {
-                "name": { "type": "string" },
+                "name": { "type": "string", "minLength": 1 },
                 "type": { "type": "string", "enum": [ "Group", "Application", "SharePointSite" ] },
                 "url": {
                   "type": "string",
@@ -306,8 +306,8 @@ function Get-OERStructureSchemaJson {
               "type": "object",
               "required": [ "resource", "role" ],
               "properties": {
-                "resource": { "type": "string" },
-                "role": { "type": "string" }
+                "resource": { "type": "string", "minLength": 1 },
+                "role": { "type": "string", "minLength": 1 }
               }
             }
           },
