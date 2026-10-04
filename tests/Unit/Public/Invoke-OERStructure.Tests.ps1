@@ -108,6 +108,43 @@ Describe 'Invoke-OERStructure' {
         }
     }
 
+    It 'treats an explicit null roleAssignments section as not declared: no scope pre-pass, no row, no abort' {
+        # The validator reads an explicit null as "not declared", yet @($null) is ONE element, and the
+        # scope pre-pass runs outside the per-entry try/catch: a null entry made it throw a
+        # parameter-binding error that aborted the whole run inside an operator's try/catch, after the
+        # earlier sections had been written. The engine drops the null before the pre-pass and skips
+        # the section.
+        InModuleScope $script:moduleName {
+            $script:RaPreCalls = 0
+            Mock Resolve-OERStructureRoleAssignmentScope { $script:RaPreCalls++; @() }
+        }
+        $Caught = $null
+        $Rows = @()
+        try {
+            $Rows = @(Invoke-OERStructure -Json '{ "version":"1.0", "groups":[{"displayName":"g"}], "roleAssignments": null }' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullSectionErr)
+        } catch {
+            $Caught = $PSItem
+        }
+
+        # Positive proof first: the run completed and the declared group section was applied.
+        $Caught | Should -BeNullOrEmpty
+        $GroupRows = @($Rows | Where-Object { $_.Section -eq 'groups' })
+        $GroupRows.Count | Should -Be 1
+        $GroupRows[0].Item | Should -Be 'g'
+        $GroupRows[0].Action | Should -Be 'Created'
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureGroup -Times 1 -Exactly }
+
+        # The null section is skipped: no scope pre-pass, no handler call, no row, no error record.
+        InModuleScope $script:moduleName {
+            $script:RaPreCalls | Should -Be 0
+            Should -Invoke Resolve-OERStructureRoleAssignmentScope -Times 0
+            Should -Invoke Sync-OERStructureRoleAssignment -Times 0
+        }
+        @($Rows | Where-Object { $_.Section -eq 'roleAssignments' }).Count | Should -Be 0
+        @($NullSectionErr).Count | Should -Be 0
+    }
+
     It 'accepts a piped inventory object via -InputObject and settles cleanly under -WhatIf' {
         $Inv = [pscustomobject]@{
             Version               = '1.0'
@@ -1017,6 +1054,36 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
         Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-a' }
         Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+    }
+
+    It 'under -WhatIf fails the later of two entries that resolve to the same assignment, naming the earlier index, instead of planning a second create' {
+        # sub:Prod and the subscription path are one scope, and principal z holds nothing there, so
+        # the earlier entry plans a create (Skipped under -WhatIf). The later entry names the same
+        # assignment: it is Failed with the earlier index named -- not a second Skipped plan, which
+        # would read as two creates -- and nothing is written for it.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"z"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"z"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DupWhatIfErr)
+
+        # Positive proof first: the earlier entry was reconciled and planned its create.
+        $Earlier = @($Rows | Where-Object { $_.Item -eq 'Reader -> z @ sub:Prod' })
+        $Earlier.Count | Should -Be 1
+        $Earlier[0].Action | Should -Be 'Skipped'
+        $Earlier[0].Detail | Should -Match '^would create role assignment'
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+
+        $Duplicate = @($Rows | Where-Object { $_.Item -eq 'Reader -> z @ /subscriptions/aaaa1111-0000-0000-0000-000000000001' })
+        $Duplicate.Count | Should -Be 1
+        $Duplicate[0].Action | Should -Be 'Failed'
+        $Duplicate[0].Detail | Should -BeExactly "roleAssignments[1] resolves to the same assignment as roleAssignments[0] ('Reader -> z @ sub:Prod'): the same scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001', principal and role. Nothing was written for this entry; keep one of the two entries."
+        @($DupWhatIfErr).Count | Should -Be 0
+        # Exactly two rows concern principal z: the planned create and the duplicate's Failed row.
+        @($Rows | Where-Object { $_.Item -like 'Reader -> z @ *' }).Count | Should -Be 2
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
     }
 
     It 'resolves the siblings of a scope once for all its entries' {

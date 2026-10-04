@@ -72,7 +72,8 @@ function Invoke-OERStructure {
     assignment declared twice: the engine hands each item its document index, the document index of
     every item of its scope and one key cache per scope, and the handler reports the LATER entry
     Failed, naming the earlier one, without reading or writing anything for it. The earlier entry
-    owns the assignment, and the prune never removes it.
+    owns the assignment, and the prune never removes it. An explicit "roleAssignments": null is not
+    declared: the section is skipped like an absent key, and the pre-pass never runs for it.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
@@ -323,6 +324,13 @@ function Invoke-OERStructure {
             if ($Include -notcontains $Section.IncludeName) { continue }
             if ($Document.PSObject.Properties.Name -notcontains $Section.DocKey) { continue }
             $Items = @($Document.($Section.DocKey))
+            # An explicit top-level "roleAssignments": null is not declared (the validator says so),
+            # yet @($null) is one element. The scope pre-pass below cannot take a null entry, and it
+            # runs outside the per-entry try/catch, so drop the null here and skip the section when
+            # nothing is left. Only this section: every other handler runs inside the per-entry catch.
+            if ($Section.IncludeName -eq 'RoleAssignments') {
+                $Items = @($Items | Where-Object { $null -ne $_ })
+            }
             if ($Items.Count -eq 0) { continue }
 
             # roleAssignments: every entry's scope is resolved ONCE, before the first entry is
