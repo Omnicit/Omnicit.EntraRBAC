@@ -180,7 +180,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
             $Warnings = @()
-            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WhatIf -WarningVariable Warnings
+            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WhatIf -WarningAction SilentlyContinue -WarningVariable Warnings
             $Joined = ($Warnings | ForEach-Object { [string]$_ }) -join ' '
             $Joined | Should -Match 'would remove'
             $Joined | Should -Not -Match 'removing undeclared'
@@ -206,7 +206,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
             $Warnings = @()
-            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningVariable Warnings
+            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue -WarningVariable Warnings
             $Joined = ($Warnings | ForEach-Object { [string]$_ }) -join ' '
             $Joined | Should -Match 'removing undeclared'
         }
@@ -1005,6 +1005,127 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
                 $Withheld.Count | Should -Be 1
                 $Withheld[0].Detail | Should -Match '^prune withheld: declared entry ''Reader -> missing_group @ subscription:Prod'' could not be resolved'
+            }
+        }
+    }
+
+    Context 'role definitions match on their GUID, never on the whole id (BL-35)' {
+        # A role definition id is anchored at whatever scope it was read from. The resolver anchors a
+        # GUID at the scope it is given (resource group, management group), while Azure Resource
+        # Manager reports a live assignment at a resource group with the SUBSCRIPTION-anchored id
+        # (measured live) and one at a management group with the tenant-anchored id. A GUID names one
+        # role definition everywhere, so the match and the prune key compare the last segment of the id,
+        # without regard to letter case, and never the whole path. The Reader built-in role GUID is
+        # the one real GUID used here; every other id is a placeholder.
+        It 'reports a GUID role at a resource group Unchanged against the live subscription-anchored id and prunes only what is undeclared' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                # What the real resolver builds for a GUID: the id anchored at the scope it was given.
+                Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/$Role" }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1/resourceGroups/rg1'; PrincipalId = 'p-1'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-declared' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1/resourceGroups/rg1'; PrincipalId = 'p-other'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-other-principal' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1/resourceGroups/rg1'; PrincipalId = 'p-1'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/aaaa1111-0000-0000-0000-000000000002'; RoleAssignmentId = 'ra-other-role' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock New-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $DeclaredItem = [PSCustomObject]@{ scope = '/subscriptions/sub-1/resourceGroups/rg1'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = 'role_sec_x' }
+                $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1/resourceGroups/rg1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue)
+                # The declared row matches the live one: Unchanged, never re-created, never removed.
+                @($r | Where-Object Action -eq 'Unchanged').Count | Should -Be 1
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-declared' }
+                # Positive control: the pass ran, and removed a different principal and a different role GUID.
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-other-principal' }
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-other-role' }
+                Should -Invoke Remove-OERRoleAssignment -Times 2 -Exactly
+                @($r | Where-Object Action -eq 'Removed').Count | Should -Be 2
+            }
+        }
+
+        It 'compares the GUID without regard to letter case: an upper-case tenant-anchored role against a lower-case subscription-anchored live id is Unchanged' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                # The real resolver returns a full role definition id exactly as written.
+                Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) $Role }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-1'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-declared' },
+                        [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = 'p-other'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-other-principal' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock New-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $DeclaredItem = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = '/providers/Microsoft.Authorization/roleDefinitions/ACDD72A7-3385-48EF-BD42-F606FBA81AE7'; principal = 'role_sec_x' }
+                $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue)
+                @($r | Where-Object Action -eq 'Unchanged').Count | Should -Be 1
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-declared' }
+                # Positive control: the pass ran and removed the undeclared principal's assignment.
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-other-principal' }
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+
+        It 'reports a GUID role at a management group Unchanged against the live tenant-anchored id and prunes only what is undeclared' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/$Role" }
+                Mock Get-OERRoleAssignment {
+                    @(
+                        [PSCustomObject]@{ Scope = '/providers/Microsoft.Management/managementGroups/plat'; PrincipalId = 'p-1'; RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-declared' },
+                        [PSCustomObject]@{ Scope = '/providers/Microsoft.Management/managementGroups/plat'; PrincipalId = 'p-other'; RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-other-principal' }
+                    )
+                }
+                Mock Remove-OERRoleAssignment {}
+                Mock New-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $DeclaredItem = [PSCustomObject]@{ scope = '/providers/Microsoft.Management/managementGroups/plat'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = 'role_sec_x' }
+                $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/providers/Microsoft.Management/managementGroups/plat' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue)
+                @($r | Where-Object Action -eq 'Unchanged').Count | Should -Be 1
+                Should -Invoke New-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-declared' }
+                # Positive control: the pass ran and removed the undeclared principal's assignment.
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-other-principal' }
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+
+        It 'still hands Azure Resource Manager the role exactly as the document wrote it when it creates the assignment' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/$Role" }
+                Mock Get-OERRoleAssignment { @() }
+                Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-new' } }
+                Mock Initialize-OERAuth {}
+                $DeclaredItem = [PSCustomObject]@{ scope = '/subscriptions/sub-1/resourceGroups/rg1'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = 'role_sec_x' }
+                $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1/resourceGroups/rg1')
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Role -ceq 'acdd72a7-3385-48ef-bd42-f606fba81ae7' -and $Scope -ceq '/subscriptions/sub-1/resourceGroups/rg1' }
             }
         }
     }

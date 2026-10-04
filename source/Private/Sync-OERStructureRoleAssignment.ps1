@@ -21,9 +21,13 @@ function Sync-OERStructureRoleAssignment {
        a group-then-user lookup.
     2. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
     3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope (throws -> Failed + return).
-    4. If a current assignment with matching PrincipalId + RoleDefinitionId exists AND is DEFINED at
-       this scope, compare the declared condition, conditionVersion and description against it. A match
-       reports Unchanged; a difference is applied in place with Set-OERRoleAssignment against the
+    4. If a current assignment with matching PrincipalId + role definition exists AND is DEFINED at
+       this scope, compare the declared condition, conditionVersion and description against it. The
+       role definition matches on its GUID, the last segment of its id, without regard to letter case,
+       never on the whole path: a role definition id is anchored at whatever scope it was read from (a
+       live assignment at a resource group carries the subscription-anchored id, while the resolver
+       anchors a GUID at the scope it was given), whereas a GUID names one role definition everywhere.
+       A match reports Unchanged; a difference is applied in place with Set-OERRoleAssignment against the
        existing assignment id and reports Updated. Those three fields are the only ones Azure allows
        editing on an existing assignment, and the engine never deletes a live high-privilege assignment
        to re-create it.
@@ -49,12 +53,14 @@ function Sync-OERStructureRoleAssignment {
 
     Scope-wide prune pass (only when -ReconcileScope is set):
     After reconciling this item the handler resolves the principal and role of every sibling in
-    $DeclaredAtScope into a declared 'PrincipalId|RoleDefinitionId' key set, then iterates $Current
-    and compares each assignment against it. Only assignments DEFINED at this scope are
+    $DeclaredAtScope into a declared '<principal object id>|<role definition GUID>' key set, then
+    iterates $Current and compares each assignment against it. The key holds the role definition's
+    GUID (the last segment of its id), compared without regard to letter case, never the whole path,
+    for the reason step 4 gives. Only assignments DEFINED at this scope are
     considered: atScope() also returns assignments inherited from ancestor scopes (e.g. a subscription
     read includes its parent management groups' assignments), and those are skipped here because they
     belong to the ancestor, are usually declared in the document under that ancestor scope, and cannot
-    be removed at this scope. Any remaining current assignment whose 'PrincipalId|RoleDefinitionId'
+    be removed at this scope. Any remaining current assignment whose principal and role GUID
     composite key is absent from the declared set is treated as undeclared and reported with its own
     identity (role -> principal @ scope) in the result Item:
     - While any sibling is unresolved (see below): emit Skipped with the withheld reason, with or
@@ -175,7 +181,17 @@ function Sync-OERStructureRoleAssignment {
             Test-OERDeclaredProperty -Node $Node -Name $Name
         }
 
-        $Label  = "$($Item.role) -> $($Item.principal) @ $($Item.scope)"
+        # A role definition id is anchored at whatever scope it was read from: the resolver anchors a
+        # GUID at the scope it was given, while Azure Resource Manager reports a live assignment at a
+        # resource group with the SUBSCRIPTION-anchored id (measured live) and one at a management
+        # group with the tenant-anchored id. The GUID, the last segment of the id, names one role
+        # definition everywhere, so the match and the prune key compare that and never the whole path.
+        function Get-RoleDefinitionGuid {
+            param([string]$RoleDefinitionId)
+            ($RoleDefinitionId.TrimEnd('/') -split '/')[-1]
+        }
+
+        $Label  ="$($Item.role) -> $($Item.principal) @ $($Item.scope)"
         $Section = 'roleAssignments'
         $PrincipalType = if (Test-DeclHas -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
 
@@ -231,6 +247,8 @@ function Sync-OERStructureRoleAssignment {
             return
         }
 
+        $RoleGuid = Get-RoleDefinitionGuid -RoleDefinitionId $RoleFullId
+
         # -- 4. Check existence of THIS item ----------------------------------------------
         # Azure Resource Manager enforces uniqueness on (scope, principal, roleDefinition) whether or
         # not a condition is present, so an assignment is matched on that tuple alone. Only condition,
@@ -248,7 +266,9 @@ function Sync-OERStructureRoleAssignment {
         # the result reported the declared (child) scope. Same predicate as the prune pass below: a
         # current object with no Scope value counts as at-scope, because ConvertTo-OERRoleAssignment
         # always projects the ARM scope and only a scope-less fixture can reach this.
-        $Matching  = @($Current | Where-Object { $_.PrincipalId -eq $PrincipalObjId -and $_.RoleDefinitionId -eq $RoleFullId })
+        # The role matches on its GUID, compared without regard to letter case (-eq), never on the whole
+        # id: the live assignment's id may be anchored at a different scope than the one resolved above.
+        $Matching  = @($Current | Where-Object { $_.PrincipalId -eq $PrincipalObjId -and (Get-RoleDefinitionGuid -RoleDefinitionId ([string]$_.RoleDefinitionId)) -eq $RoleGuid })
         $Existing  = $Matching | Where-Object { (-not $_.Scope) -or ([string]$_.Scope -eq $RawScope) } | Select-Object -First 1
         $Inherited = $null
         if (-not $Existing) { $Inherited = $Matching | Select-Object -First 1 }
@@ -367,7 +387,7 @@ function Sync-OERStructureRoleAssignment {
                 $SiblingPid  = Resolve-OERStructurePrincipal @SibParams
                 $SiblingRole = Resolve-OERRoleDefinitionId -Role $Sibling.role -Scope $RawScope
                 if ($SiblingPid -and $SiblingRole) {
-                    $null = $DeclaredKeys.Add("$SiblingPid|$SiblingRole")
+                    $null = $DeclaredKeys.Add("$SiblingPid|$(Get-RoleDefinitionGuid -RoleDefinitionId $SiblingRole)")
                 } else {
                     $SiblingUnresolved.Add($SiblingLabel)
                 }
@@ -388,7 +408,7 @@ function Sync-OERStructureRoleAssignment {
             # against this scope's declared set is a false positive. Skip anything not owned by $RawScope.
             if ($Cur.Scope -and ($Cur.Scope -ne $RawScope)) { continue }
 
-            $CurKey = "$($Cur.PrincipalId)|$($Cur.RoleDefinitionId)"
+            $CurKey = "$($Cur.PrincipalId)|$(Get-RoleDefinitionGuid -RoleDefinitionId ([string]$Cur.RoleDefinitionId))"
             if ($DeclaredKeys.Contains($CurKey)) { continue }
 
             # Each undeclared assignment gets its OWN Item label (role leaf -> principal @ scope) so the
