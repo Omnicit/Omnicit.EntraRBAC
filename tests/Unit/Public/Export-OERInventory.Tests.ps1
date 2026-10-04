@@ -918,7 +918,7 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
             $Partial[0].Exception.Message | Should -Match "administrativeUnits/$Unit/scopedRoles"
         }
         $Partial[0].Exception.Message |
-            Should -Match '1 partial Entra ID read report\(s\)' -Because 'the count names what it actually counts'
+            Should -Match '1 partial Entra ID read entry\(ies\)' -Because 'the count names what it actually counts'
         $Partial[0].Exception.Message |
             Should -Not -Match 'collection read\(s\) failed' -Because 'one report standing for three collections must not be reported as one collection'
     }
@@ -1862,9 +1862,9 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         # The lead-in must be true when the only entry is groupsRoster, or a collection written as null
         # for want of a name: neither is "a collection that could not be read" alone.
         $Partial[0].Exception.Message |
-            Should -BeLike '*1 partial Entra ID read report(s) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle*'
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
-            Should -BeLike '*A section named alone (groups, administrativeUnits or accessReviews) is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
+            Should -BeLike '*A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
     }
 
     It 'adds no groupsRoster entry and raises no InventoryPartial when the roster read answers GroupNotFound' {

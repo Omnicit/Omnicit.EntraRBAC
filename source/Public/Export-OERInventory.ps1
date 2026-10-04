@@ -73,11 +73,12 @@ function Export-OERInventory {
     report from Get-OERInventory, each naming the affected section/displayName/key triples -- so a
     single run that lost three collections reports one entry listing all three, not three entries --
     plus the entry groupsRoster when the group roster could not be read. A section whose whole list
-    could not be read (groups, administrativeUnits or accessReviews) appears in those entries by its
-    own name alone, and is written as an empty array that does not mean the tenant has none; the
-    entry groupsRoster likewise means groupsRoster.json is empty only because the roster read failed.
-    Its Count is therefore the number of partial reports, not the number of unread collections; read
-    the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
+    could not be read appears in those entries by its own name alone, and is written as an empty
+    array that does not mean the tenant has none; the entry groupsRoster likewise means
+    groupsRoster.json is empty only because the roster read failed. Its Count is therefore the number
+    of partial reports from Get-OERInventory, plus one when the group roster could not be read, and
+    not the number of unread collections; read the entries themselves for that. The same
+    non-terminating InventoryPartial error is raised here when
     IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. A members,
     scopedRoles, resources or resourceRoles collection that could not be read, or that has an entry
     the export could name by nothing the apply engine accepts, is NOT written into inventory.json as
@@ -651,13 +652,14 @@ function Export-OERInventory {
                     "Skipped: $($SkippedEligibilityScopes -join ', ')")
             }
             if ($IncompleteReads.Count -gt 0) {
-                # The count is of REPORTS, not collections: one Get-OERInventory run raises one
+                # The count is of ENTRIES, not collections: one Get-OERInventory run raises one
                 # InventoryPartial error naming every triple it lost, so a single entry here can
-                # stand for seven unread collections. Saying "N collection read(s) failed" made this
-                # message disagree with the seven triples printed right after it, and with
+                # stand for seven unread collections, and the groupsRoster entry is this cmdlet's own
+                # and not a Get-OERInventory report at all. Saying "N collection read(s) failed" made
+                # this message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone (groups, administrativeUnits or accessReviews) is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
+                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

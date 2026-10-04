@@ -19,7 +19,9 @@ function Get-OERDirectoryRoleNameMap {
     membership's role id against it. A role id the map does not name is looked up as empty by the
     caller, which decides what that means: Get-OERAdministrativeUnit keeps the role id with an empty
     RoleName, and Sync-OERStructureAdministrativeUnit withholds the add and the prune of a role it
-    cannot name instead of treating it as undeclared. That case has not been seen live.
+    cannot name instead of treating it as undeclared, but only when the document declares a role by
+    name for that principal and no live role of that principal matches it; otherwise the unnamed role
+    is reconciled as before. That case has not been seen live.
 
     .PARAMETER ThrowOnFailure
     When set, a failed read of the directory roles throws (after the error record is scrubbed) instead of

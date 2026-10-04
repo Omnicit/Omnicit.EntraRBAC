@@ -117,9 +117,9 @@ function ConvertTo-OERPruneWithheldResult {
     if ($PSCmdlet.ParameterSetName -eq 'UnreadRoleName') {
         $QuotedIds = ($UnnamedRoleId | ForEach-Object { "'$_'" }) -join ', '
         $Detail = if (@($UnnamedRoleId).Count -eq 1) {
-            "prune withheld: $Declared matches no live scoped role by name, and the principal holds a live scoped role on this unit whose name could not be read (role id $QuotedIds), which may be that role; it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it."
+            "prune withheld: $Declared matches no live scoped role by name, and the principal holds a live scoped role on this unit whose name could not be read (role id $QuotedIds), which may be that role; it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by the directory role id its live scoped role carries (RoleId in Get-OERAdministrativeUnit -IncludeScopedRoles) to reconcile it."
         } else {
-            "prune withheld: $Declared matches no live scoped role by name, and the principal holds $(@($UnnamedRoleId).Count) live scoped roles on this unit whose names could not be read (role ids $QuotedIds), any of which may be that role; none of them is added or removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it."
+            "prune withheld: $Declared matches no live scoped role by name, and the principal holds $(@($UnnamedRoleId).Count) live scoped roles on this unit whose names could not be read (role ids $QuotedIds), any of which may be that role; none of them is added or removed (our own guard, not a Graph rejection). Declare the role by the directory role id its live scoped role carries (RoleId in Get-OERAdministrativeUnit -IncludeScopedRoles) to reconcile it."
         }
         return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' -Detail $Detail
     }

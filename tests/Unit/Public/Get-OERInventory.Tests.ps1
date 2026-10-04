@@ -4257,7 +4257,7 @@ Describe 'Get-OERInventory' {
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*PARTIAL: 1 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
-                Should -BeLike '*Unread: groups. A section reported here by its name alone (groups, administrativeUnits or accessReviews) could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
+                Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
     }
 

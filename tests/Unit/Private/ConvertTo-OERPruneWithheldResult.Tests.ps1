@@ -144,7 +144,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 $R.Error | Should -BeNullOrEmpty
                 $R.Detail | Should -BeExactly ("prune withheld: scopedRole 'User Administrator' for 'person1@example.com' matches no live scoped role by name, " +
                     "and the principal holds a live scoped role on this unit whose name could not be read (role id 'dirrole-1'), which may be that role; " +
-                    'it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it.')
+                    'it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by the directory role id its live scoped role carries (RoleId in Get-OERAdministrativeUnit -IncludeScopedRoles) to reconcile it.')
             }
         }
 
@@ -156,7 +156,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
                 $R.Action | Should -BeExactly 'Skipped'
                 $R.Detail | Should -BeExactly ("prune withheld: scopedRole 'User Administrator' for 'p' matches no live scoped role by name, " +
                     "and the principal holds 2 live scoped roles on this unit whose names could not be read (role ids 'dirrole-1', 'dirrole-2'), any of which may be that role; " +
-                    'none of them is added or removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it.')
+                    'none of them is added or removed (our own guard, not a Graph rejection). Declare the role by the directory role id its live scoped role carries (RoleId in Get-OERAdministrativeUnit -IncludeScopedRoles) to reconcile it.')
             }
         }
 

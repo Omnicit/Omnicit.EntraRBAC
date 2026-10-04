@@ -30,7 +30,18 @@ assignment, Azure role policy or directory role policy twice, compared without r
 name are left out and named in `InventoryPartial`, and role assignment principals that share a
 name are written by object id.
 
-`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role whose name the directory role list does not give: when the document declares a role by name for the same principal and no live role matches it, both are left in place and reported `Skipped`, since the unnamed role may be the declared one. Declaring the role by its id reconciles it. `Get-OERInventory` and `Export-OERInventory` now report a group, administrative unit or access review list that could not be read at all through `InventoryPartial`, and `Export-OERInventory` a group roster that could not be read; such a section is still written as an empty array. An access package binding whose resource name cannot be read is written by the group's or application's object id, and when there is no such id the package's `resourceRoles` are written as `null` and reported as partial. `Test-OERStructure` now refuses an empty or blank resource, role, resource name, scoped role or principal.
+`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role whose name
+the directory role list does not give: when the document declares a role by name for the same
+principal and no live role of that principal matches it, the declared role is not added, the unnamed
+role is not removed, and the entry is reported `Skipped`, since the unnamed role may be the declared
+one. Declaring the role by its id reconciles it. `Get-OERInventory` and `Export-OERInventory` now
+report a group, administrative unit or access review list that could not be read at all through
+`InventoryPartial`, and `Export-OERInventory` a group roster that could not be read; such a section
+is still written as an empty array. An access package binding whose resource name cannot be read is
+written by the group's or application's object id, and when there is no such id the package's
+`resourceRoles` are written as `null` and reported as partial. `Test-OERStructure` now reports, and
+`Invoke-OERStructure` refuses, an empty or blank access package binding resource or role, catalog
+resource name, or administrative unit scoped role or principal.
 
 ## [1.1.1] - 2026-10-04
 

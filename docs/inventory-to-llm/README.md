@@ -226,8 +226,8 @@ CURRENT name, and its object id when the name cannot be read or is blank; a name
 object, or to several, fails its entry and withholds that catalog's prune. A catalog resource with a blank name is written under its origin
 id. An entry the export can name by nothing the apply engine accepts -- a SharePoint binding with no
 name, say -- makes the package's `resourceRoles` (or the catalog's `resources`) an explicit `null`,
-named in `InventoryPartial`. The export never writes an empty name: `Test-OERStructure` and
-`schema.json` refuse an empty or blank `resource`, `role`, `name` or `principal`.
+named in `InventoryPartial`. The export never writes an empty name: `Test-OERStructure` refuses an
+empty or blank `resource`, `role`, `name` or `principal`, and `schema.json` an empty one.
 
 ## Directory roles
 

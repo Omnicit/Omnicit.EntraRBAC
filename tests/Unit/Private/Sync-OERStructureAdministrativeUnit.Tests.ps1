@@ -1653,6 +1653,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                     $Withheld.Count | Should -Be 1
                     $Withheld[0].Detail | Should -BeLike "prune withheld: scopedRole 'User Administrator' for 'person1@example.com' matches no live scoped role by name*"
                     $Withheld[0].Detail | Should -BeLike "*'dirrole-1'*"
+                    $Withheld[0].Detail | Should -BeLike '*Declare the role by the directory role id its live scoped role carries (RoleId in Get-OERAdministrativeUnit -IncludeScopedRoles) to reconcile it.'
                     @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
                     @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
                     @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0

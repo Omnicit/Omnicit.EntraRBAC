@@ -20,8 +20,9 @@ function Get-OERAdministrativeUnit {
     that IS read but does not name one scoped role's role id is not a failure: that role's RoleName is
     empty and its RoleId is kept. The reader does not check that every membership's role id is listed,
     and the case has not been seen live. Invoke-OERStructure then adds nothing and removes nothing for
-    a role it cannot name when the document declares a role by name for the same principal, and
-    Get-OERInventory writes such a role under its role id.
+    a role it cannot name when the document declares a role by name for the same principal and no
+    live role of that principal matches that name (otherwise the unnamed role is reconciled as
+    before), and Get-OERInventory writes such a role under its role id.
 
     .PARAMETER AdministrativeUnit
     The administrative unit to read, given as either its object id (GUID) or its exact display name --
