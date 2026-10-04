@@ -991,4 +991,48 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
         @($Rows | Where-Object { $_.Action -in @('Removed', 'Extra', 'Created', 'Updated') }).Count | Should -Be 0
         $Rows.Count | Should -Be 4
     }
+
+    It 'fails the later of two entries that resolve to the same assignment, writes nothing for it and never prunes the assignment' {
+        # sub:Prod and the subscription path are one scope, so both entries name the same principal and
+        # role at it: one assignment. The later entry is Failed with the earlier one named; the
+        # earlier one reconciles; and the duplicate's key stays declared, so the pass removes only
+        # the two undeclared assignments (ra-b, ra-c) and never ra-a.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"a"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DupErr)
+
+        # Positive proof first: the earlier entry reconciled against the live state, and the pass ran.
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ sub:Prod' }).Action | Should -Be @('Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-b' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+
+        $Duplicate = @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ /subscriptions/aaaa1111-0000-0000-0000-000000000001' })
+        $Duplicate.Count | Should -Be 1
+        $Duplicate[0].Action | Should -Be 'Failed'
+        $Duplicate[0].Detail | Should -BeExactly "roleAssignments[1] resolves to the same assignment as roleAssignments[0] ('Reader -> a @ sub:Prod'): the same scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001', principal and role. Nothing was written for this entry; keep one of the two entries."
+        @($DupErr).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-a' }
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+    }
+
+    It 'resolves the siblings of a scope once for all its entries' {
+        # The engine hands every entry of one resolved scope the same key cache. Each entry's own
+        # lookup is made once and the group's two siblings are resolved once: four principal lookups,
+        # not one more set for the duplicate check of each entry and for the prune pass.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+
+        # Positive proof first: both entries reconciled, and the single pass removed the undeclared one.
+        @($Rows | Where-Object { $_.Item -like 'Reader -> * @ *' }).Action | Should -Be @('Unchanged', 'Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 4 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 4 -Exactly
+    }
 }

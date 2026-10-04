@@ -68,7 +68,11 @@ function Invoke-OERStructure {
     to run its prune pass for that scope after processing the item. An item whose scope cannot be
     resolved is reported Failed by the engine itself, with its error published as itself, and is not
     dispatched; its label is handed to every dispatched item, which withholds the prune of the whole
-    section (see -Prune).
+    section (see -Prune). Two entries that resolve to the same scope, principal and role are one
+    assignment declared twice: the engine hands each item its document index, the document index of
+    every item of its scope and one key cache per scope, and the handler reports the LATER entry
+    Failed, naming the earlier one, without reading or writing anything for it. The earlier entry
+    owns the assignment, and the prune never removes it.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
@@ -115,9 +119,10 @@ function Invoke-OERStructure {
 
     A roleAssignments entry whose SCOPE cannot be resolved withholds the prune of the whole
     roleAssignments section, not only of one scope: it may be another spelling of any scope in the
-    section, so every undeclared live assignment at every scope is reported Skipped with a Detail
-    starting "prune withheld: the scope of declared entry" (with or without -Prune), and none is
-    removed.
+    section, so every undeclared live assignment at every scope is reported Skipped (with or without
+    -Prune) with a Detail starting "prune withheld:" that names the entry, or the entries, whose scope
+    could not be resolved (in a second sentence, after the one naming an unresolved sibling, when
+    such a sibling withholds the same assignment too), and none is removed.
 
     directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
     for the pairs the document declares: a directory role the document does not name, or names only
@@ -348,6 +353,7 @@ function Invoke-OERStructure {
                             Items      = [System.Collections.Generic.List[object]]::new()
                             Indices    = [System.Collections.Generic.List[int]]::new()
                             Reconciled = $false
+                            KeyCache   = @{}
                         }
                     }
                     $RaGroup[$RaEntry.Scope].Items.Add($RaEntry.Item)
@@ -357,7 +363,11 @@ function Invoke-OERStructure {
 
             for ($ItemIndex = 0; $ItemIndex -lt $Items.Count; $ItemIndex++) {
                 $It = $Items[$ItemIndex]
-                # RoleAssignments take three extra params so prune is scoped per resolved scope.
+                # RoleAssignments take extra params so prune is scoped per resolved scope, and so the
+                # handler can tell that an entry is a second spelling of an earlier one: the entry's
+                # own document index, the document index of every entry of its scope, and ONE key
+                # cache per scope, shared by every entry of it, so the scope's entries are resolved
+                # once per run for both the duplicate check and the prune pass.
                 # DirectoryRoleAssignments take the whole section, and the prune pass runs on the
                 # first item only, whatever that item's own outcome.
                 $ExtraParams = @{}
@@ -378,6 +388,9 @@ function Invoke-OERStructure {
                     $ExtraParams.DeclaredAtScope = @($RaGroupOfItem.Items)
                     $ExtraParams.ReconcileScope  = -not $RaGroupOfItem.Reconciled
                     $ExtraParams.ScopeUnresolved = $RaScopeUnresolved
+                    $ExtraParams.ItemIndex            = $ItemIndex
+                    $ExtraParams.DeclaredAtScopeIndex = @($RaGroupOfItem.Indices)
+                    $ExtraParams.SiblingKeyCache      = $RaGroupOfItem.KeyCache
                     $RaGroupOfItem.Reconciled = $true
                 }
                 if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {

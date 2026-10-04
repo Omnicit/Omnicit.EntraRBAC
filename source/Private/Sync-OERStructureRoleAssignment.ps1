@@ -89,10 +89,26 @@ function Sync-OERStructureRoleAssignment {
     another spelling of any scope in the section, and its own live assignment would look undeclared
     in the group of whichever scope it names. The engine therefore hands every dispatched entry the
     labels of those entries as -ScopeUnresolved, and while that list is non-empty every undeclared
-    candidate at EVERY scope of the section is reported Skipped, with a Detail that starts
-    "prune withheld: the scope of declared entry '<role> -> <principal> @ <scope>' could not be
-    resolved" (several: "the scopes of declared entries '<a>', '<b>' could not be resolved"), with or
-    without -Prune. The entry keeps its own Failed record, which the engine writes.
+    candidate at EVERY scope of the section is reported Skipped, with or without -Prune, with a
+    Detail that starts "prune withheld:" and names the entries whose scope could not be resolved:
+    "the scope of declared entry '<role> -> <principal> @ <scope>' could not be resolved" for one,
+    "the scopes of declared entries '<a>', '<b>' could not be resolved" for several. When an
+    unresolved sibling (above) withholds the same candidate, its sentence comes first and the scope
+    sentence follows it. The entry keeps its own Failed record, which the engine writes.
+
+    Duplicate entries: two entries of one resolved scope that name the same principal and the same
+    role are ONE assignment declared twice. The key is '<principal object id>|<role definition
+    GUID>', compared without regard to letter case, and the engine passes the document index of the
+    entry (-ItemIndex) and of every entry of the scope (-DeclaredAtScopeIndex). Right after the
+    principal and the role are resolved, and before the current assignments are read, an entry whose
+    key equals the key of an entry with a LOWER document index is reported Failed -- no error
+    record is written, as for an unresolved principal -- with a Detail that names the earlier entry
+    by its index and label, and nothing is read or written for it: no create, no in-place update,
+    and no prune pass. The earlier entry owns the assignment. The key of the later entry stays in
+    the declared set, so the prune pass never removes the assignment. An earlier entry that carries
+    no key (its principal or role did not resolve) never counts as a duplicate. The keys of the
+    entries of a scope are resolved through one nested function and kept in -SiblingKeyCache, so
+    they are looked up at most once per run for both the duplicate check and the prune pass.
 
     The pass runs only in the invocation for the FIRST item of each resolved scope. When that item's
     own principal, role or current-assignment read fails, the handler returns before the pass: nothing
@@ -140,8 +156,9 @@ function Sync-OERStructureRoleAssignment {
     .PARAMETER DeclaredAtScope
     All document roleAssignment items that resolve to this item's scope, this item included (the
     engine groups on the canonical RESOLVED scope, compared without regard to letter case, never on
-    the scope text as written in the document). Used during the scope-wide prune pass (when
-    -ReconcileScope is set) to build the declared-key set. Each element is expected to have
+    the scope text as written in the document). Used by the duplicate check (when -ItemIndex is set)
+    and, during the scope-wide prune pass (when -ReconcileScope is set), to build the declared-key
+    set. Each element is expected to have
     .principal and .role properties. Defaults to an empty array. One element whose principal or role
     cannot be resolved withholds the prune for the whole scope (see -Prune); that element's Failed
     record comes from its own invocation of this handler.
@@ -158,6 +175,23 @@ function Sync-OERStructureRoleAssignment {
     may be another spelling of any scope in the section, so while the list is non-empty the scope-wide
     pass withholds every undeclared candidate (see -Prune). Optional, and empty by default.
 
+    .PARAMETER ItemIndex
+    The index of this entry in the document's roleAssignments array, which the engine passes. It makes
+    the duplicate check run: this entry is Failed when an entry of -DeclaredAtScope with a LOWER
+    document index resolves to the same principal and role. Optional; -1 (the default) means the
+    caller gave no index, and no duplicate check is made.
+
+    .PARAMETER DeclaredAtScopeIndex
+    The document index of each element of -DeclaredAtScope, in the same order (parallel to it), which
+    the engine passes. Without it an element's index is its position in -DeclaredAtScope. Optional,
+    and empty by default.
+
+    .PARAMETER SiblingKeyCache
+    A hashtable the engine hands to every invocation for one resolved scope, so that the keys of the
+    entries of -DeclaredAtScope are resolved once per run and shared by the duplicate check and the
+    scope-wide prune pass. The handler stores the resolved rows in it under 'Rows'. Without it the
+    keys are resolved again by each use. Optional.
+
     .EXAMPLE
     Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope '/subscriptions/00000000-0000-0000-0000-000000000001' -TenantAlias 'omnicit'
     Reconciles one role assignment entry from the document using the engine PSCmdlet as the caller.
@@ -170,6 +204,12 @@ function Sync-OERStructureRoleAssignment {
     Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune -ReconcileScope -DeclaredAtScope $SiblingItems -ScopeUnresolved @('Reader -> x @ sub:Gone')
     Reconciles one role assignment, but withholds the prune: the scope of another entry in the section
     could not be resolved, so every undeclared assignment is reported Skipped and none is removed.
+
+    .EXAMPLE
+    $KeyCache = @{}
+    Sync-OERStructureRoleAssignment -Item $LaterItem -Caller $PSCmdlet -ResolvedScope $ResolvedScope -DeclaredAtScope @($EarlierItem, $LaterItem) -DeclaredAtScopeIndex @(0, 3) -ItemIndex 3 -SiblingKeyCache $KeyCache
+    Reports the entry at document index 3 Failed, without reading or writing anything, when it resolves to
+    the same principal and role as the entry at index 0.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -189,7 +229,10 @@ function Sync-OERStructureRoleAssignment {
         [string]$TenantAlias,
         [object[]]$DeclaredAtScope = @(),
         [switch]$ReconcileScope,
-        [string[]]$ScopeUnresolved = @()
+        [string[]]$ScopeUnresolved = @(),
+        [int]$ItemIndex = -1,
+        [int[]]$DeclaredAtScopeIndex = @(),
+        [hashtable]$SiblingKeyCache
     )
 
     process {
@@ -214,6 +257,56 @@ function Sync-OERStructureRoleAssignment {
         function Get-RoleDefinitionGuid {
             param([string]$RoleDefinitionId)
             ($RoleDefinitionId.TrimEnd('/') -split '/')[-1]
+        }
+
+        # The key of every entry of the scope's group, in group order, as
+        # [PSCustomObject]@{ Position; DocumentIndex; Label; Key }. Key is '<principal object id>|<role
+        # definition GUID>', or $null when the principal or the role of that entry gave nothing or its
+        # lookup threw. DocumentIndex is the entry's index in the document's roleAssignments array when
+        # the engine passed one (-DeclaredAtScopeIndex, parallel to -DeclaredAtScope), else its
+        # position in the group. The duplicate check and the prune pass both read the rows from here,
+        # and the engine hands every invocation for one resolved scope the SAME cache, so the group's
+        # entries are resolved at most once per run, however many of them are processed.
+        function Get-SiblingKeyRow {
+            param(
+                [object[]]$Declared,
+                [int[]]$DocumentIndex,
+                [string]$Scope,
+                [hashtable]$Cache
+            )
+            if ($null -ne $Cache -and $Cache.ContainsKey('Rows')) { return $Cache['Rows'] }
+
+            $Rows = [System.Collections.Generic.List[object]]::new()
+            $Position = 0
+            foreach ($Entry in @($Declared)) {
+                $EntryLabel = "$($Entry.role) -> $($Entry.principal) @ $($Entry.scope)"
+                $EntryKey = $null
+                try {
+                    $EntryParams = @{ Reference = $Entry.principal }
+                    if (Test-OERDeclaredProperty -Node $Entry -Name 'principalType') { $EntryParams.Type = $Entry.principalType }
+                    $EntryPrincipalId = Resolve-OERStructurePrincipal @EntryParams
+                    $EntryRole = Resolve-OERRoleDefinitionId -Role $Entry.role -Scope $Scope
+                    if ($EntryPrincipalId -and $EntryRole) {
+                        $EntryKey = "$EntryPrincipalId|$(Get-RoleDefinitionGuid -RoleDefinitionId $EntryRole)"
+                    }
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    # An entry whose lookup throws carries no key, and the rows say so. No error is
+                    # written here: the entry's own invocation of this handler writes its own error and
+                    # reports its Failed record.
+                }
+                $EntryDocumentIndex = if ($null -ne $DocumentIndex -and $Position -lt $DocumentIndex.Count) { $DocumentIndex[$Position] } else { $Position }
+                $Rows.Add([PSCustomObject]@{
+                        Position      = $Position
+                        DocumentIndex = $EntryDocumentIndex
+                        Label         = $EntryLabel
+                        Key           = $EntryKey
+                    })
+                $Position++
+            }
+            $Result = $Rows.ToArray()
+            if ($null -ne $Cache) { $Cache['Rows'] = $Result }
+            $Result
         }
 
         $Label  = "$($Item.role) -> $($Item.principal) @ $($Item.scope)"
@@ -259,6 +352,31 @@ function Sync-OERStructureRoleAssignment {
             return
         }
 
+        $RoleGuid = Get-RoleDefinitionGuid -RoleDefinitionId $RoleFullId
+
+        # -- 2a. A second entry for the same assignment ------------------------------------
+        # Two entries of one resolved scope that name the same principal and the same role (the key is
+        # '<principal object id>|<role definition GUID>', compared without regard to letter case) are
+        # ONE assignment declared twice. The earlier entry (the lower document index) owns it. This one
+        # is reported Failed, as a document error and with no error record, and nothing is read or
+        # written for it: reconciling it too would let a differing description, condition or
+        # conditionVersion on it fight the earlier entry over the same assignment on every run. Its
+        # key is still in the cache's rows, so the prune pass keeps the assignment declared and never
+        # removes it. An earlier entry that carries no key (its principal or role did not resolve)
+        # never matches, so a lookup failure is not mistaken for a duplicate.
+        if ($ItemIndex -ge 0) {
+            $OwnKey = "$PrincipalObjId|$RoleGuid"
+            $Earlier = @(Get-SiblingKeyRow -Declared $DeclaredAtScope -DocumentIndex $DeclaredAtScopeIndex -Scope $RawScope -Cache $SiblingKeyCache |
+                    Where-Object { $_.DocumentIndex -lt $ItemIndex -and $null -ne $_.Key -and $_.Key -eq $OwnKey } |
+                    Sort-Object -Property DocumentIndex |
+                    Select-Object -First 1)
+            if ($Earlier.Count -gt 0) {
+                ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
+                    -Detail "roleAssignments[$ItemIndex] resolves to the same assignment as roleAssignments[$($Earlier[0].DocumentIndex)] ('$($Earlier[0].Label)'): the same scope '$RawScope', principal and role. Nothing was written for this entry; keep one of the two entries."
+                return
+            }
+        }
+
         # -- 3. Read current at-scope assignments once ------------------------------------
         $Current = $null
         try {
@@ -271,8 +389,6 @@ function Sync-OERStructureRoleAssignment {
                 -ErrorRecord $PSItem
             return
         }
-
-        $RoleGuid = Get-RoleDefinitionGuid -RoleDefinitionId $RoleFullId
 
         # -- 4. Check existence of THIS item ----------------------------------------------
         # Azure Resource Manager enforces uniqueness on (scope, principal, roleDefinition) whether or
@@ -396,33 +512,23 @@ function Sync-OERStructureRoleAssignment {
         # -- Scope-wide prune/extra pass (only when -ReconcileScope) ----------------------
         if (-not $ReconcileScope) { return }
 
-        # Build the declared key set from all $DeclaredAtScope siblings. A sibling whose principal or
-        # role cannot be resolved carries no key, so it cannot protect its own live assignment from
-        # the candidate loop below. It is recorded in $SiblingUnresolved instead, under the sibling's
-        # own result label, and while that list is non-empty every candidate at this scope is
-        # withheld (ConvertTo-OERPruneWithheldResult owns that rule) rather than reported Extra or
-        # removed. $ScopeUnresolved (the engine's labels of entries whose SCOPE did not resolve, which
-        # it never dispatches) withholds the same way: such an entry may name any scope in the section.
+        # Build the declared key set from all $DeclaredAtScope siblings, through Get-SiblingKeyRow: the
+        # same rows the duplicate check read, resolved at most once per run. A sibling whose principal
+        # or role cannot be resolved, or whose lookup throws, carries no key, so it cannot protect its
+        # own live assignment from the candidate loop below. It is recorded in $SiblingUnresolved
+        # instead, under the sibling's own result label, and while that list is non-empty every
+        # candidate at this scope is withheld (ConvertTo-OERPruneWithheldResult owns that rule) rather
+        # than reported Extra or removed. A thrown lookup does not abort the pass, and no error is
+        # written for it here: the sibling's own invocation writes its own error and Failed record.
+        # $ScopeUnresolved (the engine's labels of entries whose SCOPE did not resolve, which it never
+        # dispatches) withholds the same way: such an entry may name any scope in the section.
         $DeclaredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $SiblingUnresolved = [System.Collections.Generic.List[string]]::new()
-        foreach ($Sibling in @($DeclaredAtScope)) {
-            $SiblingLabel = "$($Sibling.role) -> $($Sibling.principal) @ $($Sibling.scope)"
-            try {
-                $SibParams = @{ Reference = $Sibling.principal }
-                if (Test-OERDeclaredProperty -Node $Sibling -Name 'principalType') { $SibParams.Type = $Sibling.principalType }
-                $SiblingPid  = Resolve-OERStructurePrincipal @SibParams
-                $SiblingRole = Resolve-OERRoleDefinitionId -Role $Sibling.role -Scope $RawScope
-                if ($SiblingPid -and $SiblingRole) {
-                    $null = $DeclaredKeys.Add("$SiblingPid|$(Get-RoleDefinitionGuid -RoleDefinitionId $SiblingRole)")
-                } else {
-                    $SiblingUnresolved.Add($SiblingLabel)
-                }
-            } catch {
-                Remove-OERErrorRecord -Record $PSItem
-                # A sibling whose lookup throws does not abort the pass, but it is unresolved all the
-                # same and withholds the prune at this scope. No error is written here: the sibling's
-                # own invocation writes its own error and Failed record.
-                $SiblingUnresolved.Add($SiblingLabel)
+        foreach ($SiblingRow in @(Get-SiblingKeyRow -Declared $DeclaredAtScope -DocumentIndex $DeclaredAtScopeIndex -Scope $RawScope -Cache $SiblingKeyCache)) {
+            if ($null -ne $SiblingRow.Key) {
+                $null = $DeclaredKeys.Add($SiblingRow.Key)
+            } else {
+                $SiblingUnresolved.Add($SiblingRow.Label)
             }
         }
 

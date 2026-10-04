@@ -1238,6 +1238,189 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
         }
     }
+
+    Context 'a second entry that resolves to the same assignment fails and is not written (Scope 3)' {
+        # Two entries that resolve to the same scope, principal and role name ONE assignment. The
+        # later one is reported Failed and writes nothing -- no read, no create, no in-place update --
+        # and its key stays in the declared set, so the prune never removes the assignment. The engine
+        # hands every invocation of one resolved scope the same -SiblingKeyCache, the document index of
+        # the entry (-ItemIndex) and the document index of every sibling (-DeclaredAtScopeIndex). The
+        # entries below sit at document indexes 0, 3 and 5, so a position and a document index differ.
+        # No id is version-4 shaped; the Reader built-in role id is the one real GUID.
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncRaDup {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param(
+                        [PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope,
+                        [string]$ResolvedScope = '/subscriptions/sub-1', [int]$ItemIndex = -1,
+                        [int[]]$DeclaredAtScopeIndex = @(), [hashtable]$SiblingKeyCache
+                    )
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune `
+                        -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope -ItemIndex $ItemIndex `
+                        -DeclaredAtScopeIndex $DeclaredAtScopeIndex -SiblingKeyCache $SiblingKeyCache
+                }
+                $script:DupLive = @()
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERStructurePrincipal {
+                    param($Reference, $Type)
+                    if ($Reference -eq 'grp1') { '11111111-aaaa-0000-0000-000000000001' }
+                    elseif ($Reference -eq 'good_group') { '11111111-aaaa-0000-0000-000000000003' }
+                    elseif ($Reference -eq 'bad_group') { throw 'Graph 503 while resolving bad_group' }
+                    elseif ($Reference -like '11111111-aaaa-0000-0000-*') { $Reference }
+                    else { $null }
+                }
+                Mock Resolve-OERRoleDefinitionId {
+                    param($Role, $Scope)
+                    $RoleGuid = if ($Role -eq 'Reader') { 'acdd72a7-3385-48ef-bd42-f606fba81ae7' } else { $Role }
+                    "$Scope/providers/Microsoft.Authorization/roleDefinitions/$RoleGuid"
+                }
+                Mock Get-OERRoleAssignment { $script:DupLive }
+                Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-new' } }
+                Mock Set-OERRoleAssignment {}
+                Mock Remove-OERRoleAssignment {}
+            }
+        }
+
+        It 'reports the later entry Failed with the earlier one named, and creates the assignment only once' {
+            InModuleScope $script:moduleName {
+                $First  = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'grp1' }
+                $Second = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = '11111111-aaaa-0000-0000-000000000001' }
+                $Cache = @{}
+                $Declared = @($First, $Second)
+                $r0 = @(Invoke-SyncRaDup -Item $First -ItemIndex 0 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ReconcileScope -ErrorAction SilentlyContinue)
+                $r3 = @(Invoke-SyncRaDup -Item $Second -ItemIndex 3 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ErrorAction SilentlyContinue -ErrorVariable DupErr)
+
+                # Positive proof first: the earlier entry was created, so the handler reached the write.
+                @($r0).Action | Should -Be @('Created')
+                @($r3).Count | Should -Be 1
+                $r3[0].Action | Should -Be 'Failed'
+                $r3[0].Item | Should -BeExactly 'acdd72a7-3385-48ef-bd42-f606fba81ae7 -> 11111111-aaaa-0000-0000-000000000001 @ /subscriptions/sub-1'
+                $r3[0].Detail | Should -BeExactly "roleAssignments[3] resolves to the same assignment as roleAssignments[0] ('Reader -> grp1 @ sub:Prod'): the same scope '/subscriptions/sub-1', principal and role. Nothing was written for this entry; keep one of the two entries."
+                # A document error, like the unresolved principal: no error record is written.
+                @($DupErr).Count | Should -Be 0
+                # Only the earlier entry read the live state and wrote.
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly
+                Should -Invoke Set-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'never updates or prunes the assignment the later entry duplicates, and still prunes what is undeclared' {
+            InModuleScope $script:moduleName {
+                $RoleId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'
+                $script:DupLive = @(
+                    [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = '11111111-aaaa-0000-0000-000000000001'; RoleDefinitionId = $RoleId; RoleAssignmentId = 'ra-1'; Description = 'live text' }
+                    [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = '11111111-aaaa-0000-0000-000000000009'; RoleDefinitionId = $RoleId; RoleAssignmentId = 'ra-2' }
+                )
+                # The earlier entry declares no description (Unchanged); the later one declares a
+                # description that differs from the live one, and would be applied in place.
+                $First  = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'grp1' }
+                $Second = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = '11111111-aaaa-0000-0000-000000000001'; description = 'declared text' }
+                $Cache = @{}
+                $Declared = @($First, $Second)
+                $r0 = @(Invoke-SyncRaDup -Item $First -ItemIndex 0 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -Prune -ReconcileScope -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                $r3 = @(Invoke-SyncRaDup -Item $Second -ItemIndex 3 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: the prune pass ran, and removed the undeclared assignment once.
+                @($r0 | Where-Object Action -eq 'Unchanged').Count | Should -Be 1
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-2' }
+                @($r3).Action | Should -Be @('Failed')
+                # The declared assignment is neither edited nor removed.
+                Should -Invoke Set-OERRoleAssignment -Times 0
+                Should -Invoke Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-1' }
+                Should -Invoke Remove-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+
+        It 'resolves the siblings of a group once for all the invocations that share the cache' {
+            InModuleScope $script:moduleName {
+                $First  = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'grp1' }
+                $Second = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = '11111111-aaaa-0000-0000-000000000001' }
+                $Cache = @{}
+                $Declared = @($First, $Second)
+                $r0 = @(Invoke-SyncRaDup -Item $First -ItemIndex 0 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ReconcileScope -ErrorAction SilentlyContinue)
+                $r3 = @(Invoke-SyncRaDup -Item $Second -ItemIndex 3 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ErrorAction SilentlyContinue)
+
+                # Positive proof first: both invocations ran in full, the second one to its duplicate verdict.
+                @($r0).Action | Should -Be @('Created')
+                @($r3).Action | Should -Be @('Failed')
+                # Each entry's own lookup once, plus the group's two siblings once -- not once per use.
+                Should -Invoke Resolve-OERStructurePrincipal -Times 4 -Exactly
+                Should -Invoke Resolve-OERRoleDefinitionId -Times 4 -Exactly
+            }
+        }
+
+        It 'does not mistake an unresolved earlier entry for a duplicate, and withholds the prune naming it' {
+            InModuleScope $script:moduleName {
+                # Entry 0 names a principal whose lookup throws, so it carries no key. Entry 1 must not be
+                # failed as its duplicate: it reconciles. The pass then withholds the prune, since the
+                # live assignment that is undeclared here may be entry 0's own.
+                $script:DupLive = @(
+                    [PSCustomObject]@{ Scope = '/subscriptions/sub-1'; PrincipalId = '11111111-aaaa-0000-0000-000000000009'; RoleDefinitionId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7'; RoleAssignmentId = 'ra-live' }
+                )
+                $Bad  = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'bad_group' }
+                $Good = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'good_group' }
+                $Cache = @{}
+                $Declared = @($Bad, $Good)
+                $rBad = @(Invoke-SyncRaDup -Item $Bad -ItemIndex 0 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 1) -SiblingKeyCache $Cache -ReconcileScope -ErrorAction SilentlyContinue)
+                $rGood = @(Invoke-SyncRaDup -Item $Good -ItemIndex 1 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 1) -SiblingKeyCache $Cache -ErrorAction SilentlyContinue)
+                $rPass = @(Invoke-SyncRaDup -Item $Good -ItemIndex 1 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 1) -SiblingKeyCache $Cache -Prune -ReconcileScope -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # Positive proof first: the unresolved entry is Failed for its own lookup, not as a duplicate.
+                @($rBad).Action | Should -Be @('Failed')
+                $rBad[0].Detail | Should -Match "^could not resolve principal 'bad_group'"
+                @($rGood).Action | Should -Be @('Created')
+                Should -Invoke New-OERRoleAssignment -Times 2 -Exactly -ParameterFilter { $Group -eq 'good_group' }
+                # The third call is the prune pass: the undeclared candidate is Skipped, never removed.
+                $Withheld = @($rPass | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'acdd72a7-3385-48ef-bd42-f606fba81ae7 -> 11111111-aaaa-0000-0000-000000000009 @ /subscriptions/sub-1' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Detail.StartsWith("prune withheld: declared entry 'Reader -> bad_group @ sub:Prod' could not be resolved") | Should -BeTrue
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'compares the duplicate key without regard to letter case' {
+            InModuleScope $script:moduleName {
+                # Entry 3 spells the principal object id and the role GUID in upper case. Azure treats the
+                # ids as the same, so it is the same assignment as entry 0 and is a duplicate.
+                $First  = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'grp1' }
+                $Second = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = 'ACDD72A7-3385-48EF-BD42-F606FBA81AE7'; principal = '11111111-AAAA-0000-0000-000000000001' }
+                $Cache = @{}
+                $Declared = @($First, $Second)
+                $r0 = @(Invoke-SyncRaDup -Item $First -ItemIndex 0 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ReconcileScope -ErrorAction SilentlyContinue)
+                $r3 = @(Invoke-SyncRaDup -Item $Second -ItemIndex 3 -DeclaredAtScope $Declared -DeclaredAtScopeIndex @(0, 3) -SiblingKeyCache $Cache -ErrorAction SilentlyContinue)
+
+                @($r0).Action | Should -Be @('Created')
+                @($r3).Action | Should -Be @('Failed')
+                $r3[0].Detail | Should -Match 'roleAssignments\[3\] resolves to the same assignment as roleAssignments\[0\]'
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+
+        It 'names the earliest of several duplicates by its document index, not its position' {
+            InModuleScope $script:moduleName {
+                # Positions 0, 1 and 2 hold the entries at document indexes 2, 4 and 7.
+                $E2 = [PSCustomObject]@{ scope = 'sub:Prod'; role = 'Reader'; principal = 'grp1' }
+                $E4 = [PSCustomObject]@{ scope = '/subscriptions/sub-1'; role = 'Reader'; principal = '11111111-aaaa-0000-0000-000000000001' }
+                $E7 = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'acdd72a7-3385-48ef-bd42-f606fba81ae7'; principal = 'grp1' }
+                $Cache = @{}
+                $Declared = @($E2, $E4, $E7)
+                $Index = @(2, 4, 7)
+                $r2 = @(Invoke-SyncRaDup -Item $E2 -ItemIndex 2 -DeclaredAtScope $Declared -DeclaredAtScopeIndex $Index -SiblingKeyCache $Cache -ReconcileScope -ErrorAction SilentlyContinue)
+                $r4 = @(Invoke-SyncRaDup -Item $E4 -ItemIndex 4 -DeclaredAtScope $Declared -DeclaredAtScopeIndex $Index -SiblingKeyCache $Cache -ErrorAction SilentlyContinue)
+                $r7 = @(Invoke-SyncRaDup -Item $E7 -ItemIndex 7 -DeclaredAtScope $Declared -DeclaredAtScopeIndex $Index -SiblingKeyCache $Cache -ErrorAction SilentlyContinue)
+
+                @($r2).Action | Should -Be @('Created')
+                @($r4).Action | Should -Be @('Failed')
+                @($r7).Action | Should -Be @('Failed')
+                $r4[0].Detail | Should -Match "^roleAssignments\[4\] resolves to the same assignment as roleAssignments\[2\] \('Reader -> grp1 @ sub:Prod'\)"
+                $r7[0].Detail | Should -Match "^roleAssignments\[7\] resolves to the same assignment as roleAssignments\[2\] \('Reader -> grp1 @ sub:Prod'\)"
+                Should -Invoke New-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+    }
 }
 
 Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal display name' {
