@@ -20,7 +20,8 @@ function Sync-OERStructureRoleAssignment {
        existing heuristic applies: an '@'-containing value triggers a user lookup; anything else triggers
        a group-then-user lookup.
     2. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
-    3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope (throws -> Failed + return).
+    3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope -ErrorAction Stop (fails ->
+       Failed + return, so a failed read is never taken as an empty list and no prune pass runs).
     4. If a current assignment with matching PrincipalId + role definition exists AND is DEFINED at
        this scope, compare the declared condition, conditionVersion and description against it. The
        role definition matches on its GUID, the last segment of its id, without regard to letter case,
@@ -378,9 +379,14 @@ function Sync-OERStructureRoleAssignment {
         }
 
         # -- 3. Read current at-scope assignments once ------------------------------------
+        # -ErrorAction Stop: Get-OERRoleAssignment reports a failed read (a 403 at a management group,
+        # measured live) as a NON-terminating error and returns nothing. Without Stop that error never
+        # reaches this catch, the failed read becomes an empty list, the entry is planned as a create,
+        # and a read that failed part way would feed the prune pass below an incomplete list. A failed
+        # read is never an empty fact: the entry is Failed, and returning here skips the prune pass.
         $Current = $null
         try {
-            $Current = @(Get-OERRoleAssignment -Scope $RawScope -AtScope)
+            $Current = @(Get-OERRoleAssignment -Scope $RawScope -AtScope -ErrorAction Stop)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)

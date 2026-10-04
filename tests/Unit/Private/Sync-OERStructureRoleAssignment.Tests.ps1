@@ -108,9 +108,10 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Get-OERRoleAssignment { param($Scope, [switch]$AtScope) @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-raw' } }
             Mock Initialize-OERAuth {}
-            # The document wrote a trailing '/'; the engine's canonical resolved scope carries none.
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = '/subscriptions/x/resourceGroups/y/'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/x/resourceGroups/y')
-            @($r | Where-Object Action -eq 'Created' | ForEach-Object { $_.Item }) | Should -BeExactly @('Reader -> role_sec_x @ /subscriptions/x/resourceGroups/y/')
+            # The document wrote the scope in another letter case; the engine hands the handler the
+            # group's resolved scope, spelled as the first entry of the group spelled it.
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = '/SUBSCRIPTIONS/x/resourceGroups/Y'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/x/resourceGroups/y')
+            @($r | Where-Object Action -eq 'Created' | ForEach-Object { $_.Item }) | Should -BeExactly @('Reader -> role_sec_x @ /SUBSCRIPTIONS/x/resourceGroups/Y')
             Should -Invoke Resolve-OERRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' }
             Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' -and $AtScope }
             Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' }
@@ -1418,6 +1419,128 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 $r4[0].Detail | Should -Match "^roleAssignments\[4\] resolves to the same assignment as roleAssignments\[2\] \('Reader -> grp1 @ sub:Prod'\)"
                 $r7[0].Detail | Should -Match "^roleAssignments\[7\] resolves to the same assignment as roleAssignments\[2\] \('Reader -> grp1 @ sub:Prod'\)"
                 Should -Invoke New-OERRoleAssignment -Times 1 -Exactly
+            }
+        }
+    }
+
+    Context 'a failed read of the assignments at the scope is Failed, never an empty list (A14)' {
+        # Get-OERRoleAssignment reports a failed ARM read (measured live: a 403 at a management group)
+        # as a NON-terminating error and returns nothing. The handler reads with -ErrorAction Stop, so
+        # that error lands in its catch: the entry is Failed with the read error, nothing is created or
+        # planned, and the prune pass for the scope never runs. The failure mock is a cmdlet writing
+        # through $PSCmdlet.WriteError, never Write-Error: only a cmdlet's own WriteError is promoted by
+        # the caller's -ErrorAction Stop, which is exactly what the handler relies on.
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                $script:A14Scope = '/providers/Microsoft.Management/managementGroups/mg-1'
+                $script:A14Item  = [PSCustomObject]@{ scope = 'mg:mg-1'; role = 'Reader'; principal = 'role_sec_x' }
+            }
+        }
+
+        It 'reports Failed with the read error and creates nothing when the read writes a non-terminating error' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+                Mock Get-OERRoleAssignment {
+                    [CmdletBinding()] param([string]$Scope, [switch]$AtScope)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('read marker: the client does not have authorization to read role assignments.'),
+                            'AuthorizationFailed', [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                }
+                Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-new' } }
+                Mock Initialize-OERAuth {}
+                $Ev = $null
+                $r = @(Invoke-SyncRaViaCaller -Item $script:A14Item -ResolvedScope $script:A14Scope -ErrorAction SilentlyContinue -ErrorVariable Ev)
+                Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq $script:A14Scope -and $AtScope }
+                @($r).Action | Should -Be @('Failed')
+                $r[0].Detail | Should -BeLike "could not read role assignments at scope '$($script:A14Scope)': read marker:*"
+                $r[0].Error.FullyQualifiedErrorId | Should -Match '^AuthorizationFailed'
+                # The read error is published as itself, once, through the caller. -ErrorVariable also
+                # collects the stop exception at each layer of Pester's mock wrapper, so the assertion
+                # is on the record the Failed row carries, not on the size of the list.
+                @($Ev | Where-Object { [object]::ReferenceEquals($_, $r[0].Error) }).Count | Should -Be 1
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'plans no create under -WhatIf when the read fails' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+                Mock Get-OERRoleAssignment {
+                    [CmdletBinding()] param([string]$Scope, [switch]$AtScope)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('read marker'), 'AuthorizationFailed',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                }
+                Mock New-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $r = @(Invoke-SyncRaViaCaller -Item $script:A14Item -ResolvedScope $script:A14Scope -WhatIf -ErrorAction SilentlyContinue)
+                @($r).Action | Should -Be @('Failed')
+                @($r | Where-Object { $_.Detail -match 'would create' }).Count | Should -Be 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'never runs the prune pass for the scope when the read fails part way, under -Prune and -ReconcileScope' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+                # One undeclared assignment at the scope is emitted before the read fails: a read that
+                # failed part way is no more a complete list than an empty one.
+                Mock Get-OERRoleAssignment {
+                    [CmdletBinding()] param([string]$Scope, [switch]$AtScope)
+                    [PSCustomObject]@{ Scope = $Scope; PrincipalId = 'p-other'; RoleDefinitionId = '/providers/Microsoft.Authorization/roleDefinitions/rd-other'; RoleAssignmentId = 'ra-undeclared' }
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('read marker'), 'AuthorizationFailed',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                }
+                Mock New-OERRoleAssignment {}
+                Mock Remove-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                $r = @(Invoke-SyncRaViaCaller -Item $script:A14Item -ResolvedScope $script:A14Scope -DeclaredAtScope @($script:A14Item) -ReconcileScope -Prune -Confirm:$false -ErrorAction SilentlyContinue)
+                @($r).Action | Should -Be @('Failed')
+                Should -Invoke Remove-OERRoleAssignment -Times 0
+                Should -Invoke New-OERRoleAssignment -Times 0
+            }
+        }
+
+        It 'scrubs the bearer-hygiene record of the failed read before it publishes it' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncRaViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                }
+                Mock Resolve-OERStructurePrincipal { 'p-1' }
+                Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+                Mock Get-OERRoleAssignment {
+                    [CmdletBinding()] param([string]$Scope, [switch]$AtScope)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('read marker'), 'AuthorizationFailed',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, $Scope))
+                }
+                Mock New-OERRoleAssignment {}
+                Mock Initialize-OERAuth {}
+                Mock Remove-OERErrorRecord { param($Record) }
+                $r = @(Invoke-SyncRaViaCaller -Item $script:A14Item -ResolvedScope $script:A14Scope -ErrorAction SilentlyContinue)
+                @($r).Action | Should -Be @('Failed')
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter { $Record.FullyQualifiedErrorId -match '^AuthorizationFailed' }
             }
         }
     }
