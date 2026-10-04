@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, or when a live scoped role's name could not be read.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -33,6 +33,17 @@ function ConvertTo-OERPruneWithheldResult {
     The caller then continues with the next candidate: no Write-Warning and no ShouldProcess prompt
     is issued for a withheld candidate, and the unresolved entry keeps its own Failed record.
 
+    A third kind of entry is not an unresolved declared entry at all: it is a LIVE administrative unit
+    scoped role whose name the directory role list did not give (the role id is known, the name is
+    blank), held by a principal for whom the document declares a role BY NAME that no live role of that
+    principal matches by name. Such a live role may be the very role the document declares, so adding
+    the declared role would duplicate it and pruning the live one would remove it. The caller names
+    the declared entry with -Declared and the role ids with -UnnamedRoleId, and this helper then ALWAYS
+    returns exactly one Skipped record (the empty-list rule above does not apply to this kind) whose
+    Detail starts 'prune withheld: ', says the declared role matches no live scoped role by name, names
+    every unnamed role id in the order given, and states that the role is neither added nor removed
+    (the module's own guard, not a Graph rejection). Declaring the role by its role id reconciles it.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -54,6 +65,16 @@ function ConvertTo-OERPruneWithheldResult {
     order. Optional, and empty by default. Such an entry may name any scope in the section, so a
     non-empty list withholds the candidate whichever collection it belongs to.
 
+    .PARAMETER Declared
+    A readable description of the declared entry that was declared by role name and matches no live
+    scoped role by name, for example "scopedRole 'User Administrator' for 'person1@example.com'".
+    Mandatory with -UnnamedRoleId, and not combinable with -Unresolved, -Candidate or -UnresolvedScope.
+
+    .PARAMETER UnnamedRoleId
+    The role ids of the live scoped roles that principal holds on the unit whose names the directory
+    role list did not give, in the order the caller wants them named. One id or several; at least one
+    is expected, since the record says the declared role may be one of them.
+
     .EXAMPLE
     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
     if ($Withheld) { $Withheld; continue }
@@ -73,16 +94,35 @@ function ConvertTo-OERPruneWithheldResult {
     Emits the Skipped record and moves on to the next live assignment when the scope of at least one
     declared entry in the section could not be resolved, or when a sibling at this scope could not be
     resolved; otherwise the prune pass continues as usual.
+
+    .EXAMPLE
+    ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' -Declared "scopedRole 'User Administrator' for 'person1@example.com'" -UnnamedRoleId @('dirrole-1')
+
+    Returns one Skipped record saying the declared role matches no live scoped role by name while the
+    principal holds a live scoped role whose name could not be read (role id 'dirrole-1'), so the role
+    is neither added nor removed.
     #>
     [OutputType([PSCustomObject])]
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
     param(
         [Parameter(Mandatory)][string]$Section,
         [Parameter(Mandatory)][string]$Item,
-        [Parameter(Mandatory)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
-        [Parameter(Mandatory)][string]$Candidate,
-        [AllowEmptyCollection()][string[]]$UnresolvedScope = @()
+        [Parameter(Mandatory, ParameterSetName = 'Unresolved')][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
+        [Parameter(Mandatory, ParameterSetName = 'Unresolved')][string]$Candidate,
+        [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
+        [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
+        [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'UnreadRoleName') {
+        $QuotedIds = ($UnnamedRoleId | ForEach-Object { "'$_'" }) -join ', '
+        $Detail = if (@($UnnamedRoleId).Count -eq 1) {
+            "prune withheld: $Declared matches no live scoped role by name, and the principal holds a live scoped role on this unit whose name could not be read (role id $QuotedIds), which may be that role; it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it."
+        } else {
+            "prune withheld: $Declared matches no live scoped role by name, and the principal holds $(@($UnnamedRoleId).Count) live scoped roles on this unit whose names could not be read (role ids $QuotedIds), any of which may be that role; none of them is added or removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it."
+        }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' -Detail $Detail
+    }
 
     $HasEntry = @($Unresolved).Count -gt 0
     $HasScope = @($UnresolvedScope).Count -gt 0

@@ -68,6 +68,19 @@ function Sync-OERStructureAdministrativeUnit {
     prune that already completed stands with no Removed row, and an unresolved entry's Failed row is
     lost; warnings and errors already written remain.
 
+    Unnamed live scoped role: the directory role list that names each live role is read in full, but it
+    holds only the activated roles, so a live scoped role whose role id it does not list reaches this
+    handler with a blank RoleName and its RoleId kept. A role declared by NAME can never match such a
+    role, yet it may be that very role. When the document declares a role by name for a principal who
+    has no live role of that name but does hold at least one such unnamed live role on the unit, the
+    handler adds nothing and removes nothing for that principal's unnamed roles: it emits ONE Skipped
+    record for the declared entry, with a Detail that starts "prune withheld: scopedRole '<role>' for
+    '<principal>' matches no live scoped role by name" and names the role ids, with or without -Prune
+    and under -WhatIf alike, and the principal's unnamed roles get no Extra or Removed record of their
+    own (ConvertTo-OERPruneWithheldResult owns the text). Declaring the role by its role id reconciles
+    it. A role declared by id is matched exactly on RoleId and is not affected, a principal's NAMED
+    live roles are pruned as usual, and so are other principals' unnamed roles.
+
     A scopedRoles[].role may be a directory-role display name or a role id (GUID); a GUID is passed
     to Add-OERAdministrativeUnitScopedRole -RoleId and matched against the live membership RoleId,
     so a role whose friendly name could not be resolved still round-trips.
@@ -117,6 +130,9 @@ function Sync-OERStructureAdministrativeUnit {
     resolved to an object id, nothing in that collection is removed or reported Extra: every
     undeclared live entry in it is reported Skipped with a Detail starting "prune withheld:", with or
     without this switch. A lookup that throws aborts the item instead, before that collection's prune.
+    A principal's live scoped role whose name the directory role list did not give is never removed,
+    and never duplicated by an add, while the document declares a role by name for that principal
+    that no live role matches: the declared entry gets one Skipped record instead.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
@@ -533,6 +549,16 @@ function Sync-OERStructureAdministrativeUnit {
         # only backs off on an explicit null.
         $ScopedRolesDeclaredNull = Test-OERDeclaredNull -Node $Item -Name 'scopedRoles'
 
+        # A live scoped role whose name the directory role list did not give (RoleName blank, RoleId
+        # known) cannot be matched to a role the document declares by NAME. Under such a declaration for
+        # the same principal it may be that very role, so neither side is touched (decision A8): no add,
+        # and the unnamed role is kept out of the Extra/prune pass below. The declared side emits the one
+        # Skipped row; ConvertTo-OERPruneWithheldResult owns its text.
+        $UnnamedLiveRoles = @($CurrentScopedRoles | Where-Object {
+                [string]::IsNullOrWhiteSpace([string]$_.RoleName) -and -not [string]::IsNullOrWhiteSpace([string]$_.RoleId)
+            })
+        $ClaimedUnnamedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
         if (Test-DeclHas -Node $Item -Name 'scopedRoles') {
             foreach ($SrEntry in @($Item.scopedRoles)) {
                 $SrRole = $SrEntry.role
@@ -555,7 +581,10 @@ function Sync-OERStructureAdministrativeUnit {
                 # map has no name for it -- by its role id. Match on whichever the live membership
                 # exposes so a GUID-declared role is never re-added or pruned. A name map that cannot be
                 # read at all never reaches this match: Get-OERAdministrativeUnit then leaves ScopedRoles
-                # unread and the read above fails the item, so no role is pruned for want of a name.
+                # unread and the read above fails the item, so no role is pruned for want of a name. A map
+                # that IS read but does not list a live role's id gives that role RoleName '' with its
+                # RoleId kept; a role declared by name never matches it here, so the unnamed-role guard
+                # below keeps such a role from being added a second time and then pruned.
                 $SrIsGuid = Test-OERGuid -Value ([string]$SrRole)
 
                 $DeclaredScopedRoles.Add([PSCustomObject]@{ Role = $SrRole; PrincipalId = $SrId })
@@ -567,6 +596,20 @@ function Sync-OERStructureAdministrativeUnit {
                 if ($AlreadyScoped) {
                     ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Unchanged' -Detail "scopedRole '$SrRole' for '$SrRef' already present"
                 } else {
+                    # A role declared by role id is matched exactly on RoleId above, so only a NAME
+                    # declaration can be one of the principal's unnamed live roles.
+                    if (-not $SrIsGuid) {
+                        $PrincipalUnnamed = @($UnnamedLiveRoles | Where-Object { $_.PrincipalId -eq $SrId })
+                        if ($PrincipalUnnamed.Count -gt 0) {
+                            foreach ($Unnamed in $PrincipalUnnamed) {
+                                $null = $ClaimedUnnamedKeys.Add("$($Unnamed.PrincipalId)|$($Unnamed.RoleId)|$($Unnamed.ScopedRoleMembershipId)")
+                            }
+                            ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name `
+                                -Declared "scopedRole '$SrRole' for '$SrRef'" `
+                                -UnnamedRoleId @($PrincipalUnnamed | ForEach-Object { [string]$_.RoleId })
+                            continue
+                        }
+                    }
                     if ($Caller.ShouldProcess($Name, "Add scopedRole '$SrRole' for '$SrId'")) {
                         $ScopedRoleParams = @{ Id = $Auid; PrincipalId = $SrId; Confirm = $false }
                         if ($SrIsGuid) { $ScopedRoleParams.RoleId = $SrRole } else { $ScopedRoleParams.RoleName = $SrRole }
@@ -592,6 +635,7 @@ function Sync-OERStructureAdministrativeUnit {
         # every live scoped role as Extra or, worse under -Prune, remove them all.
         if (-not $ScopedRolesDeclaredNull) {
             foreach ($CurSr in $CurrentScopedRoles) {
+                if ($ClaimedUnnamedKeys.Contains("$($CurSr.PrincipalId)|$($CurSr.RoleId)|$($CurSr.ScopedRoleMembershipId)")) { continue }
                 $IsDeclared = $DeclaredScopedRoles | Where-Object {
                     $_.PrincipalId -eq $CurSr.PrincipalId -and
                     (($_.Role -eq $CurSr.RoleName) -or ($CurSr.RoleId -and $_.Role -eq [string]$CurSr.RoleId))

@@ -126,4 +126,55 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
     }
+
+    # A third kind of entry: a live administrative unit scoped role whose NAME the directory role list
+    # did not give (role id known, name blank), held by a principal for whom the document declares a role
+    # by name that no live role matches. Unlike the two kinds above this one is not collection-wide and is
+    # not a lookup failure: the helper always returns the record, and the record names the role ids.
+    Context 'with an unnamed live scoped role (-Declared / -UnnamedRoleId)' {
+        It 'names one unnamed live role by its id and says neither side is touched' {
+            InModuleScope $script:moduleName {
+                $R = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' `
+                    -Declared "scopedRole 'User Administrator' for 'person1@example.com'" -UnnamedRoleId @('dirrole-1')
+                @($R).Count | Should -Be 1
+                $R.PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R.Action | Should -BeExactly 'Skipped'
+                $R.Section | Should -BeExactly 'administrativeUnits'
+                $R.Item | Should -BeExactly 'AU-IT'
+                $R.Error | Should -BeNullOrEmpty
+                $R.Detail | Should -BeExactly ("prune withheld: scopedRole 'User Administrator' for 'person1@example.com' matches no live scoped role by name, " +
+                    "and the principal holds a live scoped role on this unit whose name could not be read (role id 'dirrole-1'), which may be that role; " +
+                    'it is neither added nor removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it.')
+            }
+        }
+
+        It 'names several unnamed live roles by their ids' {
+            InModuleScope $script:moduleName {
+                $R = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' `
+                    -Declared "scopedRole 'User Administrator' for 'p'" -UnnamedRoleId @('dirrole-1', 'dirrole-2')
+                @($R).Count | Should -Be 1
+                $R.Action | Should -BeExactly 'Skipped'
+                $R.Detail | Should -BeExactly ("prune withheld: scopedRole 'User Administrator' for 'p' matches no live scoped role by name, " +
+                    "and the principal holds 2 live scoped roles on this unit whose names could not be read (role ids 'dirrole-1', 'dirrole-2'), any of which may be that role; " +
+                    'none of them is added or removed (our own guard, not a Graph rejection). Declare the role by its role id to reconcile it.')
+            }
+        }
+
+        It 'keeps the default parameter set, so a call naming -Unresolved and -Candidate still binds as before' {
+            InModuleScope $script:moduleName {
+                $R = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -Candidate "undeclared member 'u-1'"
+                @($R).Count | Should -Be 1
+                $R.Detail | Should -Not -Match 'could not be read'
+                $R.Detail | Should -Match '^prune withheld: declared entry ''x'' could not be resolved'
+                (Get-Command ConvertTo-OERPruneWithheldResult).DefaultParameterSet | Should -BeExactly 'Unresolved'
+            }
+        }
+
+        It 'refuses a call that mixes the two parameter sets' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'i' -Unresolved @('x') -Candidate 'c' `
+                        -Declared 'd' -UnnamedRoleId @('r') -ErrorAction Stop } | Should -Throw
+            }
+        }
+    }
 }

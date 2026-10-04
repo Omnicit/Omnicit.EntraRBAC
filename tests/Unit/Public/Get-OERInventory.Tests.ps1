@@ -5806,4 +5806,39 @@ Describe 'Get-OERInventory administrative unit scoped roles, driven with the rea
         $Au.scopedRoles[0].principal | Should -Be 'p-1'
         @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
     }
+
+    It 'falls back to the role id, with no InventoryPartial, when the name map is readable but does not name the role' {
+        # The directory role list holds only activated roles, so a readable list can still lack a live
+        # role's id. That role is not unread: the export names it by its id, which the apply engine
+        # accepts as a GUID declaration, and nothing is reported partial.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            if ($Uri -eq 'v1.0/directoryRoles') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'dirrole-other'; roleTemplateId = 'tmpl-other'; displayName = 'Reports Reader' }) }
+            }
+            if ($Uri -like '*/scopedRoleMembers') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{
+                            id = 'srm-1'; administrativeUnitId = '11111111-1111-1111-1111-111111111111'; roleId = 'dirrole-1'
+                            roleMemberInfo = [PSCustomObject]@{ id = 'p-1'; displayName = 'Person One' }
+                        }) }
+            }
+            if ($Uri -like '*/members') { return [PSCustomObject]@{ value = @() } }
+            if ($Uri -eq 'v1.0/directory/administrativeUnits') {
+                return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'AU-One' }) }
+            }
+            throw "unexpected Graph call $Uri"
+        }
+
+        $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorVariable InvErr -ErrorAction SilentlyContinue
+        $Au = @($Inv.administrativeUnits)[0]
+
+        # Positive proof first: the unit was exported and the name map was read.
+        $Au | Should -Not -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/directoryRoles'
+        }
+        @($Au.scopedRoles).Count | Should -Be 1
+        $Au.scopedRoles[0].role | Should -BeExactly 'dirrole-1'
+        $Au.scopedRoles[0].principal | Should -BeExactly 'p-1'
+        @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
 }
