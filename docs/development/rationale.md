@@ -2891,11 +2891,14 @@ The handler never resolves the scope again, and uses exactly that string for eve
 Manager call and for the comparison of a live assignment's scope with the declared one, which is what
 decides what the prune may touch. Were the handler to resolve it for itself, the comparison could
 stand on a different spelling than the group was formed on, and a trailing `/` would come back at the
-one line that used to hide it. As a side effect each distinct scope text is looked up once per run and
-not three times per entry, which for a `sub:` name was two to three listings each time. Only a
-success is cached, by the exact scope text: a transient failure on one entry must not fail the next
-entry with the same text. Labels and Detail texts keep the document's own text, since an operator searches the output for
-what the document says.
+comparison of a live assignment's scope with the declared one, which silently matched nothing for a
+scope ending in `/`. As a side effect each distinct scope text is looked up once per run and not three
+times per entry, which for a `sub:` name was two to three listings each time. Only a success is
+cached, by the exact scope text: a transient failure on one entry must not fail the next entry with
+the same text. Labels, which every row carries as its Item, keep the document's own text, since an
+operator searches the output for what the document says; a Detail that names the scope names the
+resolved scope the handler was given (the engine's own Detail for a scope it could not resolve quotes
+the text, since there is no resolved scope).
 
 **The role is compared on its GUID, the last segment of its id (BL-35).** `Resolve-OERRoleDefinitionId`
 anchors a role given as a GUID at the scope it was handed. A live assignment at a resource group

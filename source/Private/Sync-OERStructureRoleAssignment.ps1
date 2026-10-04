@@ -158,10 +158,9 @@ function Sync-OERStructureRoleAssignment {
     engine groups on the canonical RESOLVED scope, compared without regard to letter case, never on
     the scope text as written in the document). Used by the duplicate check (when -ItemIndex is set)
     and, during the scope-wide prune pass (when -ReconcileScope is set), to build the declared-key
-    set. Each element is expected to have
-    .principal and .role properties. Defaults to an empty array. One element whose principal or role
-    cannot be resolved withholds the prune for the whole scope (see -Prune); that element's Failed
-    record comes from its own invocation of this handler.
+    set. Each element is expected to have principal and role properties. Defaults to an empty
+    array. One element whose principal or role cannot be resolved withholds the prune for the whole
+    scope (see -Prune); that element's Failed record comes from its own invocation of this handler.
 
     .PARAMETER ReconcileScope
     When set, this invocation also performs the scope-wide Extra/prune pass after reconciling its

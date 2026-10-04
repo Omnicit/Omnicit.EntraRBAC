@@ -2385,7 +2385,9 @@ Describe 'Test-OERStructureSchema group pimPolicy approval' {
                 })
             }
             $Result = Test-OERStructureSchema -Document $Doc
-            @($Result.Errors | Where-Object { $_.Path -like 'groups[0].pimPolicy*' }) | Should -BeNullOrEmpty
+            # StartsWith, never -like: in a -like pattern [0] is a character class, so 'groups[0]...'
+            # could not match the path 'groups[0].pimPolicy...' and the assertion would be inert.
+            @($Result.Errors | Where-Object { $_.Path.StartsWith('groups[0].pimPolicy') }) | Should -BeNullOrEmpty
         }
     }
 }
@@ -3435,7 +3437,7 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         }
     }
 
-    It 'accepts previousDisplayName on a template-based group without comparing it to the computed name' {
+    It 'accepts previousDisplayName on a template-based group without comparing it to the computed name (no Warning)' {
         InModuleScope $script:moduleName {
             $Doc = '{ "version": "1.0", "groups": [ { "template": "role_sec_{Area}", "tokens": { "Area": "hr" }, "previousDisplayName": "role_sec_hr", "members": null } ] }' | ConvertFrom-Json
             $V = Test-OERStructureSchema -Document $Doc
@@ -3758,7 +3760,9 @@ Describe 'Test-OERStructureSchema duplicate entries' {
             $Hit.Count | Should -Be 1
             $Hit[0].Path | Should -BeExactly 'groups[3]'
             $Hit[0].Message | Should -Match ([regex]::Escape(' as groups[2] ('))
-            @($V.Errors | Where-Object { $_.Path -like 'groups[1]*' -and $_.Message -match 'declares the same' }).Count | Should -Be 0
+            # StartsWith, never -like: [1] is a character class in a -like pattern, so 'groups[1]*' could
+            # not match the path 'groups[1]' and this assertion would be inert.
+            @($V.Errors | Where-Object { $_.Path.StartsWith('groups[1]') -and $_.Message -match 'declares the same' }).Count | Should -Be 0
         }
 
         It 'makes no claim for a previousDisplayName that is not a non-empty string' {
