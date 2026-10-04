@@ -68,10 +68,11 @@ function Sync-OERStructureAdministrativeUnit {
     prune that already completed stands with no Removed row, and an unresolved entry's Failed row is
     lost; warnings and errors already written remain.
 
-    Unnamed live scoped role: the directory role list that names each live role is read in full, but it
-    holds only the activated roles, so a live scoped role whose role id it does not list reaches this
-    handler with a blank RoleName and its RoleId kept. A role declared by NAME can never match such a
-    role, yet it may be that very role. When the document declares a role by name for a principal who
+    Unnamed live scoped role: the directory role list that names each live role is read in full, but
+    the reader does not check that every membership's role id is listed. A role id the list does not
+    name gets an empty RoleName, with its RoleId kept; that has not been seen live, and this guard keeps
+    the handler from adding and removing a role it cannot name. A role declared by NAME can never match
+    such a role, yet it may be that very role. When the document declares a role by name for a principal who
     has no live role of that name but does hold at least one such unnamed live role on the unit, the
     handler adds nothing and removes nothing for that principal's unnamed roles: it emits ONE Skipped
     record for the declared entry, with a Detail that starts "prune withheld: scopedRole '<role>' for

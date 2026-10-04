@@ -14,6 +14,13 @@ function Get-OERDirectoryRoleNameMap {
     way and thrown, instead of being returned as a map with nothing in it. For such a caller a listing
     that succeeds with no role at all counts as unread too, and throws.
 
+    A map that was read is not guaranteed to name every role id a membership carries: it holds the
+    roles the directory role list returned (the activated ones), and this function does not check a
+    membership's role id against it. A role id the map does not name is looked up as empty by the
+    caller, which decides what that means: Get-OERAdministrativeUnit keeps the role id with an empty
+    RoleName, and Sync-OERStructureAdministrativeUnit withholds the add and the prune of a role it
+    cannot name instead of treating it as undeclared. That case has not been seen live.
+
     .PARAMETER ThrowOnFailure
     When set, a failed read of the directory roles throws (after the error record is scrubbed) instead of
     returning an empty map. The exception names the read ('v1.0/directoryRoles'), carries the cause in its
@@ -25,8 +32,8 @@ function Get-OERDirectoryRoleNameMap {
     engine reads as roles nobody declared. With the switch a read that SUCCEEDS and lists no activated
     role is treated as unread as well, and throws the same way with a message saying the listing came
     back empty: the map is read only for an administrative unit that has scoped roles, so at least one
-    directory role is activated, and an empty answer is evidence of a bad read. Without the switch that
-    listing is returned as an empty map.
+    directory role is expected to be activated, and an empty answer is taken as evidence of a bad
+    read. Without the switch that listing is returned as an empty map.
 
     .EXAMPLE
     $Map = Get-OERDirectoryRoleNameMap
@@ -58,12 +65,13 @@ function Get-OERDirectoryRoleNameMap {
     $RoleList = @($Roles.value | Where-Object { $null -ne $_ })
     if ($ThrowOnFailure -and $RoleList.Count -eq 0) {
         # The map is read only for a unit that has at least one scoped role, so at least one directory
-        # role is activated (Global Administrator and the implicit user roles always are). A listing that
-        # succeeds with none is evidence of a bad read, not a genuine empty list, and this caller reads an
-        # empty map as roles nobody declared. Thrown outside the try above: it is not a transport error.
+        # role is expected to be activated. A listing that succeeds with none is taken as a bad read, not
+        # a genuine empty list, and this caller reads an empty map as roles nobody declared. Thrown
+        # outside the try above: it is not a transport error. (That a NON-empty listing names every
+        # membership's role id is not checked either -- see the .DESCRIPTION.)
         throw [System.Exception]::new(
             "Could not read the directory roles ('v1.0/directoryRoles') that name the roles: the listing came back empty, " +
-            'although a directory role must be activated for a scoped role to exist, so it is treated as unread.')
+            'although a unit with scoped roles is expected to have at least one directory role activated, so it is treated as unread.')
     }
     foreach ($Role in $RoleList) {
         if ($Role.id)             { $Map[[string]$Role.id] = [string]$Role.displayName }

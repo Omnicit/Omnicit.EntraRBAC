@@ -226,7 +226,7 @@ Describe 'Get-OERInventoryPromptTemplate' {
         InModuleScope $script:moduleName {
             # Whitespace collapsed first, so the assertion does not depend on where the line wraps.
             $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $Collapsed | Should -Match ([regex]::Escape('The inventory writes null for a members, scopedRoles, resources or resourceRoles collection it could not read (the export reports it as partial), so a null in inventory.json means unknown, not empty: keep it null in every proposal, and never turn it into [].'))
+            $Collapsed | Should -Match ([regex]::Escape('The inventory writes null for a members, scopedRoles, resources or resourceRoles collection it could not read, or could not write without an empty name (the export reports it as partial), so a null in inventory.json means unknown, not empty: keep it null in every proposal, and never turn it into [].'))
             # The claim names the four collections: an unread owners or eligibility collection is
             # omitted, not null, so a flat "a collection it could not read" would be false of it.
             $Collapsed | Should -Not -Match ([regex]::Escape('The inventory writes null for a collection it could not read'))
@@ -235,6 +235,19 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $Collapsed | Should -Not -Match 'The inventory itself omits most keys rather than emit null'
             $Collapsed | Should -Match ([regex]::Escape('Apart from an unread members, scopedRoles, resources or resourceRoles collection (see below), the inventory omits most keys rather than emit null'))
             $Collapsed | Should -Match 'to assert a list is genuinely empty you must hand-author an explicit \[\]'
+        }
+    }
+
+    It 'tells the model that an unread top-level section is [] and named in the partial report, and that names must be non-empty strings' {
+        InModuleScope $script:moduleName {
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # A section that could not be read at all is written [] (never null) and named in the
+            # partial report, so the model must not read it as "the tenant has none" or propose
+            # deletions from it.
+            $Collapsed | Should -Match ([regex]::Escape('A TOP-LEVEL section that could not be read at all is never null: it is written [] and named in the partial report'))
+            $Collapsed | Should -Match ([regex]::Escape('never read it as "the tenant has none" and never propose deletions from it'))
+            # The validator refuses an empty string in the five name fields, so the model must not write one.
+            $Collapsed | Should -Match ([regex]::Escape('each resource, role, name and principal must be a non-empty string: the validator refuses "".'))
         }
     }
 

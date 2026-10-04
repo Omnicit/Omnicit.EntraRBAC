@@ -221,9 +221,13 @@ reference.** A Group or Application resource is identified by the object id its 
 never by the display name Microsoft Entra recorded for the resource when it was added to the catalog
 -- that recorded name stays as it was after a group is renamed (measured live; the same is expected
 of an application), so matching on it made a document naming the group's new name plan the removal
-of the group's own resource under `-Prune`. `Get-OERInventory` writes the group's or application's CURRENT name (its
-object id when the name cannot be read), and a name that resolves to no object, or to several,
-fails its entry and withholds that catalog's prune.
+of the group's own resource under `-Prune`. `Get-OERInventory` writes the group's or application's
+CURRENT name, and its object id when the name cannot be read or is blank; a name that resolves to no
+object, or to several, fails its entry and withholds that catalog's prune. A catalog resource with a blank name is written under its origin
+id. An entry the export can name by nothing the apply engine accepts -- a SharePoint binding with no
+name, say -- makes the package's `resourceRoles` (or the catalog's `resources`) an explicit `null`,
+named in `InventoryPartial`. The export never writes an empty name: `Test-OERStructure` and
+`schema.json` refuse an empty or blank `resource`, `role`, `name` or `principal`.
 
 ## Directory roles
 
@@ -394,6 +398,20 @@ These out-of-scope fields are always preserved (never written by this module):
 - Fallback approvers (`fallbackPrimaryApprovers` / `fallbackEscalationApprovers`) are preserved
   when their stage is otherwise unchanged. If a stage is rebuilt (because another field in it
   changed), fallback approvers on that stage are not carried over -- this is a known limitation.
+
+## Unread collections
+
+A read that fails is never written as a fact. A `members`, `scopedRoles`, `resources` or
+`resourceRoles` collection that could not be read, or one with an entry the export could name by
+nothing the apply engine accepts, is written as `null`, which `Invoke-OERStructure` leaves
+untouched: keep it `null` in a proposal and never change it to `[]`, since under `-Prune` an empty
+collection removes every live entry. A section that could not be read at all (the group list, the
+administrative unit list or the access review list) is reported by a warning and through
+`InventoryPartial` under the section's own name (`groups`, `administrativeUnits` or
+`accessReviews`), and is written as an empty array, never `null`. The group roster that could not be
+read is named `groupsRoster` in the bundle's `IncompleteReads` and written as an empty array in
+`groupsRoster.json`. An empty section reported that way is not evidence the tenant has none, so no
+deletion is proposed from it.
 
 ## Notes
 

@@ -96,13 +96,21 @@ Describe 'Get-OERInventoryReadme' {
             $Section | Should -Not -Match ([regex]::Escape('the export never writes the collection as empty'))
             $Section | Should -Match ([regex]::Escape('The key is written as `null`, which `Invoke-OERStructure` reads as "leave untouched".'))
             $Section | Should -Match ([regex]::Escape('Do not change such a `null` to `[]`: under `-Prune` an empty collection removes every live entry.'))
-            # The partial is promised only for what the export REPORTS as unread. A section that could
-            # not be read at all (the group, administrative unit or access review list, or the group
-            # roster) is a warning and an empty section with no partial, so a flat "every collection
-            # it could not read" would be false of it.
+            # The partial is promised only for what the export REPORTS as unread, so a flat "every
+            # collection it could not read" would be false of the others (an owners or eligibility
+            # collection is omitted, and a policy list is []).
             $Section | Should -Match ([regex]::Escape('`InventoryPartial` error naming each collection it reports as unread, these four and any other; the others are left out or written only as far as they were read'))
-            $Section | Should -Not -Match ([regex]::Escape('naming every collection it could not read, these four and any other')) -Because 'a section read as nothing at all is reported by a warning, not by the partial'
-            $Section | Should -Match ([regex]::Escape('A section that could not be read at all (the group list, the administrative unit list, the access review list or the group roster in `groupsRoster.json`) is reported by a warning and written empty, with no `InventoryPartial`'))
+            $Section | Should -Not -Match ([regex]::Escape('naming every collection it could not read, these four and any other')) -Because 'the others are left out or written only as far as they were read'
+            # A section that could not be read at all is ALSO reported now, under its own name, and is
+            # still written as an empty array; the group roster is named groupsRoster. The old text said
+            # such a section had "no InventoryPartial", which is no longer true of any of them.
+            $Section | Should -Match ([regex]::Escape('A section that could not be read at all (the group list, the administrative unit list or the access review list) is reported by a warning and through `InventoryPartial` under the section''s own name (`groups`, `administrativeUnits` or `accessReviews`), and is written as an empty array.'))
+            $Section | Should -Match ([regex]::Escape('The group roster that could not be read is named `groupsRoster` in the export''s `IncompleteReads` and written as an empty array in `groupsRoster.json`.'))
+            $Section | Should -Not -Match ([regex]::Escape('with no `InventoryPartial`')) -Because 'every unread section is named in the partial now'
+            # An entry with no usable name is never written with an empty one.
+            $Section | Should -Match ([regex]::Escape('An entry is never written with an empty name.'))
+            $Section | Should -Match ([regex]::Escape('A group or application binding whose name cannot be read is written under its object id'))
+            $Section | Should -Match ([regex]::Escape('makes its whole collection `null`, named in `InventoryPartial`, exactly like an unread one.'))
             # The section sits ahead of the numbered next steps it would otherwise be read after.
             $Md.IndexOf('## Unread collections') | Should -BeLessThan $Md.IndexOf('## Next steps')
         }

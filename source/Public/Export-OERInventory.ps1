@@ -79,8 +79,9 @@ function Export-OERInventory {
     Its Count is therefore the number of partial reports, not the number of unread collections; read
     the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
     IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. A members,
-    scopedRoles, resources or resourceRoles collection that could not be read is NOT written into
-    inventory.json as an empty one: its key is an explicit null, which the apply engine reads as
+    scopedRoles, resources or resourceRoles collection that could not be read, or that has an entry
+    the export could name by nothing the apply engine accepts, is NOT written into inventory.json as
+    an empty one or with an empty name: its key is an explicit null, which the apply engine reads as
     "leave untouched". Do not hand-edit that null to [] -- under Invoke-OERStructure -Prune an
     empty declared collection deletes every live member, binding or resource. Any other collection
     IncompleteReads names is left out of the document or written only as far as it was read, as the
@@ -656,7 +657,7 @@ function Export-OERInventory {
                 # message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read and are NOT stated as facts in inventory.json -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone (groups, administrativeUnits or accessReviews) is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
+                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone (groups, administrativeUnits or accessReviews) is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

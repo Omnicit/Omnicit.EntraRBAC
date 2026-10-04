@@ -1859,6 +1859,10 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         @($Bundle.IncompleteReads) | Should -Be @('groupsRoster')
         $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
         $Partial.Count | Should -Be 1
+        # The lead-in must be true when the only entry is groupsRoster, or a collection written as null
+        # for want of a name: neither is "a collection that could not be read" alone.
+        $Partial[0].Exception.Message |
+            Should -BeLike '*1 partial Entra ID read report(s) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
             Should -BeLike '*A section named alone (groups, administrativeUnits or accessReviews) is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
     }

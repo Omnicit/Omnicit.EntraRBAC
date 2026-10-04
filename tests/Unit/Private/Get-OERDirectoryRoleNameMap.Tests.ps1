@@ -70,9 +70,9 @@ Describe 'Get-OERDirectoryRoleNameMap' {
         }
 
         # The map is read only for a unit that has at least one scoped role, so at least one directory
-        # role is activated (Global Administrator and the implicit user roles always are). A listing
-        # that succeeds with none is evidence of a bad read, and an empty map there would name every
-        # scoped role '' and bring back the prune of the roles a document declared by name.
+        # role is expected to be activated. A listing that succeeds with none is taken as a bad read,
+        # and an empty map there would name every scoped role '' and bring back the prune of the roles
+        # a document declared by name.
         It 'throws when the read succeeds but lists no activated role, naming the read and saying the listing came back empty' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
             InModuleScope $script:moduleName {

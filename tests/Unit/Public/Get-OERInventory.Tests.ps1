@@ -4252,6 +4252,10 @@ Describe 'Get-OERInventory' {
             Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:GroupListPublished
             $Read = Get-SectionRead -Include Groups
             $Read.Partial.Count | Should -Be 1
+            # The lead-in is true of a section named alone too, which is neither a members nor a
+            # nameless collection: the list could not be read at all.
+            $Read.Partial[0].Exception.Message |
+                Should -BeLike '*PARTIAL: 1 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone (groups, administrativeUnits or accessReviews) could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
@@ -4899,6 +4903,10 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/AP-Sales/resourceRoles'
             $Partial[0].Exception.Message | Should -BeLike '*has no name, and no object id the apply engine accepts*'
+            # The lead-in is true of a collection that was READ but could not be written without an empty
+            # name, not only of an unread one.
+            $Partial[0].Exception.Message |
+                Should -BeLike '*PARTIAL: 1 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document*'
         }
 
         It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {
@@ -6312,9 +6320,10 @@ Describe 'Get-OERInventory administrative unit scoped roles, driven with the rea
     }
 
     It 'falls back to the role id, with no InventoryPartial, when the name map is readable but does not name the role' {
-        # The directory role list holds only activated roles, so a readable list can still lack a live
-        # role's id. That role is not unread: the export names it by its id, which the apply engine
-        # accepts as a GUID declaration, and nothing is reported partial.
+        # The reader does not check that every membership's role id is listed, so a readable list can
+        # still lack a live role's id (not seen live; this is the defensive case). That role is not
+        # unread: the export names it by its id, which the apply engine accepts as a GUID declaration,
+        # and nothing is reported partial.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
             if ($Uri -eq 'v1.0/directoryRoles') {
                 return [PSCustomObject]@{ value = @([PSCustomObject]@{ id = 'dirrole-other'; roleTemplateId = 'tmpl-other'; displayName = 'Reports Reader' }) }

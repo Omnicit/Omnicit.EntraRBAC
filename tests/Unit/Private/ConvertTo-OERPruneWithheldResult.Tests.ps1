@@ -173,7 +173,7 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
         It 'refuses a call that mixes the two parameter sets' {
             InModuleScope $script:moduleName {
                 { ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'i' -Unresolved @('x') -Candidate 'c' `
-                        -Declared 'd' -UnnamedRoleId @('r') -ErrorAction Stop } | Should -Throw
+                        -Declared 'd' -UnnamedRoleId @('r') -ErrorAction Stop } | Should -Throw -ErrorId 'AmbiguousParameterSet*'
             }
         }
     }

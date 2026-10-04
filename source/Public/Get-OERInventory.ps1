@@ -57,8 +57,9 @@ function Get-OERInventory {
     list leaves a catalog with no access packages, a failed policy read leaves a package with no
     assignment policies, and when the names cannot be read a group's or an application's binding is
     written under its object id and any other binding under the name the access package reader
-    could join (the name the catalog recorded, or none). Invoke-OERStructure never removes a
-    catalog, access package or assignment policy that is absent from the document.
+    could join (the name the catalog recorded; a binding with no name at all makes the package's
+    resourceRoles null, as described below). Invoke-OERStructure never removes a catalog, access
+    package or assignment policy that is absent from the document.
     An entry is never written with an empty name, since the validator and schema.json refuse one. A
     binding, catalog resource or scoped role whose name is blank is written under an object id the
     apply engine accepts when it has one: a group's or an application's binding by its object id,
@@ -1959,7 +1960,7 @@ function Get-OERInventory {
             } else { '' }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
+                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone (groups, administrativeUnits or accessReviews) could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `

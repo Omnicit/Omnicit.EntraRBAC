@@ -1590,11 +1590,12 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
 
-        # The name map can be READABLE and still not name every live role: the directory role list holds
-        # only the ACTIVATED roles, so a membership whose role id it does not list reaches the handler
-        # with RoleName '' and its RoleId kept. A role declared by NAME cannot be matched to it, yet it
-        # may be that very role, so adding the declared role and then pruning the live one (decision A8)
-        # would swap a held role for a duplicate. The handler withholds both halves instead.
+        # The name map can be READABLE and still not name every live role: the reader does not check that
+        # every membership's role id is listed, and a role id the list does not name gets RoleName ''
+        # with its RoleId kept. That has not been seen live; this is the defensive case. A role declared
+        # by NAME cannot be matched to such a role, yet it may be that very role, so adding the declared
+        # role and then pruning the live one (decision A8) would swap a held role for a duplicate. The
+        # handler withholds both halves instead.
         Context 'a readable name map that does not name a live role (decision A8)' {
             BeforeEach {
                 InModuleScope $script:moduleName {

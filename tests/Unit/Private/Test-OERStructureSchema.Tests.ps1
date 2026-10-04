@@ -4070,8 +4070,10 @@ Describe 'Test-OERStructureSchema refuses an empty name (A10)' {
 
     It 'accepts a document whose five names are all non-blank, with no Error' {
         $V = Invoke-NameValidation -Doc (New-NameDoc -Field 'none' -Value 'unused')
-        # Reached: each of the five sections was walked, so the control proves the five checks pass
-        # a real name rather than never running.
+        # This control asserts only that a document with five real names has no Error and is Valid.
+        # That the five checks run at all is proved by the five refusal cases below: each one fails
+        # the same document shape on exactly one blank field, so a check that never ran would fail its
+        # own case there rather than here.
         @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
         $V.Valid | Should -BeTrue
     }

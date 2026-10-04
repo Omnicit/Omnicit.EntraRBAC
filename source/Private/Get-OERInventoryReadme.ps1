@@ -95,13 +95,19 @@ complete picture of the tenant:
 When a read of a `members`, `scopedRoles`, `resources` or `resourceRoles` collection fails -- a
 refused, throttled or failed call -- the export never writes that collection as empty. The key is
 written as `null`, which `Invoke-OERStructure` reads as "leave untouched". Do not change such a
-`null` to `[]`: under `-Prune` an empty collection removes every live entry. `Export-OERInventory`
-ends with an `InventoryPartial` error naming each collection it reports as unread, these four and
-any other; the others are left out or written only as far as they were read, so their absence is not
-evidence the tenant has none. A section that could not be read at all (the group list, the
-administrative unit list, the access review list or the group roster in `groupsRoster.json`) is
-reported by a warning and written empty, with no `InventoryPartial`, so an empty section is not
-evidence the tenant has none either.
+`null` to `[]`: under `-Prune` an empty collection removes every live entry. An entry is never
+written with an empty name. A group or application binding whose name cannot be read is written
+under its object id, and a catalog resource with a blank name under its origin id; an entry the
+export could name by nothing the apply engine accepts (a SharePoint binding with no name, for
+example) makes its whole collection `null`, named in `InventoryPartial`, exactly like an unread one.
+`Export-OERInventory` ends with an `InventoryPartial` error naming each collection it reports as
+unread, these four and any other; the others are left out or written only as far as they were read,
+so their absence is not evidence the tenant has none. A section that could not be read at all (the
+group list, the administrative unit list or the access review list) is reported by a warning and
+through `InventoryPartial` under the section's own name (`groups`, `administrativeUnits` or
+`accessReviews`), and is written as an empty array. The group roster that could not be read is named
+`groupsRoster` in the export's `IncompleteReads` and written as an empty array in
+`groupsRoster.json`. An empty section reported that way is not evidence the tenant has none.
 
 ## Next steps
 

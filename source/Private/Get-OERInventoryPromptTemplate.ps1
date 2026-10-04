@@ -127,14 +127,20 @@ trap if you apply the scalar rule to one of them:
 - null: NONE of these collections reconcile, in either group. null -- not an omitted key -- is
   how you declare a group, administrative unit, catalog or access package WITHOUT touching one
   of them. The inventory writes null for a members, scopedRoles, resources or resourceRoles
-  collection it could not read (the export reports it as partial), so a null in inventory.json
-  means unknown, not empty: keep it null in every proposal, and never turn it into [].
+  collection it could not read, or could not write without an empty name (the export reports it
+  as partial), so a null in inventory.json means unknown, not empty: keep it null in every
+  proposal, and never turn it into [].
 - []: ALL of these collections reconcile to empty (every live entry is removed under -Prune, or
   reported Extra without it).
 
 In short: omitting members, scopedRoles, resources or resourceRoles is not a safe no-op -- it
 still prunes. Only an explicit null leaves them alone, matching what an omitted key does for
 eligibility and owners.
+
+A TOP-LEVEL section that could not be read at all is never null: it is written [] and named in
+the partial report, so an empty section there is not evidence the tenant has none -- never read it
+as "the tenant has none" and never propose deletions from it. In every proposal, each resource,
+role, name and principal must be a non-empty string: the validator refuses "".
 
 # Principles to apply
 
