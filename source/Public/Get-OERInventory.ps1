@@ -59,6 +59,12 @@ function Get-OERInventory {
     group's object id and any other binding under the name the access package reader could join
     (the name the catalog recorded, or none). Invoke-OERStructure never removes a catalog, access
     package or assignment policy that is absent from the document.
+    A group, administrative unit or access review LIST that could not be read at all is reported
+    through the same InventoryPartial error by the section's own name alone (groups,
+    administrativeUnits or accessReviews) and is written as an empty array, which does not mean the
+    tenant has none: the section is never null, so the error is the only thing that tells the two
+    apart. The warning the read already wrote stays. A list that answered "none" (a not-found
+    answer) is a fact about the tenant and is not reported.
     A dynamic group's membershipRuleProcessingState (On or Paused) is carried
     alongside its membershipRule so a paused rule round-trips paused. The Catalogs projection carries
     externallyVisible so a catalog whose access packages are requestable by connected-organization
@@ -288,20 +294,21 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits nineteen
-        # cause message shapes (group members, group owners, group PIM eligibility, group
-        # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits
+        # twenty-two cause message shapes (group members, group owners, group PIM eligibility,
+        # group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
         # access package resource role bindings, catalog resources, the catalog resource-name map,
         # the catalog list, a catalog's package list, an access package's assignment policies, an
-        # access review's access package name, an access review's assignment policy name, and
-        # objects not written because two of them share a name), so nineteen admits one of each
+        # access review's access package name, an access review's assignment policy name, objects
+        # not written because two of them share a name, the group list, the administrative unit
+        # list and the access review list), so twenty-two admits one of each
         # and a normal partial run is still reported in full; only a genuinely heterogeneous
         # large-tenant failure is truncated, and the dropped count is stated rather than silently
         # lost. Nothing is discarded either way -- every cause is written to the verbose stream as
-        # it is seen. Raise this with the shape count when a twentieth cause message is added, or
+        # it is seen. Raise this with the shape count when a twenty-third cause message is added, or
         # one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 19
+        $UnreadCauseCap = 22
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -319,6 +326,17 @@ function Get-OERInventory {
             if (-not [string]::IsNullOrWhiteSpace($Target)) { $Key = $Key.Replace($Target, '<id>') }
             if (-not $UnreadCauseKeys.Add($Key)) { return }
             if ($UnreadCauses.Count -lt $UnreadCauseCap) { $UnreadCauses.Add($Cause) }
+        }
+
+        # A section whose LIST could not be read at all is written as [] (a top-level section is never null),
+        # so the partial signal is the only thing that tells it from a tenant that has none. The key is the
+        # section's own name, added once however many records the failed read produced. NotFound records and
+        # foreign strays never reach this: the callers below skip them first.
+        function Add-UnreadSection {
+            param([string]$Key, [string]$Cause)
+            Write-Verbose "Get-OERInventory: $Cause"
+            Add-UnreadCause -Cause $Cause
+            if (-not $UnreadCollections.Contains($Key)) { $UnreadCollections.Add($Key) }
         }
 
         # Two live objects whose names match without regard to letter case would be two document entries
@@ -460,6 +478,9 @@ function Get-OERInventory {
                     # record is republished, so the cmdlet's name is not always the last segment.
                     if (@(([string]$GErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERGroup') {
                         Write-Warning "Could not read groups: $($GErr.Exception.Message)"
+                        # The warning stays; the section is ALSO counted unread, since the groups array
+                        # below is [] whether the tenant has none or the list could not be read.
+                        Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($GErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read
                         # misbehaves, it just is not a section-level finding the operator must act on.
@@ -471,6 +492,7 @@ function Get-OERInventory {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
                     Write-Warning "Could not read groups: $($PSItem.Exception.Message)"
+                    Add-UnreadSection -Key 'groups' -Cause "Could not read groups: $($PSItem.Exception.Message)"
                 }
             }
             # Project one access-type policy object from a Get-OERGroupPimPolicy result, or $null when
@@ -780,6 +802,8 @@ function Get-OERInventory {
                     # discriminator.
                     if (@(([string]$AErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAdministrativeUnit') {
                         Write-Warning "Could not read administrative units: $($AErr.Exception.Message)"
+                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($AErr.Exception.Message)"
                     } else {
                         Write-Verbose ("Get-OERInventory: ignoring a foreign error record seen while reading " +
                             "administrative units ($($AErr.FullyQualifiedErrorId)): $($AErr.Exception.Message)")
@@ -789,6 +813,7 @@ function Get-OERInventory {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AdministrativeUnitNotFound*') {
                     Write-Warning "Could not read administrative units: $($PSItem.Exception.Message)"
+                    Add-UnreadSection -Key 'administrativeUnits' -Cause "Could not read administrative units: $($PSItem.Exception.Message)"
                 }
             }
             foreach ($Au in $AuItems) {
@@ -1345,6 +1370,8 @@ function Get-OERInventory {
                     # Write-Error appends a further name when a record is republished.
                     if (@(([string]$ArErr.FullyQualifiedErrorId) -split ',') -contains 'Get-OERAccessReviewDefinition') {
                         Write-Warning "Could not read access reviews: $($ArErr.Exception.Message)"
+                        # Counted unread as well as warned, for the same reason as the groups read above.
+                        Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($ArErr.Exception.Message)"
                     } else {
                         # Routed to verbose rather than dropped: a stray is still evidence when a read
                         # misbehaves, it just is not a section-level finding the operator must act on.
@@ -1356,6 +1383,7 @@ function Get-OERInventory {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'AccessReviewDefinitionNotFound*') {
                     Write-Warning "Could not read access reviews: $($PSItem.Exception.Message)"
+                    Add-UnreadSection -Key 'accessReviews' -Cause "Could not read access reviews: $($PSItem.Exception.Message)"
                 }
             }
             foreach ($Ar in $ArItems) {
@@ -1857,7 +1885,7 @@ function Get-OERInventory {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
                     "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
-                    "Unread: $($UnreadCollections -join ', '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
+                    "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone (groups, administrativeUnits or accessReviews) could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `
                 -ErrorId 'InventoryPartial' `

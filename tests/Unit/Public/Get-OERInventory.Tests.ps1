@@ -281,7 +281,9 @@ Describe 'Get-OERInventory' {
                     [System.Exception]::new('throttled'), 'TooManyRequests',
                     [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
             }
-            Get-OERInventory -Include Groups -WarningVariable Warned -WarningAction SilentlyContinue | Out-Null
+            # -ErrorAction is pinned: the failed list now also ends the run in InventoryPartial, which
+            # is non-terminating but would stop the statement under a global $ErrorActionPreference of Stop.
+            Get-OERInventory -Include Groups -WarningVariable Warned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
             $Warned | Should -Not -BeNullOrEmpty
         }
 
@@ -1284,7 +1286,9 @@ Describe 'Get-OERInventory' {
 
         It 'warns but does not crash when access reviews cannot be read (e.g. 429)' {
             Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition { throw [System.Exception]::new('throttled') }
-            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue
+            # -ErrorAction is pinned: the failed list now also ends the run in InventoryPartial, which
+            # is non-terminating but would stop the statement under a global $ErrorActionPreference of Stop.
+            $inv = Get-OERInventory -Include AccessReviews -WarningVariable warned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
             $inv | Should -Not -BeNullOrEmpty
             $warned | Should -Not -BeNullOrEmpty
             @($inv.AccessReviews).Count | Should -Be 0
@@ -1318,8 +1322,10 @@ Describe 'Get-OERInventory' {
                     [System.Management.Automation.ErrorCategory]::LimitsExceeded,
                     $null)
             }
+            # -ErrorAction is pinned: the failed list now also ends the run in InventoryPartial, which
+            # is non-terminating but would stop the statement under a global $ErrorActionPreference of Stop.
             $inv = Get-OERInventory -Include AccessReviews -AccessReviewFilter 'AR*' `
-                -WarningVariable ArWarned -WarningAction SilentlyContinue
+                -WarningVariable ArWarned -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
             @($inv.AccessReviews).Count | Should -Be 0
             # The warning must name the cause the read cmdlet published, not one of the
             # message-less strays the engine collects from the nested transport call beside it.
@@ -3938,26 +3944,27 @@ Describe 'Get-OERInventory' {
         It 'caps the Causes clause and states how many distinct causes it dropped' {
             # Deduplication alone does not bound the clause: a large tenant can fail in many genuinely
             # different ways, and an error message thousands of causes long is unreadable. The cap is
-            # ONE PER CAUSE SHAPE the module can emit -- nineteen of them since the export began to
-            # leave out objects whose names collide (group members, group owners, group PIM
+            # ONE PER CAUSE SHAPE the module can emit -- twenty-two of them since a section whose
+            # list could not be read began to be reported (group members, group owners, group PIM
             # eligibility, group PIM-in-use criterion, group PIM policy, AU members, AU scoped roles,
             # directory role eligibility schedules, directory role assignment schedules, directory
             # role policies, access package resource role bindings, catalog resources, the catalog
             # resource-name map, the catalog list, a catalog's package list, an access package's
             # assignment policies, an access review's access package name, an access review's
-            # assignment policy name, and objects not written because two of them share a name) --
-            # and the remainder is counted rather than silently lost.
+            # assignment policy name, objects not written because two of them share a name, the group
+            # list, the administrative unit list, the access review list) -- and the remainder is
+            # counted rather than silently lost.
             # Raise the numbers here and $UnreadCauseCap together, or a whole shape can be crowded
             # out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
                 [CmdletBinding()] param([switch]$IncludeMembers, [switch]$IncludeScopedRoles)
-                foreach ($N in 1..20) {
+                foreach ($N in 1..23) {
                     $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new("Could not read scoped roles for administrative unit au-${N}: reason-${N}."),
                             'AdministrativeUnitScopedRoleReadFailed',
                             [System.Management.Automation.ErrorCategory]::PermissionDenied, "au-$N"))
                 }
-                foreach ($N in 1..20) {
+                foreach ($N in 1..23) {
                     [PSCustomObject]@{
                         Id = "au-$N"; DisplayName = "AU-$N"; Description = $null
                         IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
@@ -3974,10 +3981,10 @@ Describe 'Get-OERInventory' {
             $Causes = ($Msg -split 'Causes: ')[1]
             $Causes | Should -Not -BeNullOrEmpty
             @([regex]::Matches($Causes, 'reason-')).Count |
-                Should -Be 19 -Because 'the clause names at most nineteen distinct causes, one per cause shape'
+                Should -Be 22 -Because 'the clause names at most twenty-two distinct causes, one per cause shape'
             $Causes | Should -Match 'plus 1 more distinct cause\(s\)'
-            # All twenty units are still named as unread -- the cap applies to the causes only.
-            foreach ($N in 1..20) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
+            # All twenty-three units are still named as unread -- the cap applies to the causes only.
+            foreach ($N in 1..23) { $Msg | Should -Match "administrativeUnits/AU-$N/scopedRoles" }
         }
 
         It 'produces a members value the apply engine reads as hands-off, not as an empty declared set' {
@@ -4024,6 +4031,229 @@ Describe 'Get-OERInventory' {
                 Test-OERDeclaredNull -Node $Node -Name 'members' | Should -BeTrue
                 Test-OERDeclaredProperty -Node $Node -Name 'scopedRoles' | Should -BeFalse
             }
+        }
+    }
+
+    Context 'a section whose list could not be read at all is partial, not an empty tenant' {
+        # BL-05 / decision A9. A top-level section is never null: a LIST read that failed leaves the
+        # section as [], byte for byte what a tenant with none produces, so the InventoryPartial error
+        # is the only thing that tells the two apart. A failed list read takes one of two shapes, and
+        # each is a row below for every section: a record the reader PUBLISHED, and a terminating throw
+        # out of the reader.
+        #
+        # The published record is BUILT with its FullyQualifiedErrorId and written with
+        # Write-Error -ErrorRecord, which is load-bearing: the section only counts a record the reader
+        # itself published, told apart by the cmdlet name in the id, and a mock body appends no name
+        # (see the comment at 'still warns at section level for a group read error that is not a
+        # per-collection failure'). A plain -ErrorId would test the foreign-record path by accident.
+        #
+        # The throw mocks declare the reader's whole parameter list: a mock with a bare param() and
+        # CmdletBinding refuses the parameters the section passes, and the failure under test would
+        # then be a binding error carrying a different message.
+        BeforeAll {
+            $script:GroupListPublished = {
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+            }
+            $script:GroupListThrown = {
+                [CmdletBinding()] param($Filter, [switch]$IncludeMembers, [switch]$IncludePimEligibility, [switch]$IncludeOwners)
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('throttled'), 'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+            }
+            $script:AuListPublished = {
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERAdministrativeUnit',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+            }
+            $script:AuListThrown = {
+                [CmdletBinding()] param([switch]$IncludeMembers, [switch]$IncludeScopedRoles)
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('throttled'), 'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+            }
+            $script:ArListPublished = {
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied,Get-OERAccessReviewDefinition',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+            }
+            $script:ArListThrown = {
+                [CmdletBinding()] param([switch]$All, $DisplayName)
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('throttled'), 'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)
+            }
+
+            # One read, with every stream the assertions below look at captured, and -ErrorAction
+            # pinned: the section's InventoryPartial is non-terminating, and under a global Stop it
+            # would otherwise end the read before the object under test was returned.
+            function Get-SectionRead {
+                param([string[]]$Include)
+                $Stream = @(Get-OERInventory -Include $Include -Verbose -ErrorVariable InvErr -ErrorAction SilentlyContinue `
+                        -WarningVariable Warned -WarningAction SilentlyContinue 4>&1)
+                [PSCustomObject]@{
+                    Inventory = @($Stream | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })[0]
+                    Verbose   = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] })
+                    Partial   = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Get-OERInventory' })
+                    Warned    = @($Warned)
+                }
+            }
+
+            # What every row below proves: the section is still emitted, as an empty array that is not
+            # null; exactly ONE InventoryPartial came out of the read; its TargetObject names the
+            # section by its own name, once; its message carries the reader's own failure message; and
+            # the section warning that already existed is still written, once.
+            function Assert-SectionUnread {
+                param($Read, [string]$Section, [string]$CauseText, [string]$WarningText)
+                $Read.Inventory | Should -Not -BeNullOrEmpty
+                $Read.Inventory.PSObject.Properties.Name | Should -Contain $Section
+                $null -ne $Read.Inventory.$Section | Should -BeTrue -Because 'a top-level section is never null'
+                @($Read.Inventory.$Section).Count | Should -Be 0
+                $Read.Partial.Count | Should -Be 1
+                $Targets = @(([string]$Read.Partial[0].TargetObject) -split ', ')
+                @($Targets | Where-Object { $_ -eq $Section }).Count | Should -Be 1 -Because 'the section is named once, by its own name'
+                $Read.Partial[0].Exception.Message | Should -Match ([regex]::Escape($CauseText))
+                @($Read.Warned | Where-Object { "$_" -like "*$WarningText*" }).Count |
+                    Should -Be 1 -Because 'the section warning is unchanged: the section is counted unread as well'
+            }
+        }
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+        }
+
+        It 'reports the group list as unread when Get-OERGroup publishes a failure and returns nothing' {
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:GroupListPublished
+            $Read = Get-SectionRead -Include Groups
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section groups -CauseText 'Could not read groups: Insufficient privileges' -WarningText 'Could not read groups'
+            # Every cause is written to the verbose stream as it is seen, so one the cap drops is still reachable.
+            @($Read.Verbose | Where-Object { $_.Message -like '*Get-OERInventory: Could not read groups: Insufficient privileges*' }).Count |
+                Should -BeGreaterThan 0
+        }
+
+        It 'reports the group list as unread when Get-OERGroup throws' {
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:GroupListThrown
+            $Read = Get-SectionRead -Include Groups
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section groups -CauseText 'Could not read groups: throttled' -WarningText 'Could not read groups'
+        }
+
+        It 'reports the administrative unit list as unread when Get-OERAdministrativeUnit publishes a failure and returns nothing' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListPublished
+            $Read = Get-SectionRead -Include AdministrativeUnits
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section administrativeUnits -CauseText 'Could not read administrative units: Insufficient privileges' -WarningText 'Could not read administrative units'
+        }
+
+        It 'reports the administrative unit list as unread when Get-OERAdministrativeUnit throws' {
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListThrown
+            $Read = Get-SectionRead -Include AdministrativeUnits
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section administrativeUnits -CauseText 'Could not read administrative units: throttled' -WarningText 'Could not read administrative units'
+        }
+
+        It 'reports the access review list as unread when Get-OERAccessReviewDefinition publishes a failure and returns nothing' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListPublished
+            $Read = Get-SectionRead -Include AccessReviews
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section accessReviews -CauseText 'Could not read access reviews: Insufficient privileges' -WarningText 'Could not read access reviews'
+        }
+
+        It 'reports the access review list as unread when Get-OERAccessReviewDefinition throws' {
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListThrown
+            $Read = Get-SectionRead -Include AccessReviews
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+            Assert-SectionUnread -Read $Read -Section accessReviews -CauseText 'Could not read access reviews: throttled' -WarningText 'Could not read access reviews'
+        }
+
+        It 'names all three sections in ONE InventoryPartial when each of the three lists fails in the same run' {
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:GroupListPublished
+            Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListPublished
+            Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListPublished
+            $Read = Get-SectionRead -Include Groups, AdministrativeUnits, AccessReviews
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+            $Read.Partial.Count | Should -Be 1
+            $Targets = @(([string]$Read.Partial[0].TargetObject) -split ', ')
+            $Targets.Count | Should -Be 3
+            @($Targets | Sort-Object) | Should -Be @('accessReviews', 'administrativeUnits', 'groups')
+            foreach ($Section in 'groups', 'administrativeUnits', 'accessReviews') {
+                @($Read.Inventory.$Section).Count | Should -Be 0
+            }
+        }
+
+        It 'names a section once however many records its failed list read published' {
+            # A throttled or refused list can publish one record per page, so the same section is seen
+            # twice here; the key is the section name and is added once, while each DISTINCT cause is
+            # still kept. Without the Contains guard the TargetObject would read 'groups, groups'.
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith {
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('first page refused'), 'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('second page refused'), 'Authorization_RequestDenied,Get-OERGroup',
+                        [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+            }
+            $Read = Get-SectionRead -Include Groups
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            @($Read.Warned | Where-Object { "$_" -like '*Could not read groups*' }).Count |
+                Should -Be 2 -Because 'both published records were reached, so the section was seen twice'
+            $Read.Partial.Count | Should -Be 1
+            @(([string]$Read.Partial[0].TargetObject) -split ', ') | Should -Be @('groups')
+            $Read.Partial[0].Exception.Message | Should -Match 'Could not read groups: first page refused'
+            $Read.Partial[0].Exception.Message | Should -Match 'Could not read groups: second page refused'
+        }
+
+        It 'does not call the <Section> list unread when its read ends in <NotFoundId>, which is an answer' -ForEach @(
+            @{ Section = 'groups'; Include = 'Groups'; Command = 'Get-OERGroup'; NotFoundId = 'GroupNotFound' }
+            @{ Section = 'administrativeUnits'; Include = 'AdministrativeUnits'; Command = 'Get-OERAdministrativeUnit'; NotFoundId = 'AdministrativeUnitNotFound' }
+            @{ Section = 'accessReviews'; Include = 'AccessReviews'; Command = 'Get-OERAccessReviewDefinition'; NotFoundId = 'AccessReviewDefinitionNotFound' }
+        ) {
+            # A published not-found record: the reader answered "nothing matches", which is a fact about
+            # the tenant, so the empty section stays a plain [] with no partial and no warning.
+            $Body = [scriptblock]::Create(
+                "Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new([System.Exception]::new('nothing matches'), '$NotFoundId,$Command', [System.Management.Automation.ErrorCategory]::ObjectNotFound, `$null)) -ErrorAction Continue")
+            Mock -ModuleName $script:moduleName $Command -MockWith $Body
+            $Read = Get-SectionRead -Include $Include
+            Should -Invoke -ModuleName $script:moduleName $Command -Times 1 -Exactly
+            $null -ne $Read.Inventory.$Section | Should -BeTrue
+            @($Read.Inventory.$Section).Count | Should -Be 0
+            $Read.Partial.Count | Should -Be 0
+            @($Read.Warned).Count | Should -Be 0
+        }
+
+        It 'does not call the <Section> list unread for a record its reader did not publish' -ForEach @(
+            @{ Section = 'groups'; Include = 'Groups'; Command = 'Get-OERGroup' }
+            @{ Section = 'administrativeUnits'; Include = 'AdministrativeUnits'; Command = 'Get-OERAdministrativeUnit' }
+            @{ Section = 'accessReviews'; Include = 'AccessReviews'; Command = 'Get-OERAccessReviewDefinition' }
+        ) {
+            # A stray: -ErrorVariable also collects records raised inside nested calls, and none of them
+            # carries the reader's name. It is routed to verbose, never counted as a failed read of the
+            # section -- the reach proof is the verbose line that names it.
+            $Body = {
+                Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('a nested call failed and was swallowed'), 'TooManyRequests',
+                        [System.Management.Automation.ErrorCategory]::LimitsExceeded, $null)) -ErrorAction Continue
+            }
+            Mock -ModuleName $script:moduleName $Command -MockWith $Body
+            $Read = Get-SectionRead -Include $Include
+            Should -Invoke -ModuleName $script:moduleName $Command -Times 1 -Exactly
+            @($Read.Verbose | Where-Object { $_.Message -like '*ignoring a foreign error record*a nested call failed and was swallowed*' }).Count |
+                Should -Be 1 -Because 'the stray was reached and routed to verbose'
+            $null -ne $Read.Inventory.$Section | Should -BeTrue
+            $Read.Partial.Count | Should -Be 0
+            @($Read.Warned).Count | Should -Be 0
+        }
+
+        It 'says in the InventoryPartial message that a section named alone is an empty array and not an empty tenant' {
+            Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:GroupListPublished
+            $Read = Get-SectionRead -Include Groups
+            $Read.Partial.Count | Should -Be 1
+            $Read.Partial[0].Exception.Message |
+                Should -BeLike '*Unread: groups. A section reported here by its name alone (groups, administrativeUnits or accessReviews) could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
     }
 
