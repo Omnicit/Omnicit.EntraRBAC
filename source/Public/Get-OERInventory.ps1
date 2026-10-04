@@ -341,8 +341,12 @@ function Get-OERInventory {
                     if ($Reported.Add($K)) {
                         $Unread = "$Section/$K"
                         $UnreadCollections.Add($Unread)
-                        Add-UnreadCause -Cause ("Two or more live objects share the name $Unread (compared without regard to letter case), " +
-                            'so none of them is written: the apply engine refuses an ambiguous name.') -Target $Unread
+                        $NameCause = "Two or more live objects share the name $Unread (compared without regard to letter case), " +
+                            'so none of them is written: the apply engine refuses an ambiguous name.'
+                        # Every cause is written to the verbose stream as it is seen, like at every other
+                        # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
+                        Write-Verbose "Get-OERInventory: $NameCause"
+                        Add-UnreadCause -Cause $NameCause -Target $Unread
                     }
                     continue
                 }

@@ -2404,11 +2404,22 @@ Describe 'Get-OERInventory' {
                         $_.FullyQualifiedErrorId -like 'InventoryPartial*'
                     })
             }
-            # What the offline validator refuses about a document, as printable lines.
-            function script:Get-DupValidationError {
+            # What the offline validator says about a document: the result, and the Errors it refuses
+            # the document for as printable lines. 'the validation helper reports a known duplicate'
+            # below is the positive control for both, so a clean result is never a vacuous one.
+            function script:Get-DupValidation {
                 param([object]$Inventory)
-                $Validation = Test-OERStructure -InputObject $Inventory
+                Test-OERStructure -InputObject $Inventory
+            }
+            function script:Get-DupValidationError {
+                param([object]$Validation)
                 @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' } | ForEach-Object { "$($_.Path): $($_.Message)" })
+            }
+            function script:Assert-DupDocumentValid {
+                param([object]$Inventory)
+                $Validation = Get-DupValidation -Inventory $Inventory
+                Get-DupValidationError -Validation $Validation | Should -BeNullOrEmpty
+                $Validation.Valid | Should -BeTrue
             }
         }
 
@@ -2466,7 +2477,7 @@ Describe 'Get-OERInventory' {
             [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
             $Partial[0].Exception.Message | Should -Match 'share the name groups/Dup'
             $Partial[0].Exception.Message | Should -Match 'Unread: groups/Dup\. '
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'writes every group of a unique name and reports nothing when no two names collide' {
@@ -2492,7 +2503,7 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'administrativeUnits/Team'
             $Partial[0].Exception.Message | Should -Match 'share the name administrativeUnits/Team'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'leaves out two catalogs that share a name without regard to letter case' {
@@ -2507,7 +2518,7 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'catalogs/Core'
             $Partial[0].Exception.Message | Should -Match 'share the name catalogs/Core'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'leaves out two access packages of one catalog that share a name, and keeps a package name shared across two catalogs' {
@@ -2532,7 +2543,7 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'accessPackages/Core/Sales'
             $Partial[0].Exception.Message | Should -Match 'share the name accessPackages/Core/Sales'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'leaves out two access reviews that share a name without regard to letter case' {
@@ -2550,11 +2561,11 @@ Describe 'Get-OERInventory' {
             $Partial.Count | Should -Be 1
             [string]$Partial[0].TargetObject | Should -BeExactly 'accessReviews/Quarterly'
             $Partial[0].Exception.Message | Should -Match 'share the name accessReviews/Quarterly'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'names two groups holding one role at one scope by their object ids, with principalType Group, and keeps a unique principal by name' {
-            $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops'; $script:DupUser1 = 'person46@example.com' }
+            $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops'; $script:DupUser1 = 'person1@example.com' }
             $script:DupRoleAssignments = @(
                 New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
                 New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops'
@@ -2564,10 +2575,10 @@ Describe 'Get-OERInventory' {
             @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) | Should -Be @(
                 "Reader|$($script:DupGrp1)|Group"
                 "Reader|$($script:DupGrp2)|Group"
-                'Reader|person46@example.com|'
+                'Reader|person1@example.com|'
             )
             @($Inv.roleAssignments)[2].PSObject.Properties.Name | Should -Not -Contain 'principalType'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'puts principalType directly after principal, so the entry keeps its key order' {
@@ -2588,7 +2599,7 @@ Describe 'Get-OERInventory' {
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @($script:DupGrp1, $script:DupGrp2)
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'leaves two principals that share a name at DIFFERENT scopes alone' {
@@ -2600,7 +2611,7 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments).Count | Should -Be 2
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('Ops', 'Ops')
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'names a user and a group that carry the same name by their object ids, each with its own principalType' {
@@ -2616,7 +2627,7 @@ Describe 'Get-OERInventory' {
                 "$($script:DupUser1)|User"
                 "$($script:DupGrp1)|Group"
             )
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'writes principalType Group for a ForeignGroup that has to be named by its object id' {
@@ -2630,7 +2641,7 @@ Describe 'Get-OERInventory' {
                 "$($script:DupGrp1)|Group"
                 "$($script:DupGrp2)|Group"
             )
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'names two service principals that share a name by their object ids and keeps the principalType they already carried in place' {
@@ -2645,7 +2656,7 @@ Describe 'Get-OERInventory' {
                 "$($script:DupGrp2)|ServicePrincipal"
             )
             @(@($Inv.roleAssignments)[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'repeats until nothing collides, since an object id can equal another principal name' {
@@ -2659,13 +2670,13 @@ Describe 'Get-OERInventory' {
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @($script:DupGrp1, $script:DupGrp2, $script:DupGrp3)
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'names the full role definition id when two roles of one name still collide after the principal is an id' {
             # One user holds two different role definitions that carry the same display name. The
             # principal moves to its id first, which does not separate them, so the role moves too.
-            $script:DupNames = @{ $script:DupUser1 = 'person46@example.com' }
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
             $script:DupRoleAssignments = @(
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleName 'Contoso Reader' -RoleDefinitionId $script:DupRoleDef1
                 New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleName 'Contoso Reader' -RoleDefinitionId $script:DupRoleDef2
@@ -2677,7 +2688,93 @@ Describe 'Get-OERInventory' {
                 "$($script:DupRoleDef2)|$($script:DupUser1)"
                 'Contoso Reader|User Two'
             )
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
+        }
+
+        It 'never writes an empty principal for a colliding row that carries no principal id' {
+            # Defensive: Azure always returns a principal id, but a row without one cannot be named by
+            # it. Its principal keeps the name it was read under, and the colliding rows fall back to
+            # the full role definition id instead. Two such rows are a true duplicate that no spelling
+            # can separate, so the loop ends with the pair left as it is.
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId '' -PrincipalType 'Group' -PrincipalName 'Orphan'
+                New-DupRoleAssignment -PrincipalId '' -PrincipalType 'Group' -PrincipalName 'Orphan'
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments).Count | Should -Be 2
+            @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @('Orphan', 'Orphan') -Because 'an empty principal would be written as a declared value'
+            @($Inv.roleAssignments | ForEach-Object { $_.role }) | Should -Be @($script:DupRoleDef1, $script:DupRoleDef1)
+        }
+
+        It 'never writes an empty role for a colliding row that carries no role definition id' {
+            # The principal moves to its id on the first pass, which leaves two rows that differ in
+            # nothing: the role cannot move to an id the row does not have, so it keeps its name.
+            $script:DupNames = @{ $script:DupUser1 = 'person1@example.com' }
+            $script:DupRoleAssignments = @(
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleDefinitionId ''
+                New-DupRoleAssignment -PrincipalId $script:DupUser1 -PrincipalType 'User' -PrincipalName 'User One' -RoleDefinitionId ''
+            )
+            $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
+            @($Inv.roleAssignments).Count | Should -Be 2
+            @($Inv.roleAssignments | ForEach-Object { "$($_.role)|$($_.principal)|$($_.principalType)" }) |
+                Should -Be @("Reader|$($script:DupUser1)|User", "Reader|$($script:DupUser1)|User") -Because 'an empty role would be written as a declared value'
+        }
+
+        It 'the validation helper reports a known duplicate, so a clean result is not vacuous' {
+            $Doc = [PSCustomObject]@{
+                version                = '1.0'
+                groups                 = @([PSCustomObject]@{ displayName = 'Dup' }, [PSCustomObject]@{ displayName = 'dup' })
+                roleAssignments        = @(
+                    [PSCustomObject]@{ scope = $script:DupSub1; role = 'Reader'; principal = 'Ops' }
+                    [PSCustomObject]@{ scope = ($script:DupSub1.ToUpperInvariant() + '/'); role = 'reader'; principal = 'ops' }
+                )
+                roleManagementPolicies = @(
+                    [PSCustomObject]@{ scope = $script:DupSub1; role = 'Reader' }
+                    [PSCustomObject]@{ scope = ($script:DupSub1.ToUpperInvariant() + '/'); role = 'reader' }
+                )
+            }
+            $Validation = Get-DupValidation -Inventory $Doc
+            $Validation.Valid | Should -BeFalse
+            $Lines = @(Get-DupValidationError -Validation $Validation)
+            $Lines.Count | Should -Be 3
+            @($Lines | Where-Object { $_ -match '^groups\[1\]: ' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -match '^roleAssignments\[1\]: ' }).Count | Should -Be 1
+            @($Lines | Where-Object { $_ -match '^roleManagementPolicies\[1\]: ' }).Count | Should -Be 1
+        }
+
+        It 'writes the collision cause to the verbose stream, as every other cause is' {
+            $script:DupGroups = @(
+                New-DupGroup -Name 'Dup' -Id $script:DupGrp1
+                New-DupGroup -Name 'dup' -Id $script:DupGrp2
+            )
+            $Err = $null
+            $Stream = @(Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+            $Said = @($Stream | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            $Cause = 'Get-OERInventory: Two or more live objects share the name groups/Dup (compared without regard to letter case), so none of them is written: the apply engine refuses an ambiguous name.'
+            @($Said | Where-Object { $_ -ceq $Cause }).Count | Should -Be 1 -Because 'one cause line per colliding name, never one per object'
+            (Get-DupPartial -Record @($Err)).Count | Should -Be 1 -Because 'the run reached the partial the verbose line belongs to'
+        }
+
+        It 'names a collision in each of two sections but states the one collision cause once' {
+            # The cause key is constant -- the Target is the whole unread entry, which the dedupe key
+            # normalises away -- so it takes one slot of the cap however many sections collide.
+            $script:DupGroups = @(
+                New-DupGroup -Name 'Dup' -Id $script:DupGrp1
+                New-DupGroup -Name 'dup' -Id $script:DupGrp2
+            )
+            $script:DupAdministrativeUnits = @(
+                New-DupAdministrativeUnit -Name 'Team' -Id $script:DupGrp1
+                New-DupAdministrativeUnit -Name 'TEAM' -Id $script:DupGrp2
+            )
+            $Inv = Get-OERInventory -Include Groups, AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            @($Inv.groups).Count | Should -Be 0
+            @($Inv.administrativeUnits).Count | Should -Be 0
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup, administrativeUnits/Team'
+            $Message = $Partial[0].Exception.Message
+            $Message | Should -Match 'Unread: groups/Dup, administrativeUnits/Team\. '
+            @([regex]::Matches($Message, 'Two or more live objects share the name')).Count | Should -Be 1 -Because 'the second collision has the same cause, so it is not stated again'
         }
 
         It 'writes a role policy that was read twice once' {
@@ -2687,7 +2784,7 @@ Describe 'Get-OERInventory' {
             @($Inv.roleManagementPolicies).Count | Should -Be 1 -Because 'the second read is the same policy, so dropping it loses nothing'
             @($Inv.roleManagementPolicies)[0].role | Should -BeExactly 'Reader'
             (Get-DupPartial -Record @($InvErr)).Count | Should -Be 0 -Because 'a policy read twice is no gap in the export'
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
 
         It 'writes two role policies of different roles, and counts a scope in another letter case with a trailing slash as the same scope' {
@@ -2699,7 +2796,7 @@ Describe 'Get-OERInventory' {
             $Inv = Get-OERInventory -Include RoleManagementPolicies -Subscription 'Prod' -CommonRoles -IncludeARM
             Should -Invoke -ModuleName $script:moduleName Get-OERRoleManagementPolicy -Times 1 -Exactly
             @($Inv.roleManagementPolicies | ForEach-Object { $_.role }) | Should -Be @('Reader', 'Owner')
-            Get-DupValidationError -Inventory $Inv | Should -BeNullOrEmpty
+            Assert-DupDocumentValid -Inventory $Inv
         }
     }
 
@@ -3808,10 +3905,12 @@ Describe 'Get-OERInventory' {
             # Raise the numbers here and $UnreadCauseCap together, or a whole shape can be crowded
             # out of the clause purely by the order the sections run in.
             Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+                [CmdletBinding()] param([switch]$IncludeMembers, [switch]$IncludeScopedRoles)
                 foreach ($N in 1..20) {
-                    Write-Error -Message "Could not read scoped roles for administrative unit au-${N}: reason-${N}." `
-                        -ErrorId 'AdministrativeUnitScopedRoleReadFailed' -Category PermissionDenied `
-                        -TargetObject "au-$N" -ErrorAction Continue
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not read scoped roles for administrative unit au-${N}: reason-${N}."),
+                            'AdministrativeUnitScopedRoleReadFailed',
+                            [System.Management.Automation.ErrorCategory]::PermissionDenied, "au-$N"))
                 }
                 foreach ($N in 1..20) {
                     [PSCustomObject]@{
