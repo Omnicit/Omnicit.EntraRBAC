@@ -341,7 +341,7 @@ Connect-OerLive -Arm
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Filter = [uri]::EscapeDataString("roleName eq 'Reader'")
 $Defs = Invoke-OerLiveArm -Path "/subscriptions/$($Cfg.SubscriptionId)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=$Filter"
-$ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.roleType -eq 'BuiltInRole' })[0].name)
+$ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.type -eq 'BuiltInRole' })[0].name)
 $Live = Invoke-OerLiveArm -All -Path "$RgScope/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&`$filter=atScope()"
 foreach ($A in @($Live.Body.value | Where-Object { ([string]$_.properties.scope).TrimEnd('/') -ieq $RgScope })) {
     Write-OerLiveStep "Live at the resource group: role definition id anchored at the subscription, not the resource group: $(([string]$A.properties.roleDefinitionId).StartsWith("/subscriptions/$($Cfg.SubscriptionId)/providers/", [System.StringComparison]::OrdinalIgnoreCase)); its GUID is the Reader GUID: $(([string]$A.properties.roleDefinitionId).EndsWith("/$ReaderGuid", [System.StringComparison]::OrdinalIgnoreCase))"
@@ -417,7 +417,7 @@ Connect-OerLive -Arm
 $RgScope = "/subscriptions/$($Cfg.SubscriptionId)/resourceGroups/oer-s81-rg"
 $Filter = [uri]::EscapeDataString("roleName eq 'Reader'")
 $Defs = Invoke-OerLiveArm -Path "/subscriptions/$($Cfg.SubscriptionId)/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&`$filter=$Filter"
-$ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.roleType -eq 'BuiltInRole' })[0].name)
+$ReaderGuid = [string](@($Defs.Body.value | Where-Object { $_.properties.type -eq 'BuiltInRole' })[0].name)
 $Json = ConvertTo-Json -Depth 10 -InputObject ([ordered]@{ version = '1.0'; roleAssignments = @(
             [ordered]@{ scope = $RgScope; role = 'Reader'; principal = 'oer-s81-grp1'; principalType = 'Group' }
             [ordered]@{ scope = "$RgScope/"; role = 'Reader'; principal = 'oer-s81-grp2'; principalType = 'Group' }
