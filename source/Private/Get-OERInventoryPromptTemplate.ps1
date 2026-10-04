@@ -160,6 +160,11 @@ $NamingLine
 Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), tenantAlias
 (optional), and the section arrays. Any other top-level key is rejected.
 
+Declare each group, administrative unit, catalog, access review and directory role policy once, by
+displayName (a directory role policy by role), and each access package once per catalog: names are
+compared without regard to letter case, and a second entry for one is an Error that refuses the whole
+document.
+
 - groups[]: { displayName (or template + tokens object), previousDisplayName (rename only -- the
   group's current display name or object id when displayName declares a new one; NOT captured by
   inventory), roleAssignable (bool), dynamic (bool),
@@ -314,6 +319,19 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
     engine only edits an assignment defined at exactly that scope; an assignment merely INHERITED there
     from a parent scope is reported as skipped and left untouched, because editing it would silently
     change the parent's grant.
+  - scope is an ARM path (/subscriptions/<guid>, /subscriptions/<guid>/resourceGroups/<name>, or the
+    management group path /providers/Microsoft.Management/managementGroups/<name>) or one of the short
+    forms sub:<guid or name> (also subscription:<guid or name>) and mg:<name or display name>. The
+    apply engine resolves the scope and compares scopes without regard to letter case, so two
+    spellings of one scope are ONE scope -- the entries that name it share one prune pass.
+  - write a scope without a trailing / and without //: the offline check reports either as an Error,
+    and the whole document is refused before anything is written.
+  - declare each (scope, role, principal) once. A duplicate is an Error in the offline check and the
+    whole document is refused before anything is written. Two spellings the offline check cannot tell
+    apart (a subscription's name and its id, a management group's display name and its path) are
+    reported Failed when applied, and the later entry is not written.
+  - role may be given by name, by GUID or by full role definition id, and is matched on its GUID, so
+    a role given as a GUID matches the live assignment at a resource group or management group.
   - an explicit null means the SAME as omitting the key: not declared, live value untouched. To REMOVE
     an ABAC condition, declare condition as "" (empty string) -- never null.
 - roleManagementPolicies[]: { scope (required), role (required), allowPermanentEligibility (bool),
@@ -323,6 +341,9 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
   approvers { users[] (UPNs/ids), groups[] (names/ids) },
   authenticationContextId ("c1", or "" to disable), requireMfaOnActiveAssignment (bool),
   requireJustificationOnActiveAssignment (bool) }
+  - scope takes the same forms as a roleAssignments scope (an ARM path, sub:, subscription: or mg:,
+    never with a trailing / or //), and each (scope, role) is declared once: a duplicate is an Error
+    and the whole document is refused before anything is written.
   - requireMfaOnActivation true and authenticationContextId are mutually exclusive; declare only one.
   - an omitted field means "leave the live policy setting untouched", never "set it to false".
   - an explicit null means the SAME as omitting the key: not declared, live setting untouched. Never
@@ -334,7 +355,9 @@ Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), t
 
 Principals are UPNs (users) or display names / object ids (groups, service principals). Scopes for
 roleAssignments / roleManagementPolicies are ARM scope strings copied from scopeHierarchy.json
-(for example /subscriptions/<guid> or /providers/Microsoft.Management/managementGroups/<name>).
+(for example /subscriptions/<guid> or /providers/Microsoft.Management/managementGroups/<name>); the
+short forms sub:<guid or name>, subscription:<guid or name> and mg:<name or display name> name the
+same scopes.
 
 The machine-readable form of this contract is schema.json -- your output must validate against it.
 

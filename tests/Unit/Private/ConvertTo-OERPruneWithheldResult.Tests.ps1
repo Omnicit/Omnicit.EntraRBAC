@@ -64,4 +64,66 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             $r[0].Detail | Should -BeExactly "prune withheld: declared entries 'b-second-in-alphabet', 'a-first-in-alphabet' could not be resolved, so undeclared owner 'o-9' may be the live counterpart of one of them and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entries to reconcile this collection."
         }
     }
+
+    # A declared entry whose SCOPE could not be resolved (roleAssignments) is a different kind of
+    # unresolved: the entry carries no scope, so it may be another spelling of ANY scope in the
+    # section, and every candidate in the section is withheld, not only those of one collection.
+    Context 'with an unresolved scope (-UnresolvedScope)' {
+        It 'returns one Skipped StructureResult carrying Section and Item when only a scope is unresolved' {
+            InModuleScope $script:moduleName {
+                $r = @(ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'rd-reader -> p-1 @ /subscriptions/s-1' -Unresolved @() -UnresolvedScope @('Reader -> x @ sub:Gone') -Candidate "undeclared assignment 'a-1'")
+                $r.Count | Should -Be 1
+                $r[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureResult'
+                $r[0].Section | Should -Be 'roleAssignments'
+                $r[0].Item    | Should -Be 'rd-reader -> p-1 @ /subscriptions/s-1'
+                $r[0].Action  | Should -Be 'Skipped'
+                $r[0].Error   | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'words a single unresolved scope as a section-wide withhold and names the candidate' {
+            InModuleScope $script:moduleName {
+                $r = ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'i' -Unresolved @() -UnresolvedScope @('Reader -> x @ sub:Gone') -Candidate "undeclared assignment 'a-1'"
+                $r.Detail.StartsWith("prune withheld: the scope of declared entry 'Reader -> x @ sub:Gone'") | Should -BeTrue
+                $r.Detail | Should -BeExactly "prune withheld: the scope of declared entry 'Reader -> x @ sub:Gone' could not be resolved, so it may name this scope, and undeclared assignment 'a-1' may be the live counterpart of that entry; it is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this section."
+            }
+        }
+
+        It 'uses the plural form and names every unresolved scope in the given order' {
+            InModuleScope $script:moduleName {
+                $r = ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'i' -Unresolved @() -UnresolvedScope @('Reader -> b @ sub:Two', 'Reader -> a @ sub:One') -Candidate "undeclared assignment 'a-1'"
+                $r.Detail | Should -BeExactly "prune withheld: the scopes of declared entries 'Reader -> b @ sub:Two', 'Reader -> a @ sub:One' could not be resolved, so any of them may name this scope, and undeclared assignment 'a-1' may be the live counterpart of one of them; it is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entries to reconcile this section."
+            }
+        }
+
+        It 'puts the entry sentence first and the scope sentence after it when both are unresolved' {
+            InModuleScope $script:moduleName {
+                $r = ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'i' -Unresolved @('Reader -> p @ sub:Prod') -UnresolvedScope @('Reader -> x @ sub:Gone') -Candidate "undeclared assignment 'a-1'"
+                $r.Detail | Should -BeExactly "prune withheld: declared entry 'Reader -> p @ sub:Prod' could not be resolved, so undeclared assignment 'a-1' may be its live counterpart and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this collection. The scope of declared entry 'Reader -> x @ sub:Gone' could not be resolved either."
+            }
+        }
+
+        It 'uses the plural scope sentence after several unresolved entries and several unresolved scopes' {
+            InModuleScope $script:moduleName {
+                $r = ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'i' -Unresolved @('e-1', 'e-2') -UnresolvedScope @('s-1', 's-2') -Candidate "undeclared assignment 'a-1'"
+                $r.Detail | Should -BeExactly "prune withheld: declared entries 'e-1', 'e-2' could not be resolved, so undeclared assignment 'a-1' may be the live counterpart of one of them and is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entries to reconcile this collection. The scopes of declared entries 's-1', 's-2' could not be resolved either."
+            }
+        }
+
+        It 'keeps the entry-only text byte for byte when -UnresolvedScope is given but empty' {
+            InModuleScope $script:moduleName {
+                $Without = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -Candidate "undeclared member 'u-1'"
+                $With    = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -UnresolvedScope @() -Candidate "undeclared member 'u-1'"
+                $With.Detail | Should -BeExactly $Without.Detail
+                $With.Detail | Should -Not -Match 'scope'
+            }
+        }
+
+        It 'returns nothing when both lists are empty' {
+            InModuleScope $script:moduleName {
+                $r = @(ConvertTo-OERPruneWithheldResult -Section 'roleAssignments' -Item 'i' -Unresolved @() -UnresolvedScope @() -Candidate "undeclared assignment 'a-1'")
+                $r.Count | Should -Be 0
+            }
+        }
+    }
 }

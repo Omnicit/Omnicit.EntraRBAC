@@ -20,6 +20,12 @@ Describe 'Invoke-OERStructure' {
             Mock Sync-OERStructureAccessReview { $script:Order.Add('accessReviews') }
             Mock Sync-OERStructureRoleAssignment { $script:Order.Add('roleAssignments') }
             Mock Sync-OERStructureRoleManagementPolicy { $script:Order.Add('roleManagementPolicies') }
+            # The engine resolves every roleAssignments scope before dispatch; no test here may reach
+            # the ARM transport through that pre-pass.
+            Mock Resolve-OERScope {
+                param($Scope, $Subscription, $ManagementGroup)
+                if ($Subscription) { "/subscriptions/$Subscription" } elseif ($ManagementGroup) { "/providers/Microsoft.Management/managementGroups/$ManagementGroup" } else { $Scope }
+            }
         }
     }
 
@@ -100,6 +106,43 @@ Describe 'Invoke-OERStructure' {
             # first sub:Prod -> $true, second sub:Prod -> $false, mg:Plat -> $true
             @($script:ReconcileFlags) | Should -Be @($true, $false, $true)
         }
+    }
+
+    It 'treats an explicit null roleAssignments section as not declared: no scope pre-pass, no row, no abort' {
+        # The validator reads an explicit null as "not declared", yet @($null) is ONE element, and the
+        # scope pre-pass runs outside the per-entry try/catch: a null entry made it throw a
+        # parameter-binding error that aborted the whole run inside an operator's try/catch, after the
+        # earlier sections had been written. The engine drops the null before the pre-pass and skips
+        # the section.
+        InModuleScope $script:moduleName {
+            $script:RaPreCalls = 0
+            Mock Resolve-OERStructureRoleAssignmentScope { $script:RaPreCalls++; @() }
+        }
+        $Caught = $null
+        $Rows = @()
+        try {
+            $Rows = @(Invoke-OERStructure -Json '{ "version":"1.0", "groups":[{"displayName":"g"}], "roleAssignments": null }' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable NullSectionErr)
+        } catch {
+            $Caught = $PSItem
+        }
+
+        # Positive proof first: the run completed and the declared group section was applied.
+        $Caught | Should -BeNullOrEmpty
+        $GroupRows = @($Rows | Where-Object { $_.Section -eq 'groups' })
+        $GroupRows.Count | Should -Be 1
+        $GroupRows[0].Item | Should -Be 'g'
+        $GroupRows[0].Action | Should -Be 'Created'
+        InModuleScope $script:moduleName { Should -Invoke Sync-OERStructureGroup -Times 1 -Exactly }
+
+        # The null section is skipped: no scope pre-pass, no handler call, no row, no error record.
+        InModuleScope $script:moduleName {
+            $script:RaPreCalls | Should -Be 0
+            Should -Invoke Resolve-OERStructureRoleAssignmentScope -Times 0
+            Should -Invoke Sync-OERStructureRoleAssignment -Times 0
+        }
+        @($Rows | Where-Object { $_.Section -eq 'roleAssignments' }).Count | Should -Be 0
+        @($NullSectionErr).Count | Should -Be 0
     }
 
     It 'accepts a piped inventory object via -InputObject and settles cleanly under -WhatIf' {
@@ -263,6 +306,14 @@ Describe 'Invoke-OERStructure handler-failure row' {
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        # The engine resolves every roleAssignments scope before dispatch; no test here may reach the
+        # ARM transport through that pre-pass.
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERScope {
+                param($Scope, $Subscription, $ManagementGroup)
+                if ($Subscription) { "/subscriptions/$Subscription" } elseif ($ManagementGroup) { "/providers/Microsoft.Management/managementGroups/$ManagementGroup" } else { $Scope }
+            }
+        }
     }
 
     It 'names the failing item by displayName instead of a placeholder' {
@@ -457,6 +508,12 @@ Describe 'Invoke-OERStructure directoryRoleManagementPolicies section' {
             Mock Sync-OERStructureDirectoryRoleManagementPolicy { $script:Order.Add('directoryRoleManagementPolicies') }
             Mock Sync-OERStructureRoleAssignment { $script:Order.Add('roleAssignments') }
             Mock Sync-OERStructureRoleManagementPolicy { $script:Order.Add('roleManagementPolicies') }
+            # The engine resolves every roleAssignments scope before dispatch; no test here may reach
+            # the ARM transport through that pre-pass.
+            Mock Resolve-OERScope {
+                param($Scope, $Subscription, $ManagementGroup)
+                if ($Subscription) { "/subscriptions/$Subscription" } elseif ($ManagementGroup) { "/providers/Microsoft.Management/managementGroups/$ManagementGroup" } else { $Scope }
+            }
         }
     }
 
@@ -527,6 +584,12 @@ Describe 'Invoke-OERStructure directoryRoleAssignments section' {
             Mock Sync-OERStructureDirectoryRoleAssignment { $script:Order.Add('directoryRoleAssignments') }
             Mock Sync-OERStructureRoleAssignment { $script:Order.Add('roleAssignments') }
             Mock Sync-OERStructureRoleManagementPolicy { $script:Order.Add('roleManagementPolicies') }
+            # The engine resolves every roleAssignments scope before dispatch; no test here may reach
+            # the ARM transport through that pre-pass.
+            Mock Resolve-OERScope {
+                param($Scope, $Subscription, $ManagementGroup)
+                if ($Subscription) { "/subscriptions/$Subscription" } elseif ($ManagementGroup) { "/providers/Microsoft.Management/managementGroups/$ManagementGroup" } else { $Scope }
+            }
         }
     }
 
@@ -650,8 +713,11 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
     # name 'Dup Sub' and one 'Good Sub'. Subscription display names are not unique, so a scope
     # 'subscription:Dup Sub' cannot name one subscription: the entry must fail with the candidates
     # and the run must go on, and under -Prune nothing at the ambiguous scope may be removed or
-    # created. 'Good Sub' is the positive control: its extra assignment IS removed, which shows that
-    # the prune is live and that the run went past the failed entries. No id below is version-4 shaped.
+    # created. An entry whose scope cannot be resolved may be another spelling of ANY scope in the
+    # section, so it also withholds the prune of every other scope in it: the extra assignment at
+    # 'Good Sub' is reported Skipped and not removed. 'Good Sub' is still the positive control for
+    # the run going past the failed entries: it is read and its declared entry is Unchanged. No id
+    # below is version-4 shaped.
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
@@ -668,14 +734,16 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
             Mock Resolve-OERStructurePrincipal { "p-$Reference" }
             Mock Resolve-OERRoleDefinitionId { "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-$Role" }
             # What the old first-match code would have read for 'Dup Sub': the live assignments of the
-            # FIRST of the two subscriptions, one declared and one undeclared.
+            # FIRST of the two subscriptions, one declared and one undeclared. The handler reads at
+            # the scope the engine resolved, so the mock answers on -Scope.
             Mock Get-OERRoleAssignment {
-                if ($Subscription -eq 'Dup Sub') {
+                param($Scope, [switch]$AtScope)
+                if ($Scope -like '/subscriptions/aaaa1111-0000-0000-0000-00000000000[12]') {
                     @(
                         [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; PrincipalId = 'p-grp-a'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-dup-declared' }
                         [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; PrincipalId = 'p-live-dup'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-dup-extra' }
                     )
-                } elseif ($Subscription -eq 'Good Sub') {
+                } elseif ($Scope -eq '/subscriptions/aaaa1111-0000-0000-0000-000000000003') {
                     @(
                         [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'; PrincipalId = 'p-grp-c'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-good-declared' }
                         [PSCustomObject]@{ Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000003'; PrincipalId = 'p-live-good'; RoleDefinitionId = '/subscriptions/aaaa1111-0000-0000-0000-000000000003/providers/Microsoft.Authorization/roleDefinitions/rd-Reader'; RoleAssignmentId = 'ra-good-extra' }
@@ -688,7 +756,11 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         }
     }
 
-    It 'fails every entry at the ambiguous scope with both candidate ids, goes on to the next scope, and under -Prune removes nothing at the ambiguous one' {
+    # The flip from the earlier shape of this test is deliberate (spec A12): this test used to expect
+    # the extra assignment at 'Good Sub' to be REMOVED while 'Dup Sub' stayed unresolved. An
+    # unresolved scope may be an alias of any scope in the section, so the whole section's prune is
+    # withheld instead -- nothing is removed anywhere, and the candidate is reported Skipped.
+    It 'fails every entry at the ambiguous scope with both candidate ids, goes on to the next scope, and withholds the prune of the whole section' {
         $Json = '{ "version":"1.0", "roleAssignments":[' +
             '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-a"}, ' +
             '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-b"}, ' +
@@ -697,23 +769,25 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-        # Positive proof first: the run reached the third entry, whose scope IS resolvable, and pruned
-        # there. Without this the negative assertions below could pass on a run that stopped early.
-        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Subscription -eq 'Good Sub' }
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-good-extra' }
+        # Positive proof first: the run reached the third entry, whose scope IS resolvable, and read
+        # and reconciled it. Without this the negative assertions below could pass on a run that
+        # stopped early.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq '/subscriptions/aaaa1111-0000-0000-0000-000000000003' }
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> grp-c @ subscription:Good Sub' }).Action | Should -Be @('Unchanged')
 
-        # Nothing at the ambiguous scope was written or even read. The writes come first, so a
-        # regression that resolves the name to one of the two subscriptions fails on the write.
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -like 'ra-dup-*' }
+        # Nothing was removed anywhere: not at the ambiguous scope, and not at the good one either.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
-        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Subscription -eq 'Dup Sub' }
+        # Nothing at the ambiguous scope was even read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Scope -like '/subscriptions/aaaa1111-0000-0000-0000-00000000000[12]' }
 
-        # The rows: the resolvable scope reconciled as usual ...
-        @($Rows | Where-Object { $_.Item -eq 'Reader -> grp-c @ subscription:Good Sub' }).Action | Should -Be @('Unchanged')
-        $Removed = @($Rows | Where-Object { $_.Action -eq 'Removed' })
-        $Removed.Count | Should -Be 1
-        $Removed[0].Item | Should -BeExactly 'rd-Reader -> p-live-good @ /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+        # The undeclared assignment at the good scope is withheld, naming both unresolved entries.
+        $Withheld = @($Rows | Where-Object { $_.Action -eq 'Skipped' })
+        $Withheld.Count | Should -Be 1
+        $Withheld[0].Item | Should -BeExactly 'rd-Reader -> p-live-good @ /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+        $Withheld[0].Detail.StartsWith("prune withheld: the scopes of declared entries 'Reader -> grp-a @ subscription:Dup Sub', 'Reader -> grp-b @ subscription:Dup Sub'") | Should -BeTrue
+        @($Rows | Where-Object { $_.Action -in @('Removed', 'Extra') }).Count | Should -Be 0
 
         # ... and the ambiguous scope's two entries are Failed rows, the only rows it produced.
         $DupRows = @($Rows | Where-Object { $_.Item -like '* @ subscription:Dup Sub' })
@@ -767,5 +841,274 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
                 $_.InvocationInfo.MyCommand.Name -eq 'Invoke-OERStructure' -and
                 $_.FullyQualifiedErrorId -like 'InvalidScope,*' -and $_.Exception.Message -like '*matches 2 subscriptions*'
             }).Count | Should -Be 1
+    }
+}
+
+Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
+    # Two entries that spell one Azure scope differently must form ONE group with ONE prune pass.
+    # Grouped on the text instead, each group's pass removed the other group's declared assignment
+    # under -Prune. The real handler, Resolve-OERScope, ConvertTo-OERScopeSplat and
+    # ConvertTo-OERCanonicalScope run here; only the transports and the lookups below the scope are
+    # mocked. The subscription 'Prod' and the management group 'plat' (display name
+    # 'Platform Display') are the only Azure objects the ARM mock knows. At the shared scope the live
+    # state holds the two declared assignments (p-a and p-b, both Reader) and one undeclared one
+    # (p-c), so a single pass removes exactly ra-c. No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:RaShared = $null
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest { throw 'unexpected Graph request' }
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{ subscriptionId = 'aaaa1111-0000-0000-0000-000000000001'; displayName = 'Prod' }
+                    ) }
+            } -ParameterFilter { $Path -eq '/subscriptions?api-version=2022-12-01' -and $All }
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/plat' }
+            } -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups/plat?api-version=2020-05-01' }
+            Mock Invoke-OERArmRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("The management group 'Platform Display' was not found."),
+                    'NotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $null)
+            } -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups/Platform%20Display?api-version=2020-05-01' }
+            Mock Invoke-OERArmRequest {
+                [PSCustomObject]@{ value = @(
+                        [PSCustomObject]@{ name = 'plat'; id = '/providers/Microsoft.Management/managementGroups/plat'; properties = [PSCustomObject]@{ displayName = 'Platform Display' } }
+                    ) }
+            } -ParameterFilter { $Path -eq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All }
+            Mock Invoke-OERArmRequest { throw "unexpected ARM call: $Method $Path" }
+            Mock Resolve-OERStructurePrincipal { param($Reference, $Type) "p-$Reference" }
+            Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-$Role" }
+            Mock Get-OERRoleAssignment {
+                param($Scope, [switch]$AtScope)
+                if ($Scope -eq $script:RaShared) {
+                    $Live = $script:RaShared.ToLowerInvariant()
+                    $LiveRole = "$Live/providers/Microsoft.Authorization/roleDefinitions/rd-Reader"
+                    [PSCustomObject]@{ Scope = $Live; PrincipalId = 'p-a'; RoleDefinitionId = $LiveRole; RoleAssignmentId = 'ra-a' }
+                    [PSCustomObject]@{ Scope = $Live; PrincipalId = 'p-b'; RoleDefinitionId = $LiveRole; RoleAssignmentId = 'ra-b' }
+                    [PSCustomObject]@{ Scope = $Live; PrincipalId = 'p-c'; RoleDefinitionId = $LiveRole; RoleAssignmentId = 'ra-c' }
+                }
+            }
+            Mock New-OERRoleAssignment {}
+            Mock Set-OERRoleAssignment {}
+            Mock Remove-OERRoleAssignment { param($Id) }
+        }
+    }
+
+    It 'groups <ScopeA> and <ScopeB> as one scope: one prune pass, and neither entry removes the other''s assignment' -ForEach @(
+        @{ ScopeA = 'sub:aaaa1111-0000-0000-0000-000000000001'; ScopeB = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; Shared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        @{ ScopeA = 'subscription:aaaa1111-0000-0000-0000-000000000001'; ScopeB = 'sub:aaaa1111-0000-0000-0000-000000000001'; Shared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        @{ ScopeA = 'sub:Prod'; ScopeB = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; Shared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        @{ ScopeA = 'mg:plat'; ScopeB = '/providers/Microsoft.Management/managementGroups/plat'; Shared = '/providers/Microsoft.Management/managementGroups/plat' }
+        @{ ScopeA = 'mg:Platform Display'; ScopeB = 'mg:plat'; Shared = '/providers/Microsoft.Management/managementGroups/plat' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Shared = $Shared } { param($Shared) $script:RaShared = $Shared }
+        $Document = [PSCustomObject]@{
+            version         = '1.0'
+            roleAssignments = @(
+                [PSCustomObject]@{ scope = $ScopeA; role = 'Reader'; principal = 'a' }
+                [PSCustomObject]@{ scope = $ScopeB; role = 'Reader'; principal = 'b' }
+            )
+        }
+        $Rows = @(Invoke-OERStructure -Json ($Document | ConvertTo-Json -Depth 5) -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+
+        # Positive proof first: exactly one pass ran, and it pruned the undeclared assignment.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -in 'ra-a', 'ra-b' }
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+
+        # Each declared row keeps the scope text of its own entry.
+        @($Rows | Where-Object { $_.Item -eq "Reader -> a @ $ScopeA" }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq "Reader -> b @ $ScopeB" }).Action | Should -Be @('Unchanged')
+    }
+
+    It 'refuses a scope written with <Case> before it authenticates, and prunes nothing' -ForEach @(
+        @{ Case = 'a trailing slash'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }
+        @{ Case = 'a doubled slash'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001//resourceGroups/rg1' }
+        @{ Case = 'only a doubled slash'; Scope = '//' }
+    ) {
+        # A15: the canonical form would merge such a scope with the scope written without the stray
+        # '/', so the scope written ONLY that way would start to be pruned, and '//' would be the root.
+        # The validator refuses it instead; the whole document is refused before any sign-in or read.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"' + $Scope + '","role":"Reader","principal":"a"} ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+
+        $Rows.Count | Should -Be 0
+        $Refused = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed,*' })
+        $Refused.Count | Should -Be 1
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].scope: 'scope' at roleAssignments``[0``] must be written without a trailing or doubled '/'. Got: '$Scope'.*"
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
+    }
+
+    It 'reconciles a declared scope whose letter case differs from the live scope' {
+        # Entry a spells the scope in upper case; entry b spells it as the live state does. They are
+        # one scope, compared without regard to letter case, so they form one group with one pass.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"/SUBSCRIPTIONS/AAAA1111-0000-0000-0000-000000000001/resourceGroups/RG1","role":"Reader","principal":"a"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -in 'ra-a', 'ra-b' }
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ /SUBSCRIPTIONS/AAAA1111-0000-0000-0000-000000000001/resourceGroups/RG1' }).Action | Should -Be @('Unchanged')
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> b @ /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }).Action | Should -Be @('Unchanged')
+    }
+
+    It 'hands the handler the canonical resolved scope and resolves each scope text once' {
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -eq '/subscriptions?api-version=2022-12-01' -and $All
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 2 -Exactly -ParameterFilter {
+            $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and $AtScope
+        }
+        @($Rows | Where-Object { $_.Item -like 'Reader -> * @ sub:Prod' }).Action | Should -Be @('Unchanged', 'Unchanged')
+    }
+
+    It 'withholds the prune of every candidate when one entry fails to resolve a scope that a later entry with the same text resolves' {
+        # The pre-pass caches only SUCCESSFUL resolutions, so two entries with the same scope text can
+        # have one failure and one success. The first lookup of 'Prod' fails transiently, the second
+        # succeeds: entry 0 is Failed and never dispatched, entry 1 resolves and reconciles. The
+        # surviving group of the resolved scope declares only entry 1, so entry 0's own live
+        # assignment (p-a) looks undeclared in it -- exactly the object the document asked to keep.
+        # The failed entry may be a spelling of any scope, so the prune of the whole section is
+        # withheld and no candidate is removed.
+        InModuleScope $script:moduleName {
+            $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:RaResolveCalls = 0
+            Mock Resolve-OERScope {
+                param([string]$Scope, [string]$Subscription, [string]$ManagementGroup)
+                $script:RaResolveCalls++
+                if ($script:RaResolveCalls -eq 1) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('transient ARM failure while listing subscriptions'),
+                        'ArmTransportError',
+                        [System.Management.Automation.ErrorCategory]::ConnectionError,
+                        $null)
+                }
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            }
+        }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the same scope text was resolved twice (the failure was not cached),
+        # entry 0 failed on the first lookup, and entry 1 reconciled on the second.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERScope -Times 2 -Exactly -ParameterFilter { $Subscription -eq 'Prod' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
+            $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and $AtScope
+        }
+        $First = @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ sub:Prod' })
+        $First.Count | Should -Be 1
+        $First[0].Action | Should -Be 'Failed'
+        $First[0].Detail | Should -Match "could not resolve scope 'sub:Prod'"
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> b @ sub:Prod' }).Action | Should -Be @('Unchanged')
+
+        # Nothing was removed, and the whole section's candidates are withheld: p-a (the failed
+        # entry's own live assignment, undeclared in the surviving group) and the plain extra p-c.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
+        $Withheld = @($Rows | Where-Object { $_.Action -eq 'Skipped' })
+        # Select-Object, not member enumeration: .Item on an array is the indexer method.
+        @($Withheld | Select-Object -ExpandProperty Item) | Should -Be @(
+            'rd-Reader -> p-a @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'rd-Reader -> p-c @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        )
+        foreach ($Row in $Withheld) {
+            $Row.Detail.StartsWith("prune withheld: the scope of declared entry 'Reader -> a @ sub:Prod'") | Should -BeTrue
+        }
+        @($Rows | Where-Object { $_.Action -in @('Removed', 'Extra', 'Created', 'Updated') }).Count | Should -Be 0
+        $Rows.Count | Should -Be 4
+    }
+
+    It 'fails the later of two entries that resolve to the same assignment, writes nothing for it and never prunes the assignment' {
+        # sub:Prod and the subscription path are one scope, so both entries name the same principal and
+        # role at it: one assignment. The later entry is Failed with the earlier one named; the
+        # earlier one reconciles; and the duplicate's key stays declared, so the pass removes only
+        # the two undeclared assignments (ra-b, ra-c) and never ra-a.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"a"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DupErr)
+
+        # Positive proof first: the earlier entry reconciled against the live state, and the pass ran.
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ sub:Prod' }).Action | Should -Be @('Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-b' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+
+        $Duplicate = @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ /subscriptions/aaaa1111-0000-0000-0000-000000000001' })
+        $Duplicate.Count | Should -Be 1
+        $Duplicate[0].Action | Should -Be 'Failed'
+        $Duplicate[0].Detail | Should -BeExactly "roleAssignments[1] resolves to the same assignment as roleAssignments[0] ('Reader -> a @ sub:Prod'): the same scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001', principal and role. Nothing was written for this entry; keep one of the two entries."
+        @($DupErr).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-a' }
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+    }
+
+    It 'under -WhatIf fails the later of two entries that resolve to the same assignment, naming the earlier index, instead of planning a second create' {
+        # sub:Prod and the subscription path are one scope, and principal z holds nothing there, so
+        # the earlier entry plans a create (Skipped under -WhatIf). The later entry names the same
+        # assignment: it is Failed with the earlier index named -- not a second Skipped plan, which
+        # would read as two creates -- and nothing is written for it.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"z"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"z"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -WhatIf -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DupWhatIfErr)
+
+        # Positive proof first: the earlier entry was reconciled and planned its create.
+        $Earlier = @($Rows | Where-Object { $_.Item -eq 'Reader -> z @ sub:Prod' })
+        $Earlier.Count | Should -Be 1
+        $Earlier[0].Action | Should -Be 'Skipped'
+        $Earlier[0].Detail | Should -Match '^would create role assignment'
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly
+
+        $Duplicate = @($Rows | Where-Object { $_.Item -eq 'Reader -> z @ /subscriptions/aaaa1111-0000-0000-0000-000000000001' })
+        $Duplicate.Count | Should -Be 1
+        $Duplicate[0].Action | Should -Be 'Failed'
+        $Duplicate[0].Detail | Should -BeExactly "roleAssignments[1] resolves to the same assignment as roleAssignments[0] ('Reader -> z @ sub:Prod'): the same scope '/subscriptions/aaaa1111-0000-0000-0000-000000000001', principal and role. Nothing was written for this entry; keep one of the two entries."
+        @($DupWhatIfErr).Count | Should -Be 0
+        # Exactly two rows concern principal z: the planned create and the duplicate's Failed row.
+        @($Rows | Where-Object { $_.Item -like 'Reader -> z @ *' }).Count | Should -Be 2
+        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
+    }
+
+    It 'resolves the siblings of a scope once for all its entries' {
+        # The engine hands every entry of one resolved scope the same key cache. Each entry's own
+        # lookup is made once and the group's two siblings are resolved once: four principal lookups,
+        # not one more set for the duplicate check of each entry and for the prune pass.
+        InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+
+        # Positive proof first: both entries reconciled, and the single pass removed the undeclared one.
+        @($Rows | Where-Object { $_.Item -like 'Reader -> * @ *' }).Action | Should -Be @('Unchanged', 'Unchanged')
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERStructurePrincipal -Times 4 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERRoleDefinitionId -Times 4 -Exactly
     }
 }

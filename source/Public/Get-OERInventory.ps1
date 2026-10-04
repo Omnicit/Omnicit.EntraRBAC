@@ -135,6 +135,17 @@ function Get-OERInventory {
     the policies is reported through the InventoryPartial error and never stated as a fact: the kind
     whose read failed exports no entry, and a role selection made from an incomplete read is
     reported as partial.
+    The export never writes two entries that the validator would refuse as duplicates, so a document
+    it emits is not refused by Invoke-OERStructure for that reason. Live groups, administrative
+    units, catalogs, access reviews, or access packages of one catalog whose names match, without
+    regard to letter case, are left out of the document -- all of them -- and each such name is
+    reported through the InventoryPartial error, since the apply engine refuses an ambiguous name and
+    neither entry could be applied; leaving a top-level entry out removes nothing, because -Prune acts
+    on child collections only. Role assignments whose scope (compared in its canonical form), role
+    and principal collide are written with the principal's object id and, when the principal is
+    already an id, with the role's full definition id; principalType is then written for a user,
+    group or service principal. A role management policy read twice, for example by naming the same
+    role twice in -Role, is written once.
 
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
@@ -277,19 +288,20 @@ function Get-OERInventory {
         # live tenant). The key normalises that id away; the list still stores the FIRST full message
         # per key, so one concrete id survives as an example.
         $UnreadCauseKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits eighteen
-        # read-failure message shapes (group members, group owners, group PIM eligibility, group
+        # Cap on the DISTINCT causes named in the InventoryPartial message. The module emits nineteen
+        # cause message shapes (group members, group owners, group PIM eligibility, group
         # PIM-in-use criterion, group PIM policy, AU members, AU scoped roles, directory role
         # eligibility schedules, directory role assignment schedules, directory role policies,
         # access package resource role bindings, catalog resources, the catalog resource-name map,
         # the catalog list, a catalog's package list, an access package's assignment policies, an
-        # access review's access package name, an access review's assignment policy name), so
-        # eighteen admits one of each and a normal partial run is still reported in full; only a
-        # genuinely heterogeneous large-tenant failure is truncated, and the dropped count is stated
-        # rather than silently lost. Nothing is discarded either way -- every cause is written to the
-        # verbose stream as it is seen. Raise this with the shape count when a nineteenth
-        # read-failure message is added, or one shape starts crowding out another purely by ordering.
-        $UnreadCauseCap = 18
+        # access review's access package name, an access review's assignment policy name, and
+        # objects not written because two of them share a name), so nineteen admits one of each
+        # and a normal partial run is still reported in full; only a genuinely heterogeneous
+        # large-tenant failure is truncated, and the dropped count is stated rather than silently
+        # lost. Nothing is discarded either way -- every cause is written to the verbose stream as
+        # it is seen. Raise this with the shape count when a twentieth cause message is added, or
+        # one shape starts crowding out another purely by ordering.
+        $UnreadCauseCap = 19
 
         # Records one read-failure cause, normalised, deduplicated and capped. Local to this cmdlet
         # rather than repeated at the group and administrative-unit call sites, so the normalisation
@@ -307,6 +319,45 @@ function Get-OERInventory {
             if (-not [string]::IsNullOrWhiteSpace($Target)) { $Key = $Key.Replace($Target, '<id>') }
             if (-not $UnreadCauseKeys.Add($Key)) { return }
             if ($UnreadCauses.Count -lt $UnreadCauseCap) { $UnreadCauses.Add($Cause) }
+        }
+
+        # Two live objects whose names match without regard to letter case would be two document entries
+        # the validator refuses as a duplicate -- and the apply engine refuses an ambiguous name anyway, so
+        # neither entry could be applied. Neither is written. Each such name is reported through
+        # InventoryPartial (the unread entry is '<section>/<name>', the cause says why), so the document is
+        # never mistaken for a full snapshot. A top-level entry left out of the document removes nothing:
+        # Invoke-OERStructure prunes child collections only.
+        #
+        # -KeyOf must build the SAME key the validator (Test-OERStructureSchema) refuses a duplicate on,
+        # or a pair the validator refuses is written. An access package is keyed '<catalog>|<name>'
+        # there, so it is keyed that way here. -NameOf, when given, builds the name that is REPORTED
+        # for an entry ('<catalog>/<name>', the path an operator reads); without it the key is the name.
+        function Select-UniqueNamedEntry {
+            param([object[]]$Entry, [string]$Section, [scriptblock]$KeyOf, [scriptblock]$NameOf)
+            $Count = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($E in $Entry) {
+                $K = [string](& $KeyOf $E)
+                $Count[$K] = 1 + $(if ($Count.ContainsKey($K)) { $Count[$K] } else { 0 })
+            }
+            $Reported = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            foreach ($E in $Entry) {
+                $K = [string](& $KeyOf $E)
+                if ($Count[$K] -gt 1) {
+                    if ($Reported.Add($K)) {
+                        $ReportedName = if ($NameOf) { [string](& $NameOf $E) } else { $K }
+                        $Unread = "$Section/$ReportedName"
+                        $UnreadCollections.Add($Unread)
+                        $NameCause = "Two or more live objects share the name $Unread (compared without regard to letter case), " +
+                            'so none of them is written: the apply engine refuses an ambiguous name.'
+                        # Every cause is written to the verbose stream as it is seen, like at every other
+                        # Add-UnreadCause site: this one is added last, so it is the first the cap drops.
+                        Write-Verbose "Get-OERInventory: $NameCause"
+                        Add-UnreadCause -Cause $NameCause -Target $Unread
+                    }
+                    continue
+                }
+                $E
+            }
         }
 
         # Reads the display name of the access package or assignment policy an access review points
@@ -1159,6 +1210,9 @@ function Get-OERInventory {
                     foreach ($K in $ResolvedRa.Keys) { $PrincipalNameCache[$K] = $ResolvedRa[$K] }
                 }
 
+                # Projected first and added to the section below: whether two principals collide can
+                # only be decided once every row has its name.
+                $RaProjected = [System.Collections.Generic.List[object]]::new()
                 foreach ($Ra in $RaItems) {
                     $PrincipalName = if ($Ra.PrincipalId -and $PrincipalNameCache.ContainsKey([string]$Ra.PrincipalId)) {
                         $PrincipalNameCache[[string]$Ra.PrincipalId]
@@ -1192,8 +1246,50 @@ function Get-OERInventory {
                         $Proj.conditionVersion = $(if ($Ra.ConditionVersion) { [string]$Ra.ConditionVersion } else { '2.0' })
                     }
                     if ($IncludeId) { $Proj.id = $Ra.RoleAssignmentId }
-                    $RoleAssignments.Add([PSCustomObject]$Proj)
+                    $RaProjected.Add([PSCustomObject]@{ Ra = $Ra; Proj = $Proj; Type = $PrincipalType })
                 }
+
+                # Entra does not keep display names unique, a group can carry a user's user principal
+                # name as its display name, and Azure may return one scope in two spellings -- so two
+                # rows can export the same (scope, role, principal), which the validator refuses as a
+                # duplicate and so invalidates the whole document. The key is the validator's: the
+                # canonical scope, the role and the principal, compared without regard to letter case.
+                # Every row whose key collides moves its principal to the object id, the one name
+                # that is unique, and, when the type is known (ForeignGroup is a Group), stamps
+                # principalType so an id-named user or group is created as the right type on a
+                # re-apply. Users move too: a user's fallback name can be a display name, and a group
+                # can carry a user principal name. A colliding row whose principal already is its id
+                # then moves its role to the full role definition id, for two role definitions that
+                # share a display name. Repeated until nothing changes, since an object id can in turn
+                # equal another principal's name. Each change moves a field to its id, and a field
+                # moves only once, so it ends; what is left is one assignment read twice, which
+                # Azure does not return.
+                do {
+                    $RaKeyCount = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                    foreach ($Row in $RaProjected) {
+                        $RaKey = "$(ConvertTo-OERCanonicalScope -Scope ([string]$Row.Proj.scope))|$($Row.Proj.role)|$($Row.Proj.principal)"
+                        $RaKeyCount[$RaKey] = 1 + $(if ($RaKeyCount.ContainsKey($RaKey)) { $RaKeyCount[$RaKey] } else { 0 })
+                    }
+                    $RaMoved = $false
+                    foreach ($Row in $RaProjected) {
+                        $RaKey = "$(ConvertTo-OERCanonicalScope -Scope ([string]$Row.Proj.scope))|$($Row.Proj.role)|$($Row.Proj.principal)"
+                        if ($RaKeyCount[$RaKey] -le 1) { continue }
+                        if ($Row.Ra.PrincipalId -and [string]$Row.Proj.principal -ne [string]$Row.Ra.PrincipalId) {
+                            $Row.Proj.principal = [string]$Row.Ra.PrincipalId
+                            if ($Row.Type -in @('User', 'Group', 'ServicePrincipal')) {
+                                # principalType belongs directly after principal, where it sits for a
+                                # service principal, so the entry keeps its key order.
+                                if ($Row.Proj.Contains('principalType')) { $Row.Proj.principalType = $Row.Type }
+                                else { $Row.Proj.Insert(3, 'principalType', $Row.Type) }
+                            }
+                            $RaMoved = $true
+                        } elseif ($Row.Ra.RoleDefinitionId -and [string]$Row.Proj.role -ne [string]$Row.Ra.RoleDefinitionId) {
+                            $Row.Proj.role = [string]$Row.Ra.RoleDefinitionId
+                            $RaMoved = $true
+                        }
+                    }
+                } while ($RaMoved)
+                foreach ($Row in $RaProjected) { $RoleAssignments.Add([PSCustomObject]$Row.Proj) }
             }
         }
 
@@ -1711,23 +1807,31 @@ function Get-OERInventory {
                     elseif ($AllRolesAtScope) { Get-OERRoleManagementPolicy -AllRolesAtScope @ScopeParams }
                     else { foreach ($R in $Role) { Get-OERRoleManagementPolicy -Role $R @ScopeParams } }
                 )
+                $RmpSeen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 foreach ($Rmp in $Policies) {
                     # ConvertTo-OERInventoryRoleManagementPolicy owns the entry shape, shared with the
                     # directoryRoleManagementPolicies section; without -Directory it is the Azure
                     # roleManagementPolicies entry, scope first.
                     $RmpEntry = ConvertTo-OERInventoryRoleManagementPolicy -Policy $Rmp
+                    # The same policy read twice (-Role Reader,Reader, for one) would be two entries
+                    # the validator refuses as a duplicate. The scope is compared in the canonical
+                    # form the validator uses, the role without regard to letter case. Dropping the
+                    # second loses nothing, since it is the one policy, so nothing is reported.
+                    if (-not $RmpSeen.Add("$(ConvertTo-OERCanonicalScope -Scope ([string]$RmpEntry.scope))|$($RmpEntry.role)")) { continue }
                     if ($IncludeId) { $RmpEntry | Add-Member -NotePropertyName 'id' -NotePropertyValue $Rmp.PolicyId }
                     $RoleManagementPolicies.Add($RmpEntry)
                 }
             }
         }
 
+        # Select-UniqueNamedEntry runs while these arguments are evaluated, which is before the
+        # InventoryPartial check below, so the objects it leaves out are reported with the rest.
         ConvertTo-OERInventory `
-            -Groups $Groups.ToArray() `
-            -AdministrativeUnits $AdministrativeUnits.ToArray() `
-            -Catalogs $Catalogs.ToArray() `
-            -AccessPackages $AccessPackages.ToArray() `
-            -AccessReviews $AccessReviews.ToArray() `
+            -Groups @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName }) `
+            -AdministrativeUnits @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName }) `
+            -Catalogs @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName }) `
+            -AccessPackages @(Select-UniqueNamedEntry -Entry $AccessPackages.ToArray() -Section 'accessPackages' -KeyOf { param($E) "$($E.catalog)|$($E.displayName)" } -NameOf { param($E) "$($E.catalog)/$($E.displayName)" }) `
+            -AccessReviews @(Select-UniqueNamedEntry -Entry $AccessReviews.ToArray() -Section 'accessReviews' -KeyOf { param($E) $E.displayName }) `
             -DirectoryRoleManagementPolicies $DirectoryRoleManagementPolicies.ToArray() `
             -DirectoryRoleAssignments $DirectoryRoleAssignments.ToArray() `
             -RoleAssignments $RoleAssignments.ToArray() `
