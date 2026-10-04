@@ -109,8 +109,8 @@ function Test-OERStructureSchema {
     group) must be a non-empty string (Error); one equal to displayName, ignoring case, is a
     Warning, since both names then find the same group and a case-only rename is not possible
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
-    as for every other key, and a template-based group's computed name is not compared. A groups[] entry
-    declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
+    as for every other key, and that Warning does not compare a template-based group's computed name.
+    A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
     displayName, case-insensitively) exists in the same
     document but does not name the group in its members is a Warning (issue #59): administrativeUnit
     is applied only when the group is created and never round-trips, so without the reciprocal members
@@ -119,8 +119,24 @@ function Test-OERStructureSchema {
     every later apply, and nothing self-heals it. Nothing is reported when the referenced unit is not
     declared in the document (it may be managed elsewhere), when the unit declares members as an
     explicit null (the documented signal that skips reconciling that collection entirely), or when
-    the group is template-based (its real displayName is
-    computed by the naming engine at apply time and cannot be resolved offline). An OMITTED
+    the group is template-based (this check deliberately keeps to a declared displayName, so that no
+    document that passed before starts warning, although the naming engine can compute the name
+    offline, as the duplicate check below does). A second top-level entry whose key matches an
+    earlier one, compared without regard to letter case, is an Error at the later entry's path
+    that names the earlier entry's index, since the two describe one live object and applying both
+    makes each undo the other, or through a child collection removes what the other declared, on
+    every run. The keys are: for groups, the group name (displayName, or for a template-based entry
+    the name Resolve-OERName computes from template and tokens; an entry whose name cannot be
+    computed, for instance through an unknown token, claims no name) together with a declared
+    previousDisplayName, which is compared against the names and previous names of every earlier
+    entry; for administrativeUnits, catalogs and accessReviews, displayName; for accessPackages,
+    catalog together with displayName; for roleAssignments, scope, role and principal; for
+    roleManagementPolicies, scope and role; for directoryRoleManagementPolicies, role. A scope is
+    compared in the canonical form ConvertTo-OERCanonicalScope owns, a pure helper that the apply
+    engine shares, so sub: and subscription: with an id, mg:, and a trailing slash are spellings of
+    one scope; the comparison never resolves a scope online. A role or principal is compared as
+    written. An entry missing a key part is not compared. directoryRoleAssignments keeps its own
+    check, described above. An OMITTED
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
     each of those is still reconciled against an empty declared set when its key is omitted, so
@@ -209,6 +225,28 @@ function Test-OERStructureSchema {
                 'declares this enum case-sensitively (draft-07), so a validator outside the module rejects it.')
     }
 
+    # BL-02: a second top-level entry whose key matches an earlier one (without regard to letter case)
+    # describes the same live object twice, and applying both makes each undo the other -- or, through
+    # a child collection, remove what the other declared -- on every run. One rule, one message shape,
+    # for every section; directoryRoleAssignments keeps its own older check (Rule 10c).
+    # -Seen maps a key to the index of the first entry that claimed it and must be built with
+    # StringComparer.OrdinalIgnoreCase; a second claim is reported against that first index and is
+    # never recorded, so every later copy names the same earlier entry.
+    function Add-DuplicateEntryFinding {
+        param(
+            [System.Collections.Generic.Dictionary[string, int]]$Seen,
+            [string]$Key, [int]$Index, [string]$Section, [string]$Item, [string]$Path,
+            [string]$What, [string]$Consequence
+        )
+        if ($Seen.ContainsKey($Key)) {
+            Add-Finding -Section $Section -Item $Item -Path $Path `
+                -Message ("$Path declares the same $What as $($Section)[$($Seen[$Key])] (compared without regard to letter case). " +
+                    "$Consequence Keep one entry.")
+            return
+        }
+        $Seen[$Key] = $Index
+    }
+
     $KnownTop = @('version', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
         'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
         'roleAssignments', 'roleManagementPolicies')
@@ -260,6 +298,11 @@ function Test-OERStructureSchema {
                 activationAlertRecipients = 'notifications.activationAlert'
             }
 
+            # One dictionary for both kinds of name an entry claims (its own name and its
+            # previousDisplayName): either one finds the same live group as another entry's.
+            $GroupNameSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $GroupConsequence = 'Both entries reconcile one group, so each would undo the other''s settings and, under -Prune, remove the members the other declares.'
+
             for ($I = 0; $I -lt $Groups.Count; $I++) {
                 $G = $Groups[$I]
                 $GPath = "groups[$I]"
@@ -300,6 +343,42 @@ function Test-OERStructureSchema {
                         Add-Finding -Section 'groups' -Item $GItem -Path "$GPath.previousDisplayName" -Severity 'Warning' `
                             -Message "'previousDisplayName' at $GPath equals displayName ignoring case; a case-only rename is not possible through the document -- use Set-OERGroup -NewDisplayName."
                     }
+                }
+
+                # BL-02: the names this entry claims are its own name and its previousDisplayName. A
+                # template-based entry's name is computed with the naming engine, with the token
+                # conversion Sync-OERStructureGroup applies; an unknown token (or any other refusal)
+                # throws, and an entry whose name cannot be computed claims no name here -- the apply
+                # engine reports that entry Failed on its own. Each claim is checked against the
+                # EARLIER entries' claims only: the previousDisplayName is not claimed at all when it
+                # equals this entry's own name, so an entry whose displayName equals its own
+                # previousDisplayName (already a Warning above) is not a duplicate of itself.
+                $GroupNameKey = $null
+                if ($HasDN) {
+                    $GroupNameKey = [string]$G.displayName
+                } elseif ($HasTpl -and -not [string]::IsNullOrEmpty([string]$G.template)) {
+                    $GroupTokenHash = @{}
+                    if ((Test-HasProp -Node $G -Name 'tokens') -and $G.tokens -is [PSCustomObject]) {
+                        foreach ($GroupTokenProp in $G.tokens.PSObject.Properties) {
+                            $GroupTokenHash[$GroupTokenProp.Name] = $GroupTokenProp.Value
+                        }
+                    }
+                    try {
+                        $GroupNameKey = Resolve-OERName -Template ([string]$G.template) -Tokens $GroupTokenHash
+                    } catch {
+                        $GroupNameKey = $null
+                    }
+                }
+                if ($null -ne $GroupNameKey) {
+                    Add-DuplicateEntryFinding -Seen $GroupNameSeen -Key $GroupNameKey -Index $I -Section 'groups' `
+                        -Item $GItem -Path $GPath -What "group name '$GroupNameKey'" -Consequence $GroupConsequence
+                }
+                if ((Test-HasProp -Node $G -Name 'previousDisplayName') -and
+                    $G.previousDisplayName -is [string] -and $G.previousDisplayName.Length -gt 0 -and
+                    ($null -eq $GroupNameKey -or $G.previousDisplayName -ine $GroupNameKey)) {
+                    Add-DuplicateEntryFinding -Seen $GroupNameSeen -Key $G.previousDisplayName -Index $I -Section 'groups' `
+                        -Item $GItem -Path "$GPath.previousDisplayName" -What "group name '$($G.previousDisplayName)'" `
+                        -Consequence $GroupConsequence
                 }
 
                 foreach ($GStringProp in @('mailNickname', 'administrativeUnit')) {
@@ -529,6 +608,7 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'administrativeUnits') {
         if (Test-SectionIsArray -SectionName 'administrativeUnits') {
             $AUs = @($Document.administrativeUnits)
+            $AUSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $AUs.Count; $I++) {
                 $AU = $AUs[$I]
                 $AUPath = "administrativeUnits[$I]"
@@ -537,6 +617,12 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $AU -Name 'displayName')) {
                     Add-Finding -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
                         -Message "'displayName' is required at $AUPath."
+                } else {
+                    Add-DuplicateEntryFinding -Seen $AUSeen -Key ([string]$AU.displayName) -Index $I `
+                        -Section 'administrativeUnits' -Item $AUItem -Path $AUPath `
+                        -What "display name '$($AU.displayName)'" `
+                        -Consequence ('Both entries reconcile one administrative unit, so each would undo the other''s settings and, ' +
+                            'under -Prune, remove the members and scoped roles the other declares.')
                 }
 
                 foreach ($AUBoolProp in @('dynamic', 'restricted', 'hiddenMembership')) {
@@ -608,6 +694,7 @@ function Test-OERStructureSchema {
         if (Test-SectionIsArray -SectionName 'catalogs') {
             $ValidResourceTypes = @(Resolve-OERStructureEnumCasing -EnumName 'catalogResourceType' -List)
             $Cats = @($Document.catalogs)
+            $CatSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $Cats.Count; $I++) {
                 $Cat = $Cats[$I]
                 $CatPath = "catalogs[$I]"
@@ -616,6 +703,12 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $Cat -Name 'displayName')) {
                     Add-Finding -Section 'catalogs' -Item $CatItem -Path $CatPath `
                         -Message "'displayName' is required at $CatPath."
+                } else {
+                    Add-DuplicateEntryFinding -Seen $CatSeen -Key ([string]$Cat.displayName) -Index $I `
+                        -Section 'catalogs' -Item $CatItem -Path $CatPath `
+                        -What "display name '$($Cat.displayName)'" `
+                        -Consequence ('Both entries reconcile one catalog, so each would undo the other''s settings and, ' +
+                            'under -Prune, remove the resources the other declares.')
                 }
 
                 if (Test-HasProp -Node $Cat -Name 'externallyVisible') {
@@ -680,6 +773,7 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'accessPackages') {
         if (Test-SectionIsArray -SectionName 'accessPackages') {
             $APs = @($Document.accessPackages)
+            $APSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $APs.Count; $I++) {
                 $AP = $APs[$I]
                 $APPath = "accessPackages[$I]"
@@ -692,6 +786,15 @@ function Test-OERStructureSchema {
                 if (-not (Test-HasProp -Node $AP -Name 'catalog')) {
                     Add-Finding -Section 'accessPackages' -Item $APItem -Path $APPath `
                         -Message "'catalog' is required at $APPath."
+                }
+                if ((Test-HasProp -Node $AP -Name 'displayName') -and (Test-HasProp -Node $AP -Name 'catalog')) {
+                    # A package is identified by its catalog together with its display name: the same
+                    # name in two catalogs is two packages.
+                    Add-DuplicateEntryFinding -Seen $APSeen -Key "$($AP.catalog)|$($AP.displayName)" -Index $I `
+                        -Section 'accessPackages' -Item $APItem -Path $APPath `
+                        -What "catalog '$($AP.catalog)' and display name '$($AP.displayName)'" `
+                        -Consequence ('Both entries reconcile one access package, so each would undo the other''s settings and, ' +
+                            'under -Prune, remove the resource role bindings the other declares.')
                 }
 
                 if (Test-HasProp -Node $AP -Name 'hidden') {
@@ -1042,6 +1145,7 @@ function Test-OERStructureSchema {
         if (Test-SectionIsArray -SectionName 'accessReviews') {
             $ValidRecurrence = @(Resolve-OERStructureEnumCasing -EnumName 'accessReviewRecurrence' -List)
             $ARs = @($Document.accessReviews)
+            $ARSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $ARs.Count; $I++) {
                 $AR = $ARs[$I]
                 $ARPath = "accessReviews[$I]"
@@ -1053,6 +1157,12 @@ function Test-OERStructureSchema {
                             -Path "$ARPath.$Req" `
                             -Message "'$Req' is required at $ARPath."
                     }
+                }
+                if (Test-HasProp -Node $AR -Name 'displayName') {
+                    Add-DuplicateEntryFinding -Seen $ARSeen -Key ([string]$AR.displayName) -Index $I `
+                        -Section 'accessReviews' -Item $ARItem -Path $ARPath `
+                        -What "display name '$($AR.displayName)'" `
+                        -Consequence 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
                 }
 
                 if (Test-HasProp -Node $AR -Name 'recurrence') {
@@ -1196,6 +1306,7 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'roleAssignments') {
         if (Test-SectionIsArray -SectionName 'roleAssignments') {
             $RAs = @($Document.roleAssignments)
+            $RASeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $RAs.Count; $I++) {
                 $RA = $RAs[$I]
                 $RAPath = "roleAssignments[$I]"
@@ -1211,6 +1322,20 @@ function Test-OERStructureSchema {
                             -Path "$RAPath.$Req" `
                             -Message "'$Req' is required at $RAPath."
                     }
+                }
+                # The scope is compared in the canonical form ConvertTo-OERCanonicalScope owns (a pure
+                # helper shared with the apply engine; the validator must never resolve a scope online).
+                # A role is compared as written: a role by name in one entry and by id in another cannot
+                # be told apart offline, and the apply engine's own check catches that pair.
+                if ((Test-HasProp -Node $RA -Name 'scope') -and (Test-HasProp -Node $RA -Name 'role') -and
+                    (Test-HasProp -Node $RA -Name 'principal')) {
+                    $RACanonicalScope = ConvertTo-OERCanonicalScope -Scope ([string]$RA.scope)
+                    Add-DuplicateEntryFinding -Seen $RASeen -Key "$RACanonicalScope|$($RA.role)|$($RA.principal)" -Index $I `
+                        -Section 'roleAssignments' -Item $RAItem -Path $RAPath `
+                        -What 'scope, role and principal' `
+                        -Consequence ('Both entries describe one role assignment (the scope is compared in its canonical form: ' +
+                            'sub: and subscription: with an id, mg: and a trailing ''/'' are spellings of one scope), so applying ' +
+                            'the document would rewrite its condition and description on every run.')
                 }
 
                 if (Test-HasProp -Node $RA -Name 'principalType') {
@@ -1375,12 +1500,21 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'roleManagementPolicies') {
         if (Test-SectionIsArray -SectionName 'roleManagementPolicies') {
             $RMPs = @($Document.roleManagementPolicies)
+            $RMPSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $RMPs.Count; $I++) {
                 $RMP = $RMPs[$I]
                 $RMPPath = "roleManagementPolicies[$I]"
                 $RMPItem = if (Test-HasProp -Node $RMP -Name 'role') { $RMP.role } else { "roleManagementPolicies[$I]" }
                 Test-PimPolicySectionItem -Node $RMP -Section 'roleManagementPolicies' -Path $RMPPath -Item $RMPItem `
                     -KnownKey (@('scope') + $PimPolicyItemKey) -RequiredKey @('scope', 'role') -PimLabel 'Azure PIM'
+                if ((Test-HasProp -Node $RMP -Name 'scope') -and (Test-HasProp -Node $RMP -Name 'role')) {
+                    $RMPCanonicalScope = ConvertTo-OERCanonicalScope -Scope ([string]$RMP.scope)
+                    Add-DuplicateEntryFinding -Seen $RMPSeen -Key "$RMPCanonicalScope|$($RMP.role)" -Index $I `
+                        -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath `
+                        -What 'scope and role' `
+                        -Consequence ('Both entries describe one policy (the scope is compared in its canonical form), so applying ' +
+                            'the document would rewrite its settings on every run.')
+                }
             }
         }
     }
@@ -1391,12 +1525,19 @@ function Test-OERStructureSchema {
     if (Test-HasProp -Node $Document -Name 'directoryRoleManagementPolicies') {
         if (Test-SectionIsArray -SectionName 'directoryRoleManagementPolicies') {
             $DRMPs = @($Document.directoryRoleManagementPolicies)
+            $DRMPSeen = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
             for ($I = 0; $I -lt $DRMPs.Count; $I++) {
                 $DRMP = $DRMPs[$I]
                 $DRMPPath = "directoryRoleManagementPolicies[$I]"
                 $DRMPItem = if (Test-HasProp -Node $DRMP -Name 'role') { $DRMP.role } else { "directoryRoleManagementPolicies[$I]" }
                 Test-PimPolicySectionItem -Node $DRMP -Section 'directoryRoleManagementPolicies' -Path $DRMPPath -Item $DRMPItem `
                     -KnownKey $PimPolicyItemKey -RequiredKey @('role') -PimLabel 'PIM'
+                if (Test-HasProp -Node $DRMP -Name 'role') {
+                    Add-DuplicateEntryFinding -Seen $DRMPSeen -Key ([string]$DRMP.role) -Index $I `
+                        -Section 'directoryRoleManagementPolicies' -Item $DRMPItem -Path $DRMPPath `
+                        -What "role '$($DRMP.role)'" `
+                        -Consequence 'Both entries describe one policy, so applying the document would rewrite its settings on every run.'
+                }
             }
         }
     }
@@ -1408,7 +1549,9 @@ function Test-OERStructureSchema {
     # same role, principal and assignmentType would describe one live assignment twice; the handler
     # would re-issue its window for each of them on every run, so the second is an Error. The key is
     # compared as written, without regard to letter case: a role written by name in one entry and by
-    # id in another cannot be told apart offline. A service principal named by display name rather
+    # id in another cannot be told apart offline. (The other sections share the newer
+    # Add-DuplicateEntryFinding helper and its message shape; this older rule keeps its own wording,
+    # which its tests pin.) A service principal named by display name rather
     # than object id is a Warning: display names are not unique, and an apply run refuses an ambiguous
     # one (AmbiguousName; the entry reports Failed).
     if (Test-HasProp -Node $Document -Name 'directoryRoleAssignments') {
@@ -1580,10 +1723,11 @@ function Test-OERStructureSchema {
             $PAuName = [string]$PGroup.administrativeUnit
             if ([string]::IsNullOrEmpty($PAuName)) { continue }
 
-            # A template-based group's real displayName is produced by Resolve-OERName at apply time
-            # (token substitution); this offline validator has no naming engine to compute it against
-            # and cannot resolve the eventual name, so it emits nothing here rather than risk a false
-            # positive against the raw template placeholder text.
+            # A template-based group's real displayName is produced by Resolve-OERName (token
+            # substitution), which is pure and offline, so this validator could compute it -- the
+            # duplicate-name check in Rule 3 + Rule 4 does. This rule deliberately keeps to a declared
+            # displayName anyway: computing the name here would make documents that passed before start
+            # warning, and the placement Warning is the older, narrower rule.
             if (-not (Test-HasProp -Node $PGroup -Name 'displayName')) { continue }
             $PGroupName = [string]$PGroup.displayName
 

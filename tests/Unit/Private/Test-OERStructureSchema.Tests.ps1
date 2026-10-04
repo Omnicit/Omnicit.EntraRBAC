@@ -3468,3 +3468,425 @@ Describe 'Test-OERStructureSchema group previousDisplayName' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema duplicate entries' {
+    # BL-02: a second top-level entry whose key matches an earlier one, without regard to letter case,
+    # describes the same live object twice. Every section except directoryRoleAssignments (which keeps
+    # its own older check, covered above) refuses it as an Error at the later entry, naming the
+    # earlier index. Each section test builds three entries -- an unrelated one first, so the earlier
+    # index the message names is 1 and not a trivially-correct 0 -- and a twin of entry 1 last.
+    BeforeAll {
+        function New-DupDoc {
+            param([string]$Section, [string[]]$ItemJson)
+            ('{ "version": "1.0", "' + $Section + '": [ ' + ($ItemJson -join ', ') + ' ] }') | ConvertFrom-Json
+        }
+        function Invoke-DupValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+        function Get-DupError {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Severity -eq 'Error' })
+        }
+        function Get-DupFinding {
+            param([object]$Validation)
+            @($Validation.Errors | Where-Object { $_.Message -match 'declares the same' })
+        }
+    }
+
+    $SectionCases = @(
+        @{
+            Section   = 'groups'
+            Phrase    = 'Both entries reconcile one group, so each would undo the other''s settings and, under -Prune, remove the members the other declares.'
+            Other     = '{ "displayName": "grp_other", "members": null }'
+            First     = '{ "displayName": "Role_Sec_HR", "members": null }'
+            Second    = '{ "displayName": "ROLE_SEC_hr", "members": null }'
+            Different = '{ "displayName": "Role_Sec_Fin", "members": null }'
+        }
+        @{
+            Section   = 'administrativeUnits'
+            Phrase    = 'Both entries reconcile one administrative unit, so each would undo the other''s settings and, under -Prune, remove the members and scoped roles the other declares.'
+            Other     = '{ "displayName": "AU_Other", "members": null, "scopedRoles": null }'
+            First     = '{ "displayName": "AU_Finance", "members": null, "scopedRoles": null }'
+            Second    = '{ "displayName": "au_FINANCE", "members": null, "scopedRoles": null }'
+            Different = '{ "displayName": "AU_Sales", "members": null, "scopedRoles": null }'
+        }
+        @{
+            Section   = 'catalogs'
+            Phrase    = 'Both entries reconcile one catalog, so each would undo the other''s settings and, under -Prune, remove the resources the other declares.'
+            Other     = '{ "displayName": "Catalog Other", "resources": null }'
+            First     = '{ "displayName": "Catalog A", "resources": null }'
+            Second    = '{ "displayName": "CATALOG a", "resources": null }'
+            Different = '{ "displayName": "Catalog B", "resources": null }'
+        }
+        @{
+            Section   = 'accessPackages'
+            Phrase    = 'Both entries reconcile one access package, so each would undo the other''s settings and, under -Prune, remove the resource role bindings the other declares.'
+            Other     = '{ "displayName": "Package Other", "catalog": "Catalog A", "resourceRoles": null }'
+            First     = '{ "displayName": "Package One", "catalog": "Catalog A", "resourceRoles": null }'
+            Second    = '{ "displayName": "PACKAGE one", "catalog": "CATALOG a", "resourceRoles": null }'
+            Different = '{ "displayName": "Package Two", "catalog": "Catalog A", "resourceRoles": null }'
+        }
+        @{
+            Section   = 'accessReviews'
+            Phrase    = 'Both entries reconcile one access review, so applying the document would rewrite its settings on every run.'
+            Other     = '{ "displayName": "Review Other", "accessPackage": "Package One", "assignmentPolicy": "Policy" }'
+            First     = '{ "displayName": "Quarterly Review", "accessPackage": "Package One", "assignmentPolicy": "Policy" }'
+            Second    = '{ "displayName": "QUARTERLY review", "accessPackage": "Package One", "assignmentPolicy": "Policy" }'
+            Different = '{ "displayName": "Annual Review", "accessPackage": "Package One", "assignmentPolicy": "Policy" }'
+        }
+        @{
+            Section   = 'roleAssignments'
+            Phrase    = 'Both entries describe one role assignment (the scope is compared in its canonical form: sub: and subscription: with an id, mg: and a trailing ''/'' are spellings of one scope), so applying the document would rewrite its condition and description on every run.'
+            Other     = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-other", "role": "Reader", "principal": "person1@example.com" }'
+            First     = '{ "scope": "sub:aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }'
+            Second    = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001/", "role": "READER", "principal": "PERSON1@example.com" }'
+            Different = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001/", "role": "READER", "principal": "person2@example.com" }'
+        }
+        @{
+            Section   = 'roleManagementPolicies'
+            Phrase    = 'Both entries describe one policy (the scope is compared in its canonical form), so applying the document would rewrite its settings on every run.'
+            Other     = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-other", "role": "Reader" }'
+            First     = '{ "scope": "mg:plat", "role": "Contributor" }'
+            Second    = '{ "scope": "/providers/Microsoft.Management/managementGroups/PLAT", "role": "contributor" }'
+            Different = '{ "scope": "/providers/Microsoft.Management/managementGroups/PLAT", "role": "Owner" }'
+        }
+        @{
+            Section   = 'directoryRoleManagementPolicies'
+            Phrase    = 'Both entries describe one policy, so applying the document would rewrite its settings on every run.'
+            Other     = '{ "role": "Global Reader" }'
+            First     = '{ "role": "Reports Reader" }'
+            Second    = '{ "role": "reports READER" }'
+            Different = '{ "role": "Message Center Reader" }'
+        }
+    )
+
+    It 'refuses a <Section> entry that repeats an earlier key in another letter case, and accepts a different key' -ForEach $SectionCases {
+        $Dup = New-DupDoc -Section $Section -ItemJson @($Other, $First, $Second)
+        $Distinct = New-DupDoc -Section $Section -ItemJson @($Other, $First, $Different)
+
+        $V = Invoke-DupValidation -Doc $Dup
+        $V.Valid | Should -BeFalse
+        $Errs = @(Get-DupError -Validation $V)
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "${Section}[2]"
+        $Errs[0].Message | Should -Match ([regex]::Escape("${Section}[2] declares the same "))
+        $Errs[0].Message | Should -Match ([regex]::Escape(" as ${Section}[1] (compared without regard to letter case). "))
+        $Errs[0].Message | Should -Not -Match ([regex]::Escape("${Section}[0]"))
+        $Errs[0].Message | Should -Match ([regex]::Escape($Phrase))
+        $Errs[0].Message | Should -Match 'Keep one entry\.$'
+
+        $Vd = Invoke-DupValidation -Doc $Distinct
+        @(Get-DupFinding -Validation $Vd).Count | Should -Be 0
+        @(Get-DupError -Validation $Vd).Count | Should -Be 0
+        $Vd.Valid | Should -BeTrue
+    }
+
+    It 'names every later copy against the first entry, not against the previous copy' {
+        $Doc = New-DupDoc -Section 'catalogs' -ItemJson @(
+            '{ "displayName": "Catalog A", "resources": null }'
+            '{ "displayName": "catalog a", "resources": null }'
+            '{ "displayName": "CATALOG A", "resources": null }'
+        )
+        $Errs = @(Get-DupError -Validation (Invoke-DupValidation -Doc $Doc))
+        $Errs.Count | Should -Be 2
+        $Errs[0].Path | Should -BeExactly 'catalogs[1]'
+        $Errs[0].Message | Should -Match ([regex]::Escape(' as catalogs[0] ('))
+        $Errs[1].Path | Should -BeExactly 'catalogs[2]'
+        $Errs[1].Message | Should -Match ([regex]::Escape(' as catalogs[0] ('))
+    }
+
+    It 'words the finding exactly for a catalog entry' {
+        $Doc = New-DupDoc -Section 'catalogs' -ItemJson @(
+            '{ "displayName": "Catalog A", "resources": null }'
+            '{ "displayName": "CATALOG a", "resources": null }'
+        )
+        $Errs = @(Get-DupError -Validation (Invoke-DupValidation -Doc $Doc))
+        $Errs.Count | Should -Be 1
+        $Errs[0].Item | Should -BeExactly 'CATALOG a'
+        $Errs[0].Message | Should -BeExactly ("catalogs[1] declares the same display name 'CATALOG a' as catalogs[0] (compared without regard to letter case). " +
+            'Both entries reconcile one catalog, so each would undo the other''s settings and, under -Prune, remove the resources the other declares. Keep one entry.')
+    }
+
+    It 'keeps each section''s keys apart, so the same name in different sections is not a duplicate' {
+        $Doc = ('{ "version": "1.0", ' +
+            '"groups": [ { "displayName": "Shared Name", "members": null } ], ' +
+            '"administrativeUnits": [ { "displayName": "shared name", "members": null, "scopedRoles": null } ], ' +
+            '"catalogs": [ { "displayName": "SHARED NAME", "resources": null }, { "displayName": "shared NAME", "resources": null } ] }') | ConvertFrom-Json
+        $V = Invoke-DupValidation -Doc $Doc
+        # The catalogs twin proves the rule ran; groups and administrativeUnits must stay silent.
+        $Hit = @(Get-DupFinding -Validation $V)
+        $Hit.Count | Should -Be 1
+        $Hit[0].Path | Should -BeExactly 'catalogs[1]'
+        $Hit[0].Section | Should -BeExactly 'catalogs'
+    }
+
+    Context 'groups' {
+        It 'refuses a group whose name collides with a template-computed name: <Case>' -ForEach @(
+            @{
+                Case            = 'displayName after template'
+                Items           = @(
+                    '{ "displayName": "grp_other", "members": null }'
+                    '{ "template": "role_{env}", "tokens": { "env": "x" }, "members": null }'
+                    '{ "displayName": "ROLE_X", "members": null }'
+                )
+                ExpectedPath    = 'groups[2]'
+                ExpectedEarlier = 'groups[1]'
+            }
+            @{
+                Case            = 'template after displayName'
+                Items           = @(
+                    '{ "displayName": "grp_other", "members": null }'
+                    '{ "displayName": "ROLE_X", "members": null }'
+                    '{ "template": "role_{env}", "tokens": { "env": "x" }, "members": null }'
+                )
+                ExpectedPath    = 'groups[2]'
+                ExpectedEarlier = 'groups[1]'
+            }
+            @{
+                Case            = 'two templates computing one name, tokens matched without regard to letter case'
+                Items           = @(
+                    '{ "displayName": "grp_other", "members": null }'
+                    '{ "template": "role_{env}", "tokens": { "env": "x" }, "members": null }'
+                    '{ "template": "ROLE_{Area}", "tokens": { "AREA": "X" }, "members": null }'
+                )
+                ExpectedPath    = 'groups[2]'
+                ExpectedEarlier = 'groups[1]'
+            }
+        ) {
+            $V = Invoke-DupValidation -Doc (New-DupDoc -Section 'groups' -ItemJson $Items)
+            $Errs = @(Get-DupError -Validation $V)
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly $ExpectedPath
+            $Errs[0].Message | Should -Match ([regex]::Escape(" as $ExpectedEarlier ("))
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'names the computed name of a template-based group in the finding' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "ROLE_X", "members": null }'
+                '{ "template": "role_{env}", "tokens": { "env": "x" }, "members": null }'
+            )
+            $Errs = @(Get-DupError -Validation (Invoke-DupValidation -Doc $Doc))
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'groups[1]'
+            $Errs[0].Message | Should -Match ([regex]::Escape("groups[1] declares the same group name 'role_x' as groups[0] "))
+        }
+
+        It 'refuses a later previousDisplayName that equals an earlier displayName' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "Old_Name", "members": null }'
+                '{ "displayName": "New_Name", "previousDisplayName": "old_name", "members": null }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            $Errs = @(Get-DupError -Validation $V)
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'groups[1].previousDisplayName'
+            $Errs[0].Message | Should -Match ([regex]::Escape("groups[1].previousDisplayName declares the same group name 'old_name' as groups[0] "))
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'refuses a later displayName that equals an earlier previousDisplayName' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "New_Name", "previousDisplayName": "Old_Name", "members": null }'
+                '{ "displayName": "old_NAME", "members": null }'
+            )
+            $Errs = @(Get-DupError -Validation (Invoke-DupValidation -Doc $Doc))
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'groups[1]'
+            $Errs[0].Message | Should -Match ([regex]::Escape(' as groups[0] ('))
+        }
+
+        It 'refuses two entries that share one previousDisplayName' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "New_A", "previousDisplayName": "old", "members": null }'
+                '{ "displayName": "New_B", "previousDisplayName": "OLD", "members": null }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            $Errs = @(Get-DupError -Validation $V)
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'groups[1].previousDisplayName'
+            $Errs[0].Message | Should -Match ([regex]::Escape(' as groups[0] ('))
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'does not count an entry whose displayName equals its own previousDisplayName as a duplicate of itself' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "role_sec_hr", "previousDisplayName": "ROLE_SEC_HR", "members": null }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            # The existing Warning is still there, so the group was reached; only the new rule is silent.
+            $Warn = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].previousDisplayName' })
+            $Warn.Count | Should -Be 1
+            $Warn[0].Severity | Should -BeExactly 'Warning'
+            @(Get-DupFinding -Validation $V).Count | Should -Be 0
+            $V.Valid | Should -BeTrue
+        }
+
+        It 'makes no claim for a template with an unknown token, and does not throw' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "template": "role_{env}", "tokens": { "other": "x" }, "members": null }'
+                '{ "template": "role_{env}", "tokens": { "other": "x" }, "members": null }'
+                '{ "displayName": "Role_Real", "members": null }'
+                '{ "displayName": "ROLE_REAL", "members": null }'
+            )
+            { Invoke-DupValidation -Doc $Doc } | Should -Not -Throw
+            $V = Invoke-DupValidation -Doc $Doc
+            # The real twin after the template entries proves the loop ran past them.
+            $Hit = @(Get-DupFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[3]'
+            $Hit[0].Message | Should -Match ([regex]::Escape(' as groups[2] ('))
+        }
+
+        It 'makes no claim for a previousDisplayName that is not a non-empty string' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "displayName": "New_A", "previousDisplayName": 42, "members": null }'
+                '{ "displayName": "New_B", "previousDisplayName": 42, "members": null }'
+                '{ "displayName": "New_C", "previousDisplayName": "", "members": null }'
+                '{ "displayName": "New_D", "previousDisplayName": "", "members": null }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            # The four existing Errors are there, so every entry was reached; none of them is a duplicate.
+            @(Get-DupError -Validation $V | Where-Object { $_.Message -match 'must be a non-empty string' }).Count | Should -Be 4
+            @(Get-DupFinding -Validation $V).Count | Should -Be 0
+        }
+    }
+
+    Context 'accessPackages' {
+        It 'compares the catalog and the display name together, so one name in two catalogs is two packages' {
+            $Doc = New-DupDoc -Section 'accessPackages' -ItemJson @(
+                '{ "displayName": "Package One", "catalog": "Catalog A", "resourceRoles": null }'
+                '{ "displayName": "package one", "catalog": "Catalog B", "resourceRoles": null }'
+                '{ "displayName": "PACKAGE ONE", "catalog": "catalog b", "resourceRoles": null }'
+            )
+            $Errs = @(Get-DupError -Validation (Invoke-DupValidation -Doc $Doc))
+            # Only the third entry repeats a (catalog, name) pair, and it repeats the second.
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'accessPackages[2]'
+            $Errs[0].Message | Should -BeExactly ("accessPackages[2] declares the same catalog 'catalog b' and display name 'PACKAGE ONE' as accessPackages[1] (compared without regard to letter case). " +
+                'Both entries reconcile one access package, so each would undo the other''s settings and, under -Prune, remove the resource role bindings the other declares. Keep one entry.')
+        }
+    }
+
+    Context 'roleAssignments and roleManagementPolicies scope spellings' {
+        It 'treats <Case> as one scope in roleAssignments' -ForEach @(
+            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case and a trailing slash'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001/' }
+            @{ Case = 'subscription: and sub: with an id'; A = 'subscription:aaaa1111-0000-0000-0000-000000000001'; B = 'SUB:AAAA1111-0000-0000-0000-000000000001' }
+            @{ Case = 'sub: and subscription: with a name, in another case'; A = 'sub:Prod'; B = 'subscription:prod' }
+            @{ Case = 'mg: and the management group path'; A = 'mg:plat'; B = '/providers/Microsoft.Management/managementGroups/PLAT' }
+            @{ Case = 'MG: and the management group path in lower case with a trailing slash'; A = 'MG:Plat'; B = '/providers/microsoft.management/managementgroups/plat/' }
+            @{ Case = 'a resource group path with and without a trailing slash'; A = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/oer-rg'; B = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/OER-RG/' }
+        ) {
+            $Doc = New-DupDoc -Section 'roleAssignments' -ItemJson @(
+                ('{ "scope": "' + $A + '", "role": "Reader", "principal": "person1@example.com" }')
+                ('{ "scope": "' + $B + '", "role": "Reader", "principal": "person1@example.com" }')
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            $Errs = @(Get-DupError -Validation $V)
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'roleAssignments[1]'
+            $Errs[0].Message | Should -Match ([regex]::Escape(' as roleAssignments[0] ('))
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'treats <Case> as one scope in roleManagementPolicies' -ForEach @(
+            @{ Case = 'mg: and the management group path'; A = 'mg:plat'; B = '/providers/Microsoft.Management/managementGroups/PLAT' }
+            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case and a trailing slash'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001/' }
+            @{ Case = 'subscription: and sub: with a name, in another case'; A = 'subscription:Prod'; B = 'SUB:prod' }
+        ) {
+            $Doc = New-DupDoc -Section 'roleManagementPolicies' -ItemJson @(
+                ('{ "scope": "' + $A + '", "role": "Reader" }')
+                ('{ "scope": "' + $B + '", "role": "reader" }')
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            $Errs = @(Get-DupError -Validation $V)
+            $Errs.Count | Should -Be 1
+            $Errs[0].Path | Should -BeExactly 'roleManagementPolicies[1]'
+            $Errs[0].Message | Should -Match ([regex]::Escape(' as roleManagementPolicies[0] ('))
+            $V.Valid | Should -BeFalse
+        }
+
+        It 'keeps two roleAssignments apart when they differ in <Case>' -ForEach @(
+            @{ Case = 'the principal'; B = '{ "scope": "sub:Prod", "role": "Reader", "principal": "person2@example.com" }' }
+            @{ Case = 'the role'; B = '{ "scope": "sub:Prod", "role": "Contributor", "principal": "person1@example.com" }' }
+            @{ Case = 'a role written as an id, which offline cannot be told from the same role written as a name'; B = '{ "scope": "sub:Prod", "role": "bbbb2222-0000-0000-0000-000000000001", "principal": "person1@example.com" }' }
+            @{ Case = 'the subscription name'; B = '{ "scope": "sub:Dev", "role": "Reader", "principal": "person1@example.com" }' }
+            @{ Case = 'a subscription written as a name and as an id, which offline cannot be told apart'; B = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }' }
+            @{ Case = 'a resource group and a subscription name'; B = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/oer-rg", "role": "Reader", "principal": "person1@example.com" }' }
+            @{ Case = 'a management group and a subscription'; B = '{ "scope": "mg:Prod", "role": "Reader", "principal": "person1@example.com" }' }
+        ) {
+            $Doc = New-DupDoc -Section 'roleAssignments' -ItemJson @(
+                '{ "scope": "sub:Prod", "role": "Reader", "principal": "person1@example.com" }'
+                $B
+                '{ "scope": "sub:Prod", "role": "Reader", "principal": "PERSON1@example.com" }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            # Entry 2 repeats entry 0, which proves the section was reached; entry 1 must not be flagged.
+            $Hit = @(Get-DupFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'roleAssignments[2]'
+            $Hit[0].Message | Should -Match ([regex]::Escape(' as roleAssignments[0] ('))
+        }
+
+        It 'keeps two roleManagementPolicies apart when they differ in <Case>' -ForEach @(
+            @{ Case = 'the role'; B = '{ "scope": "mg:plat", "role": "Contributor" }' }
+            @{ Case = 'the scope'; B = '{ "scope": "mg:other", "role": "Reader" }' }
+        ) {
+            $Doc = New-DupDoc -Section 'roleManagementPolicies' -ItemJson @(
+                '{ "scope": "mg:plat", "role": "Reader" }'
+                $B
+                '{ "scope": "MG:PLAT", "role": "reader" }'
+            )
+            $Hit = @(Get-DupFinding -Validation (Invoke-DupValidation -Doc $Doc))
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'roleManagementPolicies[2]'
+            $Hit[0].Message | Should -Match ([regex]::Escape(' as roleManagementPolicies[0] ('))
+        }
+
+        It 'makes no duplicate claim for two roleAssignments entries that both lack a key part: <Case>' -ForEach @(
+            @{ Case = 'principal absent'; Incomplete = '{ "scope": "sub:Prod", "role": "Reader" }'; MissingKey = 'principal' }
+            @{ Case = 'principal an explicit null'; Incomplete = '{ "scope": "sub:Prod", "role": "Reader", "principal": null }'; MissingKey = 'principal' }
+            @{ Case = 'scope absent'; Incomplete = '{ "role": "Reader", "principal": "person1@example.com" }'; MissingKey = 'scope' }
+            @{ Case = 'role absent'; Incomplete = '{ "scope": "sub:Prod", "principal": "person1@example.com" }'; MissingKey = 'role' }
+        ) {
+            $Doc = New-DupDoc -Section 'roleAssignments' -ItemJson @($Incomplete, $Incomplete)
+            $V = Invoke-DupValidation -Doc $Doc
+            # The two required-key Errors prove both incomplete entries were reached. The two entries
+            # share every part they do have, so a claim made on the incomplete key would collide.
+            $Required = @(Get-DupError -Validation $V)
+            $Required.Count | Should -Be 2
+            $Required[0].Path | Should -BeExactly "roleAssignments[0].$MissingKey"
+            $Required[1].Path | Should -BeExactly "roleAssignments[1].$MissingKey"
+            @(Get-DupFinding -Validation $V).Count | Should -Be 0
+        }
+    }
+
+    Context 'entries that lack a key part' {
+        It 'makes no duplicate claim for two <Section> entries that both lack <MissingKey>' -ForEach @(
+            @{ Section = 'roleManagementPolicies'; Incomplete = '{ "scope": "mg:plat" }'; MissingKey = 'role' }
+            @{ Section = 'roleManagementPolicies'; Incomplete = '{ "role": "Reader" }'; MissingKey = 'scope' }
+            @{ Section = 'directoryRoleManagementPolicies'; Incomplete = '{ "requireApproval": true }'; MissingKey = 'role' }
+            @{ Section = 'accessPackages'; Incomplete = '{ "displayName": "Package One", "resourceRoles": null }'; MissingKey = 'catalog' }
+            @{ Section = 'accessPackages'; Incomplete = '{ "catalog": "Catalog A", "resourceRoles": null }'; MissingKey = 'displayName' }
+            @{ Section = 'accessReviews'; Incomplete = '{ "accessPackage": "Package One", "assignmentPolicy": "Policy" }'; MissingKey = 'displayName' }
+            @{ Section = 'catalogs'; Incomplete = '{ "resources": null }'; MissingKey = 'displayName' }
+            @{ Section = 'administrativeUnits'; Incomplete = '{ "members": null, "scopedRoles": null }'; MissingKey = 'displayName' }
+        ) {
+            $V = Invoke-DupValidation -Doc (New-DupDoc -Section $Section -ItemJson @($Incomplete, $Incomplete))
+            $Required = @(Get-DupError -Validation $V | Where-Object { $_.Message -match 'is required at' })
+            $Required.Count | Should -Be 2
+            @(Get-DupFinding -Validation $V).Count | Should -Be 0
+        }
+
+        It 'makes no duplicate claim for two groups that name neither a displayName nor a template' {
+            $V = Invoke-DupValidation -Doc (New-DupDoc -Section 'groups' -ItemJson @('{ "members": null }', '{ "members": null }'))
+            @(Get-DupError -Validation $V | Where-Object { $_.Message -match "must have either 'displayName' or 'template'" }).Count | Should -Be 2
+            @(Get-DupFinding -Validation $V).Count | Should -Be 0
+        }
+    }
+}
