@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.1.1. A preview published from this point differs from 1.1.1 only
+in documentation, tests or the build.
+
+## [1.1.1] - 2026-10-04
+
 `Get-OERInventory` and `Export-OERInventory` write an access package's unread resource role
 bindings, or a catalog's unread resources, as `"resourceRoles": null` or `"resources": null`, which
 `schema.json` accepts and `Invoke-OERStructure` leaves untouched, and name the package or catalog in
