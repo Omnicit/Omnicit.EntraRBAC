@@ -67,7 +67,8 @@ function Invoke-OERStructure {
     and -ReconcileScope is passed on the first item of each resolved scope, which signals the handler
     to run its prune pass for that scope after processing the item. An item whose scope cannot be
     resolved is reported Failed by the engine itself, with its error published as itself, and is not
-    dispatched.
+    dispatched; its label is handed to every dispatched item, which withholds the prune of the whole
+    section (see -Prune).
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
@@ -111,6 +112,12 @@ function Invoke-OERStructure {
     reported Skipped with a Detail starting "prune withheld:", with or without -Prune (instead of
     Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
     remove the unresolved entry to reconcile the collection.
+
+    A roleAssignments entry whose SCOPE cannot be resolved withholds the prune of the whole
+    roleAssignments section, not only of one scope: it may be another spelling of any scope in the
+    section, so every undeclared live assignment at every scope is reported Skipped with a Detail
+    starting "prune withheld: the scope of declared entry" (with or without -Prune), and none is
+    removed.
 
     directoryRoleAssignments is reconciled per pair of directory role and assignmentType, and only
     for the pairs the document declares: a directory role the document does not name, or names only
@@ -320,10 +327,18 @@ function Invoke-OERStructure {
             # group path and a path with a trailing '/' are all one scope, so their entries form one
             # group with one prune pass. Every entry of a group is handed the same string, the group's
             # first canonical scope, which the handler uses for every Azure Resource Manager call.
+            #
+            # An entry whose scope cannot be resolved is not dispatched and belongs to no group, yet it
+            # may be another spelling of ANY scope in the section: its own live assignment would look
+            # undeclared in the group of whichever scope it names. The labels of those entries
+            # ($RaScopeUnresolved, in document order) are therefore handed to every dispatched entry,
+            # and the prune of the whole section is withheld while the list is non-empty.
             $RaScope = @()
             $RaGroup = $null
+            $RaScopeUnresolved = @()
             if ($Section.IncludeName -eq 'RoleAssignments') {
                 $RaScope = @(Resolve-OERStructureRoleAssignmentScope -Item $Items)
+                $RaScopeUnresolved = @($RaScope | Where-Object { $null -eq $_.Scope } | ForEach-Object { $_.Label })
                 $RaGroup = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 foreach ($RaEntry in $RaScope) {
                     if ($null -eq $RaEntry.Scope) { continue }
@@ -362,6 +377,7 @@ function Invoke-OERStructure {
                     $ExtraParams.ResolvedScope   = $RaGroupOfItem.Scope
                     $ExtraParams.DeclaredAtScope = @($RaGroupOfItem.Items)
                     $ExtraParams.ReconcileScope  = -not $RaGroupOfItem.Reconciled
+                    $ExtraParams.ScopeUnresolved = $RaScopeUnresolved
                     $RaGroupOfItem.Reconciled = $true
                 }
                 if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {

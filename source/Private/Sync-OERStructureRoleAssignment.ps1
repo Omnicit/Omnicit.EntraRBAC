@@ -63,8 +63,9 @@ function Sync-OERStructureRoleAssignment {
     be removed at this scope. Any remaining current assignment whose principal and role GUID
     composite key is absent from the declared set is treated as undeclared and reported with its own
     identity (role -> principal @ scope) in the result Item:
-    - While any sibling is unresolved (see below): emit Skipped with the withheld reason, with or
-      without -Prune. No warning is written, no ShouldProcess prompt is issued, nothing is removed.
+    - While any sibling is unresolved, or the scope of any entry of the section is (see below): emit
+      Skipped with the withheld reason, with or without -Prune. No warning is written, no
+      ShouldProcess prompt is issued, nothing is removed.
     - Otherwise, with -Prune: Write-Warning, gate $Caller.ShouldProcess, call Remove-OERRoleAssignment
       -Id <RoleAssignmentId> -Confirm:$false (throws -> Failed + continue), emit Removed.
       Under -WhatIf ShouldProcess returns $false -> emit Skipped.
@@ -82,6 +83,16 @@ function Sync-OERStructureRoleAssignment {
     sibling's own invocation of this handler writes its error and reports its Failed record, under
     the same '<role> -> <principal> @ <scope>' label the withheld Detail names, so the rows can be
     correlated.
+
+    An entry ANYWHERE in the section whose SCOPE could not be resolved is a different case. The
+    engine never dispatches it, so it is in no -DeclaredAtScope, and it carries no scope: it may be
+    another spelling of any scope in the section, and its own live assignment would look undeclared
+    in the group of whichever scope it names. The engine therefore hands every dispatched entry the
+    labels of those entries as -ScopeUnresolved, and while that list is non-empty every undeclared
+    candidate at EVERY scope of the section is reported Skipped, with a Detail that starts
+    "prune withheld: the scope of declared entry '<role> -> <principal> @ <scope>' could not be
+    resolved" (several: "the scopes of declared entries '<a>', '<b>' could not be resolved"), with or
+    without -Prune. The entry keeps its own Failed record, which the engine writes.
 
     The pass runs only in the invocation for the FIRST item of each resolved scope. When that item's
     own principal, role or current-assignment read fails, the handler returns before the pass: nothing
@@ -110,7 +121,8 @@ function Sync-OERStructureRoleAssignment {
     When set (together with -ReconcileScope), undeclared current assignments at the scope are
     removed after a ShouldProcess gate. Without this switch they are only reported as Extra.
     Either way, while a sibling in -DeclaredAtScope could not be resolved (its principal or role
-    lookup gave nothing or threw), nothing at the scope is removed or reported Extra: every
+    lookup gave nothing or threw), or an entry anywhere in the section has a scope that could not be
+    resolved (-ScopeUnresolved), nothing at the scope is removed or reported Extra: every
     undeclared assignment there is reported Skipped with a Detail starting "prune withheld:", with or
     without this switch.
 
@@ -139,6 +151,13 @@ function Sync-OERStructureRoleAssignment {
     own item. The engine sets this flag on the first item of each resolved scope. The pass is not
     reached when this item's own principal, role or current-assignment read fails.
 
+    .PARAMETER ScopeUnresolved
+    The labels ('<role> -> <principal> @ <scope>', the scope as the document wrote it) of the
+    roleAssignments entries of the whole section whose scope the engine could not resolve, in
+    document order. The engine does not dispatch those entries, so none is in -DeclaredAtScope. Each
+    may be another spelling of any scope in the section, so while the list is non-empty the scope-wide
+    pass withholds every undeclared candidate (see -Prune). Optional, and empty by default.
+
     .EXAMPLE
     Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope '/subscriptions/00000000-0000-0000-0000-000000000001' -TenantAlias 'omnicit'
     Reconciles one role assignment entry from the document using the engine PSCmdlet as the caller.
@@ -146,6 +165,11 @@ function Sync-OERStructureRoleAssignment {
     .EXAMPLE
     Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune -ReconcileScope -DeclaredAtScope $SiblingItems
     Reconciles one role assignment and performs the scope-wide prune pass for undeclared extras.
+
+    .EXAMPLE
+    Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune -ReconcileScope -DeclaredAtScope $SiblingItems -ScopeUnresolved @('Reader -> x @ sub:Gone')
+    Reconciles one role assignment, but withholds the prune: the scope of another entry in the section
+    could not be resolved, so every undeclared assignment is reported Skipped and none is removed.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSShouldProcess', '',
@@ -164,7 +188,8 @@ function Sync-OERStructureRoleAssignment {
         [switch]$Prune,
         [string]$TenantAlias,
         [object[]]$DeclaredAtScope = @(),
-        [switch]$ReconcileScope
+        [switch]$ReconcileScope,
+        [string[]]$ScopeUnresolved = @()
     )
 
     process {
@@ -191,7 +216,7 @@ function Sync-OERStructureRoleAssignment {
             ($RoleDefinitionId.TrimEnd('/') -split '/')[-1]
         }
 
-        $Label  ="$($Item.role) -> $($Item.principal) @ $($Item.scope)"
+        $Label  = "$($Item.role) -> $($Item.principal) @ $($Item.scope)"
         $Section = 'roleAssignments'
         $PrincipalType = if (Test-DeclHas -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
 
@@ -376,7 +401,8 @@ function Sync-OERStructureRoleAssignment {
         # the candidate loop below. It is recorded in $SiblingUnresolved instead, under the sibling's
         # own result label, and while that list is non-empty every candidate at this scope is
         # withheld (ConvertTo-OERPruneWithheldResult owns that rule) rather than reported Extra or
-        # removed.
+        # removed. $ScopeUnresolved (the engine's labels of entries whose SCOPE did not resolve, which
+        # it never dispatches) withholds the same way: such an entry may name any scope in the section.
         $DeclaredKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
         $SiblingUnresolved = [System.Collections.Generic.List[string]]::new()
         foreach ($Sibling in @($DeclaredAtScope)) {
@@ -416,7 +442,7 @@ function Sync-OERStructureRoleAssignment {
             $CurRoleLeaf = ($Cur.RoleDefinitionId -split '/')[-1]
             $ExtraItem   = "$CurRoleLeaf -> $($Cur.PrincipalId) @ $($Cur.Scope)"
             $CurLabel    = "undeclared assignment '$($Cur.RoleDefinitionId)' for principal '$($Cur.PrincipalId)'"
-            $Withheld = ConvertTo-OERPruneWithheldResult -Section $Section -Item $ExtraItem -Unresolved $SiblingUnresolved -Candidate $CurLabel
+            $Withheld = ConvertTo-OERPruneWithheldResult -Section $Section -Item $ExtraItem -Unresolved $SiblingUnresolved -UnresolvedScope $ScopeUnresolved -Candidate $CurLabel
             if ($Withheld) { $Withheld; continue }
             if ($Prune) {
                 $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }

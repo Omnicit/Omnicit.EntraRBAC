@@ -676,8 +676,11 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
     # name 'Dup Sub' and one 'Good Sub'. Subscription display names are not unique, so a scope
     # 'subscription:Dup Sub' cannot name one subscription: the entry must fail with the candidates
     # and the run must go on, and under -Prune nothing at the ambiguous scope may be removed or
-    # created. 'Good Sub' is the positive control: its extra assignment IS removed, which shows that
-    # the prune is live and that the run went past the failed entries. No id below is version-4 shaped.
+    # created. An entry whose scope cannot be resolved may be another spelling of ANY scope in the
+    # section, so it also withholds the prune of every other scope in it: the extra assignment at
+    # 'Good Sub' is reported Skipped and not removed. 'Good Sub' is still the positive control for
+    # the run going past the failed entries: it is read and its declared entry is Unchanged. No id
+    # below is version-4 shaped.
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
@@ -716,7 +719,11 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         }
     }
 
-    It 'fails every entry at the ambiguous scope with both candidate ids, goes on to the next scope, and under -Prune removes nothing at the ambiguous one' {
+    # The flip from the earlier shape of this test is deliberate (spec A12): this test used to expect
+    # the extra assignment at 'Good Sub' to be REMOVED while 'Dup Sub' stayed unresolved. An
+    # unresolved scope may be an alias of any scope in the section, so the whole section's prune is
+    # withheld instead -- nothing is removed anywhere, and the candidate is reported Skipped.
+    It 'fails every entry at the ambiguous scope with both candidate ids, goes on to the next scope, and withholds the prune of the whole section' {
         $Json = '{ "version":"1.0", "roleAssignments":[' +
             '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-a"}, ' +
             '{"scope":"subscription:Dup Sub","role":"Reader","principal":"grp-b"}, ' +
@@ -725,23 +732,25 @@ Describe 'Invoke-OERStructure with an ambiguous subscription display name in a s
         $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-        # Positive proof first: the run reached the third entry, whose scope IS resolvable, and pruned
-        # there. Without this the negative assertions below could pass on a run that stopped early.
+        # Positive proof first: the run reached the third entry, whose scope IS resolvable, and read
+        # and reconciled it. Without this the negative assertions below could pass on a run that
+        # stopped early.
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -eq '/subscriptions/aaaa1111-0000-0000-0000-000000000003' }
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-good-extra' }
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> grp-c @ subscription:Good Sub' }).Action | Should -Be @('Unchanged')
 
-        # Nothing at the ambiguous scope was written or even read. The writes come first, so a
-        # regression that resolves the name to one of the two subscriptions fails on the write.
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -like 'ra-dup-*' }
+        # Nothing was removed anywhere: not at the ambiguous scope, and not at the good one either.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
         Should -Invoke -ModuleName $script:moduleName Set-OERRoleAssignment -Times 0
+        # Nothing at the ambiguous scope was even read.
         Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0 -ParameterFilter { $Scope -like '/subscriptions/aaaa1111-0000-0000-0000-00000000000[12]' }
 
-        # The rows: the resolvable scope reconciled as usual ...
-        @($Rows | Where-Object { $_.Item -eq 'Reader -> grp-c @ subscription:Good Sub' }).Action | Should -Be @('Unchanged')
-        $Removed = @($Rows | Where-Object { $_.Action -eq 'Removed' })
-        $Removed.Count | Should -Be 1
-        $Removed[0].Item | Should -BeExactly 'rd-Reader -> p-live-good @ /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+        # The undeclared assignment at the good scope is withheld, naming both unresolved entries.
+        $Withheld = @($Rows | Where-Object { $_.Action -eq 'Skipped' })
+        $Withheld.Count | Should -Be 1
+        $Withheld[0].Item | Should -BeExactly 'rd-Reader -> p-live-good @ /subscriptions/aaaa1111-0000-0000-0000-000000000003'
+        $Withheld[0].Detail.StartsWith("prune withheld: the scopes of declared entries 'Reader -> grp-a @ subscription:Dup Sub', 'Reader -> grp-b @ subscription:Dup Sub'") | Should -BeTrue
+        @($Rows | Where-Object { $_.Action -in @('Removed', 'Extra') }).Count | Should -Be 0
 
         # ... and the ambiguous scope's two entries are Failed rows, the only rows it produced.
         $DupRows = @($Rows | Where-Object { $_.Item -like '* @ subscription:Dup Sub' })
@@ -923,5 +932,63 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
             $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and $AtScope
         }
         @($Rows | Where-Object { $_.Item -like 'Reader -> * @ sub:Prod' }).Action | Should -Be @('Unchanged', 'Unchanged')
+    }
+
+    It 'withholds the prune of every candidate when one entry fails to resolve a scope that a later entry with the same text resolves' {
+        # The pre-pass caches only SUCCESSFUL resolutions, so two entries with the same scope text can
+        # have one failure and one success. The first lookup of 'Prod' fails transiently, the second
+        # succeeds: entry 0 is Failed and never dispatched, entry 1 resolves and reconciles. The
+        # surviving group of the resolved scope declares only entry 1, so entry 0's own live
+        # assignment (p-a) looks undeclared in it -- exactly the object the document asked to keep.
+        # The failed entry may be a spelling of any scope, so the prune of the whole section is
+        # withheld and no candidate is removed.
+        InModuleScope $script:moduleName {
+            $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            $script:RaResolveCalls = 0
+            Mock Resolve-OERScope {
+                param([string]$Scope, [string]$Subscription, [string]$ManagementGroup)
+                $script:RaResolveCalls++
+                if ($script:RaResolveCalls -eq 1) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('transient ARM failure while listing subscriptions'),
+                        'ArmTransportError',
+                        [System.Management.Automation.ErrorCategory]::ConnectionError,
+                        $null)
+                }
+                '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            }
+        }
+        $Json = '{ "version":"1.0", "roleAssignments":[' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"a"}, ' +
+            '{"scope":"sub:Prod","role":"Reader","principal":"b"} ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+        # Positive proof first: the same scope text was resolved twice (the failure was not cached),
+        # entry 0 failed on the first lookup, and entry 1 reconciled on the second.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERScope -Times 2 -Exactly -ParameterFilter { $Subscription -eq 'Prod' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
+            $Scope -ceq '/subscriptions/aaaa1111-0000-0000-0000-000000000001' -and $AtScope
+        }
+        $First = @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ sub:Prod' })
+        $First.Count | Should -Be 1
+        $First[0].Action | Should -Be 'Failed'
+        $First[0].Detail | Should -Match "could not resolve scope 'sub:Prod'"
+        @($Rows | Where-Object { $_.Item -eq 'Reader -> b @ sub:Prod' }).Action | Should -Be @('Unchanged')
+
+        # Nothing was removed, and the whole section's candidates are withheld: p-a (the failed
+        # entry's own live assignment, undeclared in the surviving group) and the plain extra p-c.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
+        $Withheld = @($Rows | Where-Object { $_.Action -eq 'Skipped' })
+        # Select-Object, not member enumeration: .Item on an array is the indexer method.
+        @($Withheld | Select-Object -ExpandProperty Item) | Should -Be @(
+            'rd-Reader -> p-a @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'rd-Reader -> p-c @ /subscriptions/aaaa1111-0000-0000-0000-000000000001'
+        )
+        foreach ($Row in $Withheld) {
+            $Row.Detail.StartsWith("prune withheld: the scope of declared entry 'Reader -> a @ sub:Prod'") | Should -BeTrue
+        }
+        @($Rows | Where-Object { $_.Action -in @('Removed', 'Extra', 'Created', 'Updated') }).Count | Should -Be 0
+        $Rows.Count | Should -Be 4
     }
 }
