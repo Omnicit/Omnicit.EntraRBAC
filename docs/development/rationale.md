@@ -2895,10 +2895,10 @@ comparison of a live assignment's scope with the declared one, which silently ma
 scope ending in `/`. As a side effect each distinct scope text is looked up once per run and not three
 times per entry, which for a `sub:` name was two to three listings each time. Only a success is
 cached, by the exact scope text: a transient failure on one entry must not fail the next entry with
-the same text. Labels, which every row carries as its Item, keep the document's own text, since an
-operator searches the output for what the document says; a Detail that names the scope names the
-resolved scope the handler was given (the engine's own Detail for a scope it could not resolve quotes
-the text, since there is no resolved scope).
+the same text. Labels, which each declared entry's rows carry as their Item, keep the document's own
+text, since an operator searches the output for what the document says; a Detail that names the scope
+names the resolved scope the handler was given (the engine's own Detail for a scope it could not
+resolve quotes the text, since there is no resolved scope).
 
 **The role is compared on its GUID, the last segment of its id (BL-35).** `Resolve-OERRoleDefinitionId`
 anchors a role given as a GUID at the scope it was handed. A live assignment at a resource group
@@ -2963,5 +2963,8 @@ policy.
 
 **Cost, accepted.** A document whose ONLY spelling of a scope ends in `/` now prunes undeclared
 assignments at that scope under `-Prune`, where that group never pruned before. It is the same prune
-the document would have had without the slash, and the one place this change removes more than it did;
-the release note says so. Every other effect of the change is to remove fewer assignments, or the same.
+the document would have had without the slash, and the first of two places this change removes more
+than it did; the release note says so. The second: a scope written as `//` canonicalises to the root
+`/`, so such a document now names -- and under `-Prune` prunes undeclared assignments at -- the tenant
+root scope, which earlier versions never pruned. Every other effect of the change is to remove fewer
+assignments, or the same.
