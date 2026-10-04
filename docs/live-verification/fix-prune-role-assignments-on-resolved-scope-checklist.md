@@ -107,7 +107,7 @@ path.
 
 ### S.1. Point the clone at this branch and build it
 
-- [ ] **S.1** The clone OerLive loads from holds this branch's build.
+- [x] **S.1** The clone OerLive loads from holds this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -132,13 +132,21 @@ fix: True`.
 exit code other than 0; `False` -- the clone did not get this branch, and every check below would
 measure `main`.
 
-Result:
+Result: 2026-10-04 14:28 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. 0 tracked changes in the clone, which was on main; the clone at the branch head c1aced8; build exit code 0; the built module carries this branch's fix: True.
+
+[oer-s81] Tracked changes in the clone before the switch: 0; branch before the switch: main
+[oer-s81] Clone at: c1aced8 docs: add the live-verification checklist for the resolved-scope prune
+[oer-s81] Build exit code: 0; the built module carries this branch's fix: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -160,11 +168,27 @@ True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-04 14:28 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the module session (app-only certificate session with the identity's app id, app name oer-live-cc, test tenant, service principal named oer-live-cc and the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the test subscription belongs to the test tenant and is Enabled); identity check passed; the module is the clone's build (1.1.2 from this branch).
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] The module is the clone's build: True
+```
 
 ### 0.2. The prerequisite script's plan
 
-- [ ] **0.2** `-WhatIf` plans only `oer-s81-` objects in the tenant.
+- [x] **0.2** `-WhatIf` plans only `oer-s81-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -188,11 +212,41 @@ with `oer-s81-`; `WhatIf: nothing was created, removed or written`; exit code `0
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
-Result:
+Result: 2026-10-04 14:29 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (run 2). Run 1 refused before anything was written: the script read the role definition's kind from properties.roleType, which ARM does not return (it is properties.type); corrected in the prereq script and in checks 1.4 and 1.6 (commit cc74e25). Run 2: identity check passed; no residue; the sweep found no oer-s81- object; oer-s81-rg does not exist; the baseline would be written before the first write (groups 97, role assignments defined at the subscription 6); 4 tenant targets, oer-s81-rg, oer-s81-grp1, oer-s81-grp2 and oer-s81-grp1 Reader at oer-s81-rg, every one with the prefix; nothing written; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s81\prereq-20261004-142859Z.log".
+[oer-s81] Mode: CREATE or complete. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Residue: raw\residue.json holds no rows.
+[oer-s81] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s81-' is left.
+[oer-s81] Found: oer-s81-grp1 exists: False; oer-s81-grp2 exists: False; oer-s81-rg exists: False; role assignments defined at oer-s81-rg: 0.
+[oer-s81] No baseline yet: it is written now, before the first write to the tenant (groups 97, role assignments defined at the subscription 6).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s81\baseline-s81.json".
+What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s81)')" on target "oer-s81-rg".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member)" on target "oer-s81-grp1".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member)" on target "oer-s81-grp2".
+What if: Performing the operation "Assign the built-in Reader role at the resource group (Azure Resource Manager PUT roleAssignments)" on target "oer-s81-grp1 Reader at oer-s81-rg".
+[oer-s81] Summary: oer-s81-rg absent; oer-s81-grp1 absent; oer-s81-grp2 absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s81] WhatIf: nothing was created, removed or written.
+[oer-s81] Done.
+[oer-s81] What-if targets: 6; in the tenant: 4; every tenant target starts with oer-s81-: True; exit code: 0
+```
 
 ### 0.3. The prerequisite script, for real
 
-- [ ] **0.3** The resource group, the two groups and the Reader assignment of `oer-s81-grp1` exist.
+- [x] **0.3** The resource group, the two groups and the Reader assignment of `oer-s81-grp1` exist.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -212,7 +266,47 @@ the assignment listed there; the summary with all three `present`; exit code `0`
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.3 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-04 14:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The baseline written and read back before the first write (groups 97, role assignments defined at the subscription 6); oer-s81-rg created and readable after 1 read; oer-s81-grp1 and oer-s81-grp2 created (201) and resolving by display name after 4 reads (about 14 s each); Reader assigned to oer-s81-grp1 at oer-s81-rg on the first attempt (2.5 s) and listed there after 1 read; summary: all three present; exit code 0.
+
+[oer-s81] Transcript (redacted): raw\s81\prereq-20261004-142919Z.log; OerLive 1.0.2.
+[oer-s81] Mode: CREATE or complete. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s81] Residue: raw\residue.json holds no rows.
+[oer-s81] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s81-' is left.
+[oer-s81] Found: oer-s81-grp1 exists: False; oer-s81-grp2 exists: False; oer-s81-rg exists: False; role assignments defined at oer-s81-rg: 0.
+[oer-s81] No baseline yet: it is written now, before the first write to the tenant (groups 97, role assignments defined at the subscription 6).
+[oer-s81] Wrote the baseline raw\s81\baseline-s81.json and read it back.
+[oer-s81] Created resource group oer-s81-rg.
+[oer-s81] oer-s81-rg is readable: converged after 1 read(s), 0.7 s.
+[oer-s81] Created group oer-s81-grp1: 201.
+[oer-s81] oer-s81-grp1 resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s81] oer-s81-grp1 resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s81] oer-s81-grp1 resolves by its display name: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s81] oer-s81-grp1 resolves by its display name: converged after 4 read(s), 14.4 s.
+[oer-s81] Created group oer-s81-grp2: 201.
+[oer-s81] oer-s81-grp2 resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s81] oer-s81-grp2 resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s81] oer-s81-grp2 resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s81] oer-s81-grp2 resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s81] Assigned Reader to oer-s81-grp1 at oer-s81-rg (attempts 1, 2.5 s).
+[oer-s81] the Reader assignment of oer-s81-grp1 is listed at oer-s81-rg: converged after 1 read(s), 0.5 s.
+[oer-s81] Summary: oer-s81-rg present; oer-s81-grp1 present; oer-s81-grp2 present; written to the tenant: True.
+[oer-s81] Done.
+[oer-s81] Exit code: 0
+```
 
 ### 1. The resource group, written with -Prune (oer-s81- objects only)
 
@@ -223,7 +317,7 @@ resource group never sees it (it is inherited there, and skipped).
 
 ### 1.1. Two spellings of one scope: the plan
 
-- [ ] **1.1** The resource group's path and the same path with a trailing `/` form one group: `-Prune -WhatIf` plans `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` created, and no removal.
+- [x] **1.1** The resource group's path and the same path with a trailing `/` form one group: `-Prune -WhatIf` plans `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` created, and no removal.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -252,11 +346,30 @@ the trailing `/`; `planned removals: 0`; no record, no warning.
 `Extra` -- the two spellings formed two groups (the defect this branch fixes); a would-create target
 ending in `/`.
 
-Result:
+Result: 2026-10-04 14:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Two rows: oer-s81-grp1 at the resource group path Unchanged (role assignment already exists); oer-s81-grp2 at the same path with a trailing slash Skipped, would create at the path WITHOUT the trailing slash (the What-if target too); planned removals 0; 0 records; no warning. The two spellings formed one group.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp2'" on target "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg".
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Skipped | would create role assignment 'Reader' for 'oer-s81-grp2' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Rows: 2; by action: Skipped 1, Unchanged 1; planned removals: 0; records: 0
+```
 
 ### 1.2. The same document, for real, after its own plan
 
-- [ ] **1.2** `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` `Created`, 0 `Removed`; the new assignment is defined at the resource group's path without a trailing `/`.
+- [x] **1.2** `oer-s81-grp1` `Unchanged`, `oer-s81-grp2` `Created`, 0 `Removed`; the new assignment is defined at the resource group's path without a trailing `/`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -295,11 +408,34 @@ resource group, each with `scope ends without '/': True`.
 **Failure looks like:** `writing: False` -- read the plan, nothing was written; a `Removed` row; a
 `Failed` row for `oer-s81-grp2` -- record its message (ARM's answer to the create).
 
-Result:
+Result: 2026-10-04 14:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Plan in the same process: 2 rows, 0 planned removals, every row about an oer-s81- group, so the run wrote. oer-s81-grp1 Unchanged; oer-s81-grp2 Created at the resource group path without the trailing slash; no Removed row; 0 records. Read back: exactly two assignments defined at oer-s81-rg, both with a scope that ends without a slash and equals the path exactly.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp2'" on target "/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg".
+[oer-s81] Plan: rows 2, planned removals 0, rows not about an oer-s81- group 0; writing: True
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Created | created role assignment 'Reader' for 'oer-s81-grp2' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Rows: 2; by action: Created 1, Unchanged 1; records: 0
+[oer-s81] two Reader assignments are defined at oer-s81-rg: converged after 1 read(s), 0.2 s.
+[oer-s81] Defined at the resource group: principal 00000000-0000-0000-0000-000000000004, scope ends without '/': True, scope equals the path exactly: True
+[oer-s81] Defined at the resource group: principal 00000000-0000-0000-0000-000000000005, scope ends without '/': True, scope equals the path exactly: True
+```
 
 ### 1.3. The same document again: only Unchanged (G8)
 
-- [ ] **1.3** A second run gives `Unchanged` for both entries and writes nothing.
+- [x] **1.3** A second run gives `Unchanged` for both entries and writes nothing.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -326,11 +462,30 @@ Disconnect-OerLive
 warnings.
 **Failure looks like:** anything but `Unchanged` -- the document does not converge.
 
-Result:
+Result: 2026-10-04 14:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (G8). The plan: 2 rows, all Unchanged; the real run: both entries Unchanged (the trailing-slash entry included), 0 records, 0 warnings; nothing written.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Plan: rows 2, all Unchanged: True
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Rows: 2; by action: Unchanged 2; records: 0; warnings: 0
+```
 
 ### 1.4. The role as the Reader role's GUID: Unchanged, twice
 
-- [ ] **1.4** With `oer-s81-grp1`'s role given as the Reader role's definition GUID, `-Prune` gives `Unchanged` and removes nothing, on two runs.
+- [x] **1.4** With `oer-s81-grp1`'s role given as the Reader role's definition GUID, `-Prune` gives `Unchanged` and removes nothing, on two runs.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -370,11 +525,33 @@ rows 2, `Unchanged 2`, 0 records, 0 warnings.
 assignment as a candidate -- the role key still compares the whole path (the defect this branch
 fixes); `writing` skipped because the plan was not all `Unchanged`.
 
-Result:
+Result: 2026-10-04 14:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Measured: both live assignments at oer-s81-rg carry the role definition id anchored at the SUBSCRIPTION, not the resource group, and its GUID is the Reader GUID -- the shape that made a GUID-anchored role never match before (BL-35). With oer-s81-grp1's role given as the Reader GUID: the plan is 2 rows, all Unchanged; Run 1 and Run 2 under -Prune: 2 rows, Unchanged 2, 0 records, 0 warnings; nothing removed or re-created.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Live at the resource group: role definition id anchored at the subscription, not the resource group: True; its GUID is the Reader GUID: True
+[oer-s81] Live at the resource group: role definition id anchored at the subscription, not the resource group: True; its GUID is the Reader GUID: True
+[oer-s81] Plan row: 00000000-0000-0000-0000-000000000006 -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Plan row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Plan: rows 2, all Unchanged: True
+[oer-s81] Run 1: rows 2; by action: Unchanged 2; records: 0; warnings: 0
+[oer-s81] Run 2: rows 2; by action: Unchanged 2; records: 0; warnings: 0
+```
 
 ### 1.5. A scope that cannot be resolved withholds the prune: the plan
 
-- [ ] **1.5** With an entry whose scope cannot be resolved, `-Prune -WhatIf` withholds the prune at the resource group: `oer-s81-grp2`'s assignment, now undeclared, is `Skipped` with `prune withheld`, not planned for removal.
+- [x] **1.5** With an entry whose scope cannot be resolved, `-Prune -WhatIf` withholds the prune at the resource group: `oer-s81-grp2`'s assignment, now undeclared, is `Skipped` with `prune withheld`, not planned for removal.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -402,11 +579,31 @@ sub:oer-s81-no-such-subscription' could not be resolved`; `planned removals: 0`;
 **Failure looks like:** `would remove` for `oer-s81-grp2`'s assignment -- the withhold does not
 reach a scope other than the unresolved entry's own.
 
-Result:
+Result: 2026-10-04 14:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Three rows: oer-s81-grp1 Unchanged; oer-s81-grp2's live assignment at oer-s81-rg, now undeclared, Skipped with "prune withheld: the scope of declared entry 'Reader -> oer-s81-grp2 @ sub:oer-s81-no-such-subscription' could not be resolved ..."; the unresolvable entry Failed (could not resolve scope: the subscription was not found), published once by Invoke-OERStructure. Planned removals 0; no warning. Observed, pre-existing and outside this step: the published record's error id is the message text itself, since Resolve-OERScope throws a plain string for a subscription name that matches nothing.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: 00000000-0000-0000-0000-000000000006 -> 00000000-0000-0000-0000-000000000005 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Skipped | prune withheld: the scope of declared entry 'Reader -> oer-s81-grp2 @ sub:oer-s81-no-such-subscription' could not be resolved, so it may name this scope, and undeclared assignment '/subscriptions/00000000-0000-0000-0000-000000000002/providers/Microsoft.Authorization/roleDefinitions/00000000-0000-0000-0000-000000000006' for principal '00000000-0000-0000-0000-000000000005' may be the live counterpart of that entry; it is left in place (our own guard, not a Graph rejection). Fix or remove the unresolved entry to reconcile this section.
+[oer-s81] Row: Reader -> oer-s81-grp2 @ sub:oer-s81-no-such-subscription | Failed | could not resolve scope 'sub:oer-s81-no-such-subscription': Subscription 'oer-s81-no-such-subscription' was not found or you do not have access to it.
+[oer-s81] Published: Subscription 'oer-s81-no-such-subscription' was not found or you do not have access to it.,Invoke-OERStructure -- Subscription 'oer-s81-no-such-subscription' was not found or you do not have access to it.
+[oer-s81] Rows: 3; by action: Failed 1, Skipped 1, Unchanged 1; planned removals: 0; warnings: 0
+```
 
 ### 1.6. A second entry for the same assignment: Failed, not written
 
-- [ ] **1.6** An entry that resolves to the same scope, principal and role as an earlier one is `Failed` naming the earlier index, and the plan removes nothing.
+- [x] **1.6** An entry that resolves to the same scope, principal and role as an earlier one is `Failed` naming the earlier index, and the plan removes nothing.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -435,7 +632,26 @@ oer-s81-grp1 @ ...')`; `planned removals: 0`; 0 records; no warning.
 **Failure looks like:** the third entry `Unchanged` or `would update` -- the duplicate is applied;
 any planned removal.
 
-Result:
+Result: 2026-10-04 14:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Three rows: oer-s81-grp1 Unchanged, oer-s81-grp2 Unchanged, and the third entry (the resource group path in upper case, the role as the Reader GUID, oer-s81-grp1) Failed: "roleAssignments[2] resolves to the same assignment as roleAssignments[0] (...): the same scope ..., principal and role. Nothing was written for this entry"; planned removals 0; 0 records; no warning.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg/ | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Row: 00000000-0000-0000-0000-000000000006 -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/RESOURCEGROUPS/OER-S81-RG | Failed | roleAssignments[2] resolves to the same assignment as roleAssignments[0] ('Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'): the same scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg', principal and role. Nothing was written for this entry; keep one of the two entries.
+[oer-s81] Rows: 3; by action: Failed 1, Unchanged 2; planned removals: 0; records: 0; warnings: 0
+```
 
 ### 2. The subscription, -WhatIf without -Prune, behind the read-only fence
 
@@ -444,7 +660,7 @@ The identity's own Owner assignment is defined at the test subscription. These b
 
 ### 2.1. `sub:` and `/subscriptions/`: the identity's Owner assignment is declared, never Extra
 
-- [ ] **2.1** Entry A declares the identity's own Owner assignment as `sub:` with the subscription id; entry B declares Reader for `oer-s81-grp1` at `/subscriptions/` with the same id. A is `Unchanged`, B would be created, and the identity's Owner assignment is never reported `Extra`.
+- [x] **2.1** Entry A declares the identity's own Owner assignment as `sub:` with the subscription id; entry B declares Reader for `oer-s81-grp1` at `/subscriptions/` with the same id. A is `Unchanged`, B would be created, and the identity's Owner assignment is never reported `Extra`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -492,11 +708,30 @@ by the fence: 0`.
 formed two groups, so B's pass called A's assignment undeclared (on `main` it does); a refused
 request -- a write was attempted under `-WhatIf`.
 
-Result:
+Result: 2026-10-04 14:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. -WhatIf, no -Prune, behind the read-only fence. Entry A (sub: with the subscription id, Owner, the identity's own service principal) Unchanged: role assignment already exists at the subscription; entry B (/subscriptions/ with the id, Reader, oer-s81-grp1) Skipped, would create. The two spellings formed one group, so the identity's own Owner assignment was never a prune candidate (count 0). The other 5 assignments defined at the subscription are Extra (6 in all, as in the baseline), counted not printed. 0 records; refused by the fence: 0.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp1'" on target "/subscriptions/00000000-0000-0000-0000-000000000002".
+[oer-s81] Row: Owner -> 00000000-0000-0000-0000-000000000007 @ sub:00000000-0000-0000-0000-000000000002 | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002'
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002 | Skipped | would create role assignment 'Reader' for 'oer-s81-grp1' at '/subscriptions/00000000-0000-0000-0000-000000000002'
+[oer-s81] Rows: 7; by action: Extra 5, Skipped 1, Unchanged 1; the identity's own assignment as a prune candidate: 0; records: 0; refused by the fence: 0
+```
 
 ### 2.2. The subscription by name
 
-- [ ] **2.2** The same check with entry A's scope as `sub:` and the subscription's display name, when `oer-live-cc` can resolve it; the name is redacted in every line.
+- [x] **2.2** The same check with entry A's scope as `sub:` and the subscription's display name, when `oer-live-cc` can resolve it; the name is redacted in every line.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -548,13 +783,33 @@ withheld), record it as it is: the check is then `[~]`.
 **Failure looks like:** the real subscription name in any line -- redact before anything is copied;
 the identity's own assignment counted as a candidate.
 
-Result:
+Result: 2026-10-04 14:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The subscription's display name was read as oer-live-cc and exactly one subscription carries it. With entry A's scope as sub: and that name (redacted to Contoso Test Subscription in every line): A Unchanged at the subscription; B Skipped, would create; the identity's own assignment as a prune candidate 0; Extra 5; refused by the fence 0. The name resolved to the same group as the /subscriptions/ path.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] The subscription's name was read: True; subscriptions listed under that name: 1
+What if: Performing the operation "Create role assignment 'Reader' for 'oer-s81-grp1'" on target "/subscriptions/00000000-0000-0000-0000-000000000002".
+[oer-s81] Row: Owner -> 00000000-0000-0000-0000-000000000007 @ sub:Contoso Test Subscription | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002'
+[oer-s81] Row: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002 | Skipped | would create role assignment 'Reader' for 'oer-s81-grp1' at '/subscriptions/00000000-0000-0000-0000-000000000002'
+[oer-s81] Rows: 7; by action: Extra 5, Skipped 1, Unchanged 1; the identity's own assignment as a prune candidate: 0; refused by the fence: 0
+```
 
 ### 3. The validator, offline
 
 ### 3.1. One duplicate per section: an Error each, and the apply refuses before it signs in
 
-- [ ] **3.1** `Test-OERStructure` reports one duplicate Error per section, nine in all, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
+- [x] **3.1** `Test-OERStructure` reports one duplicate Error per section, nine in all, and `Invoke-OERStructure` refuses the document with `StructureValidationFailed` without calling `Initialize-OERAuth`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -599,13 +854,29 @@ session exists: False`.
 `roleAssignments` or `roleManagementPolicies` pair not reported -- the canonical scope is not used;
 `Initialize-OERAuth calls` above 0.
 
-Result:
+Result: 2026-10-04 14:32 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Offline, no sign-in. Test-OERStructure: Valid False, 9 Errors, all 9 duplicate Errors, one per section, each at the LATER entry's path naming [0] -- the roleAssignments pair spelled sub: with the id against the path with a trailing slash and the role and principal in upper case, the roleManagementPolicies pair spelled subscription: against /SUBSCRIPTIONS/ in upper case. Invoke-OERStructure: 0 rows, StructureValidationFailed, Initialize-OERAuth calls 0, no Graph session.
+
+[oer-s81] Duplicate: groups | groups[1] | groups[1] declares the same group name 'OER-S81-DUP-GROUP' as groups[0] (compared without regard to letter case). Both entries reconcile one group, so each would undo the other's settings and, under -Prune, remove the members the other declares. Keep one entry.
+[oer-s81] Duplicate: administrativeUnits | administrativeUnits[1] | administrativeUnits[1] declares the same display name 'Oer-S81-Dup-Au' as administrativeUnits[0] (compared without regard to letter case). Both entries reconcile one administrative unit, so each would undo the other's settings and, under -Prune, remove the members and scoped roles the other declares. Keep one entry.
+[oer-s81] Duplicate: catalogs | catalogs[1] | catalogs[1] declares the same display name 'OER-S81-DUP-CATALOG' as catalogs[0] (compared without regard to letter case). Both entries reconcile one catalog, so each would undo the other's settings and, under -Prune, remove the resources the other declares. Keep one entry.
+[oer-s81] Duplicate: accessPackages | accessPackages[1] | accessPackages[1] declares the same catalog 'OER-S81-DUP-CATALOG' and display name 'OER-S81-DUP-AP' as accessPackages[0] (compared without regard to letter case). Both entries reconcile one access package, so each would undo the other's settings and, under -Prune, remove the resource role bindings the other declares. Keep one entry.
+[oer-s81] Duplicate: accessReviews | accessReviews[1] | accessReviews[1] declares the same display name 'OER-S81-DUP-REVIEW' as accessReviews[0] (compared without regard to letter case). Both entries reconcile one access review, so applying the document would rewrite its settings on every run. Keep one entry.
+[oer-s81] Duplicate: roleAssignments | roleAssignments[1] | roleAssignments[1] declares the same scope, role and principal as roleAssignments[0] (compared without regard to letter case). Both entries describe one role assignment (the scope is compared in its canonical form: sub: and subscription: with an id, mg: and a trailing '/' are spellings of one scope), so applying the document would rewrite its condition and description on every run. Keep one entry.
+[oer-s81] Duplicate: roleManagementPolicies | roleManagementPolicies[1] | roleManagementPolicies[1] declares the same scope and role as roleManagementPolicies[0] (compared without regard to letter case). Both entries describe one policy (the scope is compared in its canonical form), so applying the document would rewrite its settings on every run. Keep one entry.
+[oer-s81] Duplicate: directoryRoleManagementPolicies | directoryRoleManagementPolicies[1] | directoryRoleManagementPolicies[1] declares the same role 'reports reader' as directoryRoleManagementPolicies[0] (compared without regard to letter case). Both entries describe one policy, so applying the document would rewrite its settings on every run. Keep one entry.
+[oer-s81] Duplicate: directoryRoleAssignments | directoryRoleAssignments[1] | directoryRoleAssignments[1] declares the same role, principal and assignmentType as directoryRoleAssignments[0] (compared without regard to letter case). Both entries describe one live assignment, and applying the document would re-issue its window for each of them on every run; keep one entry.
+[oer-s81] Valid: False; Errors: 9; duplicate Errors: 9; sections: accessPackages, accessReviews, administrativeUnits, catalogs, directoryRoleAssignments, directoryRoleManagementPolicies, groups, roleAssignments, roleManagementPolicies
+[oer-s81] Invoke-OERStructure rows: 0; errors: StructureValidationFailed; Initialize-OERAuth calls: 0; a Graph session exists: False
+```
 
 ### 4. The whole tenant's export, read as oer-live-cc
 
 ### 4.1. The export, behind the read-only fence
 
-- [ ] **4.1** The export of the whole tenant is written, its rows per section are recorded, and names that two live objects share are counted, never named.
+- [x] **4.1** The export of the whole tenant is written, its rows per section are recorded, and names that two live objects share are counted, never named.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -663,11 +934,36 @@ expected to skip that level, as in Sprint 7 step 1).
 **Failure looks like:** a refused request -- a read path tried to write; a shared name written to the
 document anyway.
 
-Result:
+Result: 2026-10-04 14:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 474 requests, refused 0. Summary: groups 10, administrative units 1, catalogs 5, access packages 6, access reviews 5, directory role policies 22, directory role assignments 51, role assignments 15. Shared names in the tenant, by count: groups 0, administrative units 0, catalogs 0, access reviews 0, access packages in one catalog 0; written to the document anyway 0 in every section; role assignment entries written by id for a shared principal name 0. IncompleteReads 0; SkippedScopes 1 (the management-group level, which oer-live-cc cannot list, as in Sprint 7 step 1); the one InventoryPartial is Export-OERInventory's for that skipped level, with no shares-a-name cause. The tenant holds no name collision, so the collision paths are proven by the unit tests only.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Fence: requests 474, refused 0
+[oer-s81] Summary: groups 10, administrative units 1, catalogs 5, access packages 6, access reviews 5, directory role policies 22, directory role assignments 51, role assignments 15
+[oer-s81] Shared names, groups: named in the partial 0; written to the document anyway 0
+[oer-s81] Shared names, administrativeUnits: named in the partial 0; written to the document anyway 0
+[oer-s81] Shared names, catalogs: named in the partial 0; written to the document anyway 0
+[oer-s81] Shared names, accessReviews: named in the partial 0; written to the document anyway 0
+[oer-s81] Shared names, accessPackages (one catalog): named in the partial 0
+[oer-s81] Role assignment entries written by object id because their principal's name is shared: 0
+[oer-s81] IncompleteReads: 0; SkippedScopes: 1
+[oer-s81] Partial: InventoryPartial,Export-OERInventory -- causes clause shares-a-name: False
+```
 
 ### 4.2. The export validates
 
-- [ ] **4.2** `Test-OERStructure` reports the export valid, and the bundle's own `schema.json` accepts it.
+- [x] **4.2** `Test-OERStructure` reports the export valid, and the bundle's own `schema.json` accepts it.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -689,11 +985,28 @@ Disconnect-OerLive
 **Failure looks like:** `Valid False` -- record every Error's section and path (not its names): an
 Error the export writes is a defect of this branch.
 
-Result:
+Result: 2026-10-04 14:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Test-OERStructure on the whole-tenant inventory.json: Valid True, 0 Errors, 0 duplicate Errors, 0 Warnings; Test-Json against the bundle's own schema.json: True.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Test-OERStructure: Valid True; Errors 0; duplicate Errors 0; Warnings 0
+[oer-s81] Test-Json against the bundle's schema.json: True
+```
 
 ### 4.3. The export's role assignments applied with -WhatIf: no undeclared candidate
 
-- [ ] **4.3** Applying the export's `roleAssignments` with `-WhatIf`, WITHOUT `-Prune` (the subscription is in it), reports 0 `Extra` rows -- the candidates `-Prune` would remove -- and the test objects `Unchanged`.
+- [x] **4.3** Applying the export's `roleAssignments` with `-WhatIf`, WITHOUT `-Prune` (the subscription is in it), reports 0 `Extra` rows -- the candidates `-Prune` would remove -- and the test objects `Unchanged`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -739,13 +1052,58 @@ guard working, not a planned removal); `refused by the fence: 0`.
 **Failure looks like:** an `Extra` row -- an assignment the export wrote is not matched by its own
 entry, so `-Prune` would remove it: record its section and detail.
 
-Result:
+Result: 2026-10-04 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the check, with a finding outside this step. -WhatIf without -Prune, behind the fence: 15 entries; Extra rows 0 -- no candidate -Prune would remove; the two oer-s81- rows Unchanged; 9 Unchanged in all; refused by the fence 0. FINDING (pre-existing, outside the step, P1): the 6 other rows are the export's entries at two management-group scopes, planned as "would create". The diagnosis below shows why: oer-live-cc cannot read role assignments at a management group (AuthorizationFailed, published by Get-OERRoleAssignment, 6 times, plus 36 nested copies of the same record in -ErrorVariable), and the handler's read of the current assignments (Sync-OERStructureRoleAssignment.ps1:383, unchanged in substance since fa7f274:234) carries no -ErrorAction Stop, so its catch never runs and the failed read is taken as an empty list. Nothing is removed (an empty read gives the prune pass no candidate), but the row says would create where it should say Failed. Tenant user names, the management group's name and a service principal's name are replaced by person2-4, mg-name-1 and sp-name-1.
+
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create role assignment 'Owner' for 'person2@example.com'" on target "/providers/Microsoft.Management/managementGroups/mg-name-1".
+What if: Performing the operation "Create role assignment 'Owner' for 'person1@example.com'" on target "/providers/Microsoft.Management/managementGroups/mg-name-1".
+What if: Performing the operation "Create role assignment 'User Access Administrator' for 'person3@example.com'" on target "/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008".
+What if: Performing the operation "Create role assignment 'User Access Administrator' for 'person2@example.com'" on target "/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008".
+What if: Performing the operation "Create role assignment 'User Access Administrator' for 'person4@example.com'" on target "/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008".
+What if: Performing the operation "Create role assignment 'Log Analytics Contributor' for 'sp-name-1'" on target "/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008".
+[oer-s81] Rows: Skipped = 6
+[oer-s81] Rows: Unchanged = 9
+[oer-s81] Test object: Reader -> oer-s81-grp1 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Test object: Reader -> oer-s81-grp2 @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg | Unchanged | role assignment already exists at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s81-rg'
+[oer-s81] Other row: Skipped | would create role assignment 'Owner' for 'person2@example.com' at '/providers/Microsoft.Management/managementGroups/mg-name-1'
+[oer-s81] Other row: Skipped | would create role assignment 'Owner' for 'person1@example.com' at '/providers/Microsoft.Management/managementGroups/mg-name-1'
+[oer-s81] Other row: Skipped | would create role assignment 'User Access Administrator' for 'person3@example.com' at '/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008'
+[oer-s81] Other row: Skipped | would create role assignment 'User Access Administrator' for 'person2@example.com' at '/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008'
+[oer-s81] Other row: Skipped | would create role assignment 'User Access Administrator' for 'person4@example.com' at '/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008'
+[oer-s81] Other row: Skipped | would create role assignment 'Log Analytics Contributor' for 'sp-name-1' at '/providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008'
+[oer-s81] Document: role assignments 15; Extra rows: 0; refused by the fence: 0; records: 42
+
+[diagnosis, the same document again, read-only behind the fence, records grouped]
+[oer-s81] Export entries at a management-group scope: 6; distinct such scopes: 2
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/mg-name-1/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/mg-name-1/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] MG transport: THROW /providers/Microsoft.Management/managementGroups/00000000-0000-0000-0000-000000000008/providers/Microsoft.Authorization/roleAssignments -> AuthorizationFailed
+[oer-s81] Records: 54; ErrorRecords: 42; published by Invoke-OERStructure: 0
+[oer-s81] Record x36: AuthorizationFailed | OperationStopped | - | AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000007' does not have authorization to perf
+[oer-s81] Record x6: AuthorizationFailed,Get-OERRoleAssignment | OperationStopped | Get-OERRoleAssignment | AuthorizationFailed: The client '00000000-0000-0000-0000-000000000001' with object id '00000000-0000-0000-0000-000000000007' does not have authorization to perf
+[oer-s81] Rows: Skipped 6, Unchanged 9
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans the removal of the two role assignments at `oer-s81-rg`, the two groups and the resource group, and nothing else.
+- [x] **T.1** `-Teardown -WhatIf` plans the removal of the two role assignments at `oer-s81-rg`, the two groups and the resource group, and nothing else.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -764,11 +1122,45 @@ Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.
 `oer-s81-grp1` and `oer-s81-grp2` at `oer-s81-rg`, the two groups and `oer-s81-rg`; exit code `0`.
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-04 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Five tenant targets, every one with the prefix: the role assignments of oer-s81-grp1 and oer-s81-grp2 at oer-s81-rg, the groups oer-s81-grp1 and oer-s81-grp2, and oer-s81-rg; no residue; nothing removed; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s81\teardown-20261004-143819Z.log".
+[oer-s81] Mode: REMOVE. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Residue: raw\residue.json holds no rows.
+What if: Performing the operation "Remove the role assignment (Azure Resource Manager DELETE)" on target "oer-s81-grp1 role assignment at oer-s81-rg".
+What if: Performing the operation "Remove the role assignment (Azure Resource Manager DELETE)" on target "oer-s81-grp2 role assignment at oer-s81-rg".
+[oer-s81] Teardown of 'oer-s81-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s81] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s81] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s81] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s81] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s81] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s81-grp1".
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s81-grp2".
+[oer-s81] Teardown 6/6: the prefixed users.
+[oer-s81] Teardown of 'oer-s81-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+What if: Performing the operation "Delete the resource group (Azure Resource Manager DELETE)" on target "oer-s81-rg".
+[oer-s81] WhatIf: nothing was created, removed or written.
+[oer-s81] Done.
+[oer-s81] What-if targets: 6; in the tenant: 5; every tenant target starts with oer-s81-: True; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Everything with the prefix is gone, and the counts equal the baseline.
+- [x] **T.2** Everything with the prefix is gone, and the counts equal the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -787,11 +1179,52 @@ sweep finds nothing; `Resource group oer-s81-rg exists after the teardown: False
 **Failure looks like:** exit code 3 -- residue: record each RESIDUE line, it stays prefixed and the
 next run retries it; a count that differs from the baseline -- record it.
 
-Result:
+Result: 2026-10-04 14:39 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Both role assignments at oer-s81-rg removed (OK); both groups deleted (204); removed 2, residue 0, unreadable 0; oer-s81-rg deleted and gone after 2 reads (2.5 s); exists after the teardown: False; counts equal to the baseline (groups 97, role assignments defined at the subscription 6); exit code 0. The sweep run seconds after the deletion still listed the two deleted groups -- the startswith listing lags a group DELETE by a few seconds (measured in Sprint 7 step 1); T.3 reads back later.
+
+[oer-s81] Transcript (redacted): raw\s81\teardown-20261004-143844Z.log; OerLive 1.0.2.
+[oer-s81] Mode: REMOVE. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s81] Residue: raw\residue.json holds no rows.
+[oer-s81] Teardown 1: removed the oer-s81-grp1 role assignment at oer-s81-rg (OK).
+[oer-s81] Teardown 1: removed the oer-s81-grp2 role assignment at oer-s81-rg (OK).
+[oer-s81] Teardown of 'oer-s81-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s81] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s81] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s81] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s81] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s81] Teardown 5/6: the prefixed groups.
+[oer-s81] Deleted: group oer-s81-grp1 (204).
+[oer-s81] Deleted: group oer-s81-grp2 (204).
+[oer-s81] Teardown 6/6: the prefixed users.
+[oer-s81] Teardown of 'oer-s81-': removed 2, residue 0, unreadable 0.
+[oer-s81] oer-s81-rg is gone: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s81] oer-s81-rg is gone: converged after 2 read(s), 2.5 s.
+[oer-s81] Teardown RG: deleted oer-s81-rg.
+[oer-s81] Sweep: group 'oer-s81-grp1' (00000000-0000-0000-0000-000000000004) carries the prefix.
+[oer-s81] Sweep: group 'oer-s81-grp2' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s81] Resource group oer-s81-rg exists after the teardown: False
+[oer-s81] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s81] Counts: subscriptionRoleAssignments now 6, at the baseline 6; equal: True
+[oer-s81] Done.
+[oer-s81] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** A later read-back finds nothing, the clone is back on the branch it was on, and the raw folder and the redaction map are deleted after the write-up.
+- [x] **T.3** A later read-back finds nothing, the clone is back on the branch it was on, and the raw folder and the redaction map are deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -809,4 +1242,28 @@ False`; both counts equal; the clone on `main` with 0 tracked changes. After the
 into the repository checklist: delete `raw\s81\` and run `Clear-OerLiveRedactionMap`.
 **Failure looks like:** a prefixed object left -- run T.2 again.
 
-Result:
+Result: 2026-10-04 14:40 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Read back about a minute after T.2: the sweep finds no oer-s81- object; oer-s81-rg exists: False; both counts equal to the baseline; prefixed objects left 0, unread collections 0, residue rows 0. The clone is back on main with 0 tracked changes. raw\s81 and the redaction map are deleted after the write-up.
+
+[oer-s81] Transcript (redacted): raw\s81\readback-20261004-143944Z.log; OerLive 1.0.2.
+[oer-s81] Mode: READ BACK. Prefix 'oer-s81-'. Objects (fixed): oer-s81-rg; oer-s81-grp1, oer-s81-grp2; Reader for oer-s81-grp1 at oer-s81-rg. OerLive 1.0.2.
+[oer-s81] Omnicit.EntraRBAC 1.1.2 loaded from REPO\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s81] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s81] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s81-' is left.
+[oer-s81] Read-back: resource group oer-s81-rg exists: False
+[oer-s81] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s81] Counts: subscriptionRoleAssignments now 6, at the baseline 6; equal: True
+[oer-s81] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s81] Done.
+[oer-s81] Clone branch after the switch back: main; tracked changes: 0
+```
