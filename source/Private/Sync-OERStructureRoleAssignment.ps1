@@ -251,9 +251,10 @@ function Sync-OERStructureRoleAssignment {
 
         # A role definition id is anchored at whatever scope it was read from: the resolver anchors a
         # GUID at the scope it was given, while Azure Resource Manager reports a live assignment at a
-        # resource group with the SUBSCRIPTION-anchored id (measured live) and one at a management
-        # group with the tenant-anchored id. The GUID, the last segment of the id, names one role
-        # definition everywhere, so the match and the prune key compare that and never the whole path.
+        # resource group with the SUBSCRIPTION-anchored id (measured live), and a management group
+        # is expected to do the same (inferred, not measured). The GUID, the last segment of the id,
+        # names one role definition everywhere, so the match and the prune key compare that and never
+        # the whole path.
         function Get-RoleDefinitionGuid {
             param([string]$RoleDefinitionId)
             ($RoleDefinitionId.TrimEnd('/') -split '/')[-1]

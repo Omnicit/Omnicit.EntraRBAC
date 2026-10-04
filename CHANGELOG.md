@@ -7,8 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.1.1. A preview published from this point differs from 1.1.1 only
-in documentation, tests or the build.
+`Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the scope it resolves,
+not on the text the document wrote. `sub:` and `subscription:` with an id, `/subscriptions/` with
+that id, the subscription's name, `mg:` with a management group's name or display name, its path,
+and a path with a trailing `/` now name one scope, compared without regard to letter case. Earlier
+versions treated each spelling as its own scope, so under `-Prune` two entries for one scope removed
+each other's assignments on every run. A role given by its GUID now matches the live assignment at
+a resource group or management group, where `-Prune` used to remove and re-create it on every run.
+A scope that cannot be resolved withholds the prune of the whole `roleAssignments` section, and an
+entry that resolves to the same scope, principal and role as an earlier one is reported `Failed`
+and not written. A scope written with a trailing `/` is now pruned under `-Prune` like the same
+scope without it; earlier versions never pruned it.
+
+`Test-OERStructure` and `Invoke-OERStructure` now refuse a document that declares the same group,
+administrative unit, catalog, access package within one catalog, access review, role assignment,
+Azure role policy or directory role policy twice, compared without regard to letter case.
+`Get-OERInventory` and `Export-OERInventory` never write such a duplicate: objects that share a
+name are left out and named in `InventoryPartial`, and role assignment principals that share a
+name are written by object id.
 
 ## [1.1.1] - 2026-10-04
 

@@ -333,7 +333,8 @@ function Test-OERStructureSchema {
                 # non-string value names no group at all; one equal to displayName (Graph matches
                 # display names case-insensitively) resolves to the same group, so nothing is renamed
                 # -- which also means a case-only rename cannot be expressed through the document.
-                # A template-based group's real name is computed at apply time and is not compared.
+                # This Warning does not compare a template-based group's computed name (the duplicate
+                # check below does).
                 if (Test-HasProp -Node $G -Name 'previousDisplayName') {
                     $PrevDN = $G.previousDisplayName
                     if ($PrevDN -isnot [string] -or $PrevDN.Length -eq 0) {
@@ -1550,10 +1551,9 @@ function Test-OERStructureSchema {
     # would re-issue its window for each of them on every run, so the second is an Error. The key is
     # compared as written, without regard to letter case: a role written by name in one entry and by
     # id in another cannot be told apart offline. (The other sections share the newer
-    # Add-DuplicateEntryFinding helper and its message shape; this older rule keeps its own wording,
-    # which its tests pin.) A service principal named by display name rather
-    # than object id is a Warning: display names are not unique, and an apply run refuses an ambiguous
-    # one (AmbiguousName; the entry reports Failed).
+    # Add-DuplicateEntryFinding helper and its message shape; this older rule keeps its own wording.)
+    # A service principal named by display name rather than object id is a Warning: display names are
+    # not unique, and an apply run refuses an ambiguous one (AmbiguousName; the entry reports Failed).
     if (Test-HasProp -Node $Document -Name 'directoryRoleAssignments') {
         if (Test-SectionIsArray -SectionName 'directoryRoleAssignments') {
             $DRAs = @($Document.directoryRoleAssignments)

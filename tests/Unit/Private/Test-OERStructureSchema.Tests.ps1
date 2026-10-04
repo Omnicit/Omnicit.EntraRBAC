@@ -3743,6 +3743,24 @@ Describe 'Test-OERStructureSchema duplicate entries' {
             $Hit[0].Message | Should -Match ([regex]::Escape(' as groups[2] ('))
         }
 
+        It 'does not count one template with different tokens as a duplicate' {
+            $Doc = New-DupDoc -Section 'groups' -ItemJson @(
+                '{ "template": "role_{env}", "tokens": { "env": "x" }, "members": null }'
+                '{ "template": "role_{env}", "tokens": { "env": "y" }, "members": null }'
+                '{ "displayName": "Role_Real", "members": null }'
+                '{ "displayName": "ROLE_REAL", "members": null }'
+            )
+            $V = Invoke-DupValidation -Doc $Doc
+            # The two templates read the same text but compute role_x and role_y, so they claim two
+            # names. The real twin after them is the positive control: it proves the rule ran past the
+            # template entries, and is the only entry reported.
+            $Hit = @(Get-DupFinding -Validation $V)
+            $Hit.Count | Should -Be 1
+            $Hit[0].Path | Should -BeExactly 'groups[3]'
+            $Hit[0].Message | Should -Match ([regex]::Escape(' as groups[2] ('))
+            @($V.Errors | Where-Object { $_.Path -like 'groups[1]*' -and $_.Message -match 'declares the same' }).Count | Should -Be 0
+        }
+
         It 'makes no claim for a previousDisplayName that is not a non-empty string' {
             $Doc = New-DupDoc -Section 'groups' -ItemJson @(
                 '{ "displayName": "New_A", "previousDisplayName": 42, "members": null }'

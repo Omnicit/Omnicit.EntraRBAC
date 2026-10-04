@@ -2430,12 +2430,15 @@ written to Verbose and the request proceeds, letting Microsoft Graph enforce the
 did.
 
 **The prune pass is keyed on RESOLVED role ids, runs once per section, and withholds before it
-removes anything.** Like `roleAssignments`, the pass runs in the handler invocation for the
-section's FIRST item, before that item's own reconcile -- but unlike `roleAssignments`, it runs
-whatever that first item's own outcome, since a role or principal that fails to resolve for item one
-says nothing about whether item two's pair should be pruned. It is keyed on resolved role
-definition ids, not on the text the document wrote, so one role written by display name in one entry
-and by id in another is one pair, and neither entry's live assignment is ever reported `Extra`. Only
+removes anything.** Like `roleAssignments`, the pass runs in the handler invocation for the FIRST
+item of its group -- here the section's first item, there the first item of each resolved scope --
+but here it runs BEFORE that item's own reconcile, where the `roleAssignments` pass follows it. And
+unlike `roleAssignments`, it runs whatever that first item's own outcome, since a role or principal
+that fails to resolve for item one says nothing about whether item two's pair should be pruned. It is
+keyed on resolved role definition ids, not on the text the document wrote, so one role written by
+display name in one entry and by id in another is one pair, and neither entry's live assignment is
+ever reported `Extra`. `roleAssignments` is keyed on resolved ids too: the scope the engine resolved
+and the role definition's GUID (see [#role-assignment-key](#role-assignment-key)). Only
 the `(role, assignmentType)` pairs the document actually declares are read -- a role the document
 does not name is never touched, and a role declared only for `Eligible` never has its `Active`
 assignments read, nor the reverse. `ConvertTo-OERPruneWithheldResult` is called FIRST for every
@@ -2859,3 +2862,103 @@ resolves a name to the group first when that group is a resource of the catalog 
 the catalog still records for ANOTHER resource could bind the role to the wrong group and read the
 right binding as undeclared. The earlier documentation that told a proposal to keep the old recorded
 name in those two sections is withdrawn.
+
+## role-assignment-key
+
+Sprint 8 step 1 changed what identifies a `roleAssignments` entry in the apply engine, from the text
+the document wrote to what that text resolves to, and made a repeated entry an error instead of two
+passes that undo each other. This anchor records why each part sits where it does. Everything below
+was derived from the code and covered by mocked tests, except the one fact marked as measured live.
+
+**The scope is resolved once, before dispatch, and entries are grouped on the canonical resolved
+scope (BL-01).** The engine used to group sibling entries on the scope TEXT, compared without regard
+to letter case, and to run one prune pass per distinct text. `sub:` and `subscription:` with an id,
+`/subscriptions/` with that id, a subscription's name, `mg:` with a management group's name or
+display name, and the management group's path are all spellings of ONE scope, so a document that used
+two of them formed two groups over one live scope. Under `-Prune` each group's pass removed what the
+other group declared: in practice only the LAST group's assignments were left after a run, and the
+others were created and removed again on every run. Without `-Prune` each group reported the other's
+assignments as `Extra`. A trailing `/` was never trimmed either. No live scope carries one, so that
+group's comparison never matched: it pruned nothing itself, drew a false "inherited" `Skipped` row for
+its own assignment, and, when the same scope was also written without the slash, had its assignments
+pruned by that other group.
+
+`Resolve-OERStructureRoleAssignmentScope` now runs once before the first entry is dispatched. It
+parses each entry's scope with `ConvertTo-OERScopeSplat`, resolves it with `Resolve-OERScope` and puts
+the result in the canonical form `ConvertTo-OERCanonicalScope` owns. The engine groups on that string
+without regard to letter case, and hands EVERY entry of a group the same string as `-ResolvedScope`.
+The handler never resolves the scope again, and uses exactly that string for every Azure Resource
+Manager call and for the comparison of a live assignment's scope with the declared one, which is what
+decides what the prune may touch. Were the handler to resolve it for itself, the comparison could
+stand on a different spelling than the group was formed on, and a trailing `/` would come back at the
+one line that used to hide it. As a side effect each distinct scope text is looked up once per run and
+not three times per entry, which for a `sub:` name was two to three listings each time. Only a
+success is cached, by the exact scope text: a transient failure on one entry must not fail the next
+entry with the same text. Labels and Detail texts keep the document's own text, since an operator searches the output for
+what the document says.
+
+**The role is compared on its GUID, the last segment of its id (BL-35).** `Resolve-OERRoleDefinitionId`
+anchors a role given as a GUID at the scope it was handed. A live assignment at a resource group
+carries the role definition id anchored at the SUBSCRIPTION -- measured live, see the withheld
+candidate row in `docs/live-verification/fix-withhold-prune-on-unresolved-entries-checklist.md` -- and
+a management group is expected to behave the same way. Comparing whole ids therefore never matched a
+role given as a GUID below the subscription: with `-Prune` the live assignment was removed and
+created again on every run. A role given by name did match, since the listing returns Azure's own id,
+and the export writes a name or a full id, so a round trip never met the defect. But the
+`AmbiguousName` message asks the operator to give the GUID, which led straight into it. The match and
+the declared key set both compare the last segment without regard to letter case; a GUID names one
+role definition everywhere, so nothing is lost, and the id sent to Azure when an assignment is
+created is unchanged.
+
+**An unresolved scope withholds the prune of the whole section (A12).** An entry whose scope cannot
+be resolved belongs to no group, and it may be a spelling of ANY scope in the section: its own live
+assignment would look undeclared at whichever scope it names. So every undeclared candidate at every
+scope is reported `Skipped` with a Detail starting "prune withheld:", with or without `-Prune`, and
+none is removed, while the entry itself is `Failed` with its error published as itself. It is the
+rule `#directory-role-assignments` already applies to a role it cannot resolve, and it errs towards
+removing less. The earlier end-to-end test, which expected an assignment to be removed beside an
+unresolved scope, was turned round on purpose.
+
+**A repeat after resolution is `Failed` and still counts as declared.** Two entries of one resolved
+scope that name the same principal and role are one assignment declared twice, and only resolution can
+tell, for a subscription's name and its id look nothing alike. The later entry is reported `Failed`,
+naming the earlier one by index and label, and nothing is read or written for it: no create and no
+in-place update, so two spellings cannot each rewrite the condition of one assignment. Its key stays
+in the declared set, so the prune never removes the assignment it describes; withholding the key would
+let a malformed document delete a live assignment, which is the one direction this change never goes.
+An earlier entry that carries no key, because its principal or role did not resolve, never makes a
+later one a duplicate.
+
+**The validator owns uniqueness, and the canonical scope is a pure helper.** `schema.json` is draft-07,
+which cannot say that the items of an array have unique keys, so `Test-OERStructureSchema` owns the
+rule: a repeated entry is an `Error` at the later entry's path, naming the earlier index, in every
+section, and an `Error` refuses the whole document before authentication and before any write. The
+validator compares scopes, and must do it without a transport: `Test-OERStructure` is
+`Transport = 'None'` in `Get-OERRequiredScopeMap`, and the requiredscope gate follows the call graph,
+so a validator that reached `Resolve-OERScope` would give a cmdlet that needs no permission an edge to
+Azure. `ConvertTo-OERCanonicalScope` is therefore pure: a prefix in any letter case, `sub:` and
+`subscription:` with a GUID to `/subscriptions/` and the GUID, `mg:` to the management group path, and
+a trailing `/` trimmed except for `/` itself. The engine uses the same helper, so the offline and the
+online comparison cannot drift. What the helper cannot know is a subscription's name or a management
+group's display name, and those pairs are the ones the engine catches after resolution, which is why
+the rule lives in both places. `ConvertTo-OERScopeSplat` is likewise the one owner of the `sub:`,
+`subscription:` and `mg:` syntax, which `Sync-OERStructureRoleManagementPolicy` and the role assignment
+handler used to parse with two private copies.
+
+**The export leaves colliding names out, and writes colliding principals by id.** A document that
+`Get-OERInventory` writes is the one an operator edits and applies, so it must not be one the
+validator now refuses. Live groups, administrative units, catalogs, access reviews, or access packages
+of one catalog that share a name, without regard to letter case, are left out of the document, all of
+them, and each name is reported through `InventoryPartial` with the cause "share the name", also on
+the verbose stream. The apply engine has refused an ambiguous name since Sprint 7, so neither entry
+could have been applied. Leaving a top-level entry out removes nothing, since `-Prune` acts on child
+collections only and the engine never deletes a top-level object. Role assignments are different:
+every row is real and wanted, so a colliding principal is written by object id, with `principalType`
+so a re-apply creates the right kind of principal, and a role is written as its full definition id
+only when the principal already was an id. A role policy read twice is written once, since it is one
+policy.
+
+**Cost, accepted.** A document whose ONLY spelling of a scope ends in `/` now prunes undeclared
+assignments at that scope under `-Prune`, where that group never pruned before. It is the same prune
+the document would have had without the slash, and the one place this change removes more than it did;
+the release note says so. Every other effect of the change is to remove fewer assignments, or the same.

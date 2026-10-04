@@ -80,6 +80,24 @@ Describe 'Get-OERInventoryPromptTemplate' {
         }
     }
 
+    It 'documents the scope forms, the one-scope rule and the declare-once rule' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the lines wrap.
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # The short forms the apply engine accepts, next to the ARM strings in both places.
+            $Collapsed | Should -Match ([regex]::Escape('sub:<guid or name> (also subscription:<guid or name>) and mg:<name or display name>'))
+            $Collapsed | Should -Match ([regex]::Escape('the short forms sub:<guid or name>, subscription:<guid or name> and mg:<name or display name> name the same scopes'))
+            # Two spellings of one scope are one scope, compared without regard to case or a trailing slash.
+            $Collapsed | Should -Match ([regex]::Escape('compares scopes without regard to letter case and ignoring a trailing /, so two spellings of one scope are ONE scope'))
+            # The declare-once rules, for roleAssignments, roleManagementPolicies and the other sections.
+            $Collapsed | Should -Match ([regex]::Escape('declare each (scope, role, principal) once'))
+            $Collapsed | Should -Match ([regex]::Escape('each (scope, role) is declared once'))
+            $Collapsed | Should -Match ([regex]::Escape('and each access package once per catalog'))
+            # The role is matched on its GUID, so a GUID matches the live assignment below a subscription.
+            $Collapsed | Should -Match ([regex]::Escape('is matched on its GUID, so a role given as a GUID matches the live assignment at a resource group or management group'))
+        }
+    }
+
     It 'tells the model to reciprocate a group administrativeUnit in the unit members array (issue #59)' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
@@ -131,10 +149,12 @@ Describe 'Get-OERInventoryPromptTemplate' {
     It 'does not claim a resource-group-scoped role assignment is unappliable' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
-            # Sync-OERStructureRoleAssignment passes any '/'-prefixed scope straight to
-            # Resolve-OERScope, which handles /subscriptions/{id}/resourceGroups/{rg}. Saying
-            # otherwise would contradict the least-privilege principle stated further down the
-            # prompt and push the model toward needlessly broad grants.
+            # The engine's roleAssignments scope pre-pass (Resolve-OERStructureRoleAssignmentScope)
+            # parses any '/'-prefixed scope with ConvertTo-OERScopeSplat -- which only trims a
+            # trailing '/' -- and hands it to Resolve-OERScope, which handles
+            # /subscriptions/{id}/resourceGroups/{rg}. Saying otherwise would contradict the
+            # least-privilege principle stated further down the prompt and push the model toward
+            # needlessly broad grants.
             $T | Should -Match 'resource-group or resource scope does apply'
             $T | Should -Match 'preserve it verbatim'
             $T | Should -Match 'Least privilege'
