@@ -6,43 +6,50 @@ BeforeAll {
 
 Describe 'Sync-OERStructureRoleAssignment' {
 
-    It 'parses subscription:Prod into -Subscription and creates a missing assignment with -Group for non-@ principal' {
+    # The engine resolves the scope before dispatch and hands the handler the canonical resolved scope
+    # as -ResolvedScope. The handler never resolves it again: that exact string reaches every ARM call,
+    # whatever the document wrote (subscription:Prod, mg:platform, a raw path with a trailing '/').
+    It 'passes the resolved scope of subscription:Prod as -Scope to every ARM call, never resolves it again, and creates a missing assignment with -Group for non-@ principal' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
+            Mock Resolve-OERScope {}
             Mock Resolve-OERStructurePrincipal { 'p-1' }
-            Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
-            Mock Get-OERRoleAssignment { @() }
+            Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-1" }
+            Mock Get-OERRoleAssignment { param($Scope, [switch]$AtScope) @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-1' } }
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }))
-            Should -Invoke Resolve-OERScope -Times 1 -ParameterFilter { $Subscription -eq 'Prod' }
-            Should -Invoke New-OERRoleAssignment -Times 1 -ParameterFilter { $Subscription -eq 'Prod' -and $Group -eq 'role_sec_x' }
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/sub-1')
             ($r | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
+            Should -Invoke Resolve-OERRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/sub-1' }
+            Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/sub-1' -and $AtScope }
+            Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/sub-1' -and $Group -eq 'role_sec_x' }
+            Should -Invoke Resolve-OERScope -Times 0
         }
     }
 
-    It 'parses mg:platform into -ManagementGroup and creates a missing assignment' {
+    It 'passes the resolved scope of mg:platform as -Scope to every ARM call, never resolves it again, and creates a missing assignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/providers/Microsoft.Management/managementGroups/platform' }
+            Mock Resolve-OERScope {}
             Mock Resolve-OERStructurePrincipal { 'p-1' }
-            Mock Resolve-OERRoleDefinitionId { '/providers/Microsoft.Management/managementGroups/platform/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
-            Mock Get-OERRoleAssignment { @() }
+            Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-1" }
+            Mock Get-OERRoleAssignment { param($Scope, [switch]$AtScope) @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-mg-1' } }
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'mg:platform'; role = 'Reader'; principal = 'role_sec_platform' }))
-            Should -Invoke Resolve-OERScope -Times 1 -ParameterFilter { $ManagementGroup -eq 'platform' }
-            Should -Invoke New-OERRoleAssignment -Times 1 -ParameterFilter { $ManagementGroup -eq 'platform' }
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'mg:platform'; role = 'Reader'; principal = 'role_sec_platform' }) -ResolvedScope '/providers/Microsoft.Management/managementGroups/platform')
             ($r | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
+            Should -Invoke Resolve-OERRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/providers/Microsoft.Management/managementGroups/platform' }
+            Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/providers/Microsoft.Management/managementGroups/platform' -and $AtScope }
+            Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/providers/Microsoft.Management/managementGroups/platform' -and $Group -eq 'role_sec_platform' }
+            Should -Invoke Resolve-OERScope -Times 0
         }
     }
 
@@ -50,16 +57,15 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'u-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-u-1' } }
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'anna@contoso.com' }))
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'anna@contoso.com' }) -ResolvedScope '/subscriptions/sub-1')
             Should -Invoke New-OERRoleAssignment -Times 1 -ParameterFilter { $User -eq 'anna@contoso.com' }
             ($r | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
         }
@@ -69,10 +75,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -84,47 +89,32 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
             Mock New-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }))
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/sub-1')
             Should -Invoke New-OERRoleAssignment -Times 0
             ($r | Where-Object Action -eq 'Unchanged').Count | Should -BeGreaterThan 0
         }
     }
 
-    It 'passes a raw scope string as -Scope to Resolve-OERScope' {
+    It 'passes the resolved scope, not the scope text the document wrote, as -Scope to every ARM call and keeps the written text in the label' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/x/resourceGroups/y' }
+            Mock Resolve-OERScope {}
             Mock Resolve-OERStructurePrincipal { 'p-raw' }
-            Mock Resolve-OERRoleDefinitionId { '/subscriptions/x/resourceGroups/y/providers/Microsoft.Authorization/roleDefinitions/rd-raw' }
-            Mock Get-OERRoleAssignment { @() }
+            Mock Resolve-OERRoleDefinitionId { param($Role, $Scope) "$Scope/providers/Microsoft.Authorization/roleDefinitions/rd-raw" }
+            Mock Get-OERRoleAssignment { param($Scope, [switch]$AtScope) @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ RoleAssignmentId = 'ra-raw' } }
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = '/subscriptions/x/resourceGroups/y'; role = 'Reader'; principal = 'role_sec_x' }))
-            Should -Invoke Resolve-OERScope -Times 1 -ParameterFilter { $Scope -eq '/subscriptions/x/resourceGroups/y' }
-            ($r | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
-        }
-    }
-
-    It 'reports Failed and does not call New-OERRoleAssignment when Resolve-OERScope throws' {
-        InModuleScope $script:moduleName {
-            function Invoke-SyncRaViaCaller {
-                [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
-            }
-            Mock Resolve-OERScope { throw 'subscription not found' }
-            Mock Resolve-OERStructurePrincipal { 'p-1' }
-            Mock Resolve-OERRoleDefinitionId { 'rd-1' }
-            Mock Get-OERRoleAssignment { @() }
-            Mock New-OERRoleAssignment {}
-            Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Missing'; role = 'Reader'; principal = 'role_sec_x' }) -ErrorAction SilentlyContinue)
-            Should -Invoke New-OERRoleAssignment -Times 0
-            ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
+            # The document wrote a trailing '/'; the engine's canonical resolved scope carries none.
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = '/subscriptions/x/resourceGroups/y/'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/x/resourceGroups/y')
+            @($r | Where-Object Action -eq 'Created' | ForEach-Object { $_.Item }) | Should -BeExactly @('Reader -> role_sec_x @ /subscriptions/x/resourceGroups/y/')
+            Should -Invoke Resolve-OERRoleDefinitionId -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' }
+            Should -Invoke Get-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' -and $AtScope }
+            Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Scope -ceq '/subscriptions/x/resourceGroups/y' }
+            Should -Invoke Resolve-OERScope -Times 0
         }
     }
 
@@ -132,16 +122,15 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { $null }
             Mock Resolve-OERRoleDefinitionId { 'rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'no_such_group' }) -ErrorAction SilentlyContinue)
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'no_such_group' }) -ResolvedScope '/subscriptions/sub-1' -ErrorAction SilentlyContinue)
             Should -Invoke New-OERRoleAssignment -Times 0
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
         }
@@ -151,10 +140,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             # Current contains the declared item (p-1/rd-1) and an extra undeclared item
@@ -167,7 +155,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Remove-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue)
+            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningAction SilentlyContinue)
             Should -Invoke Remove-OERRoleAssignment -Times 1 -ParameterFilter { $Id -eq 'ra-extra' }
             ($r | Where-Object Action -eq 'Removed').Count | Should -BeGreaterThan 0
         }
@@ -177,10 +165,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -193,7 +180,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
             $Warnings = @()
-            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WhatIf -WarningVariable Warnings
+            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WhatIf -WarningVariable Warnings
             $Joined = ($Warnings | ForEach-Object { [string]$_ }) -join ' '
             $Joined | Should -Match 'would remove'
             $Joined | Should -Not -Match 'removing undeclared'
@@ -204,10 +191,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -220,7 +206,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
             $Warnings = @()
-            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningVariable Warnings
+            $null = Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -WarningVariable Warnings
             $Joined = ($Warnings | ForEach-Object { [string]$_ }) -join ' '
             $Joined | Should -Match 'removing undeclared'
         }
@@ -234,10 +220,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -249,7 +234,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             Mock Invoke-OERArmRequest { if ($Method -eq 'DELETE') { return [PSCustomObject]@{ id = 'ra-extra' } }; throw "unexpected $Method $Path" }
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            $All = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -ErrorAction Stop 3>&1)
+            $All = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($DeclaredItem) -ReconcileScope -ErrorAction Stop 3>&1)
             $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
             $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
             @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
@@ -264,10 +249,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -279,7 +263,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Remove-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
+            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
             Should -Invoke Remove-OERRoleAssignment -Times 0
             ($r | Where-Object Action -eq 'Extra').Count | Should -BeGreaterThan 0
         }
@@ -289,10 +273,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             # Current contains the declared assignment plus an undeclared extra
@@ -306,7 +289,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
             # No -ReconcileScope
-            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -DeclaredAtScope @($DeclaredItem))
+            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($DeclaredItem))
             Should -Invoke Remove-OERRoleAssignment -Times 0
             ($r | Where-Object { $_.Action -eq 'Extra' -or $_.Action -eq 'Removed' }).Count | Should -Be 0
         }
@@ -316,16 +299,15 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -WhatIf)
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/sub-1' -WhatIf)
             Should -Invoke New-OERRoleAssignment -Times 0
             ($r | Where-Object Action -eq 'Skipped').Count | Should -BeGreaterThan 0
         }
@@ -335,16 +317,15 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment { throw 'ARM 500' }
             Mock Initialize-OERAuth {}
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ErrorAction SilentlyContinue)
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/sub-1' -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count  | Should -BeGreaterThan 0
             ($r | Where-Object Action -eq 'Created').Count | Should -Be 0
         }
@@ -362,17 +343,16 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment { throw 'ARM 500' }
             Mock Initialize-OERAuth {}
             Mock Remove-OERErrorRecord { }
-            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ErrorAction SilentlyContinue)
+            $r = @(Invoke-SyncRaViaCaller -Item ([PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }) -ResolvedScope '/subscriptions/sub-1' -ErrorAction SilentlyContinue)
             ($r | Where-Object Action -eq 'Failed').Count | Should -BeGreaterThan 0
             Should -Invoke Remove-OERErrorRecord -Times 1
         }
@@ -382,17 +362,16 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'sp-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/.../rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ Id = 'ra-1' } }
             Mock Initialize-OERAuth {}
             $Item = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'Contoso SP'; principalType = 'ServicePrincipal' }
-            $r = @(Invoke-SyncRaViaCaller -Item $Item)
+            $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/sub-1')
             Should -Invoke New-OERRoleAssignment -Times 1 -ParameterFilter { $ServicePrincipal -eq 'Contoso SP' }
             Should -Invoke Resolve-OERStructurePrincipal -Times 1 -ParameterFilter { $Type -eq 'ServicePrincipal' }
             ($r | Where-Object Action -eq 'Created').Count | Should -BeGreaterThan 0
@@ -403,17 +382,16 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'g-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/.../rd-1' }
             Mock Get-OERRoleAssignment { @() }
             Mock New-OERRoleAssignment { [PSCustomObject]@{ Id = 'ra-1' } }
             Mock Initialize-OERAuth {}
             $Item = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            @(Invoke-SyncRaViaCaller -Item $Item) | Out-Null
+            @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/sub-1') | Out-Null
             Should -Invoke New-OERRoleAssignment -Times 1 -ParameterFilter { $Group -eq 'role_sec_x' }
         }
     }
@@ -422,10 +400,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             # atScope() returns the declared at-scope assignment AND one inherited from a parent MG.
@@ -438,7 +415,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             Mock Remove-OERRoleAssignment {}
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
+            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
             ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
             ($r | Where-Object Action -eq 'Unchanged').Count | Should -BeGreaterThan 0
         }
@@ -448,10 +425,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
         InModuleScope $script:moduleName {
             function Invoke-SyncRaViaCaller {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERStructurePrincipal { 'p-1' }
             Mock Resolve-OERRoleDefinitionId { '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
             Mock Get-OERRoleAssignment {
@@ -462,7 +438,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
             }
             Mock Initialize-OERAuth {}
             $DeclaredItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'role_sec_x' }
-            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
+            $r = @(Invoke-SyncRaViaCaller -Item $DeclaredItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($DeclaredItem) -ReconcileScope)
             $Extra = $r | Where-Object Action -eq 'Extra'
             $Extra.Item | Should -Be 'rd-extra -> extra-p @ /subscriptions/sub-1'
             $Extra.Item | Should -Not -Match 'role_sec_x'
@@ -475,10 +451,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment { @() }
@@ -488,7 +463,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                     scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'
                     condition = "@Resource[x] StringEquals 'y'"; conditionVersion = '2.0'; description = 'why'
                 }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false)
                 Should -Invoke New-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
                     $Condition -eq "@Resource[x] StringEquals 'y'" -and $ConditionVersion -eq '2.0' -and $Description -eq 'why'
                 }
@@ -500,10 +475,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -517,7 +491,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock New-OERRoleAssignment {}
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = 'c'; conditionVersion = '2.0'; description = 'd' }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false)
                 ($r | Where-Object { $_.Action -eq 'Unchanged' }) | Should -Not -BeNullOrEmpty
             }
         }
@@ -526,10 +500,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -544,7 +517,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Set-OERRoleAssignment {}
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = 'declared-condition'; conditionVersion = '2.0'; description = 'd' }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false)
                 ($r | Where-Object { $_.Detail -like '*condition*' }).Action | Should -Be 'Updated'
                 Should -Invoke New-OERRoleAssignment -Times 0 -Exactly
                 Should -Invoke Set-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
@@ -557,10 +530,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s' }
                 Mock Resolve-OERStructurePrincipal { '11111111-2222-3333-4444-555555555555' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7' }
                 Mock Get-OERRoleAssignment {
@@ -580,7 +552,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                     scope = 'subscription:s'; role = 'Reader'; principal = 'role_sec_ops'
                     condition = 'NEW'; conditionVersion = '2.0'; description = 'old description'
                 }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s' -Confirm:$false)
                 ($r | Where-Object { $_.Action -eq 'Updated' }) | Should -Not -BeNullOrEmpty
                 ($r | Where-Object { $_.Action -eq 'Skipped' }) | Should -BeNullOrEmpty
                 Should -Invoke Set-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
@@ -594,10 +566,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -611,7 +582,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Set-OERRoleAssignment {}
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = 'declared-condition'; conditionVersion = '2.0'; description = 'd' }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -WhatIf)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -WhatIf)
                 Should -Invoke Set-OERRoleAssignment -Times 0 -Exactly
                 $Skipped = $r | Where-Object { $_.Action -eq 'Skipped' }
                 $Skipped | Should -Not -BeNullOrEmpty
@@ -623,10 +594,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -640,7 +610,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Set-OERRoleAssignment { throw 'ARM 500' }
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = 'declared-condition'; conditionVersion = '2.0'; description = 'd' }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false -ErrorAction SilentlyContinue)
                 ($r | Where-Object { $_.Action -eq 'Failed' }) | Should -Not -BeNullOrEmpty
                 ($r | Where-Object { $_.Action -eq 'Updated' }) | Should -BeNullOrEmpty
             }
@@ -650,10 +620,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -670,7 +639,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 # An explicit JSON null must NOT read as '' -- that would clear the live ABAC condition
                 # through Set-OERRoleAssignment and WIDEN the principal's access.
                 $Item = '{ "scope": "/subscriptions/s1", "role": "Reader", "principal": "person17@example.com", "condition": null, "conditionVersion": null, "description": null }' | ConvertFrom-Json
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false)
                 Should -Invoke Set-OERRoleAssignment -Times 0 -Exactly
                 Should -Invoke New-OERRoleAssignment -Times 0 -Exactly
                 ($r | Where-Object { $_.Action -eq 'Unchanged' }) | Should -Not -BeNullOrEmpty
@@ -681,10 +650,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s1' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
                 Mock Get-OERRoleAssignment {
@@ -698,7 +666,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock New-OERRoleAssignment {}
                 Mock Initialize-OERAuth {}
                 $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com' }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s1' -Confirm:$false)
                 ($r | Where-Object { $_.Action -eq 'Unchanged' }) | Should -Not -BeNullOrEmpty
             }
         }
@@ -714,10 +682,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s/resourceGroups/rg' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/rd-owner' }
                 # The only match is DEFINED at the parent subscription and merely inherited into the rg.
@@ -737,7 +704,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                     scope = '/subscriptions/s/resourceGroups/rg'; role = 'Owner'; principal = 'role_sec_ops'
                     condition = 'DECLARED-CONDITION'; conditionVersion = '2.0'
                 }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false -WarningAction SilentlyContinue)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s/resourceGroups/rg' -Confirm:$false -WarningAction SilentlyContinue)
                 Should -Invoke Set-OERRoleAssignment -Times 0 -Exactly
                 Should -Invoke New-OERRoleAssignment -Times 0 -Exactly
                 ($r | Where-Object { $_.Action -eq 'Updated' })   | Should -BeNullOrEmpty
@@ -752,10 +719,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/s/resourceGroups/rg' }
                 Mock Resolve-OERStructurePrincipal { 'p-1' }
                 Mock Resolve-OERRoleDefinitionId { '/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/rd-owner' }
                 # The ancestor row comes FIRST, so a Select-Object -First 1 with no scope predicate
@@ -784,7 +750,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                     scope = '/subscriptions/s/resourceGroups/rg'; role = 'Owner'; principal = 'role_sec_ops'
                     condition = 'NEW'; conditionVersion = '2.0'
                 }
-                $r = @(Invoke-SyncRaViaCaller -Item $Item -Confirm:$false)
+                $r = @(Invoke-SyncRaViaCaller -Item $Item -ResolvedScope '/subscriptions/s/resourceGroups/rg' -Confirm:$false)
                 ($r | Where-Object { $_.Action -eq 'Updated' }) | Should -Not -BeNullOrEmpty
                 Should -Invoke Set-OERRoleAssignment -Times 1 -Exactly -ParameterFilter {
                     $Id -eq '/subscriptions/s/resourceGroups/rg/providers/Microsoft.Authorization/roleAssignments/rg-ra' -and
@@ -798,9 +764,8 @@ Describe 'Sync-OERStructureRoleAssignment' {
     }
 
     Context 'scope-wide sibling principalType resolution (site 345)' {
-        # Get-ScopeSplat maps 'subscription:Prod' to -Subscription 'Prod'; Resolve-OERScope is mocked
-        # to a fixed value regardless of the splat, matching the convention used elsewhere in this file.
-        # Two siblings share the scope: the primary item (main_group/Reader) and a second sibling
+        # The resolved scope is handed in as -ResolvedScope '/subscriptions/sub-1' whatever the item's
+        # scope text, matching the convention used elsewhere in this file. Two siblings share the scope: the primary item (main_group/Reader) and a second sibling
         # (sibling_group/Owner). Both have a matching CURRENT assignment. The declared key set built
         # from the siblings loop must include BOTH. A sibling that drops out of it -- exactly what a
         # sibling principalType coerced into a bad -Type argument at site 345 causes -- is recorded as
@@ -811,10 +776,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     switch ($Reference) {
@@ -838,7 +802,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Initialize-OERAuth {}
                 $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Owner'; principal = 'sibling_group'; principalType = 'Group' }
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
                 Should -Invoke Resolve-OERStructurePrincipal -Times 1 -Exactly -ParameterFilter {
                     $Reference -eq 'sibling_group' -and $Type -eq 'Group'
                 }
@@ -851,10 +815,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     switch ($Reference) {
@@ -889,7 +852,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 # starts 'prune withheld' -- no longer as Extra, which leaves the Extra assertion green
                 # on its own. Revert the fix and this It fails on the prune-withheld assertion below;
                 # see the task report for the quoted failing output.
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
                 ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
                 @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^prune withheld' }).Count | Should -Be 0
             }
@@ -899,10 +862,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     switch ($Reference) {
@@ -926,7 +888,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Initialize-OERAuth {}
                 $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Owner'; principal = 'sibling_group' }
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope)
                 ($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
                 @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match '^prune withheld' }).Count | Should -Be 0
             }
@@ -943,10 +905,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     if ($Reference -eq 'main_group') { 'p-main' } else { $null }
@@ -964,7 +925,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
                 $SiblingLabel = 'Reader -> missing_group @ subscription:Prod'
                 $Warnings = @()
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
                         -WarningAction SilentlyContinue -WarningVariable Warnings -ErrorAction SilentlyContinue)
                 Should -Invoke Remove-OERRoleAssignment -Times 0
                 $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
@@ -974,7 +935,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
                 (@($Warnings | ForEach-Object { [string]$_ }) -join ' ') | Should -Not -Match 'p-live'
                 # The sibling's own invocation reports it Failed under the label the reason names.
-                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
+                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
                 @($SiblingRows | Where-Object { $_.Action -eq 'Failed' -and $_.Item -eq $SiblingLabel }).Count | Should -Be 1
             }
         }
@@ -983,10 +944,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     if ($Reference -eq 'main_group') { 'p-main' } else { throw 'Graph 503 while resolving missing_group' }
@@ -1003,7 +963,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
                 $SiblingLabel = 'Reader -> missing_group @ subscription:Prod'
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
                         -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
                 Should -Invoke Remove-OERRoleAssignment -Times 0
                 $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
@@ -1012,7 +972,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 @($r | Where-Object Action -eq 'Removed').Count | Should -Be 0
                 # The swallowed sibling throw writes no error of its own in the scope-wide pass.
                 @($r | Where-Object Action -eq 'Failed').Count | Should -Be 0
-                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
+                $SiblingRows = @(Invoke-SyncRaViaCaller -Item $Sibling -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ErrorAction SilentlyContinue)
                 @($SiblingRows | Where-Object { $_.Action -eq 'Failed' -and $_.Item -eq $SiblingLabel }).Count | Should -Be 1
             }
         }
@@ -1021,10 +981,9 @@ Describe 'Sync-OERStructureRoleAssignment' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncRaViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
-                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                    param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                    Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
                 }
-                Mock Resolve-OERScope { '/subscriptions/sub-1' }
                 Mock Resolve-OERStructurePrincipal {
                     param($Reference, $Type)
                     if ($Reference -eq 'main_group') { 'p-main' } else { $null }
@@ -1040,7 +999,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
                 Mock Initialize-OERAuth {}
                 $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'main_group' }
                 $Sibling     = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'missing_group' }
-                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope -ErrorAction SilentlyContinue)
+                $r = @(Invoke-SyncRaViaCaller -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope -ErrorAction SilentlyContinue)
                 Should -Invoke Remove-OERRoleAssignment -Times 0
                 @($r | Where-Object Action -eq 'Extra').Count | Should -Be 0
                 $Withheld = @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Item -eq 'rd-reader -> p-live @ /subscriptions/sub-1' })
@@ -1054,19 +1013,18 @@ Describe 'Sync-OERStructureRoleAssignment' {
 Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal display name' {
     # Resolve-OERStructurePrincipal and Resolve-OERApplicationId run for REAL here: only the Graph
     # transport is mocked, and its servicePrincipals query answers with two service principals that
-    # share the display name 'Dup App'. Scope, role and the ARM cmdlets are mocked as in the suite
-    # above. No id below is version-4 shaped.
+    # share the display name 'Dup App'. The resolved scope is handed in as -ResolvedScope, and role and
+    # the ARM cmdlets are mocked as in the suite above. No id below is version-4 shaped.
     BeforeEach {
         InModuleScope $script:moduleName {
             function script:Invoke-SyncRaAmbiguous {
                 [CmdletBinding(SupportsShouldProcess)]
-                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope)
-                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
+                param([PSCustomObject]$Item, [switch]$Prune, [object[]]$DeclaredAtScope, [switch]$ReconcileScope, [string]$ResolvedScope)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune:$Prune -DeclaredAtScope $DeclaredAtScope -ReconcileScope:$ReconcileScope
             }
             $script:RaRoleId = '/subscriptions/sub-1/providers/Microsoft.Authorization/roleDefinitions/rd-reader'
             $script:RaLive = @()
             Mock Initialize-OERAuth {}
-            Mock Resolve-OERScope { '/subscriptions/sub-1' }
             Mock Resolve-OERRoleDefinitionId { $script:RaRoleId }
             Mock Invoke-OERGraphRequest -ParameterFilter { $Uri -like 'v1.0/servicePrincipals?*' } -MockWith {
                 @{ value = @(
@@ -1084,7 +1042,7 @@ Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal di
     It 'reports the entry Failed with both candidate ids, and reads and writes nothing' {
         InModuleScope $script:moduleName {
             $Item = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'Dup App'; principalType = 'ServicePrincipal' }
-            $r = @(Invoke-SyncRaAmbiguous -Item $Item -ErrorAction SilentlyContinue)
+            $r = @(Invoke-SyncRaAmbiguous -Item $Item -ResolvedScope '/subscriptions/sub-1' -ErrorAction SilentlyContinue)
             @($r).Action | Should -Be @('Failed')
             $r[0].Item | Should -BeExactly 'Reader -> Dup App @ subscription:Prod'
             $r[0].Detail | Should -Match "could not resolve principal 'Dup App'"
@@ -1105,7 +1063,7 @@ Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal di
             )
             $PrimaryItem = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'bbbbbbbb-0000-0000-0000-000000000001' }
             $Sibling = [PSCustomObject]@{ scope = 'subscription:Prod'; role = 'Reader'; principal = 'Dup App'; principalType = 'ServicePrincipal' }
-            $r = @(Invoke-SyncRaAmbiguous -Item $PrimaryItem -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
+            $r = @(Invoke-SyncRaAmbiguous -Item $PrimaryItem -ResolvedScope '/subscriptions/sub-1' -Prune -DeclaredAtScope @($PrimaryItem, $Sibling) -ReconcileScope `
                     -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
             @($r).Action | Should -Be @('Unchanged', 'Skipped')
             $r[1].Item | Should -BeExactly 'rd-reader -> 22222222-2222-2222-2222-222222222222 @ /subscriptions/sub-1'

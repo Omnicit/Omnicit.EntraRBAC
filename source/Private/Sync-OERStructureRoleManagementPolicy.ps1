@@ -13,11 +13,12 @@ function Sync-OERStructureRoleManagementPolicy {
     delete. This handler therefore never emits Created, Removed, or Extra records, and -Prune is a
     no-op.
 
-    Scope DSL: the document scope field is parsed into a Get-OERRoleManagementPolicy / Set-OERRoleManagementPolicy
-    splat by a nested Get-ScopeSplat helper.
+    Scope syntax: the document scope field is parsed into a Get-OERRoleManagementPolicy /
+    Set-OERRoleManagementPolicy splat by ConvertTo-OERScopeSplat, which owns the structure document's
+    scope syntax.
     - 'mg:<name>' -> -ManagementGroup <name>
     - 'subscription:<name>' or 'sub:<name>' -> -Subscription <name>
-    - Any other value -> -Scope <raw>
+    - Any other value -> -Scope <value>, where a raw Azure Resource Manager path loses a trailing '/'
 
     Presence semantics: an OMITTED field in the document means "leave untouched", NOT "set to
     $false". Only the fields the document actually declares are compared and, when they differ,
@@ -89,19 +90,10 @@ function Sync-OERStructureRoleManagementPolicy {
     )
 
     process {
-        # Nested helper: parse the scope DSL string into a Get/Set-OERRoleManagementPolicy splat.
-        # Takes a named param to avoid the PSReviewUnusedParameter-closure gotcha.
-        function Get-ScopeSplat {
-            param([string]$Scope)
-            if ($Scope -match '^(?i)mg:(.+)$')                   { return @{ ManagementGroup = $Matches[1] } }
-            if ($Scope -match '^(?i)(?:subscription|sub):(.+)$') { return @{ Subscription = $Matches[1] } }
-            return @{ Scope = $Scope }
-        }
-
         $Label   = "$($Item.role) @ $($Item.scope)"
         $Section = 'roleManagementPolicies'
 
-        $ScopeSplat = Get-ScopeSplat -Scope $Item.scope
+        $ScopeSplat = ConvertTo-OERScopeSplat -Scope $Item.scope
 
         # -- Read the current policy --------------------------------------------------------
         $Cur = $null

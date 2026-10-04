@@ -8,22 +8,20 @@ function Sync-OERStructureRoleAssignment {
     called by the Invoke-OERStructure engine and emits one or more ConvertTo-OERStructureResult
     records describing what was created, removed, skipped, or left unchanged.
 
-    Scope DSL: the document scope field is parsed into an ARM scope by a nested Get-ScopeSplat
-    helper before passing to Resolve-OERScope.
-    - 'mg:<name>' or 'mg:<displayName>' -> -ManagementGroup <name>
-    - 'subscription:<name>'/'sub:<name>' -> -Subscription <name>
-    - Any other value starting with '/' -> -Scope <raw> (passed through)
+    Scope: the engine resolves the scope (see Invoke-OERStructure) and passes the canonical resolved
+    scope as -ResolvedScope. The handler never resolves it again and uses that exact string for every
+    Azure Resource Manager call and for the at-scope comparison. The scope text the document wrote is
+    used only in the labels of this item's rows.
 
     Per-item processing:
-    1. Resolve the ARM scope via Get-ScopeSplat + Resolve-OERScope (throws -> Failed + return).
-    2. Resolve the principal object id via Resolve-OERStructurePrincipal (returns $null -> Failed + return).
+    1. Resolve the principal object id via Resolve-OERStructurePrincipal (returns $null -> Failed + return).
        When the document item has an optional 'principalType' property (User, Group, or ServicePrincipal),
        the type hint is forwarded to Resolve-OERStructurePrincipal via -Type. Without principalType the
        existing heuristic applies: an '@'-containing value triggers a user lookup; anything else triggers
        a group-then-user lookup.
-    3. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
-    4. Read current at-scope assignments via Get-OERRoleAssignment -AtScope (throws -> Failed + return).
-    5. If a current assignment with matching PrincipalId + RoleDefinitionId exists AND is DEFINED at
+    2. Resolve the full ARM role definition id via Resolve-OERRoleDefinitionId (throws -> Failed + return).
+    3. Read current at-scope assignments via Get-OERRoleAssignment -AtScope (throws -> Failed + return).
+    4. If a current assignment with matching PrincipalId + RoleDefinitionId exists AND is DEFINED at
        this scope, compare the declared condition, conditionVersion and description against it. A match
        reports Unchanged; a difference is applied in place with Set-OERRoleAssignment against the
        existing assignment id and reports Updated. Those three fields are the only ones Azure allows
@@ -38,7 +36,7 @@ function Sync-OERStructureRoleAssignment {
        the ancestor one. It is reported as a Skipped record naming the ancestor scope and the assignment
        id, with a warning. A current assignment carrying no Scope value at all counts as at-scope, the
        same convention the prune pass below uses.
-    6. Otherwise (no assignment for this principal+role anywhere at or above the scope) gate via
+    5. Otherwise (no assignment for this principal+role anywhere at or above the scope) gate via
        $Caller.ShouldProcess:
        - Under -WhatIf (returns $false): emit Skipped with planned-action Detail.
        - Otherwise: call New-OERRoleAssignment (throws -> Failed; succeeds -> Created inside try),
@@ -79,13 +77,14 @@ function Sync-OERStructureRoleAssignment {
     the same '<role> -> <principal> @ <scope>' label the withheld Detail names, so the rows can be
     correlated.
 
-    The pass runs only in the invocation for the FIRST item of each scope. When that item's own scope,
-    principal, role or current-assignment read fails, the handler returns before the pass: nothing at
-    that scope is pruned or reported Extra, and no withheld Skipped rows appear either -- only that
+    The pass runs only in the invocation for the FIRST item of each resolved scope. When that item's
+    own principal, role or current-assignment read fails, the handler returns before the pass: nothing
+    at that scope is pruned or reported Extra, and no withheld Skipped rows appear either -- only that
     item's own Failed record.
 
-    Every write is gated by $Caller.ShouldProcess. Reads (Resolve-OERScope,
-    Get-OERRoleAssignment) always execute even under -WhatIf because they provide the diff/plan.
+    Every write is gated by $Caller.ShouldProcess. Reads (Resolve-OERStructurePrincipal,
+    Resolve-OERRoleDefinitionId, Get-OERRoleAssignment) always execute even under -WhatIf because they
+    provide the diff/plan.
 
     .PARAMETER Item
     One element from the roleAssignments[] array in the structure document, as a PSCustomObject
@@ -113,26 +112,33 @@ function Sync-OERStructureRoleAssignment {
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
     accepted for a uniform Sync-OERStructure* signature.
 
+    .PARAMETER ResolvedScope
+    The canonical Azure Resource Manager scope the engine resolved this item's scope to (see
+    Invoke-OERStructure and Resolve-OERStructureRoleAssignmentScope). Every item of one resolved scope
+    is handed the same string. The handler never resolves the scope again: it passes this exact
+    string to Resolve-OERRoleDefinitionId, Get-OERRoleAssignment and New-OERRoleAssignment, and
+    compares a live assignment's scope against it.
+
     .PARAMETER DeclaredAtScope
-    All document roleAssignment items sharing this item's scope string, this item included (the
-    engine groups on the scope text as written in the document, compared case-insensitively, not on
-    the resolved ARM scope). Used during the scope-wide prune pass (when -ReconcileScope is set) to
-    build the declared-key set. Each element is expected to have .principal and .role properties.
-    Defaults to an empty array. One element whose principal or role cannot be resolved withholds the
-    prune for the whole scope (see -Prune); that element's Failed record comes from its own
-    invocation of this handler.
+    All document roleAssignment items that resolve to this item's scope, this item included (the
+    engine groups on the canonical RESOLVED scope, compared without regard to letter case, never on
+    the scope text as written in the document). Used during the scope-wide prune pass (when
+    -ReconcileScope is set) to build the declared-key set. Each element is expected to have
+    .principal and .role properties. Defaults to an empty array. One element whose principal or role
+    cannot be resolved withholds the prune for the whole scope (see -Prune); that element's Failed
+    record comes from its own invocation of this handler.
 
     .PARAMETER ReconcileScope
     When set, this invocation also performs the scope-wide Extra/prune pass after reconciling its
-    own item. The engine sets this flag on the first item of each scope group. The pass is not
-    reached when this item's own scope, principal, role or current-assignment read fails.
+    own item. The engine sets this flag on the first item of each resolved scope. The pass is not
+    reached when this item's own principal, role or current-assignment read fails.
 
     .EXAMPLE
-    Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -TenantAlias 'omnicit'
+    Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope '/subscriptions/00000000-0000-0000-0000-000000000001' -TenantAlias 'omnicit'
     Reconciles one role assignment entry from the document using the engine PSCmdlet as the caller.
 
     .EXAMPLE
-    Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -Prune -ReconcileScope -DeclaredAtScope $SiblingItems
+    Sync-OERStructureRoleAssignment -Item $DocItem -Caller $PSCmdlet -ResolvedScope $ResolvedScope -Prune -ReconcileScope -DeclaredAtScope $SiblingItems
     Reconciles one role assignment and performs the scope-wide prune pass for undeclared extras.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -148,6 +154,7 @@ function Sync-OERStructureRoleAssignment {
     param(
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
+        [Parameter(Mandatory)][string]$ResolvedScope,
         [switch]$Prune,
         [string]$TenantAlias,
         [object[]]$DeclaredAtScope = @(),
@@ -155,15 +162,6 @@ function Sync-OERStructureRoleAssignment {
     )
 
     process {
-        # Nested helper: parse the scope DSL string into a Resolve-OERScope splat hashtable.
-        # Takes a named param to avoid the PSReviewUnusedParameter-closure gotcha.
-        function Get-ScopeSplat {
-            param([string]$Scope)
-            if ($Scope -match '^(?i)mg:(.+)$')                   { return @{ ManagementGroup = $Matches[1] } }
-            if ($Scope -match '^(?i)(?:subscription|sub):(.+)$') { return @{ Subscription = $Matches[1] } }
-            return @{ Scope = $Scope }
-        }
-
         # A property that is present but NULL counts as UNDECLARED, exactly as the offline validator's
         # Test-HasProp and the Resolve-OERRoleManagementPolicyChange / Resolve-OERAccessReviewChange
         # diffs do. The layers have to agree on what "declared" means: Invoke-OERStructure validates
@@ -181,21 +179,13 @@ function Sync-OERStructureRoleAssignment {
         $Section = 'roleAssignments'
         $PrincipalType = if (Test-DeclHas -Node $Item -Name 'principalType') { [string]$Item.principalType } else { $null }
 
-        # -- 1. Resolve scope ---------------------------------------------------------------
-        $ScopeSplat = Get-ScopeSplat -Scope $Item.scope
-        $RawScope   = $null
-        try {
-            $RawScope = Resolve-OERScope @ScopeSplat
-        } catch {
-            Remove-OERErrorRecord -Record $PSItem
-            $Caller.WriteError($PSItem)
-            ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
-                -Detail "could not resolve scope '$($Item.scope)': $($PSItem.Exception.Message)" `
-                -ErrorRecord $PSItem
-            return
-        }
+        # The engine resolved the scope before dispatch (Resolve-OERStructureRoleAssignmentScope) and
+        # hands every item of one resolved scope the same canonical string. It is never resolved
+        # again here: this exact string goes to every Azure Resource Manager call below and to the
+        # at-scope comparisons, so a spelling of the scope can never split one scope in two.
+        $RawScope = $ResolvedScope
 
-        # -- 2. Resolve principal id (for diff) --------------------------------------------
+        # -- 1. Resolve principal id (for diff) --------------------------------------------
         $PrincipalObjId = $null
         $ResolveParams = @{ Reference = $Item.principal }
         if ($PrincipalType) { $ResolveParams.Type = $PrincipalType }
@@ -215,7 +205,7 @@ function Sync-OERStructureRoleAssignment {
             return
         }
 
-        # -- 3. Resolve role full id (for diff) -------------------------------------------
+        # -- 2. Resolve role full id (for diff) -------------------------------------------
         $RoleFullId = $null
         try {
             $RoleFullId = Resolve-OERRoleDefinitionId -Role $Item.role -Scope $RawScope
@@ -228,10 +218,10 @@ function Sync-OERStructureRoleAssignment {
             return
         }
 
-        # -- 4. Read current at-scope assignments once ------------------------------------
+        # -- 3. Read current at-scope assignments once ------------------------------------
         $Current = $null
         try {
-            $Current = @(Get-OERRoleAssignment @ScopeSplat -AtScope)
+            $Current = @(Get-OERRoleAssignment -Scope $RawScope -AtScope)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $Caller.WriteError($PSItem)
@@ -241,7 +231,7 @@ function Sync-OERStructureRoleAssignment {
             return
         }
 
-        # -- 5. Check existence of THIS item ----------------------------------------------
+        # -- 4. Check existence of THIS item ----------------------------------------------
         # Azure Resource Manager enforces uniqueness on (scope, principal, roleDefinition) whether or
         # not a condition is present, so an assignment is matched on that tuple alone. Only condition,
         # conditionVersion and description are editable on an existing assignment, and only by writing
@@ -320,14 +310,12 @@ function Sync-OERStructureRoleAssignment {
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
                 -Detail "no role assignment is defined at '$RawScope': the principal holds this role here through the assignment defined at the ancestor scope '$AncestorScope' ($($Inherited.RoleAssignmentId)). Nothing was written -- editing that assignment would change the ancestor grant, and creating one here would add a grant that survives removal of the ancestor. Declare this entry under scope '$AncestorScope' to manage it"
         } else {
-            # -- 6. Create (absent) -------------------------------------------------------
+            # -- 5. Create (absent) -------------------------------------------------------
             if (-not $Caller.ShouldProcess($RawScope, "Create role assignment '$($Item.role)' for '$($Item.principal)'")) {
                 ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
                     -Detail "would create role assignment '$($Item.role)' for '$($Item.principal)' at '$RawScope'"
             } else {
-                $NewParams = @{ Role = $Item.role; Confirm = $false }
-                # Merge scope params into NewParams
-                foreach ($Key in $ScopeSplat.Keys) { $NewParams[$Key] = $ScopeSplat[$Key] }
+                $NewParams = @{ Role = $Item.role; Scope = $RawScope; Confirm = $false }
                 # Choose -ServicePrincipal/-User/-Group based on principalType or the @ heuristic
                 if ($PrincipalType -eq 'ServicePrincipal') {
                     $NewParams.ServicePrincipal = $Item.principal

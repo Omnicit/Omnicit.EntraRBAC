@@ -58,9 +58,16 @@ function Invoke-OERStructure {
     Microsoft Graph only, so a document holding either section never requests an ARM token on its
     account.
 
-    RoleAssignments scope grouping: the engine groups declared role assignment items by their
-    scope string and passes -ReconcileScope on the first item of each unique scope. This signals
-    the handler to run its prune pass for that scope after processing the item.
+    RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
+    resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
+    the canonical RESOLVED scope, compared without regard to letter case -- never on the scope text
+    the document wrote, so 'sub:<id>', 'subscription:<id>', '/subscriptions/<id>', a subscription's
+    name, 'mg:<name>', 'mg:<displayName>', the management group path and a path with a trailing '/'
+    are one scope. Every item of a group is handed the same canonical resolved scope (-ResolvedScope),
+    and -ReconcileScope is passed on the first item of each resolved scope, which signals the handler
+    to run its prune pass for that scope after processing the item. An item whose scope cannot be
+    resolved is reported Failed by the engine itself, with its error published as itself, and is not
+    dispatched.
 
     DirectoryRoleAssignments section pass: the engine passes every directoryRoleAssignments entry to
     each invocation of its handler and sets -ReconcileSection on the first item only, so the handler
@@ -253,9 +260,6 @@ function Invoke-OERStructure {
             [PSCustomObject]@{ IncludeName = 'RoleManagementPolicies';          DocKey = 'roleManagementPolicies';          Handler = 'Sync-OERStructureRoleManagementPolicy' }
         )
 
-        # Per-scope tracking for the RoleAssignments section, so the scope-wide reconcile/prune pass
-        # runs once per declared scope (on the first item of that scope).
-        $SeenRaScopes = @{}
         # The DirectoryRoleAssignments prune pass is section-wide: it runs once, on the first item.
         $DraReconciled = $false
 
@@ -309,16 +313,56 @@ function Invoke-OERStructure {
             $Items = @($Document.($Section.DocKey))
             if ($Items.Count -eq 0) { continue }
 
-            foreach ($It in $Items) {
-                # RoleAssignments take two extra params so prune is scoped per declared scope.
+            # roleAssignments: every entry's scope is resolved ONCE, before the first entry is
+            # dispatched, and the entries are grouped on the canonical RESOLVED scope, compared without
+            # regard to letter case -- never on the text the document wrote. sub:<id>, subscription:<id>,
+            # /subscriptions/<id>, a subscription's name, mg:<name>, mg:<displayName>, the management
+            # group path and a path with a trailing '/' are all one scope, so their entries form one
+            # group with one prune pass. Every entry of a group is handed the same string, the group's
+            # first canonical scope, which the handler uses for every Azure Resource Manager call.
+            $RaScope = @()
+            $RaGroup = $null
+            if ($Section.IncludeName -eq 'RoleAssignments') {
+                $RaScope = @(Resolve-OERStructureRoleAssignmentScope -Item $Items)
+                $RaGroup = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::OrdinalIgnoreCase)
+                foreach ($RaEntry in $RaScope) {
+                    if ($null -eq $RaEntry.Scope) { continue }
+                    if (-not $RaGroup.ContainsKey($RaEntry.Scope)) {
+                        $RaGroup[$RaEntry.Scope] = [PSCustomObject]@{
+                            Scope      = $RaEntry.Scope
+                            Items      = [System.Collections.Generic.List[object]]::new()
+                            Indices    = [System.Collections.Generic.List[int]]::new()
+                            Reconciled = $false
+                        }
+                    }
+                    $RaGroup[$RaEntry.Scope].Items.Add($RaEntry.Item)
+                    $RaGroup[$RaEntry.Scope].Indices.Add($RaEntry.Index)
+                }
+            }
+
+            for ($ItemIndex = 0; $ItemIndex -lt $Items.Count; $ItemIndex++) {
+                $It = $Items[$ItemIndex]
+                # RoleAssignments take three extra params so prune is scoped per resolved scope.
                 # DirectoryRoleAssignments take the whole section, and the prune pass runs on the
                 # first item only, whatever that item's own outcome.
                 $ExtraParams = @{}
                 if ($Section.IncludeName -eq 'RoleAssignments') {
-                    $ScopeKey = [string]$It.scope
-                    $ExtraParams.DeclaredAtScope = @($Items | Where-Object { [string]$_.scope -eq $ScopeKey })
-                    $ExtraParams.ReconcileScope  = -not $SeenRaScopes.ContainsKey($ScopeKey)
-                    $SeenRaScopes[$ScopeKey] = $true
+                    $RaEntry = $RaScope[$ItemIndex]
+                    if ($null -eq $RaEntry.Scope) {
+                        # The entry's own row, exactly as the handler wrote it when it resolved the
+                        # scope itself: the record is published as itself, and the entry is not
+                        # dispatched.
+                        $PSCmdlet.WriteError($RaEntry.ErrorRecord)
+                        $Results.Add((ConvertTo-OERStructureResult -Section $Section.DocKey -Item $RaEntry.Label -Action 'Failed' `
+                                    -Detail "could not resolve scope '$($RaEntry.RawScope)': $($RaEntry.ErrorRecord.Exception.Message)" `
+                                    -ErrorRecord $RaEntry.ErrorRecord))
+                        continue
+                    }
+                    $RaGroupOfItem = $RaGroup[$RaEntry.Scope]
+                    $ExtraParams.ResolvedScope   = $RaGroupOfItem.Scope
+                    $ExtraParams.DeclaredAtScope = @($RaGroupOfItem.Items)
+                    $ExtraParams.ReconcileScope  = -not $RaGroupOfItem.Reconciled
+                    $RaGroupOfItem.Reconciled = $true
                 }
                 if ($Section.IncludeName -eq 'DirectoryRoleAssignments') {
                     $ExtraParams.DeclaredInSection = $Items
