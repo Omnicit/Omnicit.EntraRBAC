@@ -3542,11 +3542,11 @@ Describe 'Test-OERStructureSchema duplicate entries' {
         }
         @{
             Section   = 'roleAssignments'
-            Phrase    = 'Both entries describe one role assignment (the scope is compared in its canonical form: sub: and subscription: with an id, mg: and a trailing ''/'' are spellings of one scope), so applying the document would rewrite its condition and description on every run.'
+            Phrase    = 'Both entries describe one role assignment (the scope is compared in its canonical form: sub: and subscription: with an id, and mg:, are spellings of the scope''s path), so applying the document would rewrite its condition and description on every run.'
             Other     = '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg-other", "role": "Reader", "principal": "person1@example.com" }'
             First     = '{ "scope": "sub:aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }'
-            Second    = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001/", "role": "READER", "principal": "PERSON1@example.com" }'
-            Different = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001/", "role": "READER", "principal": "person2@example.com" }'
+            Second    = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001", "role": "READER", "principal": "PERSON1@example.com" }'
+            Different = '{ "scope": "/Subscriptions/AAAA1111-0000-0000-0000-000000000001", "role": "READER", "principal": "person2@example.com" }'
         }
         @{
             Section   = 'roleManagementPolicies'
@@ -3796,13 +3796,15 @@ Describe 'Test-OERStructureSchema duplicate entries' {
     }
 
     Context 'roleAssignments and roleManagementPolicies scope spellings' {
+        # A scope written with a trailing or doubled '/' is not a spelling of another scope: it is
+        # refused on its own (A15, covered in its own Describe below).
         It 'treats <Case> as one scope in roleAssignments' -ForEach @(
-            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case and a trailing slash'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001/' }
+            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001' }
             @{ Case = 'subscription: and sub: with an id'; A = 'subscription:aaaa1111-0000-0000-0000-000000000001'; B = 'SUB:AAAA1111-0000-0000-0000-000000000001' }
             @{ Case = 'sub: and subscription: with a name, in another case'; A = 'sub:Prod'; B = 'subscription:prod' }
             @{ Case = 'mg: and the management group path'; A = 'mg:plat'; B = '/providers/Microsoft.Management/managementGroups/PLAT' }
-            @{ Case = 'MG: and the management group path in lower case with a trailing slash'; A = 'MG:Plat'; B = '/providers/microsoft.management/managementgroups/plat/' }
-            @{ Case = 'a resource group path with and without a trailing slash'; A = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/oer-rg'; B = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/OER-RG/' }
+            @{ Case = 'MG: and the management group path in lower case'; A = 'MG:Plat'; B = '/providers/microsoft.management/managementgroups/plat' }
+            @{ Case = 'a resource group path in another letter case'; A = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/oer-rg'; B = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/OER-RG' }
         ) {
             $Doc = New-DupDoc -Section 'roleAssignments' -ItemJson @(
                 ('{ "scope": "' + $A + '", "role": "Reader", "principal": "person1@example.com" }')
@@ -3818,7 +3820,7 @@ Describe 'Test-OERStructureSchema duplicate entries' {
 
         It 'treats <Case> as one scope in roleManagementPolicies' -ForEach @(
             @{ Case = 'mg: and the management group path'; A = 'mg:plat'; B = '/providers/Microsoft.Management/managementGroups/PLAT' }
-            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case and a trailing slash'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001/' }
+            @{ Case = 'sub: with an id and /subscriptions/ with the id in upper case'; A = 'sub:aaaa1111-0000-0000-0000-000000000001'; B = '/subscriptions/AAAA1111-0000-0000-0000-000000000001' }
             @{ Case = 'subscription: and sub: with a name, in another case'; A = 'subscription:Prod'; B = 'SUB:prod' }
         ) {
             $Doc = New-DupDoc -Section 'roleManagementPolicies' -ItemJson @(
@@ -3910,5 +3912,122 @@ Describe 'Test-OERStructureSchema duplicate entries' {
             @(Get-DupError -Validation $V | Where-Object { $_.Message -match "must have either 'displayName' or 'template'" }).Count | Should -Be 2
             @(Get-DupFinding -Validation $V).Count | Should -Be 0
         }
+    }
+}
+
+Describe 'Test-OERStructureSchema scope written with a trailing or doubled slash (A15)' {
+    # ConvertTo-OERCanonicalScope strips every trailing '/', so a scope spelled with one would be
+    # merged with the scope spelled without it, a scope written ONLY with the '/' would start to be
+    # pruned, and '//' would become the root '/'. The validator therefore refuses both spellings in
+    # roleAssignments and roleManagementPolicies, as an Error at the entry's scope path, and the
+    # canonical helper keeps its trim for the scopes the engine resolves itself. No id below is
+    # version-4 shaped.
+    BeforeAll {
+        function New-SlashDoc {
+            param([string]$Section, [string]$Scope)
+            $Entry = if ($Section -eq 'roleAssignments') {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader'; principal = 'person1@example.com' }
+            } else {
+                [pscustomobject]@{ scope = $Scope; role = 'Reader' }
+            }
+            [pscustomobject]@{ version = '1.0'; $Section = @($Entry) }
+        }
+        function Invoke-SlashValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    It 'refuses <Scope> in <Section> as an Error at the entry''s scope path' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }
+            @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001//resourceGroups/rg1' }
+            @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001//' }
+            @{ Section = $Section; Scope = '//' }
+            @{ Section = $Section; Scope = '///' }
+            @{ Section = $Section; Scope = 'mg:plat/' }
+            @{ Section = $Section; Scope = 'sub:aaaa1111-0000-0000-0000-000000000001/' }
+            @{ Section = $Section; Scope = 'sub:Prod//Dev' }
+        }
+    ) {
+        $V = Invoke-SlashValidation -Doc (New-SlashDoc -Section $Section -Scope $Scope)
+        $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+        $Errs.Count | Should -Be 1
+        $Errs[0].Section | Should -BeExactly $Section
+        $Errs[0].Path | Should -BeExactly "$Section[0].scope"
+        $Errs[0].Message | Should -BeExactly "'scope' at $Section[0] must be written without a trailing or doubled '/'. Got: '$Scope'."
+        $V.Valid | Should -BeFalse
+    }
+
+    It 'accepts <Scope> in <Section>' -ForEach @(
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            @{ Section = $Section; Scope = '/' }
+            @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
+            @{ Section = $Section; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
+            @{ Section = $Section; Scope = '/providers/Microsoft.Management/managementGroups/plat' }
+            @{ Section = $Section; Scope = 'mg:plat' }
+            @{ Section = $Section; Scope = 'sub:Prod' }
+            @{ Section = $Section; Scope = 'subscription:aaaa1111-0000-0000-0000-000000000001' }
+        }
+    ) {
+        $V = Invoke-SlashValidation -Doc (New-SlashDoc -Section $Section -Scope $Scope)
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'leaves no accepted document a scope the canonical form changes, so ''//'' can never become ''/''' {
+        # Every scope ConvertTo-OERCanonicalScope maps to the root '/' is a run of slashes, and every
+        # path-shaped scope it shortens ends with '/'. Of the candidates below, the validator must
+        # accept exactly the ones the trim leaves untouched; the expected list proves the loop ran.
+        $Candidates = @(
+            '/', '//', '///', '////', '/////'
+            'mg:/', 'sub:/', 'mg://', 'mg:plat', 'mg:plat/', 'mg:plat//'
+            '/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            '/subscriptions/aaaa1111-0000-0000-0000-000000000001/'
+            '/subscriptions/aaaa1111-0000-0000-0000-000000000001//'
+            '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+            '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/'
+            '/providers/Microsoft.Management/managementGroups/plat'
+            '/providers/Microsoft.Management/managementGroups/plat/'
+        )
+        $Accepted = [System.Collections.Generic.List[string]]::new()
+        foreach ($Section in 'roleAssignments', 'roleManagementPolicies') {
+            foreach ($Scope in $Candidates) {
+                $V = Invoke-SlashValidation -Doc (New-SlashDoc -Section $Section -Scope $Scope)
+                if (-not $V.Valid) { continue }
+                $Accepted.Add("$Section|$Scope")
+                $Canonical = InModuleScope $script:moduleName -Parameters @{ Scope = $Scope } {
+                    param($Scope)
+                    ConvertTo-OERCanonicalScope -Scope $Scope
+                }
+                if ($Scope -cne '/') { $Canonical | Should -Not -BeExactly '/' -Because "'$Scope' passed the validator in $Section" }
+                if ($Scope.StartsWith('/')) { $Canonical | Should -BeExactly $Scope -Because "'$Scope' passed the validator in $Section" }
+            }
+        }
+        @($Accepted | Sort-Object) | Should -BeExactly @(
+            'roleAssignments|/'
+            'roleAssignments|/providers/Microsoft.Management/managementGroups/plat'
+            'roleAssignments|/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'roleAssignments|/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+            'roleAssignments|mg:plat'
+            'roleManagementPolicies|/'
+            'roleManagementPolicies|/providers/Microsoft.Management/managementGroups/plat'
+            'roleManagementPolicies|/subscriptions/aaaa1111-0000-0000-0000-000000000001'
+            'roleManagementPolicies|/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'
+            'roleManagementPolicies|mg:plat'
+        )
+    }
+
+    It 'reports the slash Error beside the duplicate Error when two entries differ only by a trailing slash' {
+        $Doc = ('{ "version": "1.0", "roleAssignments": [ ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001", "role": "Reader", "principal": "person1@example.com" }, ' +
+            '{ "scope": "/subscriptions/aaaa1111-0000-0000-0000-000000000001/", "role": "Reader", "principal": "person1@example.com" } ] }') | ConvertFrom-Json
+        $V = Invoke-SlashValidation -Doc $Doc
+        $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+        @($Errs.Path) | Should -BeExactly @('roleAssignments[1].scope', 'roleAssignments[1]')
+        $V.Valid | Should -BeFalse
     }
 }

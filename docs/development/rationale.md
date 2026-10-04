@@ -2881,7 +2881,7 @@ others were created and removed again on every run. Without `-Prune` each group 
 assignments as `Extra`. A trailing `/` was never trimmed either. No live scope carries one, so that
 group's comparison never matched: it pruned nothing itself, drew a false "inherited" `Skipped` row for
 its own assignment, and, when the same scope was also written without the slash, had its assignments
-pruned by that other group.
+pruned by that other group. Such a scope is now refused before the run instead (A15, below).
 
 `Resolve-OERStructureRoleAssignmentScope` now runs once before the first entry is dispatched. It
 parses each entry's scope with `ConvertTo-OERScopeSplat`, resolves it with `Resolve-OERScope` and puts
@@ -2961,10 +2961,27 @@ so a re-apply creates the right kind of principal, and a role is written as its 
 only when the principal already was an id. A role policy read twice is written once, since it is one
 policy.
 
-**Cost, accepted.** A document whose ONLY spelling of a scope ends in `/` now prunes undeclared
-assignments at that scope under `-Prune`, where that group never pruned before. It is the same prune
-the document would have had without the slash, and the first of two places this change removes more
-than it did; the release note says so. The second: a scope written as `//` canonicalises to the root
-`/`, so such a document now names -- and under `-Prune` prunes undeclared assignments at -- the tenant
-root scope, which earlier versions never pruned. Every other effect of the change is to remove fewer
-assignments, or the same.
+**A scope written with a trailing or doubled `/` is refused (A15).** The canonical form trims every
+trailing `/`. With the trim alone, a document whose ONLY spelling of a scope ended in `/` would start
+to prune undeclared assignments at that scope under `-Prune`, which that group never did, and a scope
+written as `//` would canonicalise to the root `/` and, under `-Prune`, prune undeclared assignments at
+the tenant root scope, which earlier versions never did. Both remove more than before, and this change
+never does that. `Test-OERStructureSchema` therefore reports a `roleAssignments` or
+`roleManagementPolicies` scope that ends with `/` (other than the root `/` itself) or contains `//`
+anywhere as an `Error` at the entry's scope path, and `Invoke-OERStructure` refuses the whole document
+before it signs in. A refusal removes nothing, and Azure Resource Manager never returns a scope with
+either spelling, so a document `Get-OERInventory` writes is not hit. The helper keeps its trim: for a
+document the validator accepts it changes nothing -- a unit test walks the candidate spellings and
+shows that every accepted path is its own canonical form and only `/` itself becomes `/` -- and the
+engine still applies it to the scope it resolved. The first round of this change accepted the merge
+as a cost; it was withdrawn on review. Every effect of the change is now to remove fewer assignments,
+or the same.
+
+**A failed read of the assignments at a scope is `Failed`, never an empty list (A14).**
+`Get-OERRoleAssignment` reports a failed read, for instance a 403 at a management group, as a
+non-terminating error and returns nothing. The handler read it without `-ErrorAction Stop`, so its
+catch was never reached: the failed read became an empty list, every declared entry at that scope was
+planned as a create (measured live: six assignments that exist, as an identity without read access at
+the management group), and a read that failed part way would have handed the prune pass an incomplete
+list. The read now carries `-ErrorAction Stop`, so the entry is `Failed` with the read error published
+as itself, nothing is created or planned, and the prune pass for that scope does not run.

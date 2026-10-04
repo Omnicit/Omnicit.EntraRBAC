@@ -87,8 +87,12 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # The short forms the apply engine accepts, next to the ARM strings in both places.
             $Collapsed | Should -Match ([regex]::Escape('sub:<guid or name> (also subscription:<guid or name>) and mg:<name or display name>'))
             $Collapsed | Should -Match ([regex]::Escape('the short forms sub:<guid or name>, subscription:<guid or name> and mg:<name or display name> name the same scopes'))
-            # Two spellings of one scope are one scope, compared without regard to case or a trailing slash.
-            $Collapsed | Should -Match ([regex]::Escape('compares scopes without regard to letter case and ignoring a trailing /, so two spellings of one scope are ONE scope'))
+            # Two spellings of one scope are one scope, compared without regard to case. A trailing or
+            # doubled slash is not a spelling: the offline check refuses it (A15).
+            $Collapsed | Should -Match ([regex]::Escape('compares scopes without regard to letter case, so two spellings of one scope are ONE scope'))
+            $Collapsed | Should -Match ([regex]::Escape('write a scope without a trailing / and without //: the offline check reports either as an Error'))
+            $Collapsed | Should -Match ([regex]::Escape('sub:, subscription: or mg:, never with a trailing / or //), and each (scope, role) is declared once'))
+            $Collapsed | Should -Not -Match 'ignoring a trailing /'
             # The declare-once rules, for roleAssignments, roleManagementPolicies and the other sections.
             $Collapsed | Should -Match ([regex]::Escape('declare each (scope, role, principal) once'))
             $Collapsed | Should -Match ([regex]::Escape('each (scope, role) is declared once'))

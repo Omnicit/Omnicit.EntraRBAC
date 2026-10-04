@@ -322,9 +322,10 @@ document.
   - scope is an ARM path (/subscriptions/<guid>, /subscriptions/<guid>/resourceGroups/<name>, or the
     management group path /providers/Microsoft.Management/managementGroups/<name>) or one of the short
     forms sub:<guid or name> (also subscription:<guid or name>) and mg:<name or display name>. The
-    apply engine resolves the scope and compares scopes without regard to letter case and ignoring a
-    trailing /, so two spellings of one scope are ONE scope -- the entries that name it share one
-    prune pass.
+    apply engine resolves the scope and compares scopes without regard to letter case, so two
+    spellings of one scope are ONE scope -- the entries that name it share one prune pass.
+  - write a scope without a trailing / and without //: the offline check reports either as an Error,
+    and the whole document is refused before anything is written.
   - declare each (scope, role, principal) once. A duplicate is an Error in the offline check and the
     whole document is refused before anything is written. Two spellings the offline check cannot tell
     apart (a subscription's name and its id, a management group's display name and its path) are
@@ -340,9 +341,9 @@ document.
   approvers { users[] (UPNs/ids), groups[] (names/ids) },
   authenticationContextId ("c1", or "" to disable), requireMfaOnActiveAssignment (bool),
   requireJustificationOnActiveAssignment (bool) }
-  - scope takes the same forms as a roleAssignments scope (an ARM path, sub:, subscription: or mg:),
-    and each (scope, role) is declared once: a duplicate is an Error and the whole document is refused
-    before anything is written.
+  - scope takes the same forms as a roleAssignments scope (an ARM path, sub:, subscription: or mg:,
+    never with a trailing / or //), and each (scope, role) is declared once: a duplicate is an Error
+    and the whole document is refused before anything is written.
   - requireMfaOnActivation true and authenticationContextId are mutually exclusive; declare only one.
   - an omitted field means "leave the live policy setting untouched", never "set it to false".
   - an explicit null means the SAME as omitting the key: not declared, live setting untouched. Never

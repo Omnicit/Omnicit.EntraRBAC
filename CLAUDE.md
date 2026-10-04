@@ -676,7 +676,9 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   exception -- do not migrate those two. `Why: docs/development/rationale.md#guid-predicate`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
-  either inline; the first is pure, since the offline validator uses it.
+  either inline; the first is pure, since the offline validator uses it. A document scope that
+  ends with `/` (other than `/`) or contains `//` is REFUSED by the validator, not merged by the
+  helper's trim: never drop that rule in favour of the trim, which would make such a scope prune.
   `Why: docs/development/rationale.md#role-assignment-key`
 - **`Resolve-OERPimActivationConflict` is the single owner of the MFA / authentication-context
   mutual-exclusion rule.** An enabled authentication context and `MultiFactorAuthentication` on

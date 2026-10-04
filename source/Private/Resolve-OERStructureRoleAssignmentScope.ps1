@@ -11,7 +11,8 @@ function Resolve-OERStructureRoleAssignmentScope {
 
     For each entry, in document order, the scope text is parsed by ConvertTo-OERScopeSplat, resolved
     to an Azure Resource Manager scope by Resolve-OERScope, and normalized by
-    ConvertTo-OERCanonicalScope, so a trailing '/' never reaches a comparison. Each distinct scope
+    ConvertTo-OERCanonicalScope. A document scope written with a trailing '/' or with '//' never
+    reaches this helper: the offline validation refused the document first. Each distinct scope
     TEXT is resolved once per run: a successful resolution is cached by its exact text (ordinal, so
     'sub:Prod' and 'SUB:Prod' are two lookups) and reused by every later entry with the same text.
     Only successes are cached. A failure is never shared, so a transient failure on one entry does

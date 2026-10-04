@@ -18,6 +18,11 @@ function ConvertTo-OERCanonicalScope {
     - A value that starts with '/' loses every trailing '/', except that '/' itself stays '/'.
     - Anything else is returned unchanged.
 
+    The trim is not a spelling rule for a document. Test-OERStructureSchema refuses a document scope
+    that ends with '/' (other than '/' itself) or contains '//', so for a document it accepts the trim
+    changes nothing, and a scope written with a stray '/' is never merged with another spelling or
+    pruned. The trim remains for the scope the engine resolves itself.
+
     Letter case is preserved. Callers compare the result without regard to letter case, as Azure
     Resource Manager compares scopes.
 

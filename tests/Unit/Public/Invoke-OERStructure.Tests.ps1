@@ -904,7 +904,6 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
         @{ ScopeA = 'sub:Prod'; ScopeB = '/subscriptions/aaaa1111-0000-0000-0000-000000000001'; Shared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001' }
         @{ ScopeA = 'mg:plat'; ScopeB = '/providers/Microsoft.Management/managementGroups/plat'; Shared = '/providers/Microsoft.Management/managementGroups/plat' }
         @{ ScopeA = 'mg:Platform Display'; ScopeB = 'mg:plat'; Shared = '/providers/Microsoft.Management/managementGroups/plat' }
-        @{ ScopeA = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/'; ScopeB = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1'; Shared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
     ) {
         InModuleScope $script:moduleName -Parameters @{ Shared = $Shared } { param($Shared) $script:RaShared = $Shared }
         $Document = [PSCustomObject]@{
@@ -926,17 +925,27 @@ Describe 'Invoke-OERStructure roleAssignments grouped on the resolved scope' {
         @($Rows | Where-Object { $_.Item -eq "Reader -> b @ $ScopeB" }).Action | Should -Be @('Unchanged')
     }
 
-    It 'reconciles a declared scope with a trailing slash against the live scope without it' {
+    It 'refuses a scope written with <Case> before it authenticates, and prunes nothing' -ForEach @(
+        @{ Case = 'a trailing slash'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }
+        @{ Case = 'a doubled slash'; Scope = '/subscriptions/aaaa1111-0000-0000-0000-000000000001//resourceGroups/rg1' }
+        @{ Case = 'only a doubled slash'; Scope = '//' }
+    ) {
+        # A15: the canonical form would merge such a scope with the scope written without the stray
+        # '/', so the scope written ONLY that way would start to be pruned, and '//' would be the root.
+        # The validator refuses it instead; the whole document is refused before any sign-in or read.
         InModuleScope $script:moduleName { $script:RaShared = '/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1' }
         $Json = '{ "version":"1.0", "roleAssignments":[' +
-            '{"scope":"/subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/","role":"Reader","principal":"a"} ] }'
-        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue)
+            '{"scope":"' + $Scope + '","role":"Reader","principal":"a"} ] }'
+        $Err = $null
+        $Rows = @(Invoke-OERStructure -Json $Json -Include RoleAssignments -Prune -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
 
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 1 -Exactly -ParameterFilter { $Id -eq 'ra-c' }
-        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0 -ParameterFilter { $Id -eq 'ra-a' }
-        Should -Invoke -ModuleName $script:moduleName New-OERRoleAssignment -Times 0
-        # Unchanged, not the Skipped an assignment inherited from an ancestor scope gets.
-        @($Rows | Where-Object { $_.Item -eq 'Reader -> a @ /subscriptions/aaaa1111-0000-0000-0000-000000000001/resourceGroups/rg1/' }).Action | Should -Be @('Unchanged')
+        $Rows.Count | Should -Be 0
+        $Refused = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed,*' })
+        $Refused.Count | Should -Be 1
+        $Refused[0].Exception.Message | Should -BeLike "*roleAssignments``[0``].scope: 'scope' at roleAssignments``[0``] must be written without a trailing or doubled '/'. Got: '$Scope'.*"
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERRoleAssignment -Times 0
+        Should -Invoke -ModuleName $script:moduleName Remove-OERRoleAssignment -Times 0
     }
 
     It 'reconciles a declared scope whose letter case differs from the live scope' {

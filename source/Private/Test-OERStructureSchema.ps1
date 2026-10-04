@@ -133,10 +133,13 @@ function Test-OERStructureSchema {
     catalog together with displayName; for roleAssignments, scope, role and principal; for
     roleManagementPolicies, scope and role; for directoryRoleManagementPolicies, role. A scope is
     compared in the canonical form ConvertTo-OERCanonicalScope owns, a pure helper that the apply
-    engine shares, so sub: and subscription: with an id, mg:, and a trailing slash are spellings of
-    one scope; the comparison never resolves a scope online. A role or principal is compared as
-    written. An entry missing a key part is not compared. directoryRoleAssignments keeps its own
-    check, described above. An OMITTED
+    engine shares, so sub: and subscription: with an id, and mg:, are spellings of the scope's path;
+    the comparison never resolves a scope online. A role or principal is compared as written. An
+    entry missing a key part is not compared. directoryRoleAssignments keeps its own check, described
+    above. A roleAssignments or roleManagementPolicies scope that ends with '/' (other than the root
+    '/' itself) or contains '//' is an Error at the entry's scope path: the canonical form would merge
+    it with the scope written without the stray '/', so a scope written only that way would start to
+    be pruned and '//' would become the root, and the document is refused instead. An OMITTED
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources or accessPackages[].resourceRoles key is a Warning naming the collection:
     each of those is still reconciled against an empty declared set when its key is omitted, so
@@ -1303,6 +1306,23 @@ function Test-OERStructureSchema {
         }
     }
 
+    # Rules 9 and 10 share one scope spelling rule. A scope that ends with '/' (other than the root '/'
+    # itself) or contains '//' anywhere is an Error at the entry's scope path. ConvertTo-OERCanonicalScope
+    # strips every trailing '/', so such a spelling would be merged with the scope written without it:
+    # a scope written ONLY with the stray '/' would start to be pruned, and '//' would become the root
+    # '/'. Before the engine grouped on the canonical scope, neither was ever pruned, and a refusal
+    # removes nothing. Azure Resource Manager never returns a scope carrying either spelling, so an
+    # exported document is not hit.
+    function Add-ScopeSlashFinding {
+        param([object]$Node, [string]$Section, [string]$Item, [string]$Path)
+        if (-not (Test-HasProp -Node $Node -Name 'scope')) { return }
+        $ScopeText = [string]$Node.scope
+        if (($ScopeText.EndsWith('/') -and $ScopeText -cne '/') -or $ScopeText.Contains('//')) {
+            Add-Finding -Section $Section -Item $Item -Path "$Path.scope" `
+                -Message "'scope' at $Path must be written without a trailing or doubled '/'. Got: '$ScopeText'."
+        }
+    }
+
     # Rule 9: roleAssignments
     if (Test-HasProp -Node $Document -Name 'roleAssignments') {
         if (Test-SectionIsArray -SectionName 'roleAssignments') {
@@ -1324,6 +1344,7 @@ function Test-OERStructureSchema {
                             -Message "'$Req' is required at $RAPath."
                     }
                 }
+                Add-ScopeSlashFinding -Node $RA -Section 'roleAssignments' -Item $RAItem -Path $RAPath
                 # The scope is compared in the canonical form ConvertTo-OERCanonicalScope owns (a pure
                 # helper shared with the apply engine; the validator must never resolve a scope online).
                 # A role is compared as written: a role by name in one entry and by id in another cannot
@@ -1335,7 +1356,7 @@ function Test-OERStructureSchema {
                         -Section 'roleAssignments' -Item $RAItem -Path $RAPath `
                         -What 'scope, role and principal' `
                         -Consequence ('Both entries describe one role assignment (the scope is compared in its canonical form: ' +
-                            'sub: and subscription: with an id, mg: and a trailing ''/'' are spellings of one scope), so applying ' +
+                            'sub: and subscription: with an id, and mg:, are spellings of the scope''s path), so applying ' +
                             'the document would rewrite its condition and description on every run.')
                 }
 
@@ -1508,6 +1529,7 @@ function Test-OERStructureSchema {
                 $RMPItem = if (Test-HasProp -Node $RMP -Name 'role') { $RMP.role } else { "roleManagementPolicies[$I]" }
                 Test-PimPolicySectionItem -Node $RMP -Section 'roleManagementPolicies' -Path $RMPPath -Item $RMPItem `
                     -KnownKey (@('scope') + $PimPolicyItemKey) -RequiredKey @('scope', 'role') -PimLabel 'Azure PIM'
+                Add-ScopeSlashFinding -Node $RMP -Section 'roleManagementPolicies' -Item $RMPItem -Path $RMPPath
                 if ((Test-HasProp -Node $RMP -Name 'scope') -and (Test-HasProp -Node $RMP -Name 'role')) {
                     $RMPCanonicalScope = ConvertTo-OERCanonicalScope -Scope ([string]$RMP.scope)
                     Add-DuplicateEntryFinding -Seen $RMPSeen -Key "$RMPCanonicalScope|$($RMP.role)" -Index $I `

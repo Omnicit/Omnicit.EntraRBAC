@@ -2634,11 +2634,13 @@ Describe 'Get-OERInventory' {
             @(@($Inv.roleAssignments)[0].PSObject.Properties.Name) | Should -Be @('scope', 'role', 'principal', 'principalType')
         }
 
-        It 'counts two scope spellings that differ in letter case or a trailing slash as one scope when it looks for a collision' {
+        It 'counts two scope spellings that differ in letter case as one scope when it looks for a collision' {
+            # Azure Resource Manager never returns a scope with a trailing '/', and the validator refuses
+            # one in a document (A15), so the spellings here differ in letter case only.
             $script:DupNames = @{ $script:DupGrp1 = 'Ops'; $script:DupGrp2 = 'Ops' }
             $script:DupRoleAssignments = @(
                 New-DupRoleAssignment -PrincipalId $script:DupGrp1 -PrincipalType 'Group' -PrincipalName 'Ops'
-                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops' -Scope ($script:DupSub1.ToUpperInvariant() + '/')
+                New-DupRoleAssignment -PrincipalId $script:DupGrp2 -PrincipalType 'Group' -PrincipalName 'Ops' -Scope $script:DupSub1.ToUpperInvariant()
             )
             $Inv = Get-OERInventory -Include RoleAssignments -Subscription 'Prod' -IncludeARM
             @($Inv.roleAssignments | ForEach-Object { $_.principal }) | Should -Be @($script:DupGrp1, $script:DupGrp2)
@@ -2769,11 +2771,11 @@ Describe 'Get-OERInventory' {
                 groups                 = @([PSCustomObject]@{ displayName = 'Dup' }, [PSCustomObject]@{ displayName = 'dup' })
                 roleAssignments        = @(
                     [PSCustomObject]@{ scope = $script:DupSub1; role = 'Reader'; principal = 'Ops' }
-                    [PSCustomObject]@{ scope = ($script:DupSub1.ToUpperInvariant() + '/'); role = 'reader'; principal = 'ops' }
+                    [PSCustomObject]@{ scope = $script:DupSub1.ToUpperInvariant(); role = 'reader'; principal = 'ops' }
                 )
                 roleManagementPolicies = @(
                     [PSCustomObject]@{ scope = $script:DupSub1; role = 'Reader' }
-                    [PSCustomObject]@{ scope = ($script:DupSub1.ToUpperInvariant() + '/'); role = 'reader' }
+                    [PSCustomObject]@{ scope = $script:DupSub1.ToUpperInvariant(); role = 'reader' }
                 )
             }
             $Validation = Get-DupValidation -Inventory $Doc

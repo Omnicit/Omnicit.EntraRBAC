@@ -62,10 +62,14 @@ function Invoke-OERStructure {
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
     the canonical RESOLVED scope, compared without regard to letter case -- never on the scope text
     the document wrote, so 'sub:<id>', 'subscription:<id>', '/subscriptions/<id>', a subscription's
-    name, 'mg:<name>', 'mg:<displayName>', the management group path and a path with a trailing '/'
-    are one scope. Every item of a group is handed the same canonical resolved scope (-ResolvedScope),
-    and -ReconcileScope is passed on the first item of each resolved scope, which signals the handler
-    to run its prune pass for that scope after processing the item. An item whose scope cannot be
+    name, 'mg:<name>', 'mg:<displayName>' and the management group path are one scope. A scope
+    written with a trailing '/' (other than '/' itself) or with '//' is not a spelling of another
+    scope: the offline validation refuses the whole document before anything is resolved, so such a
+    scope is never merged or pruned. Every item of a group is handed the same canonical resolved
+    scope (-ResolvedScope), and -ReconcileScope is passed on the first item of each resolved scope,
+    which signals the handler to run its prune pass for that scope after processing the item. A
+    failed read of the live assignments at a scope reports the item Failed, with the read error
+    published as itself, and no prune pass runs for that scope. An item whose scope cannot be
     resolved is reported Failed by the engine itself, with its error published as itself, and is not
     dispatched; its label is handed to every dispatched item, which withholds the prune of the whole
     section (see -Prune). Two entries that resolve to the same scope, principal and role are one
@@ -336,9 +340,10 @@ function Invoke-OERStructure {
             # roleAssignments: every entry's scope is resolved ONCE, before the first entry is
             # dispatched, and the entries are grouped on the canonical RESOLVED scope, compared without
             # regard to letter case -- never on the text the document wrote. sub:<id>, subscription:<id>,
-            # /subscriptions/<id>, a subscription's name, mg:<name>, mg:<displayName>, the management
-            # group path and a path with a trailing '/' are all one scope, so their entries form one
-            # group with one prune pass. Every entry of a group is handed the same string, the group's
+            # /subscriptions/<id>, a subscription's name, mg:<name>, mg:<displayName> and the management
+            # group path are all one scope, so their entries form one group with one prune pass. A
+            # scope with a trailing '/' or with '//' never gets here: Test-OERStructureSchema refused
+            # the document above (A15). Every entry of a group is handed the same string, the group's
             # first canonical scope, which the handler uses for every Azure Resource Manager call.
             #
             # An entry whose scope cannot be resolved is not dispatched and belongs to no group, yet it
