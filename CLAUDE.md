@@ -171,9 +171,9 @@ from the register in `docs/live-verification/README.md`, which also records the 
 `...NNN` and `personN`. **The gate reads that register**, so it is red on a placeholder used in
 `source/`, `tests/`, `docs/examples/` or `docs/development/` without a row marked taken, and on a
 register that disagrees with itself -- overlapping rows, a repeated slot description, a table without
-exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, or a slot taken
-at or above a FREE start that is not a named outlier. Add the row in the same commit that uses the
-slot. **It also holds tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a
+exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, a slot taken
+at or above a FREE start that is not a named outlier, or a placeholder cell it cannot read. Add the
+row in the same commit that uses the slot. **It also holds tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a
 fixed allowlist of four labels, `contoso`, `fabrikam`, `other` and
 `oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and `\.` as `.`, so a URL-encoded UPN and a
 regex-form domain are caught too. Replace a real label with `contoso`; never widen the allowlist to
@@ -883,9 +883,19 @@ bug.
   6.2.0 was the newest when measured on 2026-10-05. One `*.Tests.ps1` per source file. The QA gate
   (`tests/QA/module.tests.ps1`) requires a unit test file for every exported function.
 - **Import by module name, not by path**, in every `BeforeAll` -- importing by path breaks the
-  Sampler coverage measurement, which targets the built module:
+  Sampler coverage measurement, which targets the built module. Every unit test file that imports
+  the module starts with this root shape (the tripwire lines are explained below, and
+  `tests/QA/testhygiene.tests.ps1` fails a file without them):
   ```powershell
-  BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+  BeforeAll {
+      Import-Module Omnicit.EntraRBAC -Force
+      . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+      Install-OERTransportTripwire
+  }
+
+  AfterAll {
+      try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+  }
   ```
 - **Mock at the module boundary:**
   ```powershell
@@ -1059,7 +1069,9 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
 7. **Add full comment-based help:** `.SYNOPSIS`, `.DESCRIPTION`, one `.PARAMETER` per parameter,
    at least one `.EXAMPLE`.
 8. **Add a unit test file:** `tests/Unit/{Public|Private}/Verb-OERNoun.Tests.ps1`. Import by
-   module name in `BeforeAll`. Mock `Initialize-OERAuth` and `Invoke-OERGraphRequest`.
+   module name in `BeforeAll`, and install the transport tripwire there with the root `AfterAll`
+   that checks and removes it (the shape under **Testing Conventions**). Mock `Initialize-OERAuth`
+   and `Invoke-OERGraphRequest`.
 9. **Keep the file ASCII-only** and UTF-8 without BOM.
 10. **Run `./build.ps1 -Tasks test`** before committing -- it is the authoritative gate.
 

@@ -12,15 +12,15 @@ spelling of one subscription or management group scope is one scope, compared ig
 earlier, two entries for one scope could remove each other's assignments on every `-Prune` run. A
 role given by GUID matches the live assignment at a resource group, where `-Prune` removed and
 re-created it every run, and at a management group. An unresolvable scope withholds the section's
-prune, a repeat of one scope, principal and role is `Failed` and not written, and a failed read of a
-scope's assignments is `Failed` and runs no prune there. A `roleAssignments` or
+prune, a second entry for the same scope, principal and role is `Failed` and not written, and a
+failed read of a scope's assignments is `Failed` and runs no prune there. A `roleAssignments` or
 `roleManagementPolicies` scope with a trailing `/` (other than `/`) or `//` is refused before
 anything is written.
 
 `Test-OERStructure` reports, and `Invoke-OERStructure` refuses, a document that declares the same
 group, administrative unit, catalog, access package within one catalog, access review, role
 assignment or role policy twice, ignoring case, or an empty or blank access package binding resource
-or role, catalog resource name, or administrative unit scoped role or principal.
+or role, catalog resource name, or the role or principal of an administrative unit scoped role.
 
 `Get-OERInventory` and `Export-OERInventory` leave out objects that share a name, naming them in
 `InventoryPartial`, which also reports an unreadable group, administrative unit or access review
@@ -48,7 +48,8 @@ and `Invoke-OERStructure`, an ambiguous approver name is `AmbiguousApproverName`
 reported as itself, and only a missing approver is `ApproverNotFound`.
 
 `New-OERAccessReviewDefinition` and `Invoke-OERStructure` report a failed read of the access package
-that derives its catalog as itself (`CatalogDerivationFailed` stays for a package with no catalog).
+they derive the catalog from as itself (`CatalogDerivationFailed` stays for a package with no
+catalog).
 `Remove-OERAccessReviewDefinition` warns before asking for confirmation if it cannot read the
 definition to check for a Lifecycle access review; a confirmed delete still happens.
 `Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances` `$null` when unread.
@@ -56,6 +57,7 @@ definition to check for a Lifecycle access review; a confirmed delete still happ
 `Connect-OER`'s help says a client secret reaches AzAuth as plain text for each token and recommends
 a certificate or managed identity; `Connect-OER`, `Disconnect-OER` and `about_Omnicit.EntraRBAC` say
 `Disconnect-OER` ends the Graph SDK session `Connect-OER` starts.
+
 ## [1.1.1] - 2026-10-04
 
 `Get-OERInventory` and `Export-OERInventory` write an access package's unread resource role

@@ -169,8 +169,10 @@ function Sync-OERStructureAccessReview {
         # as its own nested pipeline, which re-deposited the same record on the way out -- so
         # dropping either one alone only halves the leak.
         # SilentlyContinue here means "captured", not "ignored": the records are inspected below, so
-        # a failed read is still a failed read. Same idiom, same reasoning, as the group and
-        # administrative-unit reads in Get-OERInventory.
+        # a failed read is still a failed read. The group and administrative-unit reads in
+        # Get-OERInventory share this capture (SilentlyContinue and a local -ErrorVariable) but not
+        # the pipe into Where-Object: each is a bare call inside @( ), a shape the access review
+        # read in that file measured to leak one record to the caller.
         $Existing = $null
         $Ambiguous = @()
         $Filter = "displayName eq '{0}'" -f $Name.Replace("'", "''")

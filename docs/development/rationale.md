@@ -293,7 +293,10 @@ tripwire; nothing calls module code at discovery time today (checked 2026-10-05)
 The answering runspace in `OERConfirmHost.ps1` has a global scope of its own, so the parent's
 replacements are invisible there. `Invoke-OERWithConfirmAnswer` installs the same replacements in
 it from the parent's definitions, shares the parent's hit list, records a hit for any name that no
-longer resolves there after the scenario, and refuses to run at all without an installed tripwire.
+longer resolves there after the scenario, fails the run when that check itself raised an error
+there (a scenario that left the runspace's definitions or hit list unreadable would otherwise let
+the check record nothing and report success), and refuses to run at all without an installed
+tripwire.
 
 `tests/QA/testhygiene.tests.ps1` holds the wiring by presence, statically and importing nothing: a
 root `BeforeAll` that calls `Install-OERTransportTripwire` after the first `Import-Module`, and a
@@ -336,8 +339,17 @@ switch to the Gallery, and a build step would not cover a single `Invoke-Pester`
 `-ParameterFilter` of a mock matches, with no default mock beside them: 5.7.1 calls the original --
 now the tripwire, one hit; 6.2.0 throws "No mock for command 'Invoke-WebRequest' matched the call:
 none of the parameter filters matched, and there is no default mock to fall back to." without
-calling it, and records no hit. The run fails either way, but on a different line per version, and
-no test can pin both versions in one run.
+calling it, and records no hit. On 6.x that throw is raised inside module code, a module `catch` can
+swallow it like any other failure, and the test can stay green with its happy path silently
+replaced by its failure path. The tripwire cannot see that, since no transport is reached. Measured
+in the final review of Sprint 8 step 4: a test that mocks `Invoke-OERGraphRequest` with a
+`-ParameterFilter` only, then calls `Get-OERAdministrativeUnit` with `-Filter` and
+`-ErrorAction SilentlyContinue`, passed on Pester 6.2.0 with no hit, while the module's catch
+swallowed 13 "No mock for command" records; on 5.7.1 the same file failed its container on one hit,
+`Invoke-MgGraphRequest` from `Invoke-OERGraphRequest.ps1`. The real transport was reached on
+neither version. This is the inert shape that remains, recorded here and not gated: the remedy is a
+default mock beside every filtered mock, so a call the filters stop matching falls back to it
+instead of throwing.
 
 **The traps, measured on PowerShell 7.6 with a throwaway module.**
 
@@ -422,14 +434,13 @@ the quoted text and not by line number.
    and wraps only the filtered variable in `@( )`. The access review read of `Get-OERInventory`
    reads `@(call ... | Where-Object { ... })`, and its comment says the pipe is load-bearing and
    the filter is not to be simplified away. The group and administrative-unit reads of
-   `Get-OERInventory`, which the probe's comment names as the same idiom, share the capture but not
-   the pipe: each is a bare call inside `@( )`, the shape measured above to leak 1. The local
-   collection also holds records raised inside nested calls even when an inner catch swallowed
-   them, so only a record the cmdlet itself published counts. The probe's comment measured a
-   throttled attempt that was retried and then succeeded with zero matches: it left three
-   `TooManyRequests` records and one bare, message-less exception beside the genuine not-found
-   record. A published record carries the calling cmdlet's name as a comma-separated segment of its
-   `FullyQualifiedErrorId`.
+   `Get-OERInventory` share the capture but not the pipe, as the probe's comment says: each is a
+   bare call inside `@( )`, the shape measured above to leak 1. The local collection also holds
+   records raised inside nested calls even when an inner catch swallowed them, so only a record the
+   cmdlet itself published counts. The probe's comment measured a throttled attempt that was
+   retried and then succeeded with zero matches: it left three `TooManyRequests` records and one
+   bare, message-less exception beside the genuine not-found record. A published record carries the
+   calling cmdlet's name as a comma-separated segment of its `FullyQualifiedErrorId`.
 2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
    the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
    caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
@@ -448,7 +459,8 @@ the quoted text and not by line number.
    writes it again through the engine's own cmdlet with `$Caller.WriteError($PSItem)`, and adds a
    Failed result row carrying that same record. "Once" means once as a record the engine writes:
    the child's own `WriteError` has already deposited its record into the caller's
-   `-ErrorVariable` before the `catch` runs, and the `catch` neither retracts nor repeats that.
+   `-ErrorVariable` before the `catch` runs; the `catch` does not retract that deposit, and the
+   republish adds its own copy beside it (inferred from the mechanism above, not measured).
    `Remove-OERErrorRecord`, called first, scrubs the bearer token from the shared request object
    and drops the matching `$global:Error` entry. The handler's other `catch` blocks around child
    writes have the same shape. See [#approver-lookup](#approver-lookup) for the same rule stated
@@ -1665,8 +1677,8 @@ goes through that one call -- `Connect-OER` and the first-use sign-in of any oth
 an OER session always comes with an SDK session in the same process. `Connect-MgGraph` runs only on
 a call where `$GraphCached` is false -- the first sign-in, a different tenant, identity or cloud,
 `-ForceRefresh`, a claims challenge, or a Graph token within five minutes of expiry -- so the SDK
-session is started per sign-in or token refresh and not once per cmdlet; a call that finds a valid
-cached session returns before it. `Disconnect-OER` is the matching end: inside its `ShouldProcess`
+session is started per sign-in or token refresh and not once per cmdlet; a call whose Graph session
+is still valid never reaches it. `Disconnect-OER` is the matching end: inside its `ShouldProcess`
 it clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`.
 
 The message is the same in four places, each in its own medium's voice: `Connect-OER`'s and
@@ -1694,7 +1706,7 @@ the extent of the search: it covers the tracked files under `docs/live-verificat
 file, and it does not rule out a failure that was seen and not written down. The caution is the
 explanation `feat-pim-group-approval-checklist.md` gives for the order of its steps: `Connect-OER`
 leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
-otherwise try to read as an MSAL cache. It is that commit's explanation and not a measurement: no
+otherwise try to read as an MSAL cache. It is the explanation `c2a5c70` wrote, not a measurement: no
 output of a run that skipped the disconnect is saved. In the history `main` carries, the text first
 appears in `c2a5c70` (#10), in that checklist, and the same wording later appears in three more:
 `feat-directory-role-management-policies-checklist.md` (`55acea9`),
