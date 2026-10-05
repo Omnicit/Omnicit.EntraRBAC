@@ -12,13 +12,15 @@ BeforeAll {
     # reads every unit test file statically -- it imports nothing and runs no module code -- and
     # requires, in each, a root BeforeAll that calls Install-OERTransportTripwire AFTER the module
     # import, and a root AfterAll whose try calls Assert-OERTransportTripwire and whose finally calls
-    # Uninstall-OERTransportTripwire. Why: docs/development/rationale.md#bearer-scrub-tests
+    # Uninstall-OERTransportTripwire -- a try with no catch, since a catch would swallow the
+    # assert's throw and leave the file green. Why: docs/development/rationale.md#bearer-scrub-tests
     #
     # The QA gate files are outside it on purpose: they call help, the analyzer and pure maps only.
     # =====================================================================================
 
     # The two AST-only cohort suites parse source files and import nothing, so no module code can
-    # run in them. Named here, and the second It below fails if either starts importing.
+    # run in them. Named here, and the second It below fails if either starts importing, calls a
+    # Verb-OER* command or runs Get-Command -Module.
     $script:TripwireExempt = @(
         'tests/Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1'
         'tests/Unit/Public/GroupAliasOrder.Cohort.Tests.ps1'
@@ -80,7 +82,8 @@ BeforeAll {
         blocks -- a call buried in a function that nothing invokes would otherwise pass. A root
         BeforeAll "calls Install before Import-Module" when the Install call's StartOffset is not
         greater than the StartOffset of the first Import-Module command in that block, or when the
-        block has no Import-Module at all. Returns nothing for a file that wires the tripwire.
+        block has no Import-Module at all. The try around the Assert call must have no catch clause:
+        a catch would swallow the assert's throw. Returns nothing for a file that wires the tripwire.
         #>
         [OutputType([string])]
         param(
@@ -129,13 +132,52 @@ BeforeAll {
                 foreach ($Statement in @($Body.EndBlock.Statements)) {
                     if ($Statement -isnot [System.Management.Automation.Language.TryStatementAst]) { continue }
                     if ($null -eq $Statement.Finally) { continue }
+                    if ($Statement.CatchClauses.Count -gt 0) { continue }
                     $Asserts = @(Get-TestHygieneDirectCall -Statements $Statement.Body.Statements -Name 'Assert-OERTransportTripwire')
                     $Uninstalls = @(Get-TestHygieneDirectCall -Statements $Statement.Finally.Statements -Name 'Uninstall-OERTransportTripwire')
                     if ($Asserts.Count -gt 0 -and $Uninstalls.Count -gt 0) { $Checked = $true }
                 }
             }
             if (-not $Checked) {
-                'root AfterAll does not call Assert-OERTransportTripwire inside a try whose finally calls Uninstall-OERTransportTripwire'
+                'root AfterAll does not call Assert-OERTransportTripwire inside a try with no catch whose finally calls Uninstall-OERTransportTripwire'
+            }
+        }
+    }
+
+    function Get-TestHygieneExemptFinding {
+        <#
+        .SYNOPSIS
+        Returns 'line N: name' for each command in a parsed file that can import or run module code.
+        .DESCRIPTION
+        An exempt file must import nothing. Refused: Import-Module and InModuleScope; any command
+        whose name holds '-OER', since module autoloading imports the module to run a Verb-OER*
+        command; and Get-Command with its -Module parameter, under any of its names or a prefix of
+        one (-Module, -PSSnapin, -FullyQualifiedModule). Returns nothing for a file that does none
+        of these.
+        #>
+        [OutputType([string])]
+        param(
+            [Parameter(Mandatory)]
+            [System.Management.Automation.Language.Ast]$Ast
+        )
+        $Commands = $Ast.FindAll({
+                param($Node)
+                $Node -is [System.Management.Automation.Language.CommandAst]
+            }, $true)
+        foreach ($Command in $Commands) {
+            $Name = $Command.GetCommandName()
+            if (-not $Name) { continue }
+            $Refused = ($Name -in @('Import-Module', 'InModuleScope')) -or ($Name -match '-OER')
+            if (-not $Refused -and $Name -eq 'Get-Command') {
+                foreach ($Element in $Command.CommandElements) {
+                    if ($Element -isnot [System.Management.Automation.Language.CommandParameterAst]) { continue }
+                    foreach ($Full in 'Module', 'PSSnapin', 'FullyQualifiedModule') {
+                        if ($Element.ParameterName -and $Full.StartsWith($Element.ParameterName, [System.StringComparison]::OrdinalIgnoreCase)) { $Refused = $true }
+                    }
+                }
+            }
+            if ($Refused) {
+                'line {0}: {1}' -f $Command.Extent.StartLineNumber, $Name
             }
         }
     }
@@ -164,17 +206,37 @@ Describe 'Unit test hygiene' -Tags 'TestHygiene' {
     }
 
     It 'Should exempt only unit test files that import nothing' {
+        # Known answer. A check edited into one that never fires leaves every exempt file green, so
+        # a fixed sample proves it still refuses each shape: lines 1 to 5 of the second sample are
+        # refused, and a Get-Command by name, the last line, is not.
+        $Clean = @'
+Describe 'x' {
+    It 'y' {
+        Get-ChildItem -Path $PSScriptRoot | Should -Not -BeNullOrEmpty
+        Get-Command -Name Get-ChildItem | Should -Not -BeNullOrEmpty
+    }
+}
+'@
+        $Loading = @'
+Import-Module Omnicit.EntraRBAC
+InModuleScope Omnicit.EntraRBAC { 1 }
+Get-OERGroup -Group 'x'
+Get-Command -Module Omnicit.EntraRBAC
+Get-Command -PSSnapin Omnicit.EntraRBAC
+Get-Command -Name Get-ChildItem
+'@
+        @(Get-TestHygieneExemptFinding -Ast ([System.Management.Automation.Language.Parser]::ParseInput($Clean, [ref]$null, [ref]$null))).Count |
+            Should -Be 0 -Because 'a file that imports nothing must produce no finding, or every exemption would fail'
+        @(Get-TestHygieneExemptFinding -Ast ([System.Management.Automation.Language.Parser]::ParseInput($Loading, [ref]$null, [ref]$null))) |
+            Should -Be @('line 1: Import-Module', 'line 2: InModuleScope', 'line 3: Get-OERGroup', 'line 4: Get-Command', 'line 5: Get-Command') -Because 'each way to import or run module code must be refused, and a Get-Command by name must not be'
+
         @($script:TripwireExempt).Count | Should -BeGreaterThan 0 -Because 'the exemption list is named on purpose; an empty list means this check measures nothing'
         foreach ($Relative in $script:TripwireExempt) {
             $Path = Join-Path -Path $script:ProjectPath -ChildPath $Relative
             Test-Path -LiteralPath $Path | Should -BeTrue -Because ('an exemption must name a file that exists, or it silently exempts nothing: {0}' -f $Relative)
             $Ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$null, [ref]$null)
-            $Imports = @($Ast.FindAll({
-                        param($Node)
-                        $Node -is [System.Management.Automation.Language.CommandAst] -and
-                        $Node.GetCommandName() -in @('Import-Module', 'InModuleScope')
-                    }, $true))
-            $Imports.Count | Should -Be 0 -Because ('an exempt file must import nothing, so no module code can run in it; one that starts importing must install the tripwire instead: {0}' -f $Relative)
+            $Findings = @(Get-TestHygieneExemptFinding -Ast $Ast)
+            $Findings.Count | Should -Be 0 -Because ('an exempt file must import nothing, call no Verb-OER* command and run no Get-Command -Module, so no module code can run in it; one that does must install the tripwire instead: {0}: {1}' -f $Relative, ($Findings -join '; '))
         }
     }
 
@@ -240,10 +302,26 @@ AfterAll {
 
 Describe 'x' { It 'y' { 1 | Should -Be 1 } }
 '@
+        # An empty catch swallows the assert's throw, so the file stays green whatever was reached.
+        $CatchSwallows = @'
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/x.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } catch { } finally { Uninstall-OERTransportTripwire }
+}
+
+Describe 'x' { It 'y' { 1 | Should -Be 1 } }
+'@
+        $AfterAllReason = 'root AfterAll does not call Assert-OERTransportTripwire inside a try with no catch whose finally calls Uninstall-OERTransportTripwire'
         @(Get-TestHygieneTripwireFinding -Text $Correct).Count | Should -Be 0 -Because 'a correctly wired file must produce no finding, or the gate would fail every file'
         @(Get-TestHygieneTripwireFinding -Text $NoInstall) | Should -Be @('root BeforeAll does not call Install-OERTransportTripwire')
         @(Get-TestHygieneTripwireFinding -Text $InstallFirst) | Should -Be @('root BeforeAll calls Install-OERTransportTripwire before Import-Module')
         @(Get-TestHygieneTripwireFinding -Text $NoAfterAll) | Should -Be @('no root AfterAll')
-        @(Get-TestHygieneTripwireFinding -Text $NoTryFinally) | Should -Be @('root AfterAll does not call Assert-OERTransportTripwire inside a try whose finally calls Uninstall-OERTransportTripwire')
+        @(Get-TestHygieneTripwireFinding -Text $NoTryFinally) | Should -Be @($AfterAllReason)
+        @(Get-TestHygieneTripwireFinding -Text $CatchSwallows) | Should -Be @($AfterAllReason)
     }
 }

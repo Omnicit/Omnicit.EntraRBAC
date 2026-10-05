@@ -208,6 +208,10 @@ function Test-OERTransportTripwireInRunspace {
     <#
     .SYNOPSIS
     After a scenario, records a hit in the shared list for every name that no longer resolves there.
+    .DESCRIPTION
+    Throws when the check itself raised an error in that runspace. A scenario that left the
+    runspace's definitions or hit list unreadable would otherwise make the check record nothing
+    while reporting success -- a replacement removed there would then go unnoticed.
     #>
     [CmdletBinding()]
     param(
@@ -236,6 +240,9 @@ function Test-OERTransportTripwireInRunspace {
                 }
             }.ToString())
         $null = $Shell.Invoke()
+        if ($Shell.HadErrors) {
+            throw ('OER transport tripwire: the check in the second runspace failed: {0}' -f (($Shell.Streams.Error | ForEach-Object { $_.ToString() }) -join '; '))
+        }
     } finally {
         $Shell.Dispose()
     }

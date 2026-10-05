@@ -59,6 +59,13 @@ AfterAll {
 }
 
 Describe 'OERTransportTripwire' {
+    # Per test, not only in the root BeforeAll: the re-import test below replaces the module
+    # instance, and the root BeforeAll's mock stays on the old one, so every test after it would
+    # otherwise run against a module whose Initialize-OERAuth is not mocked.
+    BeforeEach {
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+    }
+
     It 'the helper names exactly the expected five commands' -ForEach @(@{ ExpectedNames = @($script:Expected | ForEach-Object { $_.Name }) }) {
         @($ExpectedNames).Count | Should -Be 5 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
         (@(Get-OERTransportTripwireName) | Sort-Object) -join ',' | Should -Be ((@($ExpectedNames) | Sort-Object) -join ',')
@@ -222,6 +229,35 @@ Describe 'OERTransportTripwire' {
             $global:OERTransportTripwireHits[$global:OERTransportTripwireHits.Count - 1].Command | Should -Be 'Invoke-MgGraphRequest'
         } finally {
             for ($Index = 0; $Index -lt $Added; $Index++) {
+                $global:OERTransportTripwireHits.RemoveAt($global:OERTransportTripwireHits.Count - 1)
+            }
+        }
+    }
+
+    # A check that fails with an error in the answering runspace must fail the run. Measured without
+    # that rule: with the hit list gone there, a removed replacement raised "You cannot call a method
+    # on a null-valued expression" inside the check, nothing was recorded, and the run reported
+    # success; with the definitions gone, the check raised a parameter validation error instead.
+    It 'the check after the scenario fails when <Case>' -ForEach @(
+        @{
+            Case     = 'the answering runspace lost its definitions'
+            Scenario = { $global:OERTransportTripwireDefinitions = $null }
+        }
+        @{
+            Case     = 'the answering runspace lost its hit list and a replacement'
+            Scenario = {
+                $global:OERTransportTripwireHits = $null
+                Remove-Item -Path function:Invoke-WebRequest
+            }
+        }
+    ) {
+        $Before = $global:OERTransportTripwireHits.Count
+        try {
+            { Invoke-OERWithConfirmAnswer -Script $Scenario } | Should -Throw -ExpectedMessage '*the check in the second runspace failed*'
+        } finally {
+            # The lost-definitions case leaves a nameless record before the check fails; it is no
+            # transport hit, and it must not fail this file's root AfterAll.
+            for ($Index = $global:OERTransportTripwireHits.Count; $Index -gt $Before; $Index--) {
                 $global:OERTransportTripwireHits.RemoveAt($global:OERTransportTripwireHits.Count - 1)
             }
         }

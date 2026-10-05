@@ -297,10 +297,11 @@ longer resolves there after the scenario, and refuses to run at all without an i
 
 `tests/QA/testhygiene.tests.ps1` holds the wiring by presence, statically and importing nothing: a
 root `BeforeAll` that calls `Install-OERTransportTripwire` after the first `Import-Module`, and a
-root `AfterAll` whose `try` calls the assert and whose `finally` calls the uninstall. Its only
-exemptions are the two AST-only alias-order cohort suites, which import nothing; the gate fails if
-either starts importing. The QA gate files themselves are outside the tripwire -- they call help,
-the analyzer and pure maps only.
+root `AfterAll` whose `try` calls the assert and whose `finally` calls the uninstall, with no
+`catch`, which would swallow the assert's throw. Its only exemptions are the two AST-only
+alias-order cohort suites, which import nothing; the gate fails if either starts importing, calls a
+`Verb-OER*` command or runs `Get-Command -Module`. The QA gate files themselves are outside the
+tripwire -- they call help, the analyzer and pure maps only.
 
 **Why it resolves.** `source/` never module-qualifies these five calls, and a function outranks a
 cmdlet in command resolution, so module code resolves the global replacement. A Pester

@@ -134,10 +134,11 @@ BeforeAll {
     # regular expression.
     #
     # So every line is NORMALIZED before it is matched: '%40' becomes '@' (a user principal name
-    # in a URL-encoded path) and '\.' becomes '.' (a domain written as a regular expression in a
-    # test). Those are the two forms the tests in this repository actually use, and without the
-    # normalization both would slip through. A bare mention of the suffix, with no label in front
-    # of it, names no tenant and never matches.
+    # in a URL-encoded path), and a dot behind one or more backslashes becomes a plain dot (a
+    # domain written as a regular expression in a test, or that expression escaped once more, as
+    # it is inside JSON). The first two are the forms the tests in this repository actually use,
+    # and without the normalization each would slip through. A bare mention of the suffix, with no
+    # label in front of it, names no tenant and never matches.
     #
     # Every entry below is a fictional or deliberately non-existent tenant. A real label is never
     # added here to make this gate green: the fix is to replace it with one of these. The It named
@@ -169,8 +170,13 @@ BeforeAll {
     # person thought it meant; the unique description per row is that human check.
     #
     # The sample below mirrors the real register's shapes and is the reader's known answer. A row
-    # after the section's end is there on purpose: the reader must stop at the next heading. Ids
-    # are read as HEX, which is how '...0aa' and '...abc' take their place among the others.
+    # after the section's end is there on purpose: the reader must stop at the next heading.
+    #
+    # Which ids a row covers: a RANGE row covers only tails made of three decimal digits, within
+    # its bounds read as decimal numbers, and a row that names ONE placeholder covers exactly its
+    # own tail, letters included. That is how '...0aa' and '...abc' are registered, and why a tail
+    # such as '...00a' is not covered by '...000' - '...045'. The register's checks against itself
+    # still order ids as HEX, which is where '...0aa' and '...abc' take their place among the others.
     # =====================================================================================
     $script:DocHygieneSampleRegister = @'
 Text before the register is not part of it.
@@ -546,12 +552,13 @@ from `person46`, and add a row here in the same commit that uses them.
                 Returns the label of every tenant domain in Line, after normalization.
 
             .DESCRIPTION
-                Before matching, '%40' is read as '@' and a backslash-escaped dot as a dot, so a
-                user principal name in a URL-encoded path and a domain written as a regular
-                expression are read the way a tenant would read them. The label is the run of
-                letters, digits and hyphens in front of one of the three suffixes, the commercial
-                and US Government onmicrosoft ones and the 21Vianet onmschina one. A bare suffix
-                with no label in front of it names no tenant and yields nothing.
+                Before matching, '%40' is read as '@' and a dot behind one or more backslashes as a
+                plain dot, so a user principal name in a URL-encoded path and a domain written as a
+                regular expression, escaped once or twice, are read the way a tenant would read
+                them. The label is the run of letters, digits and hyphens in front of one of the
+                three suffixes, the commercial and US Government onmicrosoft ones and the 21Vianet
+                onmschina one. A bare suffix with no label in front of it names no tenant and
+                yields nothing.
 
                 The pattern cannot match across a line break, so Line may also be a whole file
                 joined with line feeds: a joined text with no label has none in any of its lines.
@@ -564,7 +571,7 @@ from `person46`, and add a row here in the same commit that uses them.
         )
 
         $Pattern = [regex]'(?i)(?<![A-Za-z0-9-])([A-Za-z0-9-]+)\.(?:onmicrosoft\.(?:com|us)|onmschina\.cn)(?![A-Za-z0-9-])'
-        $Normalized = $Line.Replace('%40', '@').Replace('\.', '.')
+        $Normalized = $Line.Replace('%40', '@') -replace '\\+\.', '.'
 
         foreach ($Match in $Pattern.Matches($Normalized)) {
             $Match.Groups[1].Value
@@ -874,8 +881,9 @@ from `person46`, and add a row here in the same commit that uses them.
 
                 - a row's placeholder cell cannot be read (such a row takes part in no other check);
                 - two taken or reserved intervals of the same table overlap;
-                - two rows that are not FREE share a slot description, compared trimmed and
-                  ignoring case, where '--' is no description and is never compared;
+                - two rows that are not FREE share a slot description, compared trimmed, with each
+                  run of whitespace read as one space, and ignoring case, where '--' is no
+                  description and is never compared;
                 - a table has not exactly one FREE row;
                 - the Allocate sentence names an id or an address other than the start of its
                   table's FREE row, or is missing;
@@ -930,7 +938,7 @@ from `person46`, and add a row here in the same commit that uses them.
         # Repeated slot descriptions, across both tables.
         $SlotLine = @{}
         foreach ($Row in $Held) {
-            $Slot = $Row.Slot.Trim().ToLowerInvariant()
+            $Slot = ($Row.Slot.Trim() -replace '\s+', ' ').ToLowerInvariant()
 
             if ($Slot -eq '--' -or $Slot -eq '') {
                 continue
@@ -1020,9 +1028,12 @@ from `person46`, and add a row here in the same commit that uses them.
 
             .DESCRIPTION
                 An all-zeros object id is a register placeholder when the last twelve hex digits
-                start with nine zeros; its slot is the last three, read as hex, and it must fall in
-                a TAKEN interval of the Id table. Any other tail is reported too: it has the
-                placeholder's shape without being one the register can hand out. A
+                start with nine zeros; its slot is the last three, and a TAKEN row of the Id table
+                must cover it. A row that names one placeholder covers exactly its own tail, letters
+                included. A range row covers only a tail made of three decimal digits, within its
+                bounds read as decimal numbers, so a tail with a letter is never covered by a range
+                even where its hex value falls inside it. Any other tail is reported too: it has
+                the placeholder's shape without being one the register can hand out. A
                 personN@example.com address must fall in a TAKEN interval of the Address table.
 
                 Reserved and FREE are both reported. A reserved slot was set aside so that it is
@@ -1060,6 +1071,55 @@ from `person46`, and add a row here in the same commit that uses them.
             return $false
         }
 
+        # A range bound as a decimal number: the reader holds each id as its three characters read
+        # as hex, so the bound is written back as those characters and read again as decimal. An
+        # open end stays open, and a bound with a letter in it has no decimal reading ($null).
+        $DecimalBound = {
+            param ($Value)
+
+            if ($Value -eq [int]::MaxValue) {
+                return [long]$Value
+            }
+
+            $Characters = '{0:x3}' -f $Value
+            if ($Characters -notmatch '^[0-9]{3}$') {
+                return $null
+            }
+
+            return [long]$Characters
+        }
+
+        $IsTakenId = {
+            param ($Slot)
+
+            $HexValue = [Convert]::ToInt32($Slot, 16)
+
+            foreach ($Interval in $TakenId) {
+                if ($Interval[0] -eq $Interval[1]) {
+                    # One placeholder: exactly its own tail, letters included.
+                    if ($HexValue -eq $Interval[0]) {
+                        return $true
+                    }
+
+                    continue
+                }
+
+                # A range: only three decimal digits, within its bounds read as decimal.
+                if ($Slot -notmatch '^[0-9]{3}$') {
+                    continue
+                }
+
+                $Low = & $DecimalBound $Interval[0]
+                $High = & $DecimalBound $Interval[1]
+
+                if ($null -ne $Low -and $null -ne $High -and [long]$Slot -ge $Low -and [long]$Slot -le $High) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+
         $Locations = [System.Collections.Generic.List[string]]::new()
 
         foreach ($Entry in $File) {
@@ -1069,7 +1129,7 @@ from `person46`, and add a row here in the same commit that uses them.
                 foreach ($Match in $GuidPattern.Matches($Text)) {
                     $Tail = $Match.Groups[1].Value
 
-                    if ($Tail.StartsWith('000000000') -and (& $IsInside ([Convert]::ToInt32($Tail.Substring(9), 16)) $TakenId)) {
+                    if ($Tail.StartsWith('000000000') -and (& $IsTakenId $Tail.Substring(9))) {
                         continue
                     }
 
@@ -1328,10 +1388,13 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         # Known answer. A pattern edited into one that never matches, a normalization step dropped,
         # or an allowlist test that lets everything through all leave this check green on every
-        # file, so a fixed sample proves it still finds what it is for. Lines 3, 4, 5 and 7 are the
-        # hits: a plain address, a URL-encoded one, the regular-expression form and the 21Vianet
-        # suffix. Line 2 is allowed only once its '%40' is read as '@', and line 6 is the bare
-        # suffix with no label in front of it.
+        # file, so a fixed sample proves it still finds what it is for. Lines 3, 4, 5, 7, 9, 10 and
+        # 11 are the hits: a plain address, a URL-encoded one, the regular-expression form, the
+        # 21Vianet suffix, the US Government suffix in upper case behind a label holding a digit,
+        # the same suffix in lower case, and the regular-expression form escaped once more, as it
+        # is inside JSON. Line 2 is allowed only once its '%40' is read as '@', line 6 is the bare
+        # suffix with no label in front of it, and line 8 is an allowed label on the US Government
+        # suffix.
         #
         # Every sample is built by CONCATENATION. This file is in scope too, and a sample written
         # out whole would put a tenant domain on one of its own lines.
@@ -1345,6 +1408,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             ('its ' + 'onmicrosoft' + '.com name')
             ('tenant.' + 'onmschina' + '.cn')
             ('contoso.onmicrosoft' + '.us')
+            ('x@LEAK-2' + '.ONMICROSOFT' + '.US')
+            ('admin@leak' + '.onmicrosoft' + '.us')
+            ('leak' + '\\.onmicrosoft' + '\\.com')
         )
 
         $SampleHits = @(
@@ -1354,7 +1420,7 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         )
 
         ($SampleHits -join ', ') |
-            Should -Be 'sample:3, sample:4, sample:5, sample:7' -Because 'the known-answer sample must yield exactly its four tenant domains outside the allowlist; anything else means the scan stopped finding a form, stopped normalizing one, or stopped consulting the allowlist'
+            Should -Be 'sample:3, sample:4, sample:5, sample:7, sample:9, sample:10, sample:11' -Because 'the known-answer sample must yield exactly its seven tenant domains outside the allowlist; anything else means the scan stopped finding a form or a suffix, stopped normalizing one, stopped reading a label in either case or with a digit, or stopped consulting the allowlist'
 
         $Hits = @(
             Get-DocHygieneTenantDomainUse -File $script:DocHygieneFiles |
@@ -1453,8 +1519,9 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
                 , @('| `...047` |', '| `...040` |')
                 # Line 13: ...099 is no longer named an outlier, and is above the FREE start.
                 , @('`...0aa`, `...abc` and `...099` sit outside', '`...0aa` and `...abc` sit outside')
-                # Line 15: the description of line 14, in another case and with other spacing.
-                , @('| an administrative unit id |', '|  An Assignment Target Principal ID  |')
+                # Line 15: the description of line 14, in another case, with other spacing around
+                # it and a double space inside it.
+                , @('| an administrative unit id |', '|  An Assignment  Target Principal ID  |')
                 # Line 21: person14 marked FREE too, so the Address table has two FREE rows.
                 , @('| allocated and never used; left reserved, do not reuse |', '| **FREE.** |')
                 # Line 26: the Allocate sentence disagrees with the Id table's FREE row.
@@ -1499,6 +1566,32 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         ((@($AddressFindings) | Sort-Object) -join ' | ') |
             Should -Be ((@($AddressExpected) | Sort-Object) -join ' | ') -Because 'the address sample must yield exactly the Address halves of the Allocate and FREE-start checks'
+
+        # The three other ways a placeholder cell cannot be read, one edit each, every one of them
+        # well formed token by token so that only its own rule can catch it. Each such row takes
+        # part in no other check, so the rest of the sample stays correct.
+        $UnreadableDefective = $script:DocHygieneSampleRegister
+        foreach ($Edit in @(
+                # Line 10: the status cell is gone, so the row has fewer than three cells.
+                , @('| a subscription id in the worked example | taken |', '| a subscription id in the worked example |')
+                # Line 11: a range that ends before it starts.
+                , @('| `...047` |', '| `...047` - `...046` |')
+                # Line 22: an address and an id in one cell.
+                , @('| `person14` |', '| `person14`, `...0ff` |')
+            )) {
+            $UnreadableDefective = $UnreadableDefective.Replace($Edit[0], $Edit[1])
+        }
+
+        $UnreadableExpected = @(
+            "10: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
+            "11: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
+            "22: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
+        )
+
+        $UnreadableFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($UnreadableDefective -split '\r?\n')))
+
+        ((@($UnreadableFindings) | Sort-Object) -join ' | ') |
+            Should -Be ((@($UnreadableExpected) | Sort-Object) -join ' | ') -Because 'a row with fewer than three cells, a reversed range and a cell mixing an id and an address must each be reported as a cell that cannot be read, and nothing else'
     }
 
     It 'Should keep the placeholder register in docs/live-verification/README.md consistent' {
@@ -1565,9 +1658,11 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             Should -BeGreaterThan 0 -Because 'the register must yield at least one taken address row; zero means the reader found no table to check against'
 
         # Known answer, against the SAMPLE register in BeforeAll rather than the real one, so that
-        # allocating the next slot never turns it red. Lines 2, 4 and 6 are the hits: a FREE id
-        # slot, a tail that is not a register placeholder at all, and a RESERVED address. Lines 1,
-        # 3 and 5 are taken slots -- 5 one of the hex outliers -- and pass.
+        # allocating the next slot never turns it red. Lines 2, 4, 6 and 7 are the hits: a FREE id
+        # slot, a tail that is not a register placeholder at all, a RESERVED address, and a tail
+        # with a letter whose hex value lies inside the range '...000' - '...045', which a range
+        # never covers. Lines 1, 3 and 5 are taken slots -- 5 one of the outliers, registered by a
+        # row of its own -- and pass.
         #
         # Every sample is built by CONCATENATION. This file is in scope too, and a placeholder
         # written out whole would be a use of it on one of its own lines.
@@ -1579,13 +1674,14 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
             ($Prefix + '100000000' + '046')
             ($Prefix + '000000000' + 'abc')
             ('person' + '14' + '@example.com')
+            ($Prefix + '000000000' + '00a')
         )
 
         $SampleRegister = Get-DocHygienePlaceholderRegister -Line @($script:DocHygieneSampleRegister -split '\r?\n')
         $SampleHits = @(Get-DocHygieneUnregisteredPlaceholderLocation -File @([PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample }) -Register $SampleRegister)
 
         ($SampleHits -join ', ') |
-            Should -Be 'sample:2, sample:4, sample:6' -Because 'the known-answer sample must yield exactly its FREE id slot, its non-register tail and its reserved address; anything else means the scan stopped reading the register, or stopped finding a placeholder'
+            Should -Be 'sample:2, sample:4, sample:6, sample:7' -Because 'the known-answer sample must yield exactly its FREE id slot, its non-register tail, its reserved address and its lettered tail inside a range; anything else means the scan stopped reading the register, stopped finding a placeholder, or let a range cover a tail that is not decimal'
 
         $Hits = @(Get-DocHygieneUnregisteredPlaceholderLocation -File $Used -Register $Register)
 
