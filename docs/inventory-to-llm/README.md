@@ -286,7 +286,7 @@ only) are written as declared. **`NoSubjects` is not a v1.0 value** -- it is a l
 so the engine substitutes `NotSpecified` and warns on every apply; write `NotSpecified` directly.
 
 `users` and `groups` are resolved by the engine (names or object ids) and apply to
-`SpecificDirectoryUsers` only. They are the only targets the module models, so three scopes are
+`SpecificDirectoryUsers` only. They are the only targets the module models, so three cases are
 refused rather than written. Each is a `Failed` row for that policy, decided before ShouldProcess (so
 the same under `-WhatIf`), with nothing written for it:
 
@@ -295,7 +295,7 @@ the same under `-WhatIf`), with nothing written for it:
 - `SpecificConnectedOrganizationUsers`, declared on an update that changes the policy: its connected
   organization targets are not modelled, so the write would drop them. A declared scope that matches
   the live policy reports `Unchanged`, and a new policy is created with it, but with no connected
-  organization targets: the module cannot write them, so they are added outside the module.
+  organization targets: the module cannot write them, so they must be added outside the module.
 - A live policy whose scope reads as `unknownFutureValue`, whatever the entry declares: Microsoft
   Graph names the real scope only to a caller that sends `Prefer: include-unknown-enum-members`,
   which this module never does. The inventory writes the value as it was read.

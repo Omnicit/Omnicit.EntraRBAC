@@ -7,48 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-`Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the scope it resolves, so every
-spelling of one scope (`sub:` or `subscription:` with an id, the `/subscriptions/` path, a
-subscription's name, `mg:` with a management group's name, display name or path) names one scope,
-compared case-insensitively; earlier, under `-Prune`, two entries for one scope removed each other's
-assignments on every run. A role given by its GUID now matches the live assignment at a resource
-group, where `-Prune` used to remove and re-create it on every run, and at a management group. A
-scope that cannot be resolved withholds the prune of the whole section, and an entry that resolves
-to the same scope, principal and role as an earlier one is `Failed` and not written. A failed read
-of the assignments at a scope is `Failed` and runs no prune there; earlier versions took it for an
-empty list and planned to create assignments that exist. A `roleAssignments` or
-`roleManagementPolicies` scope with a trailing `/` (other than `/`) or `//` is refused before
-anything is written.
+`Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope: every
+spelling of one subscription or management group scope is one scope, compared case-insensitively;
+earlier, two entries for one scope could remove each other's assignments on every `-Prune` run. A
+role given by its GUID matches the live assignment at a resource group, where `-Prune` removed and
+re-created it every run, and at a management group. An unresolvable scope withholds the whole
+section's prune, and a repeat entry (same scope, principal and role) is `Failed` and not written. A
+failed read of a scope's assignments is `Failed` and runs no prune there (earlier versions planned
+to create assignments that exist). A `roleAssignments` or `roleManagementPolicies` scope with a
+trailing `/` (other than `/`) or `//` is refused before anything is written.
 
 `Test-OERStructure` reports, and `Invoke-OERStructure` refuses, a document that declares the same
 group, administrative unit, catalog, access package within one catalog, access review, role
-assignment or role policy twice, or an empty or blank binding resource or role, catalog resource
-name, or scoped role or principal. `Get-OERInventory` and `Export-OERInventory` never write such a
-duplicate (objects that share a name are left out and named in `InventoryPartial`; role assignment
-principals that share one are written by object id), report an unreadable group, administrative unit
-or access review list, and for `Export-OERInventory` a group roster, through `InventoryPartial`, and
-write a binding whose resource name cannot be read by object id, or, with none, its `resourceRoles`
-as `null`, reported as partial.
+assignment or role policy twice, ignoring letter case, or an empty or blank access package binding
+resource or role, catalog resource name, or administrative unit scoped role or principal.
 
-`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role whose name
-the directory role list does not give: when the document declares a role by name and no live role of
-that principal matches it, the declared role is not added, the unnamed role is not removed, and the
-entry is `Skipped`. A scoped role declared by its template id or its object id also matches a live
-one that the directory role list names the same, so it is neither added again nor removed.
+`Get-OERInventory` and `Export-OERInventory` never write a duplicate: objects sharing a name are
+left out and named in `InventoryPartial`; role assignment principals sharing one are written by
+object id. They report an unreadable group, administrative unit, access review list or (for
+`Export-OERInventory`) group roster through `InventoryPartial`. An access package binding whose
+resource name cannot be read is written by object id; with no id, the package's `resourceRoles` is
+`null`, reported as partial. `Export-OERInventory`'s bundle `README.md` lists everything it could
+not read.
+
+`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role that the
+directory role list does not name: for a role declared by name that no live role of the principal
+matches, the role is not added, the unnamed role is not removed, and the entry is `Skipped`. A
+scoped role declared by its template id or object id also matches the live one carrying the other id
+form, when the directory role list names both the same, so it is neither added again nor removed.
 
 `Add-OERGroupEligibility` writes `EligibilityRequestFailed` when Graph accepts an eligibility
-request but answers `Failed`, and `Invoke-OERStructure` reports such an eligibility of an existing
-group `Failed`, never `Updated`. `New-OERAccessPackageRequestorScope` accepts `AllExternalUsers`,
-`AllDirectoryServicePrincipals` and `AllDirectoryAgentIdentities`, and an exported policy with one
-applies as `Unchanged`; `SpecificDirectoryServicePrincipals` is refused (`InvalidPolicyInput`), and a
-policy Graph returns as `unknownFutureValue`, or an update that would drop connected organization
-targets, is `Failed` and nothing is written. In the group, Azure role and directory role PIM policy
-cmdlets and `Invoke-OERStructure`, an ambiguous approver name is `AmbiguousApproverName`, a failed
-lookup is reported as itself, and only an approver that does not exist is `ApproverNotFound`.
+request but answers `Failed`, and `Invoke-OERStructure` reports that request `Failed`, never
+`Updated`, for an existing group. `New-OERAccessPackageRequestorScope` accepts `AllExternalUsers`,
+`AllDirectoryServicePrincipals` and `AllDirectoryAgentIdentities`, so an exported policy with one is
+`Unchanged`; `SpecificDirectoryServicePrincipals` is refused (`InvalidPolicyInput`), and a policy
+Graph returns as `unknownFutureValue`, or an update that would drop connected organization targets,
+is `Failed` and nothing is written.
+
+In the group, Azure role and directory role PIM policy cmdlets and `Invoke-OERStructure`, an
+ambiguous approver name is `AmbiguousApproverName`, a failed lookup is reported as itself, and only
+a missing approver is `ApproverNotFound`.
+
 `New-OERAccessReviewDefinition` reports a failed read of the package's catalog as itself
-(`CatalogDerivationFailed` stays for a package with none), `Remove-OERAccessReviewDefinition` warns,
-before it asks, that it could not check for a Lifecycle access review and still deletes, and
-`Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances` `$null` for unread instances.
+(`CatalogDerivationFailed` stays for a package with no catalog). `Remove-OERAccessReviewDefinition`
+warns before asking for confirmation that it could not check for a Lifecycle access review; a
+confirmed delete still happens. `Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances`
+`$null` for unread instances.
 
 ## [1.1.1] - 2026-10-04
 
