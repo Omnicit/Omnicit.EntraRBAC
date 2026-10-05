@@ -980,6 +980,14 @@ function Initialize-OERAuth {
                 # Get-OERSignedInObjectId so the directory-role prune never removes the caller's own
                 # assignments. The token itself is never stored.
                 SignedInObjectId = Get-OERTokenObjectId -Token $SecureToken
+                # SEC (A18): which Microsoft Graph PowerShell SDK session this module just connected,
+                # read straight after its own Connect-MgGraph above. Get-OERGraphSessionState compares
+                # it with the session the process holds at every later entry here and before every
+                # Graph call, since Invoke-OERGraphRequest sends no token of its own. Never a token and
+                # never the context object: see Get-OERGraphSessionFingerprint. The key is written even
+                # when the value is $null, so a session whose context could not be read is still
+                # compared -- and refused when someone else's appears.
+                GraphSessionFingerprint = Get-OERGraphSessionFingerprint
                 # SEC: carry the cached ARM token into the rebuilt state ONLY when the tenant and auth
                 # identity are unchanged. Otherwise drop it, so the next -IncludeARM call re-acquires for
                 # the tenant actually being targeted instead of inheriting the previous customer's token.

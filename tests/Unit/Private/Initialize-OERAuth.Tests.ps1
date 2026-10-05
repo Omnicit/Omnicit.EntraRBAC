@@ -5,6 +5,17 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
 
+    # One stable Graph SDK context for every test in this file, unless a test mocks its own. Without
+    # it the state rebuild would read the REAL Get-MgContext: empty on CI, a developer's own session
+    # on a workstation.
+    $script:DefaultGraphContext = [pscustomobject]@{
+        AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+        ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+        Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'
+        Scopes = @('Group.ReadWrite.All')
+    }
+    Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
+
     # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
     # file -- for the Get-OERTokenObjectId (oid claim / SignedInObjectId) tests below. The signature
     # segment is deliberately not a real signature; nothing here checks one.
@@ -3121,5 +3132,60 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Exactly -Times 2
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Exactly -Times 1
         }
+    }
+}
+
+Describe 'Initialize-OERAuth Graph SDK session fingerprint (A18)' {
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERLastIssuedSession = $null
+        }
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = '44444444-4444-4444-4444-444444444444' }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own. A test swaps
+        # the session by assigning $script:CurrentContext (another session, or $null for none).
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+    }
+
+    It 'records the fingerprint of the session its own Connect-MgGraph left, read after the connect' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+        }
+        $Recorded = InModuleScope $script:moduleName { $script:_OERAuthState.GraphSessionFingerprint }
+        $Expected = InModuleScope $script:moduleName -Parameters @{ C = $script:OwnContext } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        $Recorded | Should -Not -BeNullOrEmpty
+        $Recorded | Should -BeExactly $Expected
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'stores no token anywhere in the fingerprint' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+        }
+        $Recorded = InModuleScope $script:moduleName { $script:_OERAuthState.GraphSessionFingerprint }
+        $Recorded | Should -Not -Match 'NOT-A-REAL-TOKEN'
+    }
+
+    It 'keeps the fingerprint when only an ARM token is acquired' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+        }
+        $Before = InModuleScope $script:moduleName { $script:_OERAuthState.GraphSessionFingerprint }
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -IncludeARM
+        }
+        InModuleScope $script:moduleName { $script:_OERAuthState.GraphSessionFingerprint } | Should -BeExactly $Before
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
     }
 }
