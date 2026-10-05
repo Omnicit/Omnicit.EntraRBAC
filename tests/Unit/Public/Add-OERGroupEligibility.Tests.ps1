@@ -532,6 +532,133 @@ Describe 'Add-OERGroupEligibility' {
         }
     }
 
+    Context 'a request Graph accepts but answers status Failed (Sprint 8 step 3, BL-04)' {
+        # Microsoft Graph can accept an eligibility schedule request (201) and answer it with status
+        # Failed, which grants nothing. The cmdlet still emits the request object, then writes
+        # EligibilityRequestFailed, so a caller never takes the Failed request for a grant.
+        BeforeAll {
+            $script:FailedMessage = "Microsoft Graph accepted the PIM member eligibility request 'req-f1' for principal " +
+                "'11111111-1111-1111-1111-111111111111' on group 'gid-1' but answered status Failed, so nothing was granted; " +
+                're-running the same request usually succeeds (a group created moments ago can take a while to be known to ' +
+                'PIM for Groups).'
+        }
+
+        It 'emits the request object AND writes EligibilityRequestFailed when Graph answers status Failed' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f1'; status = 'Failed' } }
+            $Err = $null
+            $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupEligibility'
+            $Result[0].RequestId | Should -BeExactly 'req-f1'
+            $Result[0].Status | Should -BeExactly 'Failed'
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly 'gid-1'
+            $Err[0].Exception.Message | Should -BeExactly $script:FailedMessage
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'reads the status case-insensitively: a lower-case failed is the same error, naming the access type' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f2'; status = 'failed' } }
+            $Err = $null
+            $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -AccessType owner -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].Status | Should -BeExactly 'failed'
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
+            $Err[0].Exception.Message | Should -BeLike "Microsoft Graph accepted the PIM owner eligibility request 'req-f2' for principal *"
+        }
+
+        It 'writes no error for status <Status>, which is not Failed' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'PendingApproval' }
+            @{ Status = 'PendingProvisioning' }
+        ) {
+            $script:AnsweredStatus = $Status
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-ok'; status = $script:AnsweredStatus } }
+            $Err = $null
+            $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered with this status, so the absence below is a decision.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Result.Count | Should -Be 1
+            $Result[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 0
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries EligibilityRequestFailed' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f1'; status = 'Failed' } }
+            $Out = $null
+            $Thrown = $null
+            try {
+                Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -DurationDays 30 `
+                    -Confirm:$false -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
+            $Thrown.Exception.Message | Should -BeExactly $script:FailedMessage
+            @($Out).Count | Should -Be 1
+            $Out[0].RequestId | Should -BeExactly 'req-f1'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'names the policy this invocation opened, and how to close it, when the permanent request is answered Failed' {
+            Mock -ModuleName $script:moduleName Get-OERGroupPermanentEligibilityState {
+                [PSCustomObject]@{ HasPolicy = $true; PolicyId = 'pol-1'; PermanentAllowed = $false }
+            }
+            Mock -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility { $true }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f1'; status = 'Failed' } }
+            $Err = $null
+            $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue)
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'pol-1' }
+            $Result.Count | Should -Be 1
+            # One record, EligibilityRequestFailed: the request was not refused, so this is not
+            # PolicyOpenedButGrantFailed, but it carries the same advice about the open policy.
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
+            $Err[0].Exception.Message | Should -BeExactly ($script:FailedMessage + " PIM-for-groups policy 'pol-1' had been opened " +
+                'to allow permanent eligibility before the request was sent. The policy is still open; close it with ' +
+                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
+                '-AllowPermanentEligibility) if you do not intend to retry.')
+        }
+
+        It 'does not name a policy when this invocation did not open one' {
+            # PermanentAllowed already (the Describe default), so nothing is opened.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f1'; status = 'Failed' } }
+            $Err = $null
+            Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroupPermanentEligibilityState -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 0
+            @($Err).Count | Should -Be 1
+            $Err[0].Exception.Message | Should -BeExactly $script:FailedMessage
+        }
+
+        It 'writes no error while the apply engine owns a Failed status as replication (module-scope flag)' {
+            # Sync-OERStructureGroup sets this flag around its call for a group created in the same run
+            # only, where a Failed answer is waited on and asked again from the shared budget.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f1'; status = 'Failed' } }
+            $Err = $null
+            InModuleScope $script:moduleName { $script:_OERGroupEligibilityFailedIsReplication = $true }
+            try {
+                $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -DurationDays 30 `
+                        -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            } finally {
+                InModuleScope $script:moduleName { $script:_OERGroupEligibilityFailedIsReplication = $false }
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Result.Count | Should -Be 1
+            $Result[0].Status | Should -BeExactly 'Failed'
+            @($Err).Count | Should -Be 0
+        }
+    }
+
     It 'still emits the full GroupEligibility request shape after the converter extraction' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-shape'; status = 'Provisioned'; action = 'adminAssign' } }
         $Result = Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Duration 365 -Confirm:$false

@@ -25,6 +25,15 @@ function Add-OERGroupEligibility {
     and a grant that then fails reports a PolicyOpenedButGrantFailed error naming the policy that is
     left open -- there is no public inverse for that surgical single-rule open, so it is not rolled
     back automatically.
+    Microsoft Graph can accept a request and answer it with status Failed, which grants nothing. The
+    cmdlet then still emits the request object (its Status reads Failed) and afterwards writes a
+    non-terminating EligibilityRequestFailed error (category InvalidResult, target the group id), so
+    a caller running with -ErrorAction Stop still receives the object, for example through
+    -OutVariable, before the error stops it. Re-running the same request usually succeeds: a group
+    created moments ago can take a while to be known to PIM for Groups. Only Failed is an error;
+    PendingApproval, Provisioned and every other status are not. When this invocation had opened the
+    policy for a permanent grant, the EligibilityRequestFailed message also names that policy, which
+    is left open, and how to close it, as PolicyOpenedButGrantFailed does.
 
     .PARAMETER Group
     The target group whose member or owner eligibility is granted, given as a display name or object id
@@ -290,8 +299,31 @@ function Add-OERGroupEligibility {
                 }
                 return
             }
-            ConvertTo-OERGroupEligibilityRequest -InputObject $Response `
+            $Request = ConvertTo-OERGroupEligibilityRequest -InputObject $Response `
                 -GroupId $GroupId -PrincipalId $ResolvedPrincipalId -AccessType $AccessType -Action $Action
+            # Emitted first, as always, so a caller under -ErrorAction Stop still receives the request
+            # (through -OutVariable, for example) before the error below stops it.
+            $Request
+            # Microsoft Graph can ACCEPT the request (201) and answer it with status Failed, which
+            # grants nothing. Only Failed is an error (-eq is case-insensitive); PendingApproval,
+            # Provisioned and every other status are the request applied or on its way.
+            # $script:_OERGroupEligibilityFailedIsReplication is set by Sync-OERStructureGroup around
+            # its call for a group created in the same run ONLY, where a Failed answer is replication
+            # that the engine waits on and asks again from its shared budget. It cannot be told any
+            # other way: a record written here lands in the engine caller's -ErrorVariable even when
+            # the engine catches the throw (measured: the ActionPreferenceStopException and this record
+            # both stay there), so a run that ends Updated would still hand back errors. Never set
+            # anywhere else, and not a public parameter.
+            if ([string]$Request.Status -eq 'Failed' -and -not $script:_OERGroupEligibilityFailedIsReplication) {
+                $FailedMessage = "Microsoft Graph accepted the PIM $AccessType eligibility request '$($Request.RequestId)' for principal '$ResolvedPrincipalId' on group '$GroupId' but answered status Failed, so nothing was granted; re-running the same request usually succeeds (a group created moments ago can take a while to be known to PIM for Groups)."
+                if ($PolicyOpened) {
+                    # The same advice PolicyOpenedButGrantFailed gives: this invocation weakened the
+                    # policy, nothing was granted, and there is no public inverse to roll it back.
+                    $FailedMessage += " PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility before the request was sent. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry."
+                }
+                Write-CmdletError -Message ([System.Exception]::new($FailedMessage)) `
+                    -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $GroupId -Cmdlet $PSCmdlet
+            }
         }
     }
 }
