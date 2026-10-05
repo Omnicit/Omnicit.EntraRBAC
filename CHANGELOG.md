@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope: every
-spelling of one subscription or management group scope is one scope, compared ignoring case;
+spelling of one subscription or management group scope is one scope, ignoring case;
 earlier, two entries for one scope could remove each other's assignments on every `-Prune` run. A
 role given by GUID matches the live assignment at a resource group, where `-Prune` removed and
 re-created it every run, and at a management group. An unresolvable scope withholds the section's
@@ -33,15 +33,15 @@ object id; with no id, the package's `resourceRoles` is `null`, reported as part
 directory role list does not name: a role declared by name that no live role of the principal
 matches is not added, the unnamed role is not removed, and the entry is `Skipped`. A role declared
 by template id or object id also matches the live scoped role carrying the other id form (when
-the directory role list names both the same), so it is neither re-added nor removed.
+the list names both the same), so it is neither re-added nor removed.
 
-`Add-OERGroupEligibility` writes `EligibilityRequestFailed` when Graph accepts an eligibility
+`Add-OERGroupEligibility` writes `EligibilityRequestFailed` when Graph accepts the
 request but answers `Failed`, and `Invoke-OERStructure` reports it `Failed`, never `Updated`, for an
 existing group. `New-OERAccessPackageRequestorScope` accepts `AllExternalUsers`,
 `AllDirectoryServicePrincipals` and `AllDirectoryAgentIdentities`, so an exported policy with one is
 `Unchanged`; `SpecificDirectoryServicePrincipals` is refused (`InvalidPolicyInput`), and a policy
 Graph returns as `unknownFutureValue`, or an update that would drop connected organization targets,
-is `Failed` and nothing is written.
+is `Failed` and writes nothing.
 
 In `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy`, `Set-OERRoleManagementPolicy`
 and `Invoke-OERStructure`, an ambiguous approver name is `AmbiguousApproverName`, a failed lookup is
