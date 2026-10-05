@@ -6,9 +6,13 @@ function New-OERSignInRefusedError {
     .DESCRIPTION
     The single owner of the SignInRefused id and message. The module's transports raise it before a
     request made on behalf of a command whose sign-in was refused -- a command Get-OERSignInRefusal
-    finds latched on the call stack -- so nothing is sent for that command under the session an earlier
-    sign-in left. The target is the refused command's name. The message names no tenant, no account and
-    no token: the sign-in latch holds none of them.
+    finds latched on the call stack -- so nothing is sent for that command under the session or the
+    token an earlier sign-in left. Invoke-OERGraphRequest checks its session gate first, so a Graph
+    request made while the Graph SDK session is changed is refused as GraphSessionChanged instead. The
+    target is the latched command's name: the cmdlet for a sign-in refused at its entry, and the
+    transport's nested function (Invoke-GraphSingle, Invoke-ArmCallWithRefresh) for one refused during
+    that transport's own refresh. The message names no tenant, no account and no token: the sign-in
+    latch holds none of them.
 
     .PARAMETER Command
     The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it ('a script

@@ -12,9 +12,16 @@ function Get-OERSignInRefusal {
 
     Initialize-OERAuth latches the command that called it at entry and releases it only when its
     sign-in succeeds (Lock-OERSignIn, Unlock-OERSignIn). A command whose sign-in was refused carries on
-    past the refusal when no try is active up the call stack, so every request it makes, directly or
-    through a command it calls, finds its frame here. A command that has finished is on no call stack,
-    so the next command is not refused.
+    past the refusal when no try is active up the call stack. Both transports call this function
+    before every request -- Invoke-OERGraphRequest after its session gate, which still refuses a
+    changed session as GraphSessionChanged and so comes first -- so every request such a command
+    makes, directly or through a command it calls, that reaches this check finds its frame here. A
+    command that has finished is on no call stack, so the latch does not refuse the command after it.
+
+    The latched command is the one that called Initialize-OERAuth directly. Inside a transport's own
+    refresh (the Graph claims step-up or token-rejected retry, the ARM 401 retry) that is the
+    transport's nested function, Invoke-GraphSingle or Invoke-ArmCallWithRefresh, so the name returned
+    for that retry is an internal function's.
 
     .EXAMPLE
     $Refused = Get-OERSignInRefusal

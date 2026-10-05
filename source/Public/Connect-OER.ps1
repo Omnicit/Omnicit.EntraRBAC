@@ -45,9 +45,10 @@ function Connect-OER {
     Connect-MgGraph started.
 
     If another Connect-MgGraph -- your own, or another tool's -- replaces the module's session in
-    the same process, the next OER cmdlet refuses its Microsoft Graph calls with a
-    GraphSessionChanged error instead of sending them under that session, and the error can be
-    reported more than once for one cmdlet. The module never switches the session back by itself.
+    the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
+    GraphSessionChanged error instead of sending them under that session, and its Azure Resource
+    Manager calls with a SignInRefused error, and an error can be reported more than once for one
+    cmdlet. The module never switches the session back by itself.
     Run Connect-OER with the same sign-in the session used -- for an app-only session, its
     certificate or client secret, since a bare Connect-OER signs in interactively -- to connect the
     module again, which takes the session back and so replaces the other one, or use a new
@@ -55,6 +56,14 @@ function Connect-OER {
     the next OER cmdlet signs in again by itself, except on an app-only session (client secret or
     certificate), which reports AppOnlySessionCredentialUnavailable until Connect-OER is run with
     the secret or certificate.
+
+    More generally, an OER cmdlet whose own sign-in fails or is refused -- one that names another
+    tenant with -TenantId and cannot sign in to it, for example -- sends no Microsoft Graph or Azure
+    Resource Manager request: each request it then attempts is refused with a SignInRefused error
+    (or, in the case above, GraphSessionChanged for a Microsoft Graph request) instead of going out
+    under the session an earlier sign-in left. A cmdlet it calls, or a neighbour in the same
+    pipeline, that signs in successfully does not change that. Run Connect-OER, or a new command
+    whose sign-in succeeds, to send requests again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with

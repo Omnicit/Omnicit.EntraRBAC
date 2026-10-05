@@ -12,9 +12,10 @@ function Disconnect-OER {
     Connect-OER sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
     Connect-MgGraph with the module's token, and so does the automatic sign-in of any other OER
     cmdlet. If another Connect-MgGraph -- your own, or another tool's -- replaces that session in
-    the same process, the next OER cmdlet refuses its Microsoft Graph calls with a
-    GraphSessionChanged error instead of sending them under that session, and the error can be
-    reported more than once for one cmdlet. The module never switches the session back by itself:
+    the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
+    GraphSessionChanged error instead of sending them under that session, and its Azure Resource
+    Manager calls with a SignInRefused error, and an error can be reported more than once for one
+    cmdlet. The module never switches the session back by itself:
     Connect-OER, run with the same sign-in the session used -- for an app-only session, its
     certificate or client secret, since a bare Connect-OER signs in interactively -- connects the
     module again and takes the session back, and a new PowerShell process is the other way.

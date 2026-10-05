@@ -58,12 +58,14 @@ function Initialize-OERAuth {
 
     Every entry first latches the command that called this function (Lock-OERSignIn), and only a
     success releases it (Unlock-OERSignIn): the cached return, or a new connection that went the whole
-    way. Every refusal, terminating error and early return -- ArmTokenAcquisitionFailed's included --
-    leaves that command latched, since outside any try a command carries on past a terminating error
-    this function raises, and the module's transports send nothing for a latched command
-    (SignInRefused). The latch is keyed on that command's invocation, so a command it calls, or a
-    pipeline neighbour, that signs in successfully does not release it. It holds no token and no
-    tenant value.
+    way. Every refusal, terminating error and early return -- ArmTokenAcquisitionFailed's included,
+    so that command's Graph calls are refused too -- leaves that command latched, since outside any
+    try a command carries on past a terminating error this function raises, and the module's
+    transports send nothing for a latched command: they refuse each of its requests with
+    SignInRefused, except that the Graph wrapper's session gate, which comes first, still reports a
+    changed session as GraphSessionChanged. The latch is keyed on that command's invocation, so a
+    command it calls, or a pipeline neighbour, that signs in successfully does not release it. It
+    holds no token and no tenant value.
 
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
@@ -199,12 +201,14 @@ function Initialize-OERAuth {
     # last statement of a new connection that went the whole way -- after the ARM step, inside the big
     # try and never in its finally. Every refusal, terminating error and early return leaves it set,
     # ArmTokenAcquisitionFailed's early return included, although the Graph session is connected by
-    # then. A terminating error ends this function but not the command that called it: outside any try
-    # that command carries on with its next statement (see the SEC (A18) comment below), so a command
-    # whose sign-in for tenant B failed or was refused would otherwise send its Graph and ARM calls
-    # under the session tenant A left -- for Invoke-OERStructure -Prune, B's document applied to A.
-    # Invoke-OERGraphRequest and Invoke-OERArmRequest read the latch through Get-OERSignInRefusal and
-    # refuse every call of a latched command with SignInRefused (New-OERSignInRefusedError).
+    # then, so that command's Graph calls are refused as well as its ARM calls. A terminating error
+    # ends this function but not the command that called it: outside any try that command carries on
+    # with its next statement (see the SEC (A18) comment below), so a command whose sign-in for tenant
+    # B failed or was refused would otherwise send its Graph and ARM calls under the session tenant A
+    # left -- for Invoke-OERStructure -Prune, B's document applied to A. Invoke-OERGraphRequest and
+    # Invoke-OERArmRequest read the latch through Get-OERSignInRefusal before every request and refuse
+    # every request of a latched command with SignInRefused (New-OERSignInRefusedError) -- the Graph
+    # wrapper after its session gate, which still reports a changed session as GraphSessionChanged.
     #
     # Keyed on the calling command's INVOCATION, not a module boolean that any success releases.
     # Almost every public cmdlet calls this function in its begin block, and the apply handlers call
@@ -216,8 +220,14 @@ function Initialize-OERAuth {
     # Get-OERGroup's process block reads. A transport refuses when ANY frame on its call stack is
     # latched, so a nested command's own success releases only its own entry and the refused outer
     # command stays latched, and a pipeline neighbour's success releases only its own. A command that
-    # finishes leaves every call stack, so the next command is not refused: Connect-OER, or a new
-    # command whose sign-in succeeds, sends again.
+    # finishes leaves every call stack, so the latch does not refuse the command after it: Connect-OER,
+    # or a new command whose sign-in succeeds, sends again.
+    #
+    # The calling command is the IMMEDIATE caller. Inside a transport's own refresh -- the claims
+    # step-up or the token-rejected retry of Invoke-OERGraphRequest, the 401 retry of
+    # Invoke-OERArmRequest -- that is the transport's nested function (Invoke-GraphSingle,
+    # Invoke-ArmCallWithRefresh): a refusal there refuses only that retry, and the command's next
+    # request is a new transport call (Ruling R5).
     #
     # The table ($script:_OERSignInLatch, a ConditionalWeakTable) holds its keys weakly and never keeps
     # a finished command alive. Every value in it is the boolean $true: it holds no token and no tenant
@@ -450,28 +460,32 @@ function Initialize-OERAuth {
     # -ErrorAction SilentlyContinue. No public cmdlet wraps its Initialize-OERAuth call, so the cmdlet
     # still reaches Invoke-OERGraphRequest, which is why that wrapper checks the session again before
     # every Graph call. This refusal, like every other one in this function, also leaves the sign-in
-    # latch set for the calling command (SEC (A19), at the top of this function), so both transports
-    # refuse that command's calls with SignInRefused. Unit tests cannot see the carrying on from inside
-    # Pester, whose try makes the refusal propagate; the wrapper's tests prove it in a runspace with no
-    # try.
+    # latch set for the calling command (SEC (A19), at the top of this function), so that command
+    # sends nothing: the Graph wrapper's session gate, which comes before its latch gate, refuses the
+    # command's Graph calls with GraphSessionChanged while the session stays changed, and the ARM
+    # wrapper's latch gate refuses its ARM calls with SignInRefused. Unit tests cannot see the carrying
+    # on from inside Pester, whose try makes the refusal propagate; the wrappers' tests prove it in a
+    # runspace with no try.
     #
     # A refused request that names another tenant, identity or cloud first drops the cached ARM token.
-    # The cmdlet carries on past the refusal, as above, and its Azure Resource Manager calls send
-    # whatever ARM token the state holds: Invoke-OERArmRequest compares nothing, it sends
-    # $script:_OERAuthState.ArmToken. Left in place, a token minted for the module's own tenant
-    # answered a request for another one -- measured by the final review of this change, in a runspace
-    # with no try: Get-OERSubscription -TenantId naming a second tenant was refused, then listed the
-    # FIRST tenant's subscriptions with the first tenant's token. A request naming another tenant,
-    # identity or cloud must not leave a token minted for the old one behind: the rule the state
-    # rebuild below already applies on $ArmIdentityUnchanged, applied here because the refusal never
-    # reaches the rebuild. With no token the request carries an empty bearer, ARM answers 401, and the
-    # 401 path raises instead of re-acquiring (its forced refresh is refused here as well, and an
-    # app-only session never re-acquires), so no request carries a credential for the wrong tenant.
+    # The cmdlet carries on past the refusal, as above, but since A19 the latch refuses its Azure
+    # Resource Manager calls (SignInRefused) before Invoke-OERArmRequest materializes a bearer. The
+    # drop predates the latch and stays as a second guard that does not depend on it, since
+    # Invoke-OERArmRequest compares nothing: it sends $script:_OERAuthState.ArmToken. Left in place,
+    # before the latch existed, a token minted for the module's own tenant answered a request for
+    # another one -- measured by the final review of A18, in a runspace with no try:
+    # Get-OERSubscription -TenantId naming a second tenant was refused, then listed the FIRST tenant's
+    # subscriptions with the first tenant's token. A request naming another tenant, identity or cloud
+    # must not leave a token minted for the old one behind: the rule the state rebuild below already
+    # applies on $ArmIdentityUnchanged, applied here because the refusal never reaches the rebuild.
+    # With no token, a request that reached the send would carry an empty bearer, ARM would answer 401,
+    # and the 401 path raises instead of re-acquiring (its forced refresh is refused here as well, and
+    # an app-only session never re-acquires), so no request carries a credential for the wrong tenant.
     # ONLY then: a refused request for the module's own tenant, identity and cloud keeps its token,
-    # since its Azure calls go to the tenant it meant. The cost: once Connect-OER has taken the session
-    # back, an app-only session needs Connect-OER -IncludeARM again before an Azure cmdlet, since the
-    # module never keeps the certificate or the client secret; a delegated or managed identity session
-    # re-acquires its ARM token by itself.
+    # since that token is for the tenant the request meant. The cost: once Connect-OER has taken the
+    # session back, an app-only session needs Connect-OER -IncludeARM again before an Azure cmdlet,
+    # since the module never keeps the certificate or the client secret; a delegated or managed
+    # identity session re-acquires its ARM token by itself.
     if ($GraphSession -eq 'Changed' -and -not $ReclaimGraphSession) {
         if (-not $ArmIdentityUnchanged) {
             $script:_OERAuthState.ArmToken         = $null

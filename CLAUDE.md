@@ -519,6 +519,25 @@ the session back. Never add a second reclaim caller, and never make the module s
 back by itself: either one moves the other session's Graph calls to this module's tenant.
 `Why: docs/development/rationale.md#auth-state`
 
+**A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
+error from `Initialize-OERAuth` ends only `Initialize-OERAuth`: outside any `try` the cmdlet that
+called it carries on, and used to send its calls under the session an earlier sign-in left -- for
+`Invoke-OERStructure -TenantId B -Prune`, B's document applied to A. So `Initialize-OERAuth` latches
+its calling command as its first statement (`Lock-OERSignIn`) and releases it only on success
+(`Unlock-OERSignIn`: the cached return, or a new connection that went the whole way); both are
+called only there. Every refusal, terminating error and early return leaves the command latched --
+`ArmTokenAcquisitionFailed` included, so that command's Graph calls are refused too although its
+Graph half connected. Both transports ask `Get-OERSignInRefusal` before every request and refuse it
+while any frame on the call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns
+the id and the message) -- the Graph wrapper after its session gate, so a changed session still reads
+`GraphSessionChanged`, and the cmdlet's ARM calls after that refusal read `SignInRefused`. The latch
+is keyed weakly on the calling command's INVOCATION, never a module boolean: a nested cmdlet's
+sign-in, or a pipeline neighbour's, releases only its own entry. A finished command is on no call
+stack, so the next command, or `Connect-OER`, sends again. An ARM call of a command whose entry was
+not refused still goes out with the module's own token: ARM has no session gate. Never write that
+the cmdlet stops -- it carries on and sends nothing -- and never add a second `Lock-OERSignIn` or
+`Unlock-OERSignIn` call site. `Why: docs/development/rationale.md#auth-state`
+
 | Parameter set | Key parameters | Use case |
 |---|---|---|
 | `Interactive` (default) | `-TenantId`, `-Interactive` | Admin at a keyboard (system browser) |
