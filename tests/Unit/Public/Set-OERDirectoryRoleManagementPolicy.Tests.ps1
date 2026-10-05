@@ -1,5 +1,7 @@
 BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 
     $script:PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
@@ -128,6 +130,10 @@ BeforeAll {
         if ($Sent.Count -ne 1) { throw "Expected exactly one PATCH of the approval rule, got $($Sent.Count)." }
         @(@($Sent[0].Body.setting.approvalStages)[0].primaryApprovers)
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Set-OERDirectoryRoleManagementPolicy' {

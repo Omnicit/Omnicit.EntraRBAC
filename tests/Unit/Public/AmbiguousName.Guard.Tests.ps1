@@ -449,6 +449,12 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'An ambiguous display name is refused at every swept call site' {

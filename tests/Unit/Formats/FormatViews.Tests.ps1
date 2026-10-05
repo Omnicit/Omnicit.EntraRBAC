@@ -2,10 +2,16 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
     $script:FormatPath = Join-Path (Split-Path (Get-Module $script:moduleName).Path -Parent) 'Formats/Omnicit.EntraRBAC.Format.ps1xml'
     if (-not (Test-Path $script:FormatPath)) {
         $script:FormatPath = "$PSScriptRoot/../../../source/Formats/Omnicit.EntraRBAC.Format.ps1xml"
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Format views' {

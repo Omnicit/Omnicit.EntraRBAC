@@ -1,4 +1,12 @@
-BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+}
 
 Describe 'New-OERPolicyNotificationRule' {
     It 'maps Event+Recipient to the correct rule id and tags the output' {

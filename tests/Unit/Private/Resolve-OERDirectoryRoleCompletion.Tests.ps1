@@ -1,4 +1,12 @@
-BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+}
 
 Describe 'Resolve-OERDirectoryRoleCompletion' {
     It 'returns one CompletionResult per curated directory role for an empty word' {

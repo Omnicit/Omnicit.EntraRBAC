@@ -1,5 +1,7 @@
 BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
 
     # A live Approval_EndUser_Assignment rule as Microsoft Graph returns it (hashtables), with the
     # given approvers on its first stage. -Stage2 adds a second stage, which must be ignored.
@@ -19,6 +21,10 @@ BeforeAll {
             Resolve-OERGraphApproverSet @Splat
         }
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Resolve-OERGraphApproverSet' {

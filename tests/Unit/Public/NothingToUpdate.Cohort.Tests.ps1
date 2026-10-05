@@ -140,6 +140,12 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'The no-updatable-property guard reports one id across the whole Set-* cohort' {

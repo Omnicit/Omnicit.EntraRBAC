@@ -1,5 +1,7 @@
 BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
 
     # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
     # file. The signature segment is deliberately not a real signature; nothing here checks one.
@@ -20,6 +22,10 @@ BeforeAll {
         param([string]$TokenText)
         ConvertTo-SecureString -String $TokenText -AsPlainText -Force
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Get-OERTokenObjectId' {

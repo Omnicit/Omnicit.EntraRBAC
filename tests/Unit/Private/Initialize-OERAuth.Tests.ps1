@@ -2,6 +2,8 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
 
     # Builds a JWT-shaped string at run time only -- never a literal starting 'eyJ' in this tracked
     # file -- for the Get-OERTokenObjectId (oid claim / SignedInObjectId) tests below. The signature
@@ -16,6 +18,10 @@ BeforeAll {
         $Payload = & $Encode ($Claims | ConvertTo-Json -Compress)
         "$Header.$Payload.NOT-A-REAL-TOKEN"
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Initialize-OERAuth' {

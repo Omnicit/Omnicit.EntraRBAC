@@ -1,4 +1,12 @@
-BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+}
 
 Describe 'Get-OERBuiltInDirectoryRoleName' {
     It 'returns the full built-in directory-role set from Microsoft Learn' {

@@ -1,6 +1,12 @@
 BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Enable-OEREligibleRoleAssignment' {
