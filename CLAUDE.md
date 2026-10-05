@@ -89,12 +89,15 @@ source/
   Formats/                    # Omnicit.EntraRBAC.Format.ps1xml (type data is inline in suffix.ps1)
   en-US/                      # about_Omnicit.EntraRBAC.help.txt
 tests/
-  QA/                         # Six gate files (below), all run by ./build.ps1 -Tasks test
+  QA/                         # Seven gate files (below), all run by ./build.ps1 -Tasks test
   Unit/Private/, Unit/Public/ # One *.Tests.ps1 per source file, plus the named exceptions below
   Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
-  Unit/TestHelpers/           # Not a Pester directory. OERConfirmHost.ps1 hosts a runspace whose
+  Unit/TestHelpers/           # Two helpers and one suite. OERConfirmHost.ps1 hosts a runspace whose
                               #   PSHost answers ShouldProcess prompts -- the only way to test a
                               #   genuine DECLINE or to read the prompt/target text.
+                              #   OERTransportTripwire.ps1 is the transport tripwire every unit test
+                              #   file installs; OERTransportTripwire.Tests.ps1 is its known-answer
+                              #   suite.
 build.yaml, build.ps1         # Sampler/ModuleBuilder config and bootstrap entry point
 RequiredModules.psd1          # Build-time dependency resolver (NOT the runtime pin -- see Dependencies)
 azure-pipelines.yml           # Build + Test only, no Deploy stage -- it never publishes
@@ -141,7 +144,7 @@ Get-ChildItem source/Private -Filter '*.ps1' | Select-Object -ExpandProperty Bas
 `README.md` section "Available Cmdlets" is the maintained, cohort-grouped list of every exported
 cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one needs.
 
-**The six QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
+**The seven QA gates** (`tests/QA/`): `module.tests.ps1` (manifest, changelog, help, README,
 per-function PSScriptAnalyzer, and a unit test file for every exported function),
 `about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
 exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
@@ -150,8 +153,10 @@ own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
 tenant object ids, non-documentation email addresses and credentials out of every tracked file under
 `docs/`, `specs/`, `source/` and `tests/`, enumerating tracked files with `git ls-files` and reading
 their content from disk, and also checks that tracked Markdown under `docs/`, `specs/`,
-`README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag), and
-`docsync.tests.ps1` (binds `README.md` to the about topic).
+`README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
+`docsync.tests.ps1` (binds `README.md` to the about topic), and `testhygiene.tests.ps1` (every unit
+test file that imports the module installs, checks and uninstalls the transport tripwire; read
+statically, importing nothing).
 
 **`dochygiene.tests.ps1` applies TWO object-id rules, split by what the file is.** Under `docs/` and
 `specs/` a GUID is prose, so it must be a `00000000-0000-0000-0000-0000000000NN` placeholder. Under
@@ -192,7 +197,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Seven cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Eight cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -215,6 +220,9 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
   asserting every row is `Unchanged`.
+- `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
+  the five names, resolution from the module scope, parameter parity, mock precedence, the record
+  and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
 
 ---
 
@@ -858,8 +866,10 @@ bug.
 
 ## Testing Conventions
 
-- **Pester v5** under `tests/Unit/{Private,Public}/`. One `*.Tests.ps1` per source file. The QA gate
-  (`tests/QA/module.tests.ps1`) requires a unit test file for every exported function.
+- **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`. The build resolves
+  the newest Pester, which was 6.2.0 when measured on 2026-10-05, and CI runs that. One
+  `*.Tests.ps1` per source file. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file
+  for every exported function.
 - **Import by module name, not by path**, in every `BeforeAll` -- importing by path breaks the
   Sampler coverage measurement, which targets the built module:
   ```powershell
@@ -879,6 +889,17 @@ bug.
   entry, so without a mock the test attempts real authentication.
 - **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`** -- the call stack goes through the
   wrapper, so mocking the raw SDK call has no effect.
+- **Every unit test file that imports the module installs the transport tripwire.** In its root
+  `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
+  and calls `Install-OERTransportTripwire`; it ends with a root
+  `AfterAll { try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire } }`. An
+  unmocked call that still reaches `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`,
+  `Invoke-MgGraphRequest` or `Invoke-WebRequest` is recorded and refused, and fails the file even when
+  module code swallowed the refusal. `tests/QA/testhygiene.tests.ps1` holds it. Never delete a
+  transport-named function with an unqualified `Remove-Item 'function:...'` unless the local stub is
+  certain to exist -- with none left, it walks up and removes the global replacement. A
+  scope-qualified path (`function:script:...`, `function:global:...`) removes nothing at all.
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
   profile directory: a test of a `-BasePath` default intercepts `Test-Path` in module scope instead.
@@ -915,7 +936,8 @@ bug.
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
   no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- nine
   `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
-  exemption.
+  exemption. The transport tripwire rule under these conventions is machine-checked separately, by
+  `tests/QA/testhygiene.tests.ps1`.
   `Why: docs/development/rationale.md#static-source-gates`
 
 ---
@@ -929,8 +951,10 @@ non-negotiable:
    may run a live-verification checklist against the operator's designated test tenant only as the
    dedicated app identity whose only credential is a non-exportable certificate, only while the
    operator has enabled that identity for the run, and never with any other sign-in.
-2. **Every test mocks `Get-AzToken`, `Connect-MgGraph`, `Connect-AzAccount`, and
-   `Invoke-OERGraphRequest`.** Nothing in CI or tests authenticates for real.
+2. **Every unit test mocks `Initialize-OERAuth` and the module's transport wrappers at the module
+   boundary, and the transport tripwire records and refuses any call that still reaches
+   `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` or
+   `Invoke-WebRequest`.** Nothing in CI or tests authenticates for real.
 3. **Destructive cmdlets must support `-Confirm` and `-WhatIf`** via
    `[CmdletBinding(SupportsShouldProcess)]`.
 4. **Deletions of high-value objects** (groups, access packages, etc.) use

@@ -265,6 +265,106 @@ literal pattern in any tracked `.ps1`, `.psm1` or `.psd1`, source and tests alik
 reached a committed file -- it lived only in the throwaway harness -- so there is nothing to fix,
 only something to recognise.
 
+### The transport tripwire
+
+Until Sprint 8 step 4 nothing stood between an unmocked module call and the real transport: there
+was no global mock and no check, only the convention of mocking at the module boundary. Mocking
+`Initialize-OERAuth` is not enough on its own. With no auth state, `Invoke-OERArmRequest` falls back
+to `https://management.azure.com` and sends a real, unauthenticated `Invoke-WebRequest` -- measured
+on 2026-10-05 by deleting one `Invoke-OERArmRequest` mock in a copy of
+`Get-OERResourceGroup.Tests.ps1`: with `Initialize-OERAuth` still mocked, the call reached
+`Invoke-WebRequest` from `Invoke-OERArmRequest.ps1`.
+
+**What.** `tests/Unit/TestHelpers/OERTransportTripwire.ps1` defines a GLOBAL replacement for each of
+the five commands through which module code reaches a tenant or the network: `Get-AzToken`,
+`Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` and `Invoke-WebRequest`. Each one
+records the call and throws. Every unit test file that imports the module dot-sources the helper and
+calls `Install-OERTransportTripwire` in its root `BeforeAll`, directly after `Import-Module`, and
+ends with a root `AfterAll` that runs `Assert-OERTransportTripwire` in a `try` and
+`Uninstall-OERTransportTripwire` in its `finally`. The assert throws listing every recorded hit and
+every name that no longer resolves to its replacement from the module's scope. A throw in a root
+`AfterAll` fails the container -- `Result=Failed`, `FailedContainers=1`, measured on Pester 5.7.1
+and 6.2.0 -- and Sampler's `Pester_Tests_Stop_On_Fail` gates on `Result -eq 'Passed'`, so
+`./build.ps1 -Tasks test` fails with it.
+
+The answering runspace in `OERConfirmHost.ps1` has a global scope of its own, so the parent's
+replacements are invisible there. `Invoke-OERWithConfirmAnswer` installs the same replacements in
+it from the parent's definitions, shares the parent's hit list, records a hit for any name that no
+longer resolves there after the scenario, and refuses to run at all without an installed tripwire.
+
+`tests/QA/testhygiene.tests.ps1` holds the wiring by presence, statically and importing nothing: a
+root `BeforeAll` that calls `Install-OERTransportTripwire` after the first `Import-Module`, and a
+root `AfterAll` whose `try` calls the assert and whose `finally` calls the uninstall. Its only
+exemptions are the two AST-only alias-order cohort suites, which import nothing; the gate fails if
+either starts importing. The QA gate files themselves are outside the tripwire -- they call help,
+the analyzer and pure maps only.
+
+**Why it resolves.** `source/` never module-qualifies these five calls, and a function outranks a
+cmdlet in command resolution, so module code resolves the global replacement. A Pester
+`Mock -ModuleName` is an alias in the module's script scope and outranks both, so every existing
+mock keeps working and records no hit. A test-scope `Mock` without `-ModuleName` is not seen by
+module code, so that call hits the tripwire. All measured on Pester 5.7.1 and 6.2.0 alike, and the
+known-answer suite `OERTransportTripwire.Tests.ps1` pins resolution, mock precedence and a re-import
+of the module per name.
+
+**Why record AND throw.** A throw alone is not enough: the module's own catch blocks turn it into a
+`WriteError` or a Failed row that a test may never look at. Measured: a copy of
+`Get-OERGroup.Tests.ps1` with one `Invoke-OERGraphRequest` mock deleted passed all 48 of its tests
+while the transport was reached once, and only the `AfterAll` check failed the file. The record
+holds parameter NAMES only, never a value, since a value may be a secret, a token or a URI; the
+known-answer suite pins that a call whose `-Uri` carries a sentinel records `Parameters = 'Uri'` and
+no sentinel.
+
+**Why built from the cmdlet's metadata, with no `dynamicparam`.** Pester builds a mock's parameter
+block from the command it resolves, which is now the replacement, so the replacement must carry
+exactly the cmdlet's parameters. Each is generated with `ProxyCommand.GetCmdletBindingAttribute`
+and `ProxyCommand.GetParamBlock` from the real cmdlet. Measured on 2026-10-05 (AzAuth 2.10.0,
+Microsoft.Graph.Authentication 2.41.0, Microsoft.PowerShell.Utility 7.0.0.0): none of the five
+implements `IDynamicParameters`, and the generated functions have the same parameter names (35, 30,
+13, 30 and 54) and the same number of parameter sets (11, 6, 1, 1 and 4) as the cmdlets. A Pester
+mock of a proxy with a `dynamicparam` block fails (see the probe traps above), so the generator
+refuses a cmdlet that starts declaring dynamic parameters.
+
+**Per file, not in `source/` and not in the build (A13).** A check in `source/` would publish a test
+switch to the Gallery, and a build step would not cover a single `Invoke-Pester` run.
+
+**Pester 5.7.1 and 6.2.0 differ on a filter that matches nothing.** A call that no
+`-ParameterFilter` of a mock matches, with no default mock beside them: 5.7.1 calls the original --
+now the tripwire, one hit; 6.2.0 throws "No mock for command 'Invoke-WebRequest' matched the call:
+none of the parameter filters matched, and there is no default mock to fall back to." without
+calling it, and records no hit. The run fails either way, but on a different line per version, and
+no test can pin both versions in one run.
+
+**The traps, measured on PowerShell 7.6 with a throwaway module.**
+
+- An unqualified `Remove-Item 'function:X'` inside `InModuleScope`, with no local `X` left, walks up
+  and removes the GLOBAL replacement. The `AfterAll` then reports `X no longer resolves`.
+- A scope qualifier in a `Remove-Item` path on the `function:` drive removes nothing and raises no
+  error, with or without `-Force`: `function:script:X`, `function:local:X` and `function:global:X`
+  alike. `Uninstall-OERTransportTripwire` therefore removes by an unqualified path, and only while
+  the nearest definition is a replacement, then verifies from its own scope and from the module's.
+- A function defined unqualified inside `InModuleScope` disappears when that block returns; one
+  defined as `function script:X` persists in the module.
+- Seven sites -- five in `Invoke-OERGraphRequest.Tests.ps1`, two in `Get-OERInventory.Tests.ps1` --
+  ran a statement before the local stub's definition inside the `try` whose `finally` removes the
+  stub, so a throw at that statement would have deleted the global replacement. The definition is
+  now the first statement in each `try`.
+- A ReadOnly replacement was measured and not adopted. It blocks the trap (`FunctionNotRemovable`)
+  and Pester still mocks it, but it was set aside because
+  `Remove-Item -Path function:global:X -Force` left it in place. That form leaves a plain function
+  in place too (the qualifier above), and an unqualified `Remove-Item -Force` does remove a ReadOnly
+  global function (measured). Plain functions plus the `AfterAll` resolution check stand: a removed
+  replacement fails the file either way.
+
+**What it found.** The first runs with the tripwire (Pester 6.2.0, 2026-10-05) found two tests that
+reached the real `Invoke-MgGraphRequest` through the unmocked Graph wrapper and stayed green, since
+module code swallowed the failure. `Get-OERInventory.Tests.ps1`, "does not emit url for a group
+resource": the group resource's current-name lookup by `originId` was unmocked.
+`Resolve-OERDirectoryRoleInput.Tests.ps1`, "never throws for a match, a miss, an ambiguity or a read
+failure": its match case had no resolver mock, so it read Graph and exercised a read failure instead
+of a match. Each now has the missing mock, and the whole unit suite then passed 5,482 tests with no
+hit.
+
 ## static-source-gates
 
 `tests/QA/sourcehygiene.tests.ps1` carries nine `Describe` blocks. Four machine-check a rule stated
