@@ -9,7 +9,8 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 **This file writes nothing to the tenant.** No object is created, changed or deleted, and every
 Microsoft Graph request below is a read. The prefix `oer-s84b-` appears only in the name of a group
 that does not exist, `oer-s84b-does-not-exist`, which the module is asked to read. There is no
-prerequisite script and no teardown of objects.
+prerequisite script and no teardown of objects. Section 3 (round 1) runs `Invoke-OERStructure` with
+`-WhatIf` only, and its sign-in for another tenant is refused before anything is read.
 
 **Who runs it.** The dedicated certificate identity `oer-live-cc`, through the OerLive library, which
 lives beside the operator's copy of this file outside the repository ([README.md](README.md), first
@@ -59,6 +60,16 @@ before it merges.
   token; a request naming another tenant, identity or cloud therefore drops that token first.
 - **E. The paged read ends on a refused page** ("end a paged Graph read that a refusal interrupts"),
   and the fingerprint is compared ordinally ("compare the Graph SDK session fingerprint ordinally").
+- **F. Round 1: a command whose sign-in is refused sends nothing** ("Latch a command whose sign-in was
+  refused", "Refuse every transport call made for a command whose sign-in was refused", decision
+  A19). The step's finding F1: a terminating error from `Initialize-OERAuth` ends only that function,
+  and the cmdlet that called it carries on, outside any `try`, to its Graph and ARM calls under the
+  session that stands. `Initialize-OERAuth` now sets a latch at its entry, keyed on the command that
+  called it, and releases it only on success; both transports refuse every request from a command
+  whose latch is set, with the new `SignInRefused`. A nested cmdlet's own sign-in, or a pipeline
+  neighbour's, does not release the outer command's latch. Round 1 also ends both transports at every
+  throw ("End both transports at every throw they raise", finding F3) and gates the transport gates
+  statically (finding F7).
 
 A live tenant is needed for what mocks cannot show: what `Get-MgContext` really holds after the
 module's `Connect-MgGraph -AccessToken` and after a certificate `Connect-MgGraph` for another app in the
@@ -78,9 +89,21 @@ on this branch the module's read is refused before any Graph request leaves (sec
   (class B: `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth Graph SDK
   session check (A18)`, A6 to A9 and A13, and `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`,
   G5). A cmdlet that names ANOTHER tenant with `-TenantId` is refused and its ARM token is dropped
-  first (A12, G10); 2.5 runs that case live.- **The refusal under `-ErrorAction SilentlyContinue`, outside any `try`.** 2.2 runs it through a
+  first (A12, G10); 2.5 runs that case live.
+- **The refusal under `-ErrorAction SilentlyContinue`, outside any `try`.** 2.2 runs it through a
   cmdlet; the wrapper's own shape is class B (G7 in the same Describe, in a runspace with no `try`).
 - **Convergence (G8)** does not apply: nothing in this branch writes.
+- **Round 1, the cases section 3 does not run live** (class B). A nested public cmdlet whose own
+  sign-in hits the cache does not release the refused outer command's latch
+  (`tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth sign-in latch
+  (A19)`; end to end, outside any `try`, in `Invoke-OERGraphRequest.Tests.ps1` H1, the shape 3.3 runs
+  live). In runspaces with no `try`: a token-rejected or claims-challenge retry whose refresh is
+  refused sends nothing (`Invoke-OERGraphRequest.Tests.ps1` L9 and L10, `Invoke-OERArmRequest.Tests.ps1`
+  A8), and every throw in either transport ends it under `-ErrorAction SilentlyContinue`, so no partial
+  collection and no error body reaches the success channel (the F3 tests S1-S7 and S1-S5 in the same
+  two files). A refusal other than a failed token request (`TenantMismatch`,
+  `AppOnlySessionCredentialUnavailable`, `GraphConnectFailed` and the others) sets the same latch:
+  each is its own case in the A19 Describe of `Initialize-OERAuth.Tests.ps1`.
 
 ## Setup, once
 
@@ -664,6 +687,154 @@ Verdict: PASS. The swap again (after Disconnect-MgGraph, as MSAL could not read 
 [oer-s84b] Identity: the session's app id is oer-live-cc-noperm's: True
 [oer-s84b] 2.5 another tenant named: subscriptions returned 0; errors: GraphSessionChanged, AppOnlyTokenRefreshUnsatisfiable; Graph requests: 0; the module held an ARM token before: True; after: False; its state still names the test tenant: True
 ```
+
+## 3. Round 1: a command whose sign-in is refused sends nothing
+
+Added in round 1 (decision A19). The step's finding F1: a terminating error from `Initialize-OERAuth`
+ends only that function, and the public cmdlet that called it carries on, outside any `try`, to its
+Graph and Azure Resource Manager calls -- under the session that stands, which is the module's own
+tenant, while the command named another. Round 1 sets a latch at `Initialize-OERAuth`'s entry, keyed
+on the command that called it, releases it only on success, and both transports refuse every request
+from a command whose latch is set (`SignInRefused`).
+
+**How the sign-in is refused here.** A request naming another tenant inherits nothing from the
+session, so an app-only session falls back to an interactive sign-in for it -- a browser prompt,
+which no check in Sprint 8 may start. The block therefore installs a fence on `Get-AzToken` that
+refuses every token request: the module's sign-in for the other tenant fails at once with
+`GraphTokenAcquisitionFailed`, exactly as a failed sign-in does, and nothing signs in to anything.
+The tenant named is the placeholder `00000000-0000-0000-0000-000000000099`, which does not exist. The
+module's own session was established BEFORE the fence by `Connect-OerLive`, so the module's tenant
+is reachable throughout and 3.4 needs no token.
+
+**3.1 to 3.4 run in ONE process**, in order: 3.4 reads what the earlier checks left.
+
+### 3.1. Get-OERGroup naming another tenant: the sign-in is refused, and no Graph request leaves
+
+- [ ] **3.1** After `Connect-OER` to the test tenant, `Get-OERGroup -TenantId` naming a tenant that does not exist: the sign-in is refused, the errors include `SignInRefused`, and the fence counts 0 Graph requests.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s84b-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s84b'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase)); it carries the latch: $([bool](& $Module { Get-Command -Name Lock-OERSignIn -ErrorAction Ignore }))"
+# The fences: global functions the module's unqualified calls resolve to (a function outranks a
+# cmdlet). Graph and ARM requests are counted and forwarded to the real cmdlets, module-qualified;
+# every token request is counted and REFUSED, so no sign-in starts.
+$GraphMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-MgGraphRequest -CommandType Cmdlet))
+$GraphFence = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($GraphMeta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($GraphMeta)))`nend { `$global:S84bGraphCalls++; Microsoft.Graph.Authentication\Invoke-MgGraphRequest @PSBoundParameters }"
+Set-Item -Path function:global:Invoke-MgGraphRequest -Value ([scriptblock]::Create($GraphFence))
+$WebMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-WebRequest -CommandType Cmdlet))
+$WebFence = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($WebMeta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($WebMeta)))`nend { `$global:S84bArmCalls++; Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters }"
+Set-Item -Path function:global:Invoke-WebRequest -Value ([scriptblock]::Create($WebFence))
+function global:Get-AzToken { $global:S84bTokenCalls++; throw 'S84b fence: no token request is made in this check.' }
+function Invoke-S84bR1 {
+    # A plain call, outside any try, as at a prompt. Prints counts, error ids and the module's state;
+    # never a token, never an error record.
+    param([string]$Label, [scriptblock]$Call)
+    $global:S84bGraphCalls = 0; $global:S84bArmCalls = 0; $global:S84bTokenCalls = 0
+    $All = @(& $Call 2>&1)
+    $Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+    $Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+    $Ids = @($Errs | ForEach-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] })
+    $S = & $Module { $script:_OERAuthState }
+    Write-OerLiveStep "$($Label): output objects $($Out.Count); errors: $(if ($Ids) { $Ids -join ', ' } else { 'none' }); Graph requests: $global:S84bGraphCalls; ARM requests: $global:S84bArmCalls; token requests: $global:S84bTokenCalls; session state: $(& $Module { Get-OERGraphSessionState }); the state still names the test tenant: $(([string]$S.TenantId).ToLowerInvariant() -eq $Cfg.TenantId); a refused command is on this prompt's call stack: $($null -ne (& $Module { Get-OERSignInRefusal }))"
+    foreach ($E in @($Errs | Group-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] } | ForEach-Object { $_.Group[0] })) {
+        $Text = ConvertTo-OerLiveRedacted -Text $E.Exception.Message
+        if ($Text.Length -gt 300) { $Text = $Text.Substring(0, 300) + ' ...' }
+        Write-OerLiveStep "$($Label): $($E.FullyQualifiedErrorId); category $($E.CategoryInfo.Category) -- $Text"
+    }
+    $S = $null
+    , $Out
+}
+$null = Invoke-S84bR1 -Label '3.1 Get-OERGroup naming another tenant' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' -TenantId '00000000-0000-0000-0000-000000000099' }
+```
+
+**Expect:** the identity lines `True`; the worktree's build `True`, the latch `True`; `output objects
+0`; errors including `GraphTokenAcquisitionFailed` (the refused sign-in, the fence's token refusal
+inside it) and `SignInRefused` (the Graph request the cmdlet carried on to); `Graph requests: 0; ARM
+requests: 0; token requests: 1`; `session state: Own`; the state still names the test tenant `True`;
+`a refused command is on this prompt's call stack: False` (the refused command has ended).
+**Failure looks like:** `Graph requests: 1` or more -- the refused command still sent a request under
+the module's session (F1); no `SignInRefused` with 0 requests -- the request never reached the gate,
+so the check proves nothing; `token requests: 0` -- the sign-in was never attempted (another
+refusal path); a 401/403 -- STOP.
+
+Result:
+
+### 3.2. Get-OERSubscription naming another tenant: no Azure Resource Manager request leaves
+
+- [ ] **3.2** The same with `Get-OERSubscription -TenantId` naming the tenant that does not exist: the fence counts 0 ARM requests.
+
+```powershell
+$HadArm = [bool](& $Module { $script:_OERAuthState.ArmToken })
+$Subs = Invoke-S84bR1 -Label '3.2 Get-OERSubscription naming another tenant' -Call { Get-OERSubscription -TenantId '00000000-0000-0000-0000-000000000099' }
+Write-OerLiveStep "3.2: subscriptions returned $(@($Subs).Count); the module held an ARM token for the test tenant before: $HadArm; and still holds it: $([bool](& $Module { $script:_OERAuthState.ArmToken }))"
+$Subs = $null
+```
+
+**Expect:** `output objects 0`; errors including `GraphTokenAcquisitionFailed` and `SignInRefused`;
+`Graph requests: 0; ARM requests: 0; token requests: 1`; `subscriptions returned 0`; the ARM token
+held before `True` and still `True` (a failed sign-in rebuilds nothing; the latch, not a dropped token,
+keeps it from being sent). Before this round the same call carried on to Azure Resource Manager with
+the test tenant's token under the other tenant's name (F1, measured offline in step 4b).
+**Failure looks like:** `ARM requests: 1` or more, or `subscriptions returned 1` or more -- the test
+tenant's subscriptions listed under another tenant's name.
+
+Result:
+
+### 3.3. Invoke-OERStructure naming another tenant, -WhatIf: no request, and no planned change
+
+- [ ] **3.3** `Invoke-OERStructure -TenantId` naming the tenant that does not exist, `-WhatIf`, with a minimal document (one group, one role assignment): 0 Graph and 0 ARM requests, and no row says Created, Updated or Removed.
+
+```powershell
+$DocPath = Join-Path ([System.IO.Path]::GetTempPath()) ('s84b-r1-' + [guid]::NewGuid().ToString('N') + '.json')
+$Doc = [ordered]@{
+    version         = '1.0'
+    groups          = @([ordered]@{ displayName = 'oer-s84b-does-not-exist' })
+    roleAssignments = @([ordered]@{ scope = "/subscriptions/$($Cfg.SubscriptionId)"; role = 'Reader'; principal = 'oer-s84b-does-not-exist' })
+}
+[System.IO.File]::WriteAllText($DocPath, ($Doc | ConvertTo-Json -Depth 10))
+$Rows = Invoke-S84bR1 -Label '3.3 Invoke-OERStructure -WhatIf naming another tenant' -Call { Invoke-OERStructure -Path $DocPath -TenantId '00000000-0000-0000-0000-000000000099' -WhatIf }
+[System.IO.File]::Delete($DocPath)
+$Actions = @($Rows | Where-Object { $_.PSObject.Properties['Action'] } | Group-Object Action | ForEach-Object { "$($_.Name) $($_.Count)" })
+Write-OerLiveStep "3.3: rows by action: $(if ($Actions) { $Actions -join ', ' } else { 'none' }); a row says Created, Updated or Removed: $([bool]@($Rows | Where-Object { $_.Action -in 'Created', 'Updated', 'Removed' }).Count); a row plans a creation ('would create'): $([bool]@($Rows | Where-Object { [string]$_.Detail -match 'would create' }).Count)"
+$Rows = $null
+```
+
+**Expect:** errors including `GraphTokenAcquisitionFailed` and `SignInRefused`; `Graph requests: 0;
+ARM requests: 0; token requests: 1`; rows only `Failed` (the reads the nested cmdlets were refused);
+`a row says Created, Updated or Removed: False`; `a row plans a creation ('would create'): False` (a
+refused read is never read as an absent object). The document file is a temp file outside the clone
+and is deleted at once; it names the test subscription, which is never printed.
+**Failure looks like:** any Graph or ARM request -- a nested cmdlet's own sign-in, which hits the
+module's cache for the test tenant, released the latch of the outer command (the design this round
+rules out); a "would create" row -- a refused read was planned against as an absent object.
+
+Result:
+
+### 3.4. A plain command afterwards is sent, and the latch is released
+
+- [ ] **3.4** A plain `Get-OERGroup` without `-TenantId` afterwards succeeds on the module's own session, with one Graph request and no token request.
+
+```powershell
+$null = Invoke-S84bR1 -Label '3.4 Get-OERGroup on the module''s own tenant afterwards' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' }
+foreach ($Name in 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Get-AzToken') { Remove-Item -Path "function:global:$Name" -ErrorAction SilentlyContinue }
+Write-OerLiveStep "Fences removed: $(-not (Test-Path function:global:Invoke-MgGraphRequest) -and -not (Test-Path function:global:Invoke-WebRequest) -and -not (Test-Path function:global:Get-AzToken))"
+Disconnect-OerLive
+```
+
+**Expect:** `output objects 0; errors: GroupNotFound; Graph requests: 1; ARM requests: 0; token
+requests: 0; session state: Own`; the state still names the test tenant `True`; `a refused command is
+on this prompt's call stack: False`; `Fences removed: True`.
+**Failure looks like:** `SignInRefused` on this plain command -- the latch outlived the refused
+commands; `token requests: 1` -- the cache was lost by the refusals.
+
+Result:
+
 ## Teardown
 
 ### T.1. No session is left, nothing carries the prefix, and the main clone is untouched
@@ -713,3 +884,33 @@ Verdict: PASS. No object starting with oer-s84b- exists in any of the six collec
 [oer-s84b] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False
 [oer-s84b] Main clone: branch main; HEAD 2a86120
 ```
+
+### T.2. Round 1: no session is left, nothing carries the prefix, and the main clone is untouched
+
+- [ ] **T.2** After section 3, the same teardown as T.1: `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main`; the redaction map is deleted after the write-up.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s84b-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s84b'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Left = @(Find-OerLivePrefixed -ThrowOnUnread)
+Disconnect-OerLive
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "Prefixed objects: $($Left.Count); a Graph SDK session is left: $([bool](Get-MgContext)); the module holds a session: $([bool](& $Module { $script:_OERAuthState }))"
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+```
+
+**Expect:** the identity lines `True`; the sweep's "no ... starting with 'oer-s84b-' is left";
+`Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False`; the
+main clone on `main`. After the results are copied into this file: `Clear-OerLiveRedactionMap`, and
+`raw\s84b\` deleted.
+**Failure looks like:** a prefixed object -- nothing here creates one: STOP and report it; a session
+left -- run `Disconnect-OER` and `Disconnect-MgGraph` again.
+
+Result:
