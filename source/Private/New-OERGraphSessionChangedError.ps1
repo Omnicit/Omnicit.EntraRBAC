@@ -28,7 +28,8 @@ function New-OERGraphSessionChangedError {
             "Omnicit.EntraRBAC connected it for tenant '$Tenant': another Connect-MgGraph has replaced " +
             "it. Omnicit.EntraRBAC does not send its Microsoft Graph calls under a session it did not " +
             "connect, and it does not switch the session back by itself, since that would move the " +
-            "other session's calls to this module's tenant. Run Connect-OER to connect the module " +
+            "other session's calls to this module's tenant. Run Connect-OER with the same sign-in you " +
+            "used -- for an app-only session, its certificate or client secret -- to connect the module " +
             "again, or use a new PowerShell process."),
         'GraphSessionChanged',
         [System.Management.Automation.ErrorCategory]::AuthenticationError,

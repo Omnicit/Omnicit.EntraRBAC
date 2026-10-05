@@ -42,6 +42,17 @@ Describe 'New-OERGraphSessionChangedError' {
             $script:Record.Exception.Message | Should -Match 'Connect-OER'
             $script:Record.Exception.Message | Should -Match 'new PowerShell process'
         }
+
+        It 'names the sign-in Connect-OER needs, the certificate or client secret of an app-only session' {
+            # A bare Connect-OER signs in interactively, which does not take back an app-only session.
+            $script:Record.Exception.Message | Should -Match ([regex]::Escape(
+                    'Run Connect-OER with the same sign-in you used -- for an app-only session, its certificate or client secret -- to connect the module again'))
+        }
+
+        It 'names no tenant but the module''s own' {
+            $Guids = @([regex]::Matches($script:Record.Exception.Message, '[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}') | ForEach-Object { $_.Value })
+            $Guids | Should -Be @('44444444-4444-4444-4444-444444444444')
+        }
     }
 
     It 'builds with no auth state, targeting the empty string' {
