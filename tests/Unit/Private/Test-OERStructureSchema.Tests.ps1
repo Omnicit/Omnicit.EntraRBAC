@@ -4031,3 +4031,68 @@ Describe 'Test-OERStructureSchema scope written with a trailing or doubled slash
         $V.Valid | Should -BeFalse
     }
 }
+
+Describe 'Test-OERStructureSchema refuses an empty name (A10)' {
+    # A name an entry is identified by -- an access package binding's resource or role, a catalog
+    # resource's name, an administrative unit scoped role's role or principal -- that is present but
+    # empty (or only whitespace) used to pass as "declared", and then threw at apply or matched
+    # nothing. It is an Error at the field's own path now, and Get-OERInventory never writes one.
+    # An ABSENT field is still "is required", and an explicit null is still "not declared". No id
+    # below is version-4 shaped.
+    BeforeAll {
+        function New-NameDoc {
+            param([string]$Field, [object]$Value)
+            $Sr = [ordered]@{ role = 'User Administrator'; principal = '33333333-3333-3333-3333-333333333333' }
+            $Res = [ordered]@{ name = 'role_sec_x'; type = 'Group' }
+            $Rr = [ordered]@{ resource = 'role_sec_x'; role = 'Member' }
+            switch ($Field) {
+                'scopedRoles.role'       { $Sr.role = $Value }
+                'scopedRoles.principal'  { $Sr.principal = $Value }
+                'resources.name'         { $Res.name = $Value }
+                'resourceRoles.resource' { $Rr.resource = $Value }
+                'resourceRoles.role'     { $Rr.role = $Value }
+            }
+            [PSCustomObject]@{
+                version             = '1.0'
+                administrativeUnits = @([PSCustomObject]@{ displayName = 'AU-One'; members = $null; scopedRoles = @([PSCustomObject]$Sr) })
+                catalogs            = @([PSCustomObject]@{ displayName = 'CAT-IT-Core'; resources = @([PSCustomObject]$Res) })
+                accessPackages      = @([PSCustomObject]@{ displayName = 'AP-Sales'; catalog = 'CAT-IT-Core'; resourceRoles = @([PSCustomObject]$Rr) })
+            }
+        }
+        function Invoke-NameValidation {
+            param([object]$Doc)
+            InModuleScope $script:moduleName -Parameters @{ Doc = $Doc } {
+                param($Doc)
+                Test-OERStructureSchema -Document $Doc
+            }
+        }
+    }
+
+    It 'accepts a document whose five names are all non-blank, with no Error' {
+        $V = Invoke-NameValidation -Doc (New-NameDoc -Field 'none' -Value 'unused')
+        # This control asserts only that a document with five real names has no Error and is Valid.
+        # That the five checks run at all is proved by the five refusal cases below: each one fails
+        # the same document shape on exactly one blank field, so a check that never ran would fail its
+        # own case there rather than here.
+        @($V.Errors | Where-Object { $_.Severity -eq 'Error' }).Count | Should -Be 0
+        $V.Valid | Should -BeTrue
+    }
+
+    It 'refuses an empty or blank <Field> as an Error at <Path>' -ForEach @(
+        @{ Field = 'scopedRoles.role'; Section = 'administrativeUnits'; Path = 'administrativeUnits[0].scopedRoles[0].role'; Message = "'role' at administrativeUnits[0].scopedRoles[0] must be a non-empty string." }
+        @{ Field = 'scopedRoles.principal'; Section = 'administrativeUnits'; Path = 'administrativeUnits[0].scopedRoles[0].principal'; Message = "'principal' at administrativeUnits[0].scopedRoles[0] must be a non-empty string." }
+        @{ Field = 'resources.name'; Section = 'catalogs'; Path = 'catalogs[0].resources[0].name'; Message = "'name' at catalogs[0].resources[0] must be a non-empty string." }
+        @{ Field = 'resourceRoles.resource'; Section = 'accessPackages'; Path = 'accessPackages[0].resourceRoles[0].resource'; Message = "'resource' at accessPackages[0].resourceRoles[0] must be a non-empty string." }
+        @{ Field = 'resourceRoles.role'; Section = 'accessPackages'; Path = 'accessPackages[0].resourceRoles[0].role'; Message = "'role' at accessPackages[0].resourceRoles[0] must be a non-empty string." }
+    ) {
+        foreach ($Value in @('', '  ')) {
+            $V = Invoke-NameValidation -Doc (New-NameDoc -Field $Field -Value $Value)
+            $Errs = @($V.Errors | Where-Object { $_.Severity -eq 'Error' })
+            $Errs.Count | Should -Be 1 -Because "only the field set to '$Value' is refused"
+            $Errs[0].Section | Should -BeExactly $Section
+            $Errs[0].Path | Should -BeExactly $Path
+            $Errs[0].Message | Should -BeExactly $Message
+            $V.Valid | Should -BeFalse
+        }
+    }
+}

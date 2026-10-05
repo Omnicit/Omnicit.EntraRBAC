@@ -24,7 +24,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
-- `README.md` -- a short next-steps guide.
+- `README.md` -- explains the bundle, lists under "What this export could not read" everything the
+  export could not read (or says that nothing was left unread), and holds the next steps. The list
+  is written into this file only, never into `inventory.json` or any other JSON file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -38,8 +40,10 @@ landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every grou
 ## 2. Ask an LLM
 
 Open `rbac-architect-prompt.md`. Leave the `USER PREFERENCES (optional)` block untouched for
-best-practice defaults, or set your naming standard and depth. Give the prompt plus the JSON files
-to any capable LLM. It returns three proposals: Foundational, Recommended, Advanced -- each a
+best-practice defaults, or set your naming standard and depth. Give the prompt, the bundle's
+`README.md` and the JSON files to any capable LLM: the README's "What this export could not read"
+section is where the bundle says which collections, objects and Azure scopes are unknown rather
+than empty. It returns three proposals: Foundational, Recommended, Advanced -- each a
 complete `Invoke-OERStructure` document.
 
 ## 3. Validate and apply
@@ -221,9 +225,13 @@ reference.** A Group or Application resource is identified by the object id its 
 never by the display name Microsoft Entra recorded for the resource when it was added to the catalog
 -- that recorded name stays as it was after a group is renamed (measured live; the same is expected
 of an application), so matching on it made a document naming the group's new name plan the removal
-of the group's own resource under `-Prune`. `Get-OERInventory` writes the group's or application's CURRENT name (its
-object id when the name cannot be read), and a name that resolves to no object, or to several,
-fails its entry and withholds that catalog's prune.
+of the group's own resource under `-Prune`. `Get-OERInventory` writes the group's or application's
+CURRENT name, and its object id when the name cannot be read or is blank; a name that resolves to no
+object, or to several, fails its entry and withholds that catalog's prune. A catalog resource with a blank name is written under its origin
+id. An entry the export can name by nothing the apply engine accepts -- a SharePoint binding with no
+name, say -- makes the package's `resourceRoles` (or the catalog's `resources`) an explicit `null`,
+named in `InventoryPartial`. The export never writes an empty name: `Test-OERStructure` refuses an
+empty or blank `resource`, `role`, `name` or `principal`, and `schema.json` an empty one.
 
 ## Directory roles
 
@@ -394,6 +402,27 @@ These out-of-scope fields are always preserved (never written by this module):
 - Fallback approvers (`fallbackPrimaryApprovers` / `fallbackEscalationApprovers`) are preserved
   when their stage is otherwise unchanged. If a stage is rebuilt (because another field in it
   changed), fallback approvers on that stage are not carried over -- this is a known limitation.
+
+## Unread collections
+
+A read that fails is never written as a fact. A `members`, `scopedRoles`, `resources` or
+`resourceRoles` collection that could not be read, or one with an entry the export could name by
+nothing the apply engine accepts, is written as `null`, which `Invoke-OERStructure` leaves
+untouched: keep it `null` in a proposal and never change it to `[]`, since under `-Prune` an empty
+collection removes every live entry. A section that could not be read at all (the group list, the
+administrative unit list or the access review list) is reported by a warning and through
+`InventoryPartial` under the section's own name (`groups`, `administrativeUnits` or
+`accessReviews`), and is written as an empty array, never `null`. The group roster that could not be
+read is named `groupsRoster` in the bundle's `IncompleteReads` and written as an empty array in
+`groupsRoster.json`. An empty section reported that way is not evidence the tenant has none, so no
+deletion is proposed from it.
+
+The bundle's `README.md` lists every such report, and every Azure scope the export could not read
+(for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
+under "What this export could not read" -- one bullet per entry, each written as a code span so an
+entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. When nothing was
+left unread, that section says so. The list is in the README alone: `inventory.json` and the other
+JSON files never carry it, so the apply document keeps exactly the shape the schema describes.
 
 ## Notes
 

@@ -71,17 +71,29 @@ function Export-OERInventory {
 
     Entra ID coverage is reported the same way. IncompleteReads carries one entry per partial
     report from Get-OERInventory, each naming the affected section/displayName/key triples -- so a
-    single run that lost three collections reports one entry listing all three, not three entries.
-    Its Count is therefore the number of partial reports, not the number of unread collections; read
-    the entries themselves for that. The same non-terminating InventoryPartial error is raised here when
+    single run that lost three collections reports one entry listing all three, not three entries --
+    plus the entry groupsRoster when the group roster could not be read. A section whose whole list
+    could not be read appears in those entries by its own name alone, and is written as an empty
+    array that does not mean the tenant has none; the entry groupsRoster likewise means
+    groupsRoster.json is empty only because the roster read failed. Its Count is therefore the number
+    of partial reports from Get-OERInventory, plus one when the group roster could not be read, and
+    not the number of unread collections; read the entries themselves for that. The same
+    non-terminating InventoryPartial error is raised here when
     IncompleteReads, SkippedScopes or SkippedEligibilityScopes is non-empty. A members,
-    scopedRoles, resources or resourceRoles collection that could not be read is NOT written into
-    inventory.json as an empty one: its key is an explicit null, which the apply engine reads as
+    scopedRoles, resources or resourceRoles collection that could not be read, or that has an entry
+    the export could name by nothing the apply engine accepts, is NOT written into inventory.json as
+    an empty one or with an empty name: its key is an explicit null, which the apply engine reads as
     "leave untouched". Do not hand-edit that null to [] -- under Invoke-OERStructure -Prune an
     empty declared collection deletes every live member, binding or resource. Any other collection
     IncompleteReads names is left out of the document or written only as far as it was read, as the
     Get-OERInventory help describes; Invoke-OERStructure never removes a catalog, access package or
     assignment policy that is absent from the document.
+
+    The bundle says so itself. The generated README.md carries a section named "What this export
+    could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
+    entry, or the statement that nothing was left unread, so whoever receives the bundle (an LLM,
+    say) can tell a collection that was not read from one that is empty. The lists go into README.md
+    only, never into inventory.json or any other file that is validated or applied.
 
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
@@ -433,6 +445,9 @@ function Export-OERInventory {
                 Remove-OERErrorRecord -Record $PSItem
                 if ($PSItem.FullyQualifiedErrorId -notlike 'GroupNotFound*') {
                     Write-Warning "Could not read the group roster: $($PSItem.Exception.Message)"
+                    # A9: the same defect class as the unread sections -- the roster is written as []
+                    # either way. It is read-only context, so it is named here, not in Get-OERInventory.
+                    $IncompleteReads.Add('groupsRoster')
                 }
             }
             $Roster = @(foreach ($Rg in $RosterGroups) {
@@ -536,7 +551,12 @@ function Export-OERInventory {
         }
         $WrittenFiles.Add('rbac-architect-prompt.md')
         if ($ShouldWrite) {
-            (Get-OERInventoryReadme) | Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
+            # All three lists are complete by now (the roster read above was the last to add an
+            # IncompleteReads entry), and they go into the README alone: inventory.json is the apply
+            # document and must stay exactly the shape the schema describes. The parameters are
+            # mandatory, so a README that claims a complete read cannot be written by forgetting one.
+            (Get-OERInventoryReadme -IncompleteReads @($IncompleteReads) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes)) |
+                Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
 
@@ -643,13 +663,14 @@ function Export-OERInventory {
                     "Skipped: $($SkippedEligibilityScopes -join ', ')")
             }
             if ($IncompleteReads.Count -gt 0) {
-                # The count is of REPORTS, not collections: one Get-OERInventory run raises one
+                # The count is of ENTRIES, not collections: one Get-OERInventory run raises one
                 # InventoryPartial error naming every triple it lost, so a single entry here can
-                # stand for seven unread collections. Saying "N collection read(s) failed" made this
-                # message disagree with the seven triples printed right after it, and with
+                # stand for seven unread collections, and the groupsRoster entry is this cmdlet's own
+                # and not a Get-OERInventory report at all. Saying "N collection read(s) failed" made
+                # this message disagree with the seven triples printed right after it, and with
                 # Get-OERInventory's own "7 collection(s)" on the same run. The help already states
                 # the entry-per-report rule; the message now agrees with it.
-                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read report(s) name collections that could not be read and are NOT stated as facts in inventory.json -- one report can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched")
+                $PartialParts.Add("$($IncompleteReads.Count) partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: $($IncompleteReads -join '; '). A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as leave untouched. A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read")
             }
             Write-CmdletError `
                 -Message ([System.Exception]::new(

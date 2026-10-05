@@ -16,7 +16,13 @@ function Get-OERAdministrativeUnit {
     non-terminating error instead, so an empty array in the result always means the unit genuinely
     has none. The scoped roles read includes the directory role list that names each role: when the
     unit has scoped roles and that list cannot be read, the whole ScopedRoles read counts as failed,
-    since roles without their names would be read by the apply engine as roles nobody declared.
+    since roles without their names would be read by the apply engine as roles nobody declared. A list
+    that IS read but does not name one scoped role's role id is not a failure: that role's RoleName is
+    empty and its RoleId is kept. The reader does not check that every membership's role id is listed,
+    and the case has not been seen live. Invoke-OERStructure then adds nothing and removes nothing for
+    a role it cannot name when the document declares a role by name for the same principal and no
+    live role of that principal matches that name (otherwise the unnamed role is reconciled as
+    before), and Get-OERInventory writes such a role under its role id.
 
     .PARAMETER AdministrativeUnit
     The administrative unit to read, given as either its object id (GUID) or its exact display name --
@@ -41,7 +47,9 @@ function Get-OERAdministrativeUnit {
     non-terminating AdministrativeUnitScopedRoleReadFailed error and the ScopedRoles property is
     omitted, so a returned empty array always means the unit has no scoped role members. Failing to
     read the directory role list that supplies each role's name (needed only when the unit has scoped
-    roles) is a failed read too, and the error names that read.
+    roles) is a failed read too, and the error names that read. A list that is read but does not name a
+    role id leaves that scoped role's RoleName empty and keeps its RoleId, so a returned ScopedRoles
+    entry can carry an empty RoleName next to a RoleId without the read having failed.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -161,6 +169,9 @@ function Get-OERAdministrativeUnit {
                     # undeclared and remove them under -Prune. -ThrowOnFailure makes the failure reach the
                     # catch below, which omits ScopedRoles and publishes the read error. A unit with no
                     # scoped role has nothing to name, so its (empty) answer does not wait on the list.
+                    # A list that is READ but does not name a membership's role id is a different case: it
+                    # is not checked here, and that role gets RoleName '' with its RoleId kept (not seen
+                    # live). The apply engine, not this reader, decides what that means.
                     $RoleMap = @{}
                     if ($Scoped.Count -gt 0) { $RoleMap = Get-OERDirectoryRoleNameMap -ThrowOnFailure }
                     $Scoped = @($Scoped | ForEach-Object { ConvertTo-OERScopedRoleMember -InputObject $_ -RoleName ([string]$RoleMap[[string]$_.roleId]) })

@@ -73,7 +73,9 @@ function Get-OERStructureSchemaJson {
     administrativeUnits[].members, administrativeUnits[].scopedRoles, catalogs[].resources and
     accessPackages[].resourceRoles. For those five an omitted key still reconciles and still PRUNES,
     so an explicit null is the only way a document can say "leave this collection alone" -- and it
-    is what Get-OERInventory emits when the live read failed (issue #76). owners and eligibility
+    is what Get-OERInventory emits when the live read failed (issue #76). For scopedRoles, resources
+    and resourceRoles it also emits null when an entry has no name and no object id the apply engine
+    accepts, since the schema refuses an empty one (minLength 1). owners and eligibility
     are deliberately NOT widened: an omitted key is already hands-off for them, so nothing in the
     module produces a null there and a nullable type would be surface with no producer.
     accessReviews[].recurrence is nullable for the same reason on the scalar side: Test-OERStructureSchema
@@ -243,13 +245,13 @@ function Get-OERStructureSchemaJson {
           },
           "scopedRoles": {
             "type": [ "array", "null" ],
-            "description": "An omitted key still reconciles: existing scoped roles it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves scoped roles untouched entirely -- null, not an omitted key, is how a unit is declared without touching its scoped roles. [] reconciles to no declared scoped roles. Get-OERInventory emits null here when the live read failed.",
+            "description": "An omitted key still reconciles: existing scoped roles it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves scoped roles untouched entirely -- null, not an omitted key, is how a unit is declared without touching its scoped roles. [] reconciles to no declared scoped roles. Get-OERInventory emits null here when the live read failed, and when an entry has no role or no principal that the apply engine accepts (it never writes an empty one).",
             "items": {
               "type": "object",
               "required": [ "role", "principal" ],
               "properties": {
-                "role": { "type": "string" },
-                "principal": { "type": "string" }
+                "role": { "type": "string", "minLength": 1 },
+                "principal": { "type": "string", "minLength": 1 }
               }
             }
           }
@@ -271,12 +273,12 @@ function Get-OERStructureSchemaJson {
           },
           "resources": {
             "type": [ "array", "null" ],
-            "description": "An omitted key still reconciles: existing resources it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves resources untouched entirely -- null, not an omitted key, is how a catalog is declared without touching its resources. [] reconciles to no declared resources. Get-OERInventory emits null here when the live read failed.",
+            "description": "An omitted key still reconciles: existing resources it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves resources untouched entirely -- null, not an omitted key, is how a catalog is declared without touching its resources. [] reconciles to no declared resources. Get-OERInventory emits null here when the live read failed, and when a resource has no name and no origin id that the apply engine accepts (it never writes an empty name).",
             "items": {
               "type": "object",
               "required": [ "name" ],
               "properties": {
-                "name": { "type": "string" },
+                "name": { "type": "string", "minLength": 1 },
                 "type": { "type": "string", "enum": [ "Group", "Application", "SharePointSite" ] },
                 "url": {
                   "type": "string",
@@ -301,13 +303,13 @@ function Get-OERStructureSchemaJson {
           "hidden": { "type": "boolean" },
           "resourceRoles": {
             "type": [ "array", "null" ],
-            "description": "An omitted key still reconciles: existing bindings it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves bindings untouched entirely -- null, not an omitted key, is how a package is declared without touching its resource role bindings. [] reconciles to no declared bindings. Get-OERInventory emits null here when the live read failed.",
+            "description": "An omitted key still reconciles: existing bindings it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves bindings untouched entirely -- null, not an omitted key, is how a package is declared without touching its resource role bindings. [] reconciles to no declared bindings. Get-OERInventory emits null here when the live read failed, and when a binding has no resource name and no object id that the apply engine accepts, or no role (it never writes an empty one).",
             "items": {
               "type": "object",
               "required": [ "resource", "role" ],
               "properties": {
-                "resource": { "type": "string" },
-                "role": { "type": "string" }
+                "resource": { "type": "string", "minLength": 1 },
+                "role": { "type": "string", "minLength": 1 }
               }
             }
           },

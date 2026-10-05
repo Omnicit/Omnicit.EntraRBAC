@@ -26,8 +26,9 @@ function ConvertTo-OERAccessPackageResourceRole {
 
     .PARAMETER ResourceDisplayName
     The resource's real display name, resolved and stamped on by the caller (for example by joining
-    scope.originId against the catalog's resources). Left $null when the caller does not supply it,
-    since the resourceRoleScopes payload never carries the resource's own display name.
+    scope.originId against the catalog's resources). Left $null when the caller does not supply it
+    or supplies an empty one, since the resourceRoleScopes payload never carries the resource's own
+    display name and an empty name is no name.
 
     .EXAMPLE
     ConvertTo-OERAccessPackageResourceRole -InputObject $rrs -AccessPackageId 'ap-1'
@@ -51,7 +52,7 @@ function ConvertTo-OERAccessPackageResourceRole {
         $Out = [PSCustomObject]@{
             ResourceRoleScopeId = $InputObject.id
             RoleName            = $InputObject.role.displayName
-            ResourceDisplayName = $ResourceDisplayName
+            ResourceDisplayName = if ([string]::IsNullOrEmpty($ResourceDisplayName)) { $null } else { $ResourceDisplayName }
             ScopeDisplayName    = $InputObject.scope.displayName
             OriginId            = $InputObject.scope.originId
             OriginSystem        = $InputObject.scope.originSystem

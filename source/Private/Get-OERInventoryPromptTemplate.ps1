@@ -47,8 +47,11 @@ improvement proposals at increasing maturity. Each proposal MUST be a complete, 
 Invoke-OERStructure document (schema below) so it can be applied directly by the Omnicit.EntraRBAC
 PowerShell module.
 
-# Inputs (attached JSON files)
+# Inputs (attached files)
 
+- README.md -- read its section "What this export could not read" first: it lists every collection,
+  object or Azure scope this export could not read, or says that nothing was left unread; anything
+  listed there is unknown, not empty
 - inventory.json -- the current state, within this document's coverage limits (see below), in the
   exact apply schema. Your proposals reshape this.
 - groupsRoster.json -- every security group (names + flags only). Context for the landscape.
@@ -127,14 +130,22 @@ trap if you apply the scalar rule to one of them:
 - null: NONE of these collections reconcile, in either group. null -- not an omitted key -- is
   how you declare a group, administrative unit, catalog or access package WITHOUT touching one
   of them. The inventory writes null for a members, scopedRoles, resources or resourceRoles
-  collection it could not read (the export reports it as partial), so a null in inventory.json
-  means unknown, not empty: keep it null in every proposal, and never turn it into [].
+  collection it could not read, or could not write without an empty name (the export reports it
+  as partial, and README.md lists it under "What this export could not read"), so a null in
+  inventory.json means unknown, not empty: keep it null in every proposal, and never turn it
+  into [].
 - []: ALL of these collections reconcile to empty (every live entry is removed under -Prune, or
   reported Extra without it).
 
 In short: omitting members, scopedRoles, resources or resourceRoles is not a safe no-op -- it
 still prunes. Only an explicit null leaves them alone, matching what an omitted key does for
 eligibility and owners.
+
+A TOP-LEVEL section that could not be read at all is never null: it is written [] and listed in
+README.md under "What this export could not read", so an empty section there is not evidence the
+tenant has none -- never read it as "the tenant has none" and never propose deletions from it. In
+every proposal, each resource, role, name and principal must be a non-empty string: the validator
+refuses "".
 
 # Principles to apply
 

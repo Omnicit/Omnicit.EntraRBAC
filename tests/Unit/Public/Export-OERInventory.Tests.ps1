@@ -2,6 +2,47 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+
+    # F2 / A17. The bundle's README.md lists what the export could not read; the apply document and
+    # every other JSON file must not. These helpers read the section back from a written bundle.
+    $script:CouldNotReadHeading = '## What this export could not read'
+    # The ten top-level keys ConvertTo-OERInventory emits, in order: the shape of inventory.json.
+    $script:InventoryTopLevelKeys = @(
+        'version', 'groups', 'administrativeUnits', 'catalogs', 'accessPackages', 'accessReviews',
+        'directoryRoleManagementPolicies', 'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies'
+    )
+    # The README section, heading included, up to the next level 2 heading; $null when it is missing.
+    function Get-ReadmeCouldNotReadSection {
+        param([string]$BundlePath)
+        $Readme = Get-Content (Join-Path $BundlePath 'README.md') -Raw
+        $Start = $Readme.IndexOf($script:CouldNotReadHeading)
+        if ($Start -lt 0) { return $null }
+        $Next = $Readme.IndexOf("`n## ", $Start)
+        if ($Next -lt 0) { return $Readme.Substring($Start) }
+        $Readme.Substring($Start, $Next - $Start)
+    }
+    # The bullet lines of a section.
+    function Get-SectionBullets {
+        param([string]$Section)
+        @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+    }
+    # Proves the list stayed out of the apply document and every other JSON file: no file carries the
+    # heading, the partial notice or any of the given texts (the README's bullet lines, since a bare
+    # entry such as 'groups' is a word the JSON legitimately holds), and inventory.json keeps exactly
+    # its ten keys.
+    function Assert-ListStaysOutOfJson {
+        param([string]$BundlePath, [string[]]$Forbidden)
+        $JsonFiles = @(Get-ChildItem -Path $BundlePath -Filter '*.json')
+        $JsonFiles.Count | Should -BeGreaterThan 10 -Because 'the per-area files and inventory.json were all written'
+        foreach ($File in $JsonFiles) {
+            $Raw = Get-Content $File.FullName -Raw
+            foreach ($Text in (@($script:CouldNotReadHeading, 'This bundle is PARTIAL') + @($Forbidden))) {
+                $Raw | Should -Not -Match ([regex]::Escape($Text)) -Because "$($File.Name) must not carry '$Text'"
+            }
+        }
+        $Inventory = Get-Content (Join-Path $BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        ($Inventory.PSObject.Properties.Name -join ',') | Should -BeExactly ($script:InventoryTopLevelKeys -join ',')
+    }
 }
 
 Describe 'Export-OERInventory (core)' {
@@ -501,6 +542,52 @@ Describe 'Export-OERInventory (Azure walk)' {
         Test-Path (Join-Path $Result.BundlePath 'scopeHierarchy.json') | Should -BeTrue
         ($Warn -join "`n") | Should -Match 'enumerate Azure scopes'
     }
+
+    It 'lists the Azure walk that could not start in the README, once per file it leaves short, as code spans' {
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree { throw 'cannot read management groups' }
+        $Sentinel = '<all Azure scopes: scope enumeration failed>'
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'readme-walk') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: the walk was attempted and failed, and the returned object says the same.
+        Should -Invoke -ModuleName $script:moduleName Resolve-OERInventoryScopeTree -Times 1 -Exactly
+        $Result.SkippedScopes | Should -Contain $Sentinel
+        $Result.SkippedEligibilityScopes | Should -Contain $Sentinel
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Result.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Expected = @(
+            '- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `<all Azure scopes: scope enumeration failed>`'
+            '- Azure scope, absent from `azurePimEligibility.json`: `<all Azure scopes: scope enumeration failed>`'
+        )
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        # Shown, not swallowed as an HTML tag: outside a code span the section holds no angle bracket.
+        ($Section -replace '`[^`]*`', '') | Should -Not -Match '<'
+        $Section | Should -Match 'This bundle is PARTIAL'
+        Assert-ListStaysOutOfJson -BundlePath $Result.BundlePath -Forbidden $Expected
+    }
+
+    It 'lists a scope that could not be read under the role assignment files only, not under azurePimEligibility.json' {
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            param($Include, $Scope, $Subscription, $ManagementGroup, $AllRolesAtScope)
+            if ($Scope -eq '/subscriptions/s1') { throw 'boom (throttled)' }
+            $inv = [PSCustomObject]@{ Version='1.0'; Groups=@(); AdministrativeUnits=@(); Catalogs=@(); AccessPackages=@(); AccessReviews=@(); RoleAssignments=@(); RoleManagementPolicies=@() }
+            $inv.PSObject.TypeNames.Insert(0,'Omnicit.EntraRBAC.Inventory'); $inv
+        }
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'readme-scope') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: s1 was attempted, failed and was skipped; s2 was read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly -ParameterFilter { $Scope -eq '/subscriptions/s1' }
+        $Result.SkippedScopes | Should -Contain '/subscriptions/s1'
+        @($Result.SkippedEligibilityScopes).Count | Should -Be 0
+        $Result.ScopeCount | Should -Be 1
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Result.BundlePath
+        $Expected = @('- Azure scope, absent from `roleAssignments.json` and `roleManagementPolicies.json`: `/subscriptions/s1`')
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        Assert-ListStaysOutOfJson -BundlePath $Result.BundlePath -Forbidden $Expected
+    }
 }
 
 Describe 'Export-OERInventory (Azure PIM eligibility)' {
@@ -586,6 +673,26 @@ Describe 'Export-OERInventory (Azure PIM eligibility)' {
         @($Partial).Count | Should -Be 1 -Because 'the eligibility gap folds into the SAME trailing error, not a second one'
         $Partial[0].Exception.Message | Should -Match 'azurePimEligibility\.json'
         $Partial[0].Exception.Message | Should -Match '/subscriptions/s2'
+    }
+
+    It 'lists a scope whose eligibility could not be read in the README under azurePimEligibility.json only' {
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @('/subscriptions/s2') }
+        }
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'readme-elig') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: the eligibility read ran, s2 is the one it skipped, and the role assignment
+        # walk read both scopes, so the role assignment files are not the short ones.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventoryAzureEligibility -Times 1 -Exactly
+        $Bundle.SkippedEligibilityScopes | Should -Contain '/subscriptions/s2'
+        @($Bundle.SkippedScopes).Count | Should -Be 0
+        $Bundle.ScopeCount | Should -Be 2
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        $Expected = @('- Azure scope, absent from `azurePimEligibility.json`: `/subscriptions/s2`')
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
+        Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden $Expected
     }
 
     It 'does not raise InventoryPartial when the eligibility read of every scope succeeded' {
@@ -918,9 +1025,40 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
             $Partial[0].Exception.Message | Should -Match "administrativeUnits/$Unit/scopedRoles"
         }
         $Partial[0].Exception.Message |
-            Should -Match '1 partial Entra ID read report\(s\)' -Because 'the count names what it actually counts'
+            Should -Match '1 partial Entra ID read entry\(ies\)' -Because 'the count names what it actually counts'
         $Partial[0].Exception.Message |
             Should -Not -Match 'collection read\(s\) failed' -Because 'one report standing for three collections must not be reported as one collection'
+    }
+
+    It 'opens the export InventoryPartial message by saying objects were left out for a shared name when that is the only cause' {
+        # F5. Get-OERInventory leaves out two live objects that share a name and names them in its own
+        # InventoryPartial. Nothing is unread and nothing is written as null, so an opening that
+        # spoke only of collections that could not be read would be untrue of this export.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            Write-Error -Message 'This inventory is PARTIAL: 1 collection(s) or object(s) were left out because two or more live objects share a name.' `
+                -ErrorId 'InventoryPartial' -Category LimitsExceeded `
+                -TargetObject 'groups/Dup' -ErrorAction Continue
+            $inv = [PSCustomObject]@{
+                Version = '1.0'
+                Groups = @()
+                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir-dup') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorVariable ExErr -ErrorAction SilentlyContinue
+
+        # Reach proof: the inventory read ran, its one report is the only entry, and Export raised its own error.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        @($Bundle.IncompleteReads) | Should -Be @('groups/Dup')
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'groups/Dup'
+        $Partial[0].Exception.Message |
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
     }
 
     It 'still writes the whole bundle under -ErrorAction Stop when the inner read was partial' {
@@ -1154,6 +1292,29 @@ Describe 'Export-OERInventory (prompt + readme + self-check)' {
         Test-Path (Join-Path $Result.BundlePath 'schema.json') | Should -BeTrue
         # the emitted schema is valid JSON
         { Get-Content (Join-Path $Result.BundlePath 'schema.json') -Raw | ConvertFrom-Json } | Should -Not -Throw
+    }
+
+    It 'says in the README that nothing was left unread when the export read everything, and keeps that out of the JSON' {
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'readme-complete') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: both group reads ran, and the export itself reports a complete read.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        @($Result.IncompleteReads).Count | Should -Be 0
+        @($Result.SkippedScopes).Count | Should -Be 0
+        @($Result.SkippedEligibilityScopes).Count | Should -Be 0
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Result.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Collapsed = $Section -replace '\s+', ' '
+        $Collapsed | Should -Match 'Nothing\.'
+        $Collapsed | Should -Match 'read everything it was asked to read'
+        @(Get-SectionBullets -Section $Section).Count | Should -Be 0
+        $Section | Should -Not -MatchExactly 'This bundle is PARTIAL'
+        Assert-ListStaysOutOfJson -BundlePath $Result.BundlePath -Forbidden @('Nothing. `Export-OERInventory`')
     }
 
     It 'seeds the naming convention from a matching tenant profile' {
@@ -1451,6 +1612,35 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         $Catalog.resources[0].name | Should -Be 'role_sec_x'
     }
 
+    It 'lists an unread binding set in the README under "What this export could not read" and in no JSON file' {
+        Mock -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -MockWith $script:FailBindingRead
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b11') -Include Catalogs, AccessPackages `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExpErr
+
+        # Reach proofs: the binding read ran and failed, and the export reports exactly one entry.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageResourceRole -Times 1 -Exactly -ParameterFilter { $AccessPackage -eq 'ap-1' }
+        @($ExpErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+        @($Bundle.IncompleteReads).Count | Should -Be 1
+        $Entry = @($Bundle.IncompleteReads)[0]
+        $Entry | Should -Match 'accessPackages/AP-Sales/resourceRoles'
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Section | Should -Match 'This bundle is PARTIAL'
+        $Section | Should -Not -Match 'Nothing\.'
+        # One bullet per IncompleteReads entry, each in a code span; nothing under the Azure labels.
+        $Bullets = @(Get-SectionBullets -Section $Section)
+        $Bullets.Count | Should -Be 1
+        $Bullets[0] | Should -BeExactly ('- Entra ID: `' + $Entry + '`')
+        # The README sits where the bundle explains itself, ahead of the file list.
+        $Readme = Get-Content (Join-Path $Bundle.BundlePath 'README.md') -Raw
+        $Readme.IndexOf($script:CouldNotReadHeading) | Should -BeLessThan $Readme.IndexOf('## Files')
+        $Readme.IndexOf($script:CouldNotReadHeading) | Should -BeGreaterThan -1
+
+        # Never in the apply document or any other JSON file, whose shape is unchanged.
+        Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @($Entry, $Bullets[0])
+    }
+
     It 'writes an unread catalog resource set as an explicit null on disk and names it in the one partial (non-terminating)' {
         Mock -ModuleName $script:moduleName Get-OERCatalogResource -MockWith $script:FailResourceRead
         $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'b2') -Include Catalogs, AccessPackages `
@@ -1697,5 +1887,240 @@ Describe 'Export-OERInventory (an unread collection is never applied as empty)' 
         $Removal = @($Rows | Where-Object { $_.Section -eq 'accessPackages' -and $_.Item -eq 'AP-Sales' -and $_.Detail -match 'undeclared' })
         $Removal.Count | Should -Be 1
         $Removal[0].Detail | Should -BeLike "would remove undeclared resourceRole binding 'Member|11111111-1111-1111-1111-111111111111'*"
+    }
+}
+
+Describe 'Export-OERInventory (a section whose list could not be read is partial)' {
+    # BL-05 / decision A9. The export reads through the REAL Get-OERInventory, so what is mocked is the
+    # three readers it calls, healthy (and empty) by default; a test swaps in the one that fails. A
+    # list that could not be read is written as [] -- the same file a tenant with none produces -- so
+    # the only thing that tells the two apart is the partial signal reaching the bundle summary.
+    #
+    # The failure is a record the reader PUBLISHED, built with its FullyQualifiedErrorId and written
+    # with Write-Error -ErrorRecord: the section counts a record only when the id names the reader, and
+    # a mock body appends no name (see Get-OERInventory.Tests.ps1, 'still warns at section level for a
+    # group read error that is not a per-collection failure').
+    BeforeAll {
+        $script:GroupListPublished = {
+            Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied,Get-OERGroup',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+        }
+        $script:AuListPublished = {
+            Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied,Get-OERAdministrativeUnit',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+        }
+        $script:ArListPublished = {
+            Write-Error -ErrorRecord ([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied,Get-OERAccessReviewDefinition',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)) -ErrorAction Continue
+        }
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {}
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition {}
+    }
+
+    It 'names the groups section in IncompleteReads and raises InventoryPartial when the filtered group read fails' {
+        # The roster read (-All) is the one that still succeeds, so the entry is the section's alone.
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { -not $All } -MockWith $script:GroupListPublished
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { $All } -MockWith {
+            [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-groups') -Include Groups -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: the filtered read ran and failed, the roster read ran and answered.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { -not $All }
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        $Bundle.RosterCount | Should -Be 1
+        $Entries = @((@($Bundle.IncompleteReads) -join ', ') -split ', ')
+        $Entries | Should -Contain 'groups'
+        $Entries | Should -Not -Contain 'groupsRoster' -Because 'the roster read answered, so only the section is unread'
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+    }
+
+    It 'lists the groups section in the README, as written to disk, when the filtered group read fails' {
+        # The same failure as the first row above, but written for real (no -WhatIf): the README is
+        # only generated when the bundle is, and this is the one that proves the section reaches it.
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { -not $All } -MockWith $script:GroupListPublished
+        Mock -ModuleName $script:moduleName Get-OERGroup -ParameterFilter { $All } -MockWith {
+            [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_team'; GroupType = 'Assigned'; IsAssignableToRole = $true }
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-groups-readme') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: the filtered read ran and failed, the roster read ran and answered, and the
+        # export raised its one InventoryPartial.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { -not $All }
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        $Bundle.RosterCount | Should -Be 1
+        @($Bundle.IncompleteReads) | Should -Be @('groups')
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Section | Should -Match 'This bundle is PARTIAL'
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly '- Entra ID: `groups`'
+        Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @('- Entra ID: `groups`')
+    }
+
+    It 'names the administrativeUnits section in IncompleteReads and raises InventoryPartial when the unit list fails' {
+        Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit -MockWith $script:AuListPublished
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-aus') -Include AdministrativeUnits -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+        $Bundle.AdministrativeUnits | Should -Be 0
+        $Entries = @((@($Bundle.IncompleteReads) -join ', ') -split ', ')
+        $Entries | Should -Contain 'administrativeUnits'
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+    }
+
+    It 'names the accessReviews section in IncompleteReads and raises InventoryPartial when the access review list fails' {
+        Mock -ModuleName $script:moduleName Get-OERAccessReviewDefinition -MockWith $script:ArListPublished
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-ars') -Include AccessReviews -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        $Bundle.AccessReviews | Should -Be 0
+        $Entries = @((@($Bundle.IncompleteReads) -join ', ') -split ', ')
+        $Entries | Should -Contain 'accessReviews'
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+    }
+
+    It 'writes no IncompleteReads entry and raises no InventoryPartial when the three lists read back empty' {
+        # The control for the three rows above: an empty list that WAS read is a fact about the tenant.
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'sec-none') `
+            -Include Groups, AdministrativeUnits, AccessReviews -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERAdministrativeUnit -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERAccessReviewDefinition -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 2 -Exactly
+        $Bundle.PSObject.Properties.Name | Should -Contain 'IncompleteReads'
+        @($Bundle.IncompleteReads).Count | Should -Be 0
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+    }
+}
+
+Describe 'Export-OERInventory (the group roster that could not be read is partial)' {
+    # BL-05 / decision A9, the roster half. groupsRoster.json is read-only context, but a roster that
+    # could not be read is written as [] exactly like a tenant with no groups, so it is named in
+    # IncompleteReads as groupsRoster -- by this cmdlet, not by Get-OERInventory, which never sees it.
+    # Get-OERInventory is mocked here: the inventory read is healthy and returns the one group, and
+    # the roster read (Get-OERGroup -All) is the only thing under test.
+    BeforeAll {
+        # A non-terminating failure the roster read's -ErrorAction Stop promotes. A Write-Error mock
+        # body is never promoted, so it would not reach the catch; a mock with its own CmdletBinding
+        # that calls $PSCmdlet.WriteError is.
+        $script:FailRosterRead = {
+            [CmdletBinding()] param([switch]$All)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Insufficient privileges to complete the operation.'), 'Authorization_RequestDenied',
+                    [System.Management.Automation.ErrorCategory]::PermissionDenied, $null))
+        }
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Test-OERStructureSchema { [PSCustomObject]@{ Valid = $true; Errors = @() } }
+        # The filtered group read succeeds: the inventory comes back with its one security group.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            $Inv = [PSCustomObject]@{
+                Version = '1.0'
+                Groups = @([PSCustomObject]@{ id = 'g-1'; displayName = 'role_sec_team'; roleAssignable = $true; dynamic = $false; description = $null; members = @() })
+                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $Inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $Inv
+        }
+    }
+
+    It 'names groupsRoster in IncompleteReads and raises InventoryPartial when the roster read fails' {
+        Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:FailRosterRead
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-fail') -Include Groups -WhatIf `
+            -WarningVariable ExWarn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: the roster read ran, its failure was reported as a warning, and the roster is empty.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        @($ExWarn | Where-Object { "$_" -like '*Could not read the group roster*' }).Count | Should -Be 1
+        $Bundle.RosterCount | Should -Be 0
+        @($Bundle.IncompleteReads) | Should -Be @('groupsRoster')
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' }).Count | Should -Be 1
+    }
+
+    It 'lists groupsRoster in the README, as written to disk, when the roster read fails' {
+        Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:FailRosterRead
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-readme') -Include Groups `
+            -WarningVariable ExWarn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        # Reach proofs: the roster read ran and failed, and groupsRoster.json is the empty array a
+        # tenant with no groups would also produce -- which is why the README has to say it.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        @($ExWarn | Where-Object { "$_" -like '*Could not read the group roster*' }).Count | Should -Be 1
+        $Bundle.RosterCount | Should -Be 0
+        @($Bundle.IncompleteReads) | Should -Be @('groupsRoster')
+        @(Get-Content (Join-Path $Bundle.BundlePath 'groupsRoster.json') -Raw | ConvertFrom-Json).Count | Should -Be 0
+
+        $Section = Get-ReadmeCouldNotReadSection -BundlePath $Bundle.BundlePath
+        $Section | Should -Not -BeNullOrEmpty
+        $Section | Should -Match 'This bundle is PARTIAL'
+        $Section | Should -Not -Match 'Nothing\.'
+        ((Get-SectionBullets -Section $Section) -join "`n") | Should -BeExactly '- Entra ID: `groupsRoster`'
+        Assert-ListStaysOutOfJson -BundlePath $Bundle.BundlePath -Forbidden @('- Entra ID: `groupsRoster`')
+    }
+
+    It 'says in the export InventoryPartial message what a section named alone and the groupsRoster entry mean' {
+        Mock -ModuleName $script:moduleName Get-OERGroup -MockWith $script:FailRosterRead
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-msg') -Include Groups -WhatIf `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        @($Bundle.IncompleteReads) | Should -Be @('groupsRoster')
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        # The lead-in must be true when the only entry is groupsRoster, or a collection written as null
+        # for want of a name: neither is "a collection that could not be read" alone.
+        $Partial[0].Exception.Message |
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
+        $Partial[0].Exception.Message |
+            Should -BeLike '*A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
+    }
+
+    It 'adds no groupsRoster entry and raises no InventoryPartial when the roster read answers GroupNotFound' {
+        # GroupNotFound is an answer -- there are no groups -- not a failed read.
+        Mock -ModuleName $script:moduleName Get-OERGroup -MockWith {
+            [CmdletBinding()] param([switch]$All)
+            $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('No group matches.'), 'GroupNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $null))
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'roster-nf') -Include Groups -WhatIf `
+            -WarningVariable ExWarn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable ExErr
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly -ParameterFilter { $All }
+        $Bundle.RosterCount | Should -Be 0
+        @($Bundle.IncompleteReads).Count | Should -Be 0
+        @($ExErr | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+        @($ExWarn | Where-Object { "$_" -like '*Could not read the group roster*' }).Count | Should -Be 0
     }
 }

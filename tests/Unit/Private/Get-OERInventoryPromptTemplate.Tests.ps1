@@ -226,7 +226,8 @@ Describe 'Get-OERInventoryPromptTemplate' {
         InModuleScope $script:moduleName {
             # Whitespace collapsed first, so the assertion does not depend on where the line wraps.
             $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
-            $Collapsed | Should -Match ([regex]::Escape('The inventory writes null for a members, scopedRoles, resources or resourceRoles collection it could not read (the export reports it as partial), so a null in inventory.json means unknown, not empty: keep it null in every proposal, and never turn it into [].'))
+            $Collapsed | Should -Match ([regex]::Escape('The inventory writes null for a members, scopedRoles, resources or resourceRoles collection it could not read, or could not write without an empty name (the export reports it as partial, and README.md lists it under "What this export could not read"), so a null in inventory.json means unknown, not empty: keep it null in every proposal, and never turn it into [].'))
+            $Collapsed | Should -Not -Match ([regex]::Escape('(the export reports it as partial)')) -Because 'the partial report is no longer the only place the list is found'
             # The claim names the four collections: an unread owners or eligibility collection is
             # omitted, not null, so a flat "a collection it could not read" would be false of it.
             $Collapsed | Should -Not -Match ([regex]::Escape('The inventory writes null for a collection it could not read'))
@@ -235,6 +236,43 @@ Describe 'Get-OERInventoryPromptTemplate' {
             $Collapsed | Should -Not -Match 'The inventory itself omits most keys rather than emit null'
             $Collapsed | Should -Match ([regex]::Escape('Apart from an unread members, scopedRoles, resources or resourceRoles collection (see below), the inventory omits most keys rather than emit null'))
             $Collapsed | Should -Match 'to assert a list is genuinely empty you must hand-author an explicit \[\]'
+        }
+    }
+
+    It 'tells the model that an unread top-level section is [] and listed in README.md, and that names must be non-empty strings' {
+        InModuleScope $script:moduleName {
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # A section that could not be read at all is written [] (never null) and listed in the
+            # README under "What this export could not read", so the model must not read it as "the
+            # tenant has none" or propose deletions from it.
+            $Collapsed | Should -Match ([regex]::Escape('A TOP-LEVEL section that could not be read at all is never null: it is written [] and listed in README.md under "What this export could not read"'))
+            $Collapsed | Should -Not -Match ([regex]::Escape('it is written [] and named in the partial report'))
+            $Collapsed | Should -Match ([regex]::Escape('never read it as "the tenant has none" and never propose deletions from it'))
+            # The validator refuses an empty string in the five name fields, so the model must not write one.
+            $Collapsed | Should -Match ([regex]::Escape('each resource, role, name and principal must be a non-empty string: the validator refuses "".'))
+        }
+    }
+
+    It 'names README.md and its section "What this export could not read" as the place that lists what the export could not read' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+            $Collapsed = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $Collapsed | Should -Match 'README\.md'
+            $Collapsed | Should -Match 'What this export could not read'
+            # The Inputs list opens with the README, ahead of every JSON file, since the list of
+            # unread data changes how each of them is read.
+            $Bullet = 'README.md -- read its section "What this export could not read" first: it lists every collection, object or Azure scope this export could not read, or says that nothing was left unread; anything listed there is unknown, not empty'
+            $Collapsed | Should -Match ([regex]::Escape($Bullet))
+            # The heading says "attached files", not "attached JSON files": the README it opens with is
+            # Markdown, and the bundle README tells the reader to attach it too.
+            $InputsStart = $Collapsed.IndexOf('# Inputs (attached files)')
+            $InputsStart | Should -BeGreaterThan -1
+            $Collapsed | Should -Not -Match ([regex]::Escape('# Inputs (attached JSON files)'))
+            $Collapsed.IndexOf('- ' + $Bullet) | Should -Be ($InputsStart + '# Inputs (attached files) '.Length) -Because 'the README is the FIRST bullet of the Inputs list'
+            $Collapsed.IndexOf($Bullet) | Should -BeLessThan $Collapsed.IndexOf('- inventory.json -- the current state')
+            # The two places that used to point at "the partial report" now point at the README too.
+            $Collapsed | Should -Match ([regex]::Escape('(the export reports it as partial, and README.md lists it under "What this export could not read")'))
+            $Collapsed | Should -Match ([regex]::Escape('it is written [] and listed in README.md under "What this export could not read"'))
         }
     }
 
