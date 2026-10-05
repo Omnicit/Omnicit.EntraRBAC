@@ -81,7 +81,12 @@ Describe 'Get-OERGraphSessionFingerprint' {
     }
 
     It 'returns $null for a $null context' {
+        # An EXPLICIT -Context $null means "no session": the helper tells it from an omitted -Context
+        # with $PSBoundParameters.ContainsKey, so it must never fall back to reading the real
+        # Get-MgContext. The mock is the proof of that, since a fallback would call it.
+        Mock -ModuleName Omnicit.EntraRBAC Get-MgContext { }
         InModuleScope Omnicit.EntraRBAC { Get-OERGraphSessionFingerprint -Context $null } | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-MgContext -Times 0
     }
 
     It 'calls Get-MgContext exactly once when no context is given, and returns $null when it writes nothing' {
@@ -116,6 +121,25 @@ Describe 'Get-OERGraphSessionFingerprint' {
         $Fa = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $A } { param($C) Get-OERGraphSessionFingerprint -Context $C }
         $Fb = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $B } { param($C) Get-OERGraphSessionFingerprint -Context $C }
         $Fa | Should -BeExactly $Fb
+    }
+
+    It 'tells one scope containing a space from two scopes' {
+        # A joined string would give "a b" for both; the scopes are a JSON array, so a value holding
+        # the separator can never make two sessions compare equal.
+        $One = New-TestGraphContext -Override @{ Scopes = @('a b') }
+        $Two = New-TestGraphContext -Override @{ Scopes = @('a', 'b') }
+        $Fo = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $One } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        $Ft = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $Two } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        $Fo | Should -Not -BeExactly $Ft
+    }
+
+    It 'writes the scopes as a JSON array, an empty list as []' {
+        $Some = New-TestGraphContext -Override @{ Scopes = @('Group.ReadWrite.All') }
+        $None = New-TestGraphContext -Override @{ Scopes = @() }
+        $Fs = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $Some } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        $Fn = InModuleScope Omnicit.EntraRBAC -Parameters @{ C = $None } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        $Fs | Should -Match '"Scopes":\["Group\.ReadWrite\.All"\]'
+        $Fn | Should -Match '"Scopes":\[\]'
     }
 
     It 'changes when <Name> changes' -ForEach @(

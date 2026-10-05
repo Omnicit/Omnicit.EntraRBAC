@@ -59,6 +59,6 @@ function Get-OERGraphSessionFingerprint {
         Account             = [string]$Context.Account
         AppName             = [string]$Context.AppName
         Environment         = [string]$Context.Environment
-        Scopes              = $Scopes -join ' '
+        Scopes              = $Scopes
     } | ConvertTo-Json -Compress
 }
