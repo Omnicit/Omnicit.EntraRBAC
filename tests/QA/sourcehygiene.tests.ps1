@@ -1338,15 +1338,21 @@ BeforeAll {
         Graph send paths, or one that was moved to the wrong side of the bearer token. This pass
         reads the structure of the two wrapper files instead.
 
-        WHAT A GATED STATEMENT IS. A transport statement is the nearest enclosing try of a call that
+        WHAT A GATED STATEMENT IS. A transport statement is the try whose BODY holds a call that
         reaches the wire: Invoke-MgGraphRequest outside the nested helper Invoke-GraphAttempt (the
         helper is the one direct sender, and is counted on its own), a call of Invoke-GraphAttempt,
-        or Invoke-WebRequest in the ARM wrapper. It is gated when a statement block that holds it,
-        or one that encloses it inside the SAME loop iteration, has every required gate among the
-        statements before it. The climb stops at a loop, so a gate placed before the retry loop is
-        refused: it would not run again after a throttle sleep. From the earliest required gate to
-        the transport statement, no statement may call Initialize-OERAuth or Start-Sleep, and
-        neither may the transport statement itself ahead of its request.
+        or Invoke-WebRequest in the ARM wrapper. A send in a catch or finally block, or in no try
+        at all, is a violation of its own. Each such try must hold exactly the calls the file's
+        shape names -- one Invoke-MgGraphRequest and one Invoke-GraphAttempt for Graph, one
+        Invoke-WebRequest for ARM -- so a second send cannot hide inside a gated try.
+
+        It is gated when every required gate is among the statements BEFORE it in the very block
+        that holds it. There is NO climb into enclosing blocks: a gate in an outer block does not
+        cover a request that runs after a sign-in or a sleep placed between the two, so a gate
+        hoisted above an enclosing if, or above the retry loop, is refused. From the earliest
+        required gate to the transport statement no statement may call Initialize-OERAuth or
+        Start-Sleep, and inside the transport statement no such call may stand ahead of ANY of its
+        requests, each judged at its own position.
 
         POSITION IS READ FROM THE TREE, never from a line number: a return added after an unrelated
         throw elsewhere in these files moves every line below it and changes nothing here.
@@ -1463,83 +1469,80 @@ BeforeAll {
         return $Found
     }
 
-    # The statement a call belongs to for gating: its nearest enclosing try inside $Boundary (the
-    # function that must hold every transport statement), else the innermost statement of a block.
-    function Get-OERTransportStatement {
+    # Where a call sits: the nearest enclosing try inside $Boundary (the function that must hold every
+    # transport statement), and whether the call lies in that try's BODY. A call in a catch or finally
+    # block is not in the body, and a call with no try around it at all has no Try.
+    function Get-OERTransportPlacement {
         param($Call, $Boundary)
 
-        $Innermost = $null
+        $Child = $Call
         for ($Node = $Call.Parent; $null -ne $Node -and -not [System.Object]::ReferenceEquals($Node, $Boundary); $Node = $Node.Parent) {
-            if ($Node -is [System.Management.Automation.Language.TryStatementAst]) { return $Node }
-            $IsStatement = ($Node.Parent -is [System.Management.Automation.Language.StatementBlockAst]) -or
-            ($Node.Parent -is [System.Management.Automation.Language.NamedBlockAst])
-            if ($null -eq $Innermost -and $IsStatement) { $Innermost = $Node }
+            if ($Node -is [System.Management.Automation.Language.TryStatementAst]) {
+                return [PSCustomObject]@{ Try = $Node; InBody = [System.Object]::ReferenceEquals($Child, $Node.Body) }
+            }
+            $Child = $Node
         }
-        return $Innermost
+        return [PSCustomObject]@{ Try = $null; InBody = $false }
     }
 
-    # Climbs from a transport statement through the statement blocks that hold it, stopping at a loop
-    # or a function: the first block with every required gate before the statement decides. Returns
-    # the Reason it is NOT gated ($null when it is) and the latch gate's if statement.
+    # The verdict on one transport statement (a try): every required gate -- the latch gate alone when
+    # no session gate is required -- must be among the statements BEFORE it in the very block that
+    # holds it, with no statement from the earlier gate up to it calling Initialize-OERAuth or
+    # Start-Sleep. There is deliberately NO climb into enclosing blocks: a gate in an outer block does
+    # not cover a statement that runs after a sign-in or a sleep placed between the two, so a gate
+    # hoisted above an enclosing if, or above a retry loop, is refused. Returns the Reason it is NOT
+    # gated ($null when it is) and the latch gate's if statement.
     function Get-OERTransportGateFailure {
         param($Transport, [bool]$RequireSessionGate)
 
-        $FirstAbsent = $null
-        $Level = $Transport
-        while ($null -ne $Level) {
-            if ($Level -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
-                $Level -is [System.Management.Automation.Language.LoopStatementAst] -or
-                $Level -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { break }
+        $Block = $Transport.Parent
+        if ($Block -isnot [System.Management.Automation.Language.StatementBlockAst] -and
+            $Block -isnot [System.Management.Automation.Language.NamedBlockAst]) {
+            return [PSCustomObject]@{ Reason = 'is not a statement of a block, so no gate can precede it'; LatchGate = $null }
+        }
+        $Statements = @($Block.Statements)
+        $Index = [System.Array]::IndexOf($Statements, $Transport)
+        $Gates = Find-OERTransportGates -Statements $Statements -Before $Index
 
-            $Block = $Level.Parent
-            if ($Block -is [System.Management.Automation.Language.StatementBlockAst] -or
-                $Block -is [System.Management.Automation.Language.NamedBlockAst]) {
-                $Statements = @($Block.Statements)
-                $Index = [System.Array]::IndexOf($Statements, $Level)
-                $Gates = Find-OERTransportGates -Statements $Statements -Before $Index
-
-                $Absent = @()
-                if ($RequireSessionGate -and $Gates.Session -lt 0) { $Absent += 'the session gate' }
-                if ($Gates.Latch -lt 0) { $Absent += 'the latch gate' }
-
-                if ($Absent.Count -eq 0) {
-                    $Start = $Gates.Latch
-                    if ($RequireSessionGate -and $Gates.Session -lt $Start) { $Start = $Gates.Session }
-                    for ($Between = $Start; $Between -lt $Index; $Between++) {
-                        $Hit = @(Find-OERCallNamed -Ast $Statements[$Between] -Name 'Initialize-OERAuth', 'Start-Sleep') |
-                            Select-Object -First 1
-                        if ($Hit) {
-                            return [PSCustomObject]@{
-                                Reason    = 'has a call to {0} (line {1}) between the gates and itself' -f
-                                (Get-OERCallName -CommandAst $Hit), $Hit.Extent.StartLineNumber
-                                LatchGate = $null
-                            }
-                        }
-                    }
-                    return [PSCustomObject]@{ Reason = $null; LatchGate = $Gates.LatchIf }
-                }
-                if ($null -eq $FirstAbsent) { $FirstAbsent = $Absent }
+        $Absent = @()
+        if ($RequireSessionGate -and $Gates.Session -lt 0) { $Absent += 'the session gate' }
+        if ($Gates.Latch -lt 0) { $Absent += 'the latch gate' }
+        if ($Absent.Count -gt 0) {
+            return [PSCustomObject]@{
+                Reason    = 'is not preceded, in its own statement block, by {0}' -f ($Absent -join ' and ')
+                LatchGate = $null
             }
-            $Level = $Level.Parent
         }
 
-        return [PSCustomObject]@{
-            Reason    = 'is not preceded, in its own statement block or an enclosing one inside the same loop iteration, by {0}' -f
-            (@($FirstAbsent) -join ' and ')
-            LatchGate = $null
+        $Start = $Gates.Latch
+        if ($RequireSessionGate -and $Gates.Session -lt $Start) { $Start = $Gates.Session }
+        for ($Between = $Start; $Between -lt $Index; $Between++) {
+            $Hit = @(Find-OERCallNamed -Ast $Statements[$Between] -Name 'Initialize-OERAuth', 'Start-Sleep') |
+                Select-Object -First 1
+            if ($Hit) {
+                return [PSCustomObject]@{
+                    Reason    = 'has a call to {0} (line {1}) between the gates and itself' -f
+                    (Get-OERCallName -CommandAst $Hit), $Hit.Extent.StartLineNumber
+                    LatchGate = $null
+                }
+            }
         }
+        return [PSCustomObject]@{ Reason = $null; LatchGate = $Gates.LatchIf }
     }
 
-    # One file's transport statements: every call of one of $TransportCommands inside $OwnerFunction,
-    # grouped by the statement it belongs to and each checked for its gates. A call outside the owner
-    # function is Misplaced; one inside $ExemptFunction (the nested helper that is the one direct
-    # sender) is only counted.
+    # One file's transport statements: every call of a command named in $CallsPerStatement inside
+    # $OwnerFunction. A call outside the owner function is Misplaced; one inside $ExemptFunction (the
+    # nested helper that is the one direct sender) is only counted; one that is not in the BODY of a
+    # try is a violation of its own. The rest are grouped by the try that holds them, and each try is
+    # checked for its gates, for holding exactly the calls $CallsPerStatement names (command name to
+    # the number of calls one statement holds), and, call by call, for an Initialize-OERAuth or
+    # Start-Sleep ahead of that call's own position.
     function Get-OERTransportGateReport {
         param(
             $Ast,
             [string]$FileLabel,
             [string]$OwnerFunction,
-            [string[]]$TransportCommands,
+            [hashtable]$CallsPerStatement,
             [string]$ExemptFunction,
             [bool]$RequireSessionGate
         )
@@ -1561,7 +1564,7 @@ BeforeAll {
         $Report.Owner = $Owners[0]
 
         $Groups = [System.Collections.Generic.List[object]]::new()
-        foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name $TransportCommands)) {
+        foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name @($CallsPerStatement.Keys))) {
             $InOwner = $false
             $InExempt = $false
             for ($Node = $Call.Parent; $null -ne $Node; $Node = $Node.Parent) {
@@ -1576,30 +1579,50 @@ BeforeAll {
                 continue
             }
 
-            $Statement = Get-OERTransportStatement -Call $Call -Boundary $Report.Owner
+            $Placement = Get-OERTransportPlacement -Call $Call -Boundary $Report.Owner
+            if ($null -eq $Placement.Try -or -not $Placement.InBody) {
+                $Report.Violations.Add(('{0}:{1} -- {2} is called outside the body of a try statement (in a catch or finally block, or in none)' -f
+                        $FileLabel, $Call.Extent.StartLineNumber, (Get-OERCallName -CommandAst $Call)))
+                continue
+            }
+
             $Group = $null
             foreach ($Candidate in $Groups) {
-                if ([System.Object]::ReferenceEquals($Candidate.Statement, $Statement)) { $Group = $Candidate; break }
+                if ([System.Object]::ReferenceEquals($Candidate.Statement, $Placement.Try)) { $Group = $Candidate; break }
             }
             if ($null -eq $Group) {
-                $Group = [PSCustomObject]@{ Statement = $Statement; Calls = [System.Collections.Generic.List[object]]::new() }
+                $Group = [PSCustomObject]@{ Statement = $Placement.Try; Calls = [System.Collections.Generic.List[object]]::new() }
                 $Groups.Add($Group)
             }
             $Group.Calls.Add($Call)
         }
 
         foreach ($Group in $Groups) {
+            $Reasons = [System.Collections.Generic.List[string]]::new()
             $Failure = Get-OERTransportGateFailure -Transport $Group.Statement -RequireSessionGate $RequireSessionGate
-            $Reason = $Failure.Reason
-            if (-not $Reason) {
-                $FirstOffset = ($Group.Calls | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
-                $Early = @(Find-OERCallNamed -Ast $Group.Statement -Name 'Initialize-OERAuth', 'Start-Sleep' |
-                        Where-Object { $_.Extent.StartOffset -lt $FirstOffset }) | Select-Object -First 1
-                if ($Early) {
-                    $Reason = 'has a call to {0} (line {1}) ahead of its own request' -f
-                    (Get-OERCallName -CommandAst $Early), $Early.Extent.StartLineNumber
+            if ($Failure.Reason) { $Reasons.Add($Failure.Reason) }
+
+            foreach ($Command in $CallsPerStatement.Keys) {
+                $Held = @($Group.Calls | Where-Object { (Get-OERCallName -CommandAst $_) -eq $Command }).Count
+                if ($Held -ne $CallsPerStatement[$Command]) {
+                    $Reasons.Add(('holds {0} call(s) of {1}, expected {2}' -f $Held, $Command, $CallsPerStatement[$Command]))
                 }
             }
+
+            # Each call is judged at its OWN position: a sign-in or a sleep that falls between two calls
+            # of one statement is ahead of the second one's request even when it follows the first.
+            foreach ($Call in $Group.Calls) {
+                $Early = @(Find-OERCallNamed -Ast $Group.Statement -Name 'Initialize-OERAuth', 'Start-Sleep' |
+                        Where-Object { $_.Extent.StartOffset -lt $Call.Extent.StartOffset }) | Select-Object -First 1
+                if ($Early) {
+                    $Reasons.Add(('has a call to {0} (line {1}) ahead of the {2} request at line {3}' -f
+                            (Get-OERCallName -CommandAst $Early), $Early.Extent.StartLineNumber,
+                            (Get-OERCallName -CommandAst $Call), $Call.Extent.StartLineNumber))
+                }
+            }
+
+            $Reason = $null
+            if ($Reasons.Count -gt 0) { $Reason = (@($Reasons | Select-Object -Unique)) -join '; ' }
             $Line = $Group.Statement.Extent.StartLineNumber
             $Report.Statements.Add([PSCustomObject]@{ Line = $Line; Reason = $Reason; LatchGate = $Failure.LatchGate })
             if ($Reason) { $Report.Violations.Add(('{0}:{1} -- the transport statement {2}' -f $FileLabel, $Line, $Reason)) }
@@ -1634,7 +1657,7 @@ BeforeAll {
     if ($TransportAsts.ContainsKey($script:transportGateGraphPath)) {
         $script:transportGraphReport = Get-OERTransportGateReport -Ast $TransportAsts[$script:transportGateGraphPath] `
             -FileLabel $script:transportGateGraphPath -OwnerFunction 'Invoke-GraphSingle' `
-            -TransportCommands 'Invoke-MgGraphRequest', 'Invoke-GraphAttempt' -ExemptFunction 'Invoke-GraphAttempt' `
+            -CallsPerStatement @{ 'Invoke-MgGraphRequest' = 1; 'Invoke-GraphAttempt' = 1 } -ExemptFunction 'Invoke-GraphAttempt' `
             -RequireSessionGate $true
     }
 
@@ -1644,7 +1667,7 @@ BeforeAll {
     if ($TransportAsts.ContainsKey($script:transportGateArmPath)) {
         $script:transportArmReport = Get-OERTransportGateReport -Ast $TransportAsts[$script:transportGateArmPath] `
             -FileLabel $script:transportGateArmPath -OwnerFunction 'Invoke-ArmCall' `
-            -TransportCommands 'Invoke-WebRequest' -ExemptFunction '' -RequireSessionGate $false
+            -CallsPerStatement @{ 'Invoke-WebRequest' = 1 } -ExemptFunction '' -RequireSessionGate $false
 
         # The bearer token is materialized by `$Plain = ...ArmToken...Password`; both the assignment
         # and the ArmToken read are markers, so renaming the variable cannot slip a materialization
@@ -1771,10 +1794,77 @@ BeforeAll {
         '}'
     )
 
+    # The gates above an enclosing if, with the try (and, in one case, a sign-in) inside it: the shape
+    # a climbing check used to accept, and the hole the review found.
+    $FixtureIfBlock = @(
+        'function Invoke-Fixture {'
+        '    SESSION'
+        '    LATCH'
+        '    if ($Run) {'
+        '        BETWEEN'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    # A second send in a catch or finally block, behind a sleep and a sign-in, of a try whose body is
+    # gated and holds its one send.
+    $FixtureCatchSend = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { Start-Sleep -Seconds 1; Initialize-OERAuth @AuthParams; return Invoke-MgGraphRequest @InvokeParams }'
+        '    }'
+        '}'
+    )
+    $FixtureFinallySend = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw } finally { Invoke-MgGraphRequest @InvokeParams }'
+        '    }'
+        '}'
+    )
+    # A second send in the same gated try body, after a sleep and a sign-in, and a plain second send.
+    $FixtureSleepThenSend = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Invoke-MgGraphRequest @InvokeParams; Start-Sleep -Seconds 1; Initialize-OERAuth @AuthParams; Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureTwoSends = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Invoke-MgGraphRequest @InvokeParams; Invoke-MgGraphRequest @Other } catch { throw }'
+        '    }'
+        '}'
+    )
+    # The real two-command shape of a Graph statement, and the same with a sign-in between its two calls.
+    $FixtureTwoCommands = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { if ($Direct) { return Invoke-MgGraphRequest @InvokeParams }; BETWEEN $Attempt = Invoke-GraphAttempt @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+
     $FixtureLatchNoReturn = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw (New-OERSignInRefusedError -Command $R) }'
     $FixtureLatchOtherThrow = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw ''refused''; return }'
     $FixtureLatchNoRead = '$R = Get-OERSignInRefusal; if ($true) { throw (New-OERSignInRefusedError -Command $R); return }'
     $FixtureSessionNoReturn = 'if ((Get-OERGraphSessionState) -eq ''Changed'') { throw (New-OERGraphSessionChangedError) }'
+
+    # What one statement of each shape must hold; a case without Counts is a one-send Graph statement.
+    $CountsGraph = @{ 'Invoke-MgGraphRequest' = 1 }
+    $CountsWeb = @{ 'Invoke-WebRequest' = 1 }
+    $CountsBoth = @{ 'Invoke-MgGraphRequest' = 1; 'Invoke-GraphAttempt' = 1 }
 
     $FixtureCases = @(
         [PSCustomObject]@{ Name = 'both gates, a benign statement between'; Statements = 1; Violations = 0; Session = $true
@@ -1807,10 +1897,26 @@ BeforeAll {
             Text = (New-OERGateFixtureText -Lines $FixtureNested -Session $FixtureSession -Latch $FixtureLatch) }
         [PSCustomObject]@{ Name = 'a second, ungated transport statement'; Statements = 2; Violations = 1; Session = $true
             Text = (New-OERGateFixtureText -Lines $FixtureSecond -Session $FixtureSession -Latch $FixtureLatch) }
-        [PSCustomObject]@{ Name = 'a gated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 0; Session = $false
+        [PSCustomObject]@{ Name = 'a gated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb
             Text = (New-OERGateFixtureText -Lines $FixtureAlias -Session '' -Latch $FixtureLatch) }
-        [PSCustomObject]@{ Name = 'an ungated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 1; Session = $false
+        [PSCustomObject]@{ Name = 'an ungated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 1; Session = $false; Counts = $CountsWeb
             Text = (New-OERGateFixtureText -Lines $FixtureAlias -Session '' -Latch '') }
+        [PSCustomObject]@{ Name = 'gates above an enclosing if, the try inside it'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureIfBlock -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'gates above an enclosing if, a sign-in after them inside it'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureIfBlock -Session $FixtureSession -Latch $FixtureLatch -Between 'Initialize-OERAuth @AuthParams') }
+        [PSCustomObject]@{ Name = 'a second send in a catch block of a gated try'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureCatchSend -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'a second send in a finally block of a gated try'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureFinallySend -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'a second send after Start-Sleep and a sign-in in the same try body'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureSleepThenSend -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'two sends of one command in the same try body'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureTwoSends -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'the two-command Graph shape, gated'; Statements = 1; Violations = 0; Session = $true; Counts = $CountsBoth
+            Text = (New-OERGateFixtureText -Lines $FixtureTwoCommands -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'a sign-in between the two calls of one statement'; Statements = 1; Violations = 1; Session = $true; Counts = $CountsBoth
+            Text = (New-OERGateFixtureText -Lines $FixtureTwoCommands -Session $FixtureSession -Latch $FixtureLatch -Between 'Initialize-OERAuth @AuthParams;') }
     )
 
     $script:transportGateKnownAnswerCount = 0
@@ -1823,9 +1929,10 @@ BeforeAll {
             $script:transportGateKnownAnswerFailures += '{0} -- the fixture does not parse: {1}' -f $Case.Name, $CaseErrors[0].Message
             continue
         }
-        $CaseCommands = if ($Case.Text -match '\biwr\b') { @('Invoke-WebRequest') } else { @('Invoke-MgGraphRequest') }
+        $CaseCounts = $Case.Counts
+        if ($null -eq $CaseCounts) { $CaseCounts = $CountsGraph }
         $CaseReport = Get-OERTransportGateReport -Ast $CaseAst -FileLabel $Case.Name -OwnerFunction 'Invoke-Fixture' `
-            -TransportCommands $CaseCommands -ExemptFunction '' -RequireSessionGate $Case.Session
+            -CallsPerStatement $CaseCounts -ExemptFunction '' -RequireSessionGate $Case.Session
         $script:transportGateKnownAnswerCount++
         if ($CaseReport.OwnerCount -ne 1 -or
             $CaseReport.Statements.Count -ne $Case.Statements -or
@@ -2446,8 +2553,8 @@ Describe 'Transport gate hygiene' -Tags 'SourceHygiene' {
             reach. The mutation proofs show the gate can fail on the real wrappers; these show it
             keeps failing for the same reasons, and in this run, on every machine.
         #>
-        $script:transportGateKnownAnswerCount | Should -Be 17 -Because (
-            'the known-answer table holds seventeen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:transportGateKnownAnswerCount | Should -Be 25 -Because (
+            'the known-answer table holds twenty-five cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
         $script:transportGateKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
 The transport gate checker no longer reaches the verdict a known-answer case requires. Each line
 names the case and the count it expected. The checker is what the other assertions in this Describe
@@ -2501,8 +2608,11 @@ request: the session gate (an if on Get-OERGraphSessionState that throws New-OER
 and then returns) and the latch gate (the result of Get-OERSignInRefusal, and an if on it that throws
 New-OERSignInRefusedError and then returns). The return is load-bearing: a function carries on past its
 OWN throw under -ErrorAction SilentlyContinue or Ignore when no try is active up the call stack. The
-gates belong inside the retry loop, outside the try that wraps the request, and with nothing between
-them and the request that signs in again or sleeps. Add the missing gate; do not exempt a statement.
+gates belong in the very block that holds the try, outside it, and with nothing between them and any
+request that signs in again or sleeps; a gate in an enclosing block, or above the retry loop, does not
+count. Every send sits in the BODY of such a try (never a catch or finally block), and a try holds
+exactly one Invoke-MgGraphRequest and one Invoke-GraphAttempt. Add the missing gate or remove the extra
+send; do not exempt a statement.
 '@
     }
 
@@ -2519,9 +2629,10 @@ send path no gate stands in front of. Route the call through Invoke-GraphSingle.
             'Invoke-ArmCall is the one function that sends an ARM request; a call of Invoke-WebRequest from any other function in the ARM wrapper is a send path no gate stands in front of')
         $script:transportArmReport.Violations -join "`n" | Should -BeNullOrEmpty -Because @'
 The ARM wrapper's one request passes the latch gate first: the result of Get-OERSignInRefusal, and an if
-on it that throws New-OERSignInRefusedError and then returns, in the statement block that holds the
-request and with no Initialize-OERAuth or Start-Sleep between them. ARM has no session gate, by design:
-its token is not a Graph SDK session. Add the missing gate; do not exempt a statement.
+on it that throws New-OERSignInRefusedError and then returns, in the very block that holds the try that
+sends it and with no Initialize-OERAuth or Start-Sleep between them. The send sits in the BODY of that
+try, which holds exactly one Invoke-WebRequest. ARM has no session gate, by design: its token is not a
+Graph SDK session. Add the missing gate or remove the extra send; do not exempt a statement.
 '@
         $script:transportArmBearerViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 The bearer token is materialized from the cached SecureString only at the request boundary, and only

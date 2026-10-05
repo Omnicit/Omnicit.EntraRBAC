@@ -148,7 +148,7 @@ cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one need
 per-function PSScriptAnalyzer, and a unit test file for every exported function),
 `about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
 exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
-own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
+own call graph), `sourcehygiene.tests.ps1` (the ten static source gates --
 `Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
 tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
 addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
@@ -971,10 +971,13 @@ bug.
   an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
   and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
   `Lock-OERSignIn`/`Unlock-OERSignIn` only in `Initialize-OERAuth`, `Invoke-MgGraphRequest` only in
-  the Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper, and every request a wrapper
-  sends preceded, in its statement block and inside the same loop iteration, by its session gate
-  (Graph only) and its latch gate, each a throw followed by a return, with the transport statements
-  counted exactly (three Graph, one ARM) so a new send path cannot escape the scan.
+  the Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper, and every send a wrapper makes
+  in the body of a try that holds exactly its one send (one `Invoke-MgGraphRequest` and one
+  `Invoke-GraphAttempt` for Graph, one `Invoke-WebRequest` for ARM), that try preceded, in the very
+  block that holds it, by its session gate (Graph only) and its latch gate, each a throw followed by
+  a return, with no `Initialize-OERAuth` or `Start-Sleep` between them and any request, and the
+  transport statements counted exactly (three Graph, one ARM) so a new send path cannot escape the
+  scan.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
