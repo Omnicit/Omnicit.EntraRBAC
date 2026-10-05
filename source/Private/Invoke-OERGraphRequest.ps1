@@ -850,6 +850,30 @@ function Invoke-OERGraphRequest {
                 throw (New-OERSignInRefusedError -Command $SignInRefusal)
                 return
             }
+            # SEC (A20): never a Graph call while a command runs whose sign-in another command has since
+            # replaced. In a pipeline every begin block runs first, and almost every public cmdlet signs
+            # in in its begin block, so the upstream command's process block acts under the session the
+            # downstream command's sign-in switched to: New-OERGroup -TenantId A ... |
+            # Add-OERGroupMember -TenantId B created the group in B (F-E). Both sign-ins succeed, so
+            # neither gate above sees it. Initialize-OERAuth remembers which identity each command
+            # signed in as, and Get-OERSignInSupersession compares every frame on the call stack with
+            # the state, not only the nearest: a nested cmdlet signs in again without -TenantId,
+            # inherits the switched state and remembers it, so its own frame matches while the outer
+            # command's does not. A command that runs inside such a command's output -- the next
+            # command in its pipeline, or one in a ForEach-Object over it -- has that command's frame on
+            # its call stack (measured), so its requests are refused too. Checked after the latch gate,
+            # so a command whose sign-in was refused is still reported as SignInRefused, and outside the
+            # try below for the same reason as the two gates above: its catch would turn the refusal
+            # into a Graph failure.
+            #
+            # The return is load-bearing for the same reason as theirs: under -ErrorAction
+            # SilentlyContinue or Ignore, with no try up the call stack, this function would carry on
+            # past its own throw to the request.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
+                return
+            }
             $Attempt = $null
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
@@ -985,6 +1009,14 @@ function Invoke-OERGraphRequest {
                 throw (New-OERSignInRefusedError -Command $SignInRefusal)
                 return
             }
+            # SEC (A20): the supersession gate too; see the one at the top of the loop. What reaches
+            # it here is a step-up whose sign-in changed the state's identity: a command on the call
+            # stack still remembers the identity before it, so the retry below is refused.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
+                return
+            }
 
             # -- Retry once with the upgraded token --
             # Routed through Invoke-GraphAttempt like the first attempt: under -SkipHttpErrorCheck a
@@ -1071,6 +1103,14 @@ function Invoke-OERGraphRequest {
             $SignInRefusal = Get-OERSignInRefusal
             if ($null -ne $SignInRefusal) {
                 throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            # SEC (A20): the supersession gate too; see the one at the top of the loop. What reaches
+            # it here is a refresh whose sign-in changed the state's identity: a command on the call
+            # stack still remembers the identity before it, so the retry below is refused.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
                 return
             }
             # Same reason as the claims retry above: a soft failure must not read as a success.

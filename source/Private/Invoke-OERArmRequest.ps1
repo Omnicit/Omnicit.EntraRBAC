@@ -113,6 +113,29 @@ function Invoke-OERArmRequest {
             return
         }
 
+        # SEC (A20): never an ARM request while a command runs whose sign-in another command has since
+        # replaced. In a pipeline every begin block runs first, and almost every public cmdlet signs in
+        # in its begin block, so the upstream command's process block acts under the state the
+        # downstream command's sign-in switched to -- and would send the ARM token that sign-in cached,
+        # for the downstream command's tenant (F-E). Both sign-ins succeed, so the latch gate above does
+        # not see it. Initialize-OERAuth remembers which identity each command signed in as, and
+        # Get-OERSignInSupersession compares every frame on the call stack with the state, not only the
+        # nearest: a nested cmdlet signs in again without -TenantId, inherits the switched state and
+        # remembers it, so its own frame matches while the outer command's does not. A command that
+        # runs inside such a command's output -- the next command in its pipeline, or one in a
+        # ForEach-Object over it -- has that command's frame on its call stack (measured), so its
+        # requests are refused too. After the latch gate, so a command whose sign-in was refused is
+        # still reported as SignInRefused, and here, for the same requests as that gate -- the 401
+        # retry included, which reaches this gate when the refresh's sign-in changed the state's
+        # identity -- before the bearer token is materialized. The return is load-bearing for the same
+        # reason as the latch gate's: without it this function would carry on past its own throw to
+        # build the bearer and send it.
+        $SignInSupersession = Get-OERSignInSupersession
+        if ($null -ne $SignInSupersession) {
+            throw (New-OERSignInSupersededError -Command $SignInSupersession)
+            return
+        }
+
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
         $InvokeParams = @{

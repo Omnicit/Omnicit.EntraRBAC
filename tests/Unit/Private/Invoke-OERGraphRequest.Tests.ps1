@@ -3062,6 +3062,553 @@ Describe 'Invoke-OERGraphRequest sign-in latch gate (A19)' {
     }
 }
 
+Describe 'Invoke-OERGraphRequest sign-in supersession gate (A20)' {
+    # In a pipeline every begin block runs first, so a command's process block acts under the session a
+    # later command's sign-in switched to, and both sign-ins succeeded. Initialize-OERAuth therefore
+    # remembers which identity each command signed in as, and the wrapper refuses every request made
+    # while a command on the call stack remembers another identity than the state carries. These tests
+    # remember an identity the way Initialize-OERAuth does, from a stand-in command that calls
+    # Register-OERSignInIdentity with its own invocation, and then change the state the way a later
+    # sign-in would.
+    BeforeAll {
+        $script:SupOwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        $script:SupForeignContext = [pscustomobject]@{
+            AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+            ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+        }
+
+        # What a later command's successful sign-in leaves behind: the state names another tenant.
+        function script:Switch-SupersessionTenant {
+            & (Get-Module $script:moduleName) { $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777' }
+        }
+
+        # Latches the innermost frame of the named command on the current call stack, as the latch
+        # Describe's helper does: a refused refresh latches the wrapper's Invoke-GraphSingle, and a
+        # Pester mock body runs too far in for Lock-OERSignIn to find that frame itself.
+        function script:Lock-SupersessionNamedFrame {
+            param([Parameter(Mandatory)][string]$Name)
+            $Frame = @(Get-PSCallStack | Where-Object { $null -ne $_.InvocationInfo -and $_.InvocationInfo.MyCommand.Name -eq $Name })[0]
+            if ($null -eq $Frame) { throw "Lock-SupersessionNamedFrame: no frame of '$Name' is on the call stack." }
+            & (Get-Module $script:moduleName) {
+                param($Invocation)
+                if ($null -eq $script:_OERSignInLatch) {
+                    $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                }
+                $script:_OERSignInLatch.AddOrUpdate($Invocation, $true)
+            } $Frame.InvocationInfo
+        }
+
+        # Runs one probe in a runspace with no try: a stand-in command remembers the identity of an
+        # interactive state Initialize-OERAuth did not build (no session fingerprint, and the fresh
+        # import holds no latch table), so only the supersession gate can refuse, and calls the wrapper
+        # under -ErrorAction SilentlyContinue.
+        #   -Respond is pasted into a MODULE-scope Invoke-MgGraphRequest stub, after its counter
+        #     ($global:OERSupGraphCalls) and its hang guard (exit past five calls). The stub is removed
+        #     again, unqualified from the module scope, before the runspace check reads the module scope.
+        #   -BeforeCall runs in the stand-in after it remembered its identity and before the request.
+        # Initialize-OERAuth is replaced in the module scope by a sign-in that succeeds and changes the
+        # state's identity, as a step-up or refresh that switched tenants would: it latches its caller
+        # (the wrapper's Invoke-GraphSingle), switches the tenant, then releases and remembers that
+        # caller, exactly where the real function does. Hang guard: exit past five calls. It is not a
+        # transport name, so the runspace check does not read it, and the runspace is discarded with it.
+        # The records are read from $Error, cleared just before the call: SilentlyContinue keeps a
+        # suppressed throw off the error stream, not out of $Error.
+        function script:Invoke-SupersessionGraphProbe {
+            param(
+                [Parameter(Mandatory)][scriptblock]$Respond,
+                [scriptblock]$BeforeCall = {}
+            )
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+        ClientId = ''; Environment = 'Global'; GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+    }
+}
+$global:OERSupGraphCalls = 0
+$global:OERSupInitCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Invoke-MgGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method, [string]$Uri, $Body)
+        $global:OERSupGraphCalls++
+        if ($global:OERSupGraphCalls -gt 5) { exit }
+__RESPOND__
+    }
+    function script:Initialize-OERAuth {
+        [CmdletBinding()]
+        param($TenantId, $AuthMethod, $ClientId, $ClaimsChallenge, [switch]$ForceRefresh, [switch]$IncludeARM)
+        $global:OERSupInitCalls++
+        if ($global:OERSupInitCalls -gt 5) { exit }
+        $Caller = Lock-OERSignIn
+        $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+        Unlock-OERSignIn -Invocation $Caller
+        Register-OERSignInIdentity -Invocation $Caller
+    }
+}
+$Error.Clear()
+$Result = @(& (Get-Module Omnicit.EntraRBAC) {
+    function Invoke-SignedInCommand {
+        [CmdletBinding()]
+        param()
+        Register-OERSignInIdentity -Invocation $MyInvocation
+__BEFORECALL__
+        Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+    }
+    Invoke-SignedInCommand
+})
+$Records = @($Error | ForEach-Object { '{0} | {1}' -f [string]$_.FullyQualifiedErrorId, [string]$_.TargetObject })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-MgGraphRequest }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-MgGraphRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'RESULT COUNT: {0}' -f $Result.Count
+'GRAPH CALLS: {0}' -f $global:OERSupGraphCalls
+'INIT CALLS: {0}' -f $global:OERSupInitCalls
+foreach ($Record in $Records) { 'ERROR: {0}' -f $Record }
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__RESPOND__', $Respond.ToString()).Replace('__BEFORECALL__', $BeforeCall.ToString())
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The 'id | target' of every record a probe found in $Error.
+        function script:Get-SupersessionProbeRecord {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -like 'ERROR: *' } | ForEach-Object { "$_" -replace '^ERROR: ', '' })
+        }
+    }
+
+    BeforeEach {
+        $script:SupCurrent = $script:SupOwnContext
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:SupCurrent }
+        # A state Initialize-OERAuth would have built, carrying the fingerprint of the module's own
+        # session, so the session gate really compares. Interactive, so a 401 or a claims challenge
+        # reaches Initialize-OERAuth.
+        InModuleScope $script:moduleName -Parameters @{ C = $script:SupOwnContext } {
+            param($C)
+            $script:_OERAuthState = @{
+                TenantId                = '44444444-4444-4444-4444-444444444444'
+                AuthMethod              = 'Interactive'
+                ClientId                = ''
+                Environment             = 'Global'
+                GraphTokenExpiry        = [DateTime]::UtcNow.AddHours(1)
+                GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+        }
+    }
+
+    It 'S1: refuses a call made for a command whose remembered identity differs from the state with SignInSuperseded, sending nothing' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SupersededCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                # A later command's sign-in switches the state to another tenant.
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SupersededCommand
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInSuperseded*'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-SupersededCommand'
+        $Caught.Exception.Message | Should -Match 'Run the commands as separate statements'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'S2: refuses a call a nested command makes, naming the outer command whose remembered identity differs' {
+        # The nested command signs in again without -TenantId, inherits the switched state and
+        # remembers it, so its own frame matches the state and the walk must go on past it.
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $R = InModuleScope $script:moduleName {
+            function Invoke-NestedCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Value = $null
+                $Held = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Value)
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                @{ NestedHeld = $Held; NestedEquals = $Value -eq (Get-OERSignInIdentity); Caught = $Caught }
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                Invoke-NestedCommand
+            }
+            Invoke-OuterCommand
+        }
+
+        $R.NestedHeld | Should -BeTrue
+        $R.NestedEquals | Should -BeTrue
+        $R.Caught.FullyQualifiedErrorId | Should -BeLike 'SignInSuperseded*'
+        $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'S3: sends the call when the identity table was never created' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @('sent') } }
+
+        $R = InModuleScope $script:moduleName {
+            Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+            $Result = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups'
+            @{ Result = $Result; TableExists = $null -ne $script:_OERSignInIdentity }
+        }
+
+        @($R.Result.value) | Should -Be @('sent')
+        $R.TableExists | Should -BeFalse
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S4: sends the call when the remembering command''s identity equals the state' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @('sent') } }
+
+        $R = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Value = $null
+                $Held = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Value)
+                @{ Held = $Held; Result = (Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups') }
+            }
+            Invoke-SignedInCommand
+        }
+
+        # Not vacuous: the command remembers an identity, so it was compared.
+        $R.Held | Should -BeTrue
+        @($R.Result.value) | Should -Be @('sent')
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S5: sends the call when the table holds only a command that has finished' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @('sent') } }
+
+        $R = InModuleScope $script:moduleName {
+            function Invoke-FinishedCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $MyInvocation
+            }
+            function Invoke-LaterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups'
+            }
+            # Separate statements. Held here, so the weak table cannot drop the entry before the call.
+            $Kept = Invoke-FinishedCommand
+            $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+            $Value = $null
+            $Held = $script:_OERSignInIdentity.TryGetValue($Kept, [ref]$Value)
+            @{ Held = $Held; Differs = $Value -ne (Get-OERSignInIdentity); Result = (Invoke-LaterCommand) }
+        }
+
+        # Not vacuous: the table holds the finished command with an identity that differs from the
+        # state, so only its absence from the call stack lets the later command send.
+        $R.Held | Should -BeTrue
+        $R.Differs | Should -BeTrue
+        @($R.Result.value) | Should -Be @('sent')
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S6: refuses the token-rejected retry when the refresh''s sign-in changes the state''s identity' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { Switch-SupersessionTenant }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInSuperseded*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-SignedInCommand'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
+        # The first attempt, the rejected one: the retry never goes out.
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S7: refuses the claims-challenge retry when the step-up''s sign-in changes the state''s identity' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { Switch-SupersessionTenant }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInSuperseded*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-SignedInCommand'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S8a: reports a command that is latched as well as superseded as SignInRefused' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $R = InModuleScope $script:moduleName {
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                Initialize-StandIn
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                @{ Caught = $Caught; Supersession = Get-OERSignInSupersession }
+            }
+            Invoke-RefusedCommand
+        }
+
+        # Not vacuous: the supersession gate alone would refuse this command.
+        $R.Supersession | Should -BeExactly 'Invoke-RefusedCommand'
+        $R.Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'S8b: reports a changed session as GraphSessionChanged when the command is superseded as well' {
+        $script:SupCurrent = $script:SupForeignContext
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $R = InModuleScope $script:moduleName {
+            function Invoke-SupersededCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                @{ Caught = $Caught; Supersession = Get-OERSignInSupersession }
+            }
+            Invoke-SupersededCommand
+        }
+
+        $R.Supersession | Should -BeExactly 'Invoke-SupersededCommand'
+        $R.Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'S8c: reports a refresh that latched the wrapper and changed the identity as SignInRefused' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            Switch-SupersessionTenant
+            Lock-SupersessionNamedFrame -Name 'Invoke-GraphSingle'
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        # The supersession gate alone would name Invoke-SignedInCommand (S6); the latch gate names the
+        # latched retry's caller.
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-GraphSingle'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S8d: reports a session changed during the refresh as GraphSessionChanged when the refresh also changed the identity' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            Switch-SupersessionTenant
+            $script:SupCurrent = $script:SupForeignContext
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S8e: reports a step-up that latched the wrapper and changed the identity as SignInRefused' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            Switch-SupersessionTenant
+            Lock-SupersessionNamedFrame -Name 'Invoke-GraphSingle'
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-GraphSingle'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S8f: reports a session changed during the step-up as GraphSessionChanged when the step-up also changed the identity' {
+        $script:SupAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:SupAttempt++
+            if ($script:SupAttempt -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            Switch-SupersessionTenant
+            $script:SupCurrent = $script:SupForeignContext
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Invoke-SignedInCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SignedInCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'S9: refuses before any Graph call, outside any try, when a superseded command runs the wrapper under -ErrorAction SilentlyContinue' {
+        # The hit list is shared by the whole file, so each runspace test counts its own delta.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionGraphProbe -Respond {
+            @{ value = @('sent') }
+        } -BeforeCall {
+            # A later command's sign-in switches the state to another tenant.
+            $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Under SilentlyContinue, with no try up the call stack, a function carries on past its own
+        # throw: only the gate's return keeps the request from going out.
+        $R.Output | Should -Contain 'GRAPH CALLS: 0'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        # The gate was reached: SilentlyContinue keeps the refusal off the error stream, not out of $Error.
+        Get-SupersessionProbeRecord -Probe $R | Should -Be @('SignInSuperseded | Invoke-SignedInCommand')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S10: refuses the token-rejected retry, outside any try, when the refresh''s sign-in changes the identity, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionGraphProbe -Respond {
+            if ($global:OERSupGraphCalls -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        # One request, the rejected one: the retry after the refresh never goes out.
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        # The refresh remembered the new identity for the wrapper's own frame; the walk went on past it.
+        Get-SupersessionProbeRecord -Probe $R | Should -Be @('SignInSuperseded | Invoke-SignedInCommand')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S11: refuses the claims-challenge retry, outside any try, when the step-up''s sign-in changes the identity, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionGraphProbe -Respond {
+            if ($global:OERSupGraphCalls -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        Get-SupersessionProbeRecord -Probe $R | Should -Be @('SignInSuperseded | Invoke-SignedInCommand')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}
+
 Describe 'A command whose sign-in was refused sends nothing through either transport (A19, F1)' {
     # Step 4b's finding F1: a terminating error from Initialize-OERAuth ends only Initialize-OERAuth.
     # Outside any try, the command that called it carries on, and its calls -- and those of every
@@ -3240,6 +3787,377 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         $R.Output | Should -Contain 'GRAPH CALLS: 1'
         $R.Output | Should -Contain 'GROUPS: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'the refused command sends nothing, and the second command is answered by the stub'
+    }
+}
+
+Describe 'A command whose sign-in a later command in the pipeline replaced sends nothing (A20, F-E)' {
+    # Step 4b round 1's finding F-E: in a pipeline every begin block runs first, and almost every
+    # public cmdlet signs in in its begin block, so New-OERGroup -TenantId A ... |
+    # Add-OERGroupMember -TenantId B created the group in B: both sign-ins succeed, so neither the
+    # latch nor the session gate sees it. These tests run the REAL Initialize-OERAuth, end to end, in a
+    # runspace with no try anywhere, so a refused request is only stopped by the gate itself.
+    #
+    # Measured (2026-10-05, plain PowerShell): a downstream command's process block, and a command
+    # inside a ForEach-Object script block, runs INSIDE the upstream command's output call, with the
+    # upstream command's frame -- its own invocation -- still on the call stack; separate statements
+    # do not have it. By the rule that any frame on the call stack whose memory differs refuses the
+    # request, a downstream command that runs inside the output of a superseded command is refused
+    # too: its requests are made while the upstream command runs, and the record names the innermost
+    # frame whose memory differs -- the upstream command.
+    #
+    # The stand-ins handle a refused request the way the public cmdlets do (Get-OERGroup, for one):
+    # each request in a try of its own, the record scrubbed and written as a non-terminating error, so
+    # the command carries on to its next request. Measured: the gate's throw, caught nowhere, ends the
+    # whole statement -- with stand-ins that did not catch, the first refusal ended the runspace's
+    # script. Nothing else wraps the pipeline, the sign-ins or the stand-ins.
+    BeforeAll {
+        # Runs one scenario in a runspace with no try, against the real Initialize-OERAuth. Every
+        # transport it and the two wrappers reach is a MODULE-scope stub, so no call reaches the
+        # tripwire's global functions; each has a hang guard (exit past a bound no scenario reaches)
+        # and each is removed again below, unqualified from the module scope, before the runspace
+        # check reads the module scope.
+        #   Get-AzToken answers a token for exactly the tenant it was asked for (-Tenant, as
+        #     Initialize-OERAuth passes it), so neither TenantMismatch check refuses it, for Microsoft
+        #     Graph or Azure Resource Manager by the resource named, and records 'graph <tenant>' or
+        #     'arm <tenant>'. Never a real token.
+        #   Connect-MgGraph records a session naming the tenant of the last Graph token, and
+        #     Get-MgContext returns it, so after each sign-in the A18 session gate finds the module's
+        #     own session: only the supersession gate can refuse.
+        #   Invoke-MgGraphRequest and Invoke-WebRequest record the request's URI only (never a header)
+        #     and answer an empty list.
+        # -Scenario runs in the module scope, in the same block that defines the stand-ins, so they
+        # can call private functions; with -AtTopLevel it runs at the top of the script instead, as a
+        # prompt would run it. The stand-ins have the shape of almost every public cmdlet:
+        # Initialize-OERAuth called directly in the command's own begin block, the requests in its
+        # process block, each caught and written as an error. The tenants are invented: A is
+        # 4444..., B is 7777....
+        function script:Invoke-SupersessionPipelineProbe {
+            param(
+                [Parameter(Mandatory)][scriptblock]$Scenario,
+                [switch]$AtTopLevel
+            )
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+$global:OERA20Context = $null
+$global:OERA20GraphTenant = $null
+$global:OERA20ConnectCalls = 0
+$global:OERA20ContextCalls = 0
+$global:OERA20TokenCalls = [System.Collections.Generic.List[string]]::new()
+$global:OERA20GraphRequests = [System.Collections.Generic.List[string]]::new()
+$global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Get-AzToken {
+        [CmdletBinding()]
+        param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
+            [switch]$Interactive, [switch]$DeviceCode, [switch]$ManagedIdentity, [switch]$Force)
+        if ($global:OERA20TokenCalls.Count -ge 10) { exit }
+        $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
+        $global:OERA20TokenCalls.Add(('{0} {1}' -f $Kind, $Tenant))
+        if ($Kind -eq 'graph') { $global:OERA20GraphTenant = $Tenant }
+        [pscustomobject]@{
+            Token     = 'NOT-A-REAL-TOKEN-' + $Kind
+            ExpiresOn = [System.DateTimeOffset]::UtcNow.AddHours(1)
+            Identity  = 'oer-a20-probe'
+            TenantId  = $Tenant
+        }
+    }
+    function script:Connect-MgGraph {
+        [CmdletBinding()]
+        param($AccessToken, [switch]$NoWelcome, $Environment)
+        $global:OERA20ConnectCalls++
+        if ($global:OERA20ConnectCalls -gt 10) { exit }
+        $global:OERA20Context = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = $global:OERA20GraphTenant
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+    }
+    function script:Get-MgContext {
+        $global:OERA20ContextCalls++
+        if ($global:OERA20ContextCalls -gt 100) { exit }
+        $global:OERA20Context
+    }
+    function script:Invoke-MgGraphRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Body)
+        if ($global:OERA20GraphRequests.Count -ge 10) { exit }
+        $global:OERA20GraphRequests.Add([string]$Uri)
+        @{ value = @() }
+    }
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        if ($global:OERA20ArmRequests.Count -ge 10) { exit }
+        $global:OERA20ArmRequests.Add([string]$Uri)
+        [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
+    }
+}
+$Error.Clear()
+$Output = @(& (Get-Module Omnicit.EntraRBAC) {
+    function Invoke-FirstProbe {
+        [CmdletBinding()]
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId)
+        begin { Initialize-OERAuth -TenantId $TenantId -IncludeARM }
+        process {
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-FirstProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            $InputObject
+        }
+    }
+    function Invoke-SecondProbe {
+        [CmdletBinding()]
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId)
+        begin { Initialize-OERAuth -TenantId $TenantId -IncludeARM }
+        process {
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-SecondProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            $InputObject
+        }
+    }
+    function Invoke-OuterProbe {
+        [CmdletBinding()]
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId)
+        begin { Initialize-OERAuth -TenantId $TenantId -IncludeARM }
+        process {
+            # A real public cmdlet without -TenantId: it signs in again in its own begin block, from
+            # whatever state the module holds by then, and remembers it.
+            $null = Get-OERGroup -Group 'oer-a20-probe'
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&probe=Invoke-OuterProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            $InputObject
+        }
+    }
+    function Invoke-UpProbe {
+        [CmdletBinding()]
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId)
+        begin { Initialize-OERAuth -TenantId $TenantId }
+        process {
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-UpProbe-before' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            $InputObject
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-UpProbe-after' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+        }
+    }
+    function Invoke-DownProbe {
+        [CmdletBinding()]
+        param([string]$TenantId)
+        begin { Initialize-OERAuth -TenantId $TenantId -IncludeARM }
+        process {
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-DownProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&probe=Invoke-DownProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
+        }
+    }
+__MODULE_SCENARIO__
+})
+$Output += @(
+__TOP_SCENARIO__
+)
+# Oldest first: $Error holds the newest record first.
+$Records = @($Error)
+[array]::Reverse($Records)
+$RecordLines = foreach ($Record in $Records) {
+    'ERROR: {0} | {1} | {2}' -f [string]$Record.FullyQualifiedErrorId, [string]$Record.TargetObject, [string]$Record.Exception.Message
+}
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) {
+    Remove-Item -Path function:Get-AzToken
+    Remove-Item -Path function:Connect-MgGraph
+    Remove-Item -Path function:Get-MgContext
+    Remove-Item -Path function:Invoke-MgGraphRequest
+    Remove-Item -Path function:Invoke-WebRequest
+}
+$Restored = foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+    $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+    [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+}
+'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+'CONTEXT STUB REMOVED: {0}' -f ($null -eq (& (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Get-MgContext -CommandType Function -ErrorAction Ignore }))
+'OUTPUT COUNT: {0}' -f $Output.Count
+foreach ($Call in $global:OERA20TokenCalls) { 'TOKEN: {0}' -f $Call }
+foreach ($Uri in $global:OERA20GraphRequests) { 'GRAPH: {0}' -f $Uri }
+foreach ($Uri in $global:OERA20ArmRequests) { 'ARM: {0}' -f $Uri }
+$RecordLines
+'END OF SCRIPT REACHED'
+'@
+            $ModuleScenario = if ($AtTopLevel) { '' } else { $Scenario.ToString() }
+            $TopScenario = if ($AtTopLevel) { $Scenario.ToString() } else { '' }
+            $Text = $Text.Replace('__MODULE_SCENARIO__', $ModuleScenario).Replace('__TOP_SCENARIO__', $TopScenario)
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The text after a probe line's prefix, for every line that carries it.
+        function script:Get-PipelineProbeLine {
+            param([Parameter(Mandatory)]$Probe, [Parameter(Mandatory)][string]$Prefix)
+            @($Probe.Output | Where-Object { "$_".StartsWith($Prefix) } | ForEach-Object { "$_".Substring($Prefix.Length) })
+        }
+
+        # The 'id | target' of every SignInSuperseded record a probe found in $Error, oldest first. The
+        # id is the FullyQualifiedErrorId, so it ends in the name of the command that wrote the record
+        # -- the command whose request was refused -- while the target is the command the gate named.
+        function script:Get-PipelineProbeSuperseded {
+            param([Parameter(Mandatory)]$Probe)
+            @(Get-PipelineProbeLine -Probe $Probe -Prefix 'ERROR: ' | Where-Object { $_ -like 'SignInSuperseded*' } |
+                    ForEach-Object { ($_ -split ' \| ')[0..1] -join ' | ' })
+        }
+    }
+
+    It 'P1: two commands in one pipeline naming different tenants send nothing while the first one runs' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' | Invoke-SecondProbe -TenantId '77777777-7777-7777-7777-777777777777'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # Both sign-ins succeeded, each with its own token for each resource: the second switched the
+        # state to B before the first command's process block ran.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # The first command's two requests, then the second command's two: the second runs inside the
+        # first command's output, with the first command's frame on the call stack, so its requests
+        # are made while the first command runs and every record names the first command.
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe'
+            'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe')
+        # Each command carried on past its refusals, which it wrote as errors.
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P1b: New-OERGroup -TenantId A piped to Add-OERGroupMember -TenantId B creates nothing' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -AtTopLevel -Scenario {
+            New-OERGroup -TenantId '44444444-4444-4444-4444-444444444444' -DisplayName 'oer-a20-probe-group' |
+                Add-OERGroupMember -TenantId '77777777-7777-7777-7777-777777777777' -PrincipalId '99999999-9999-9999-9999-999999999999'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # Both sign-ins succeeded: Add-OERGroupMember's begin block switched the state to B before
+        # New-OERGroup's process block ran.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777')
+        # Nothing was sent: the first request New-OERGroup attempts, its name lookup, is refused, and no
+        # group reaches Add-OERGroupMember.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        # New-OERGroup catches the refused lookup and reports it as GroupResolveFailed, carrying the
+        # refusal's message; its catch scrubs the SignInSuperseded record itself from $Error, so the
+        # record left is New-OERGroup's own, with the group name as its target.
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike 'GroupResolveFailed,New-OERGroup | oer-a20-probe-group | *Run the commands as separate statements*'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P2: an outer command, its nested cmdlet and the command downstream of it send nothing while the outer command runs' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-OuterProbe -TenantId '44444444-4444-4444-4444-444444444444' | Invoke-SecondProbe -TenantId '77777777-7777-7777-7777-777777777777'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # No third pair of token calls: the nested Get-OERGroup signed in from the cache of B.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # The nested cmdlet's read, the outer command's ARM call, then the downstream command's two,
+        # which run inside the outer command's output: all made while the outer command runs, so each
+        # record names the outer command, though the nested cmdlet remembers the state's own identity.
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Get-OERGroup | Invoke-OuterProbe', 'SignInSuperseded,Invoke-OuterProbe | Invoke-OuterProbe'
+            'SignInSuperseded,Invoke-SecondProbe | Invoke-OuterProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-OuterProbe')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P3: the same pipeline naming the same tenant twice sends every request' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' | Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The second command's sign-in is a cached return of the first one's.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P4: two separate statements naming different tenants each send their requests' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444'
+            'item' | Invoke-SecondProbe -TenantId '77777777-7777-7777-7777-777777777777'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 2'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P5: a command that signs in to another tenant inside ForEach-Object over an upstream command''s output sends nothing while the upstream command runs' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-UpProbe -TenantId '44444444-4444-4444-4444-444444444444' | ForEach-Object { Invoke-DownProbe -TenantId '77777777-7777-7777-7777-777777777777' }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # Down signs in to B inside Up's output call, after Up's first request went out under A.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444'
+            'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-UpProbe-before')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # Down's Graph and ARM requests, then Up's second request, all made while Up runs: each record
+        # names Up, the innermost frame whose memory differs (Down's own memory equals the state).
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Invoke-DownProbe | Invoke-UpProbe', 'SignInSuperseded,Invoke-DownProbe | Invoke-UpProbe'
+            'SignInSuperseded,Invoke-UpProbe | Invoke-UpProbe')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P6: a command whose sign-in was a cached return is refused the same way' {
+        # The shape after Connect-OER: the first command names no tenant and signs in from the cache.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444'
+            'item' | Invoke-FirstProbe | Invoke-SecondProbe -TenantId '77777777-7777-7777-7777-777777777777'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # No token call for the second statement's first command: a cached return.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 77777777-7777-7777-7777-777777777777', 'arm 77777777-7777-7777-7777-777777777777')
+        # Only the first statement's two requests went out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @('https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe')
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
+            'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe'
+            'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
 
