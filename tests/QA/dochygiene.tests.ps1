@@ -153,6 +153,60 @@ BeforeAll {
     )
 
     # =====================================================================================
+    # THE PLACEHOLDER REGISTER IS READ, NOT JUST CITED.
+    #
+    # docs/live-verification/README.md allocates every placeholder used outside the checklists --
+    # the all-zeros object ids and the personN addresses -- one row per slot, and names the next
+    # free one in a sentence. Until this gate read it, nothing checked the register against itself
+    # or against the tree, and it drifted: the sentence named a slot the table had already given
+    # away. The register's whole purpose is to stop two objects sharing one placeholder, so a
+    # register that disagrees with itself is the defect it exists to prevent, waiting to happen.
+    #
+    # The gate now reads it (Get-DocHygienePlaceholderRegister), fails on a register that
+    # contradicts itself (Get-DocHygieneRegisterFinding), and fails on a placeholder used in
+    # source/, tests/, docs/examples/ or docs/development/ that the register does not show as
+    # taken. What it still cannot check is whether a slot's description means what the last
+    # person thought it meant; the unique description per row is that human check.
+    #
+    # The sample below mirrors the real register's shapes and is the reader's known answer. A row
+    # after the section's end is there on purpose: the reader must stop at the next heading. Ids
+    # are read as HEX, which is how '...0aa' and '...abc' take their place among the others.
+    # =====================================================================================
+    $script:DocHygieneSampleRegister = @'
+Text before the register is not part of it.
+
+## The placeholder register
+
+Prose before the tables is read too, and holds nothing the reader takes.
+
+| Placeholder | Slot (generic) | Status |
+|---|---|---|
+| `...000` - `...045` | the per-file numbering and the any-id stand-in | taken, under the per-file rule |
+| `...046` | a subscription id in the worked example | taken |
+| `...047` | a principal id in the worked example | taken |
+| `...066` and up | -- | **FREE. Allocate from here.** |
+| `...099` | a deliberately non-existent object id | taken |
+| `...0aa` | an assignment target principal id | taken |
+| `...abc` | an administrative unit id | taken |
+
+Addresses follow the same global rule:
+
+| Placeholder | Slot (generic) | Status |
+|---|---|---|
+| `person1` - `person13`, `person15` - `person45` | reviewers, requestors and members | taken |
+| `person14` | -- | allocated and never used; left reserved, do not reuse |
+| `person46` and up | -- | **FREE. Allocate from here.** |
+
+`...0aa`, `...abc` and `...099` sit outside the counting sequence for historical reasons and are
+listed so they are not handed out twice. Allocate new object ids from `...066` and new addresses
+from `person46`, and add a row here in the same commit that uses them.
+
+## The next section
+
+| `...070` | a row after the register, which the reader must not take | taken |
+'@
+
+    # =====================================================================================
     # ENUMERATE TRACKED FILES WITH `git ls-files`, NOT THE FILESYSTEM.
     #
     # Raw console output and unredacted working copies live beside the checklists as UNTRACKED
@@ -574,6 +628,468 @@ BeforeAll {
 
         return $false
     }
+
+    function Get-DocHygienePlaceholderRegister {
+        <#
+            .SYNOPSIS
+                Reads the placeholder register out of the lines of docs/live-verification/README.md.
+
+            .DESCRIPTION
+                The register runs from the line '## The placeholder register' to the next line
+                that starts with '## '. Nothing outside it is read.
+
+                Every table row whose first cell holds a backticked id token (three dots and three
+                hex characters) or address token ('person' and a number) becomes one Row:
+
+                - Table: Id or Address, from the kind of the first token in the cell.
+                - Intervals: one [Start, End] pair per comma-separated part of the first cell -- a
+                  single token, an 'A - B' range, or 'A and up', whose End is [int]::MaxValue. An
+                  id is its three characters read as HEX; an address is its number.
+                - Unreadable: true when any part of the first cell is none of those three shapes,
+                  when the cell mixes ids and addresses, when a range ends before it starts, or when
+                  the row has fewer than three cells. Such a row is REPORTED, never skipped: a
+                  reader that dropped a row it could not parse would quietly stop checking it.
+                - Slot: the second cell, trimmed.
+                - Status: Free when the third cell says FREE, Taken when it starts with 'taken',
+                  otherwise Reserved.
+                - Line: the 1-based line number in Line.
+
+                The prose is read a paragraph at a time, with each paragraph's lines joined, so a
+                sentence that wraps is still one sentence. AllocateId and AllocateAddress come from
+                the first sentence of the form 'Allocate new object ids from (id) and new addresses
+                from (address)', and AllocateLine is the line it starts on; all three are $null when
+                no such sentence exists. Outliers are the ids named in the sentence that says they
+                sit 'outside the counting sequence', and HeadingLine is the line of the heading
+                itself, or $null when the section is missing.
+        #>
+        [OutputType([PSCustomObject])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [AllowEmptyString()]
+            [string[]]$Line
+        )
+
+        $Token = '`(?:\.\.\.[0-9A-Fa-f]{3}|person\d{1,9})`'
+        $PartPattern = [regex]('^\s*(' + $Token + ')(?:\s*-\s*(' + $Token + ')|\s+(and up))?\s*$')
+        $AllocatePattern = [regex]'(?i)Allocate\s+new\s+object\s+ids\s+from\s+`\.\.\.([0-9A-Fa-f]{3})`\s+and\s+new\s+addresses\s+from\s+`person(\d{1,9})`'
+        $OutlierPattern = [regex]'(?i)outside\s+the\s+counting\s+sequence'
+        $IdTokenPattern = [regex]'`\.\.\.([0-9A-Fa-f]{3})`'
+
+        $ReadToken = {
+            param ($Text)
+
+            $Bare = $Text.Trim('`')
+
+            if ($Bare.StartsWith('...')) {
+                return [PSCustomObject]@{ Kind = 'Id'; Value = [Convert]::ToInt32($Bare.Substring(3), 16) }
+            }
+
+            return [PSCustomObject]@{ Kind = 'Address'; Value = [int]$Bare.Substring(6) }
+        }
+
+        $HeadingIndex = -1
+        for ($Index = 0; $Index -lt $Line.Count; $Index++) {
+            if ($Line[$Index].TrimEnd() -eq '## The placeholder register') {
+                $HeadingIndex = $Index
+                break
+            }
+        }
+
+        $Rows = [System.Collections.Generic.List[object]]::new()
+        $Paragraphs = [System.Collections.Generic.List[int[]]]::new()
+
+        if ($HeadingIndex -ge 0) {
+            $Current = [System.Collections.Generic.List[int]]::new()
+
+            for ($Index = $HeadingIndex + 1; $Index -lt $Line.Count; $Index++) {
+                $Text = $Line[$Index]
+
+                if ($Text.StartsWith('## ')) {
+                    break
+                }
+
+                if ($Text -match '^\s*\|' -or [string]::IsNullOrWhiteSpace($Text)) {
+                    if ($Current.Count -gt 0) {
+                        $Paragraphs.Add($Current.ToArray())
+                        $Current.Clear()
+                    }
+                }
+                else {
+                    $Current.Add($Index)
+                    continue
+                }
+
+                if ($Text -notmatch '^\s*\|') {
+                    continue
+                }
+
+                $Cells = $Text.Trim().Trim('|').Split('|')
+
+                # A header row or the separator row holds no token and is not a register row.
+                $FirstToken = [regex]::Match($Cells[0], $Token)
+                if (-not $FirstToken.Success) {
+                    continue
+                }
+
+                $Kinds = [System.Collections.Generic.HashSet[string]]::new()
+                $Intervals = [System.Collections.Generic.List[int[]]]::new()
+                $Unreadable = $Cells.Count -lt 3
+
+                foreach ($Part in $Cells[0].Split(',')) {
+                    $PartMatch = $PartPattern.Match($Part)
+
+                    if (-not $PartMatch.Success) {
+                        $Unreadable = $true
+                        continue
+                    }
+
+                    $From = & $ReadToken $PartMatch.Groups[1].Value
+                    $null = $Kinds.Add($From.Kind)
+                    $To = $From.Value
+
+                    if ($PartMatch.Groups[2].Success) {
+                        $Last = & $ReadToken $PartMatch.Groups[2].Value
+                        $null = $Kinds.Add($Last.Kind)
+                        $To = $Last.Value
+                    }
+                    elseif ($PartMatch.Groups[3].Success) {
+                        $To = [int]::MaxValue
+                    }
+
+                    if ($To -lt $From.Value) {
+                        $Unreadable = $true
+                    }
+
+                    $Intervals.Add([int[]]@($From.Value, $To))
+                }
+
+                if ($Kinds.Count -gt 1) {
+                    $Unreadable = $true
+                }
+
+                $Status = 'Reserved'
+                if ($Cells.Count -ge 3) {
+                    if ($Cells[2] -match '\bFREE\b') {
+                        $Status = 'Free'
+                    }
+                    elseif ($Cells[2].Trim() -match '^taken\b') {
+                        $Status = 'Taken'
+                    }
+                }
+
+                $Rows.Add([PSCustomObject]@{
+                        Table      = (& $ReadToken $FirstToken.Value).Kind
+                        Intervals  = $Intervals.ToArray()
+                        Slot       = $(if ($Cells.Count -ge 2) { $Cells[1].Trim() } else { '' })
+                        Status     = $Status
+                        Unreadable = $Unreadable
+                        Line       = $Index + 1
+                    })
+            }
+
+            if ($Current.Count -gt 0) {
+                $Paragraphs.Add($Current.ToArray())
+            }
+        }
+
+        $AllocateId = $null
+        $AllocateAddress = $null
+        $AllocateLine = $null
+        $Outliers = [System.Collections.Generic.List[int]]::new()
+        $OutliersRead = $false
+
+        foreach ($Indices in $Paragraphs) {
+            # One string per paragraph, each line trimmed and joined with one space, and the
+            # offset at which each line starts in it.
+            $Builder = [System.Text.StringBuilder]::new()
+            $Offsets = [int[]]::new($Indices.Count)
+
+            for ($Member = 0; $Member -lt $Indices.Count; $Member++) {
+                $Offsets[$Member] = $Builder.Length
+                $null = $Builder.Append($Line[$Indices[$Member]].Trim()).Append(' ')
+            }
+
+            $Joined = $Builder.ToString()
+
+            if ($null -eq $AllocateId) {
+                $AllocateMatch = $AllocatePattern.Match($Joined)
+
+                if ($AllocateMatch.Success) {
+                    $AllocateId = [Convert]::ToInt32($AllocateMatch.Groups[1].Value, 16)
+                    $AllocateAddress = [int]$AllocateMatch.Groups[2].Value
+
+                    $Member = $Indices.Count - 1
+                    while ($Offsets[$Member] -gt $AllocateMatch.Index) {
+                        $Member--
+                    }
+
+                    $AllocateLine = $Indices[$Member] + 1
+                }
+            }
+
+            $OutlierMatch = $OutlierPattern.Match($Joined)
+
+            if (-not $OutliersRead -and $OutlierMatch.Success) {
+                $OutliersRead = $true
+
+                # The sentence around the phrase. A sentence ends at '.', '!' or '?' followed by
+                # whitespace; the dots inside a token are followed by another dot or a hex digit,
+                # never by whitespace, so they do not end one.
+                $SentenceStart = 0
+                foreach ($Stop in [regex]::Matches($Joined.Substring(0, $OutlierMatch.Index), '[.!?]\s')) {
+                    $SentenceStart = $Stop.Index + $Stop.Length
+                }
+
+                $SentenceEnd = $Joined.Length
+                $EndMatch = [regex]::new('[.!?](?:\s|$)').Match($Joined, $OutlierMatch.Index + $OutlierMatch.Length)
+                if ($EndMatch.Success) {
+                    $SentenceEnd = $EndMatch.Index + 1
+                }
+
+                foreach ($IdMatch in $IdTokenPattern.Matches($Joined.Substring($SentenceStart, $SentenceEnd - $SentenceStart))) {
+                    $Outliers.Add([Convert]::ToInt32($IdMatch.Groups[1].Value, 16))
+                }
+            }
+        }
+
+        [PSCustomObject]@{
+            HeadingLine     = $(if ($HeadingIndex -ge 0) { $HeadingIndex + 1 } else { $null })
+            Rows            = $Rows.ToArray()
+            AllocateId      = $AllocateId
+            AllocateAddress = $AllocateAddress
+            AllocateLine    = $AllocateLine
+            Outliers        = $Outliers.ToArray()
+        }
+    }
+
+    function Get-DocHygieneRegisterFinding {
+        <#
+            .SYNOPSIS
+                Returns one 'line: what' string per defect in a register read by
+                Get-DocHygienePlaceholderRegister.
+
+            .DESCRIPTION
+                A register is defective when:
+
+                - a row's placeholder cell cannot be read (such a row takes part in no other check);
+                - two taken or reserved intervals of the same table overlap;
+                - two rows that are not FREE share a slot description, compared trimmed and
+                  ignoring case, where '--' is no description and is never compared;
+                - a table has not exactly one FREE row;
+                - the Allocate sentence names an id or an address other than the start of its
+                  table's FREE row, or is missing;
+                - a taken or reserved id at or above the Id table's FREE start is not one of the
+                  outliers, or a taken or reserved address is at or above the Address table's.
+
+                The last two need exactly one FREE row to compare against; a table without one is
+                reported by the check before them instead. A finding names placeholder tokens
+                such as '...066' and 'person46', which identify a slot in this register and nothing
+                in any tenant, and never quotes a slot description.
+        #>
+        [OutputType([string])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [object]$Register
+        )
+
+        $Findings = [System.Collections.Generic.List[string]]::new()
+        $Anchor = $(if ($Register.HeadingLine) { $Register.HeadingLine } else { 0 })
+
+        $FormatToken = {
+            param ($Table, $Value)
+
+            if ($Table -eq 'Id') {
+                return ('...{0:x3}' -f $Value)
+            }
+
+            return ('person{0}' -f $Value)
+        }
+
+        $FormatInterval = {
+            param ($Table, $Interval)
+
+            if ($Interval[0] -eq $Interval[1]) {
+                return (& $FormatToken $Table $Interval[0])
+            }
+
+            if ($Interval[1] -eq [int]::MaxValue) {
+                return ('{0} and up' -f (& $FormatToken $Table $Interval[0]))
+            }
+
+            return ('{0} - {1}' -f (& $FormatToken $Table $Interval[0]), (& $FormatToken $Table $Interval[1]))
+        }
+
+        foreach ($Row in @($Register.Rows | Where-Object { $_.Unreadable })) {
+            $Findings.Add(("{0}: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind" -f $Row.Line))
+        }
+
+        $Readable = @($Register.Rows | Where-Object { -not $_.Unreadable })
+        $Held = @($Readable | Where-Object { $_.Status -ne 'Free' })
+
+        # Repeated slot descriptions, across both tables.
+        $SlotLine = @{}
+        foreach ($Row in $Held) {
+            $Slot = $Row.Slot.Trim().ToLowerInvariant()
+
+            if ($Slot -eq '--' -or $Slot -eq '') {
+                continue
+            }
+
+            if ($SlotLine.ContainsKey($Slot)) {
+                $Findings.Add(('{0}: the slot description repeats the one on line {1}' -f $Row.Line, $SlotLine[$Slot]))
+                continue
+            }
+
+            $SlotLine[$Slot] = $Row.Line
+        }
+
+        foreach ($Table in 'Id', 'Address') {
+            $TableRows = @($Readable | Where-Object { $_.Table -eq $Table })
+            $TableHeld = @($Held | Where-Object { $_.Table -eq $Table })
+            $Free = @($TableRows | Where-Object { $_.Status -eq 'Free' })
+
+            # Overlapping intervals, every pair once, a row's own intervals included.
+            $Flat = @(
+                foreach ($Row in $TableHeld) {
+                    foreach ($Interval in $Row.Intervals) {
+                        [PSCustomObject]@{ Interval = $Interval; Line = $Row.Line }
+                    }
+                }
+            )
+
+            for ($First = 0; $First -lt $Flat.Count; $First++) {
+                for ($Second = $First + 1; $Second -lt $Flat.Count; $Second++) {
+                    $A = $Flat[$First].Interval
+                    $B = $Flat[$Second].Interval
+
+                    if ($A[0] -le $B[1] -and $B[0] -le $A[1]) {
+                        $Findings.Add(('{0}: the {1} interval {2} overlaps {3} on line {4}' -f $Flat[$Second].Line, $Table, (& $FormatInterval $Table $B), (& $FormatInterval $Table $A), $Flat[$First].Line))
+                    }
+                }
+            }
+
+            if ($Free.Count -ne 1) {
+                $Line = $(if ($TableRows.Count -gt 0) { $TableRows[0].Line } else { $Anchor })
+                $Findings.Add(('{0}: the {1} table has {2} FREE rows, not exactly one' -f $Line, $Table, $Free.Count))
+                continue
+            }
+
+            $FreeStart = [int]::MaxValue
+            foreach ($Interval in $Free[0].Intervals) {
+                if ($Interval[0] -lt $FreeStart) {
+                    $FreeStart = $Interval[0]
+                }
+            }
+
+            $Allocate = $(if ($Table -eq 'Id') { $Register.AllocateId } else { $Register.AllocateAddress })
+
+            if ($null -eq $Allocate -or $Allocate -ne $FreeStart) {
+                $Named = $(if ($null -eq $Allocate) { 'nothing' } else { & $FormatToken $Table $Allocate })
+                $Line = $(if ($Register.AllocateLine) { $Register.AllocateLine } else { $Anchor })
+                $Findings.Add(('{0}: the Allocate sentence names {1} for the {2} table, whose FREE row starts at {3}' -f $Line, $Named, $Table, (& $FormatToken $Table $FreeStart)))
+            }
+
+            foreach ($Row in $TableHeld) {
+                foreach ($Interval in $Row.Intervals) {
+                    if ($Interval[1] -lt $FreeStart) {
+                        continue
+                    }
+
+                    if ($Table -eq 'Address') {
+                        $Findings.Add(('{0}: the Address slot {1} is held at or above the FREE start {2}' -f $Row.Line, (& $FormatInterval $Table $Interval), (& $FormatToken $Table $FreeStart)))
+                        continue
+                    }
+
+                    if ($Interval[0] -eq $Interval[1] -and @($Register.Outliers) -contains $Interval[0]) {
+                        continue
+                    }
+
+                    $Findings.Add(('{0}: the Id slot {1} is held at or above the FREE start {2} and is not a named outlier' -f $Row.Line, (& $FormatInterval $Table $Interval), (& $FormatToken $Table $FreeStart)))
+                }
+            }
+        }
+
+        return $Findings
+    }
+
+    function Get-DocHygieneUnregisteredPlaceholderLocation {
+        <#
+            .SYNOPSIS
+                Returns 'path:line' for every placeholder in File that Register does not show as taken.
+
+            .DESCRIPTION
+                An all-zeros object id is a register placeholder when the last twelve hex digits
+                start with nine zeros; its slot is the last three, read as hex, and it must fall in
+                a TAKEN interval of the Id table. Any other tail is reported too: it has the
+                placeholder's shape without being one the register can hand out. A
+                personN@example.com address must fall in a TAKEN interval of the Address table.
+
+                Reserved and FREE are both reported. A reserved slot was set aside so that it is
+                never used, and a FREE one used without a row is exactly the state the next person
+                allocates over. Unreadable rows grant nothing.
+
+                The matched value is never returned, only its location.
+        #>
+        [OutputType([string])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [object[]]$File,
+
+            [Parameter(Mandatory = $true)]
+            [object]$Register
+        )
+
+        $GuidPattern = [regex]'(?i)00000000-0000-0000-0000-([0-9a-f]{12})'
+        $AddressPattern = [regex]'(?i)(?<![A-Za-z0-9._%+-])person(\d+)@example\.com'
+
+        $Taken = @($Register.Rows | Where-Object { $_.Status -eq 'Taken' -and -not $_.Unreadable })
+        $TakenId = @(foreach ($Row in @($Taken | Where-Object { $_.Table -eq 'Id' })) { $Row.Intervals })
+        $TakenAddress = @(foreach ($Row in @($Taken | Where-Object { $_.Table -eq 'Address' })) { $Row.Intervals })
+
+        $IsInside = {
+            param ($Value, $Intervals)
+
+            foreach ($Interval in $Intervals) {
+                if ($Value -ge $Interval[0] -and $Value -le $Interval[1]) {
+                    return $true
+                }
+            }
+
+            return $false
+        }
+
+        $Locations = [System.Collections.Generic.List[string]]::new()
+
+        foreach ($Entry in $File) {
+            for ($Index = 0; $Index -lt $Entry.Lines.Count; $Index++) {
+                $Text = $Entry.Lines[$Index]
+
+                foreach ($Match in $GuidPattern.Matches($Text)) {
+                    $Tail = $Match.Groups[1].Value
+
+                    if ($Tail.StartsWith('000000000') -and (& $IsInside ([Convert]::ToInt32($Tail.Substring(9), 16)) $TakenId)) {
+                        continue
+                    }
+
+                    $Locations.Add(('{0}:{1}' -f $Entry.RelativePath, ($Index + 1)))
+                }
+
+                foreach ($Match in $AddressPattern.Matches($Text)) {
+                    $Number = 0L
+
+                    if ([long]::TryParse($Match.Groups[1].Value, [ref]$Number) -and (& $IsInside $Number $TakenAddress)) {
+                        continue
+                    }
+
+                    $Locations.Add(('{0}:{1}' -f $Entry.RelativePath, ($Index + 1)))
+                }
+            }
+        }
+
+        return $Locations
+    }
 }
 
 Describe 'Documentation hygiene' -Tags 'DocHygiene' {
@@ -882,6 +1398,199 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
         # declares, not a value found in the tree.
         $Unused | Should -BeNullOrEmpty -Because (
             'every label on the tenant-domain allowlist must still be used by a tracked file in scope other than this one; remove the entry rather than leaving a standing permission nobody reads. Unused: {0}' -f ($Unused -join '; '))
+    }
+
+    It 'Should read the placeholder register and find each kind of defect (known answer)' {
+        # No skip guard: this It reads no tracked file, only the sample declared in BeforeAll, so it
+        # measures the same thing with or without git.
+        $Correct = @($script:DocHygieneSampleRegister -split '\r?\n')
+        $Register = Get-DocHygienePlaceholderRegister -Line $Correct
+
+        # The reader, field by field. Ids are HEX: '...045' is 69, '...0aa' 170 and '...abc' 2748.
+        # 'up' is an 'and up' row's open end. The row after the section's end (line 31) must not
+        # be here, and neither must the two header rows of each table.
+        $RowText = @(
+            foreach ($Row in $Register.Rows) {
+                $Intervals = @(
+                    foreach ($Interval in $Row.Intervals) {
+                        '{0}-{1}' -f $Interval[0], $(if ($Interval[1] -eq [int]::MaxValue) { 'up' } else { $Interval[1] })
+                    }
+                )
+
+                '{0}:{1}:{2}:{3}' -f $Row.Line, $Row.Table, $Row.Status, ($Intervals -join ',')
+            }
+        )
+
+        ($RowText -join '; ') |
+            Should -Be '9:Id:Taken:0-69; 10:Id:Taken:70-70; 11:Id:Taken:71-71; 12:Id:Free:102-up; 13:Id:Taken:153-153; 14:Id:Taken:170-170; 15:Id:Taken:2748-2748; 21:Address:Taken:1-13,15-45; 22:Address:Reserved:14-14; 23:Address:Free:46-up' -Because 'the reader must return every register row with its table, status and intervals, ids read as hex, and stop at the next heading'
+
+        @($Register.Rows | Where-Object { $_.Unreadable }).Count |
+            Should -Be 0 -Because 'every placeholder cell in the correct sample is well formed'
+
+        $Register.Rows[0].Slot |
+            Should -Be 'the per-file numbering and the any-id stand-in' -Because 'the slot is the second cell, trimmed'
+
+        $Register.AllocateId | Should -Be 102 -Because 'the Allocate sentence names ...066 for object ids, read as hex, across a line break'
+        $Register.AllocateAddress | Should -Be 46 -Because 'the Allocate sentence names person46 for addresses, on the line after the one it starts on'
+        $Register.AllocateLine | Should -Be 26 -Because 'the Allocate sentence starts on line 26'
+
+        ((@($Register.Outliers) | Sort-Object) -join ',') |
+            Should -Be '153,170,2748' -Because 'the outliers are the three ids named in the sentence about the counting sequence, which wraps over two lines'
+
+        $CorrectFindings = @(Get-DocHygieneRegisterFinding -Register $Register)
+
+        @($CorrectFindings).Count |
+            Should -Be 0 -Because ('the correct sample register has no defect, so any finding is a false positive: {0}' -f ($CorrectFindings -join '; '))
+
+        # One of each kind of defect, each made by one edit to the correct copy, so the sample shows
+        # exactly what changed. A typo in an edit leaves its defect out and turns this RED, which
+        # is the right direction.
+        $Defective = $script:DocHygieneSampleRegister
+        foreach ($Edit in @(
+                # Line 10: 'to' is not a range, so the cell cannot be read.
+                , @('| `...046` |', '| `...046` to `...048` |')
+                # Line 11: ...040 sits inside ...000 - ...045 on line 9.
+                , @('| `...047` |', '| `...040` |')
+                # Line 13: ...099 is no longer named an outlier, and is above the FREE start.
+                , @('`...0aa`, `...abc` and `...099` sit outside', '`...0aa` and `...abc` sit outside')
+                # Line 15: the description of line 14, in another case and with other spacing.
+                , @('| an administrative unit id |', '|  An Assignment Target Principal ID  |')
+                # Line 21: person14 marked FREE too, so the Address table has two FREE rows.
+                , @('| allocated and never used; left reserved, do not reuse |', '| **FREE.** |')
+                # Line 26: the Allocate sentence disagrees with the Id table's FREE row.
+                , @('object ids from `...066`', 'object ids from `...067`')
+            )) {
+            $Defective = $Defective.Replace($Edit[0], $Edit[1])
+        }
+
+        $Expected = @(
+            "10: the placeholder cell cannot be read as tokens, ranges and 'and up' of one kind"
+            '11: the Id interval ...040 overlaps ...000 - ...045 on line 9'
+            '13: the Id slot ...099 is held at or above the FREE start ...066 and is not a named outlier'
+            '15: the slot description repeats the one on line 14'
+            '21: the Address table has 2 FREE rows, not exactly one'
+            '26: the Allocate sentence names ...067 for the Id table, whose FREE row starts at ...066'
+        )
+
+        $Findings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($Defective -split '\r?\n')))
+
+        ((@($Findings) | Sort-Object) -join ' | ') |
+            Should -Be ((@($Expected) | Sort-Object) -join ' | ') -Because 'the defective sample must yield exactly one finding per kind of defect; a missing one means that check stopped looking, an extra one that a check fires on what it should not'
+
+        # The two kinds with an Id half and an Address half: the sample above exercises the Id
+        # halves, and its Address table has two FREE rows, which leaves nothing to compare the
+        # Address halves against. This sample keeps the Id table correct and breaks only those.
+        $AddressDefective = $script:DocHygieneSampleRegister
+        foreach ($Edit in @(
+                # Line 22: a reserved address at or above the FREE start person46.
+                , @('| `person14` |', '| `person50` |')
+                # Line 26 (the sentence's first line): the address it names is not the FREE start.
+                , @('from `person46`, and add', 'from `person47`, and add')
+            )) {
+            $AddressDefective = $AddressDefective.Replace($Edit[0], $Edit[1])
+        }
+
+        $AddressExpected = @(
+            '22: the Address slot person50 is held at or above the FREE start person46'
+            '26: the Allocate sentence names person47 for the Address table, whose FREE row starts at person46'
+        )
+
+        $AddressFindings = @(Get-DocHygieneRegisterFinding -Register (Get-DocHygienePlaceholderRegister -Line @($AddressDefective -split '\r?\n')))
+
+        ((@($AddressFindings) | Sort-Object) -join ' | ') |
+            Should -Be ((@($AddressExpected) | Sort-Object) -join ' | ') -Because 'the address sample must yield exactly the Address halves of the Allocate and FREE-start checks'
+    }
+
+    It 'Should keep the placeholder register in docs/live-verification/README.md consistent' {
+        if ($script:DocHygieneSkipReason) {
+            Set-ItResult -Skipped -Because $script:DocHygieneSkipReason
+            return
+        }
+
+        # The register is read from the tracked copy in scope, like every other file here. A
+        # register that is not found means the path moved or the scope narrowed, and a check that
+        # reads nothing finds nothing wrong.
+        $RegisterPath = 'docs/live-verification/README.md'
+        $RegisterFile = @($script:DocHygieneFiles | Where-Object { $_.RelativePath -eq $RegisterPath })
+
+        $RegisterFile.Count |
+            Should -Be 1 -Because ('the placeholder register lives in {0}, a tracked file in scope; without it this check reads nothing' -f $RegisterPath)
+
+        $Register = Get-DocHygienePlaceholderRegister -Line $RegisterFile[0].Lines
+
+        # Emptiness guards, one per table. A heading renamed, or a table reshaped past what the
+        # reader recognizes, leaves no rows -- and a register with no rows has no defect to find.
+        @($Register.Rows | Where-Object { $_.Table -eq 'Id' }).Count |
+            Should -BeGreaterThan 0 -Because 'the register must yield at least one object-id row; zero means the section heading or the table moved and the check ran on nothing'
+
+        @($Register.Rows | Where-Object { $_.Table -eq 'Address' }).Count |
+            Should -BeGreaterThan 0 -Because 'the register must yield at least one address row; zero means the address table moved and the check ran on nothing'
+
+        $Findings = @(Get-DocHygieneRegisterFinding -Register $Register | ForEach-Object { '{0}:{1}' -f $RegisterPath, $_ })
+
+        @($Findings).Count |
+            Should -Be 0 -Because ('the placeholder register must agree with itself: no overlapping rows, no repeated slot description, exactly one FREE row per table, an Allocate sentence that names those FREE starts, and nothing taken at or above a FREE start except the named outliers. Fix the register: {0}' -f ($Findings -join '; '))
+    }
+
+    It 'Should register every placeholder used in source/, tests/, docs/examples/ and docs/development/' {
+        if ($script:DocHygieneSkipReason) {
+            Set-ItResult -Skipped -Because $script:DocHygieneSkipReason
+            return
+        }
+
+        # The register's GLOBAL rule covers exactly these four trees. A live-verification checklist
+        # numbers its placeholders per file, from 01, so the same placeholder there means a
+        # different object in each checklist and is not the register's to allocate.
+        $UsageScopePattern = '^(source|tests|docs/examples|docs/development)/'
+        $Used = @($script:DocHygieneFiles | Where-Object { $_.RelativePath -match $UsageScopePattern })
+
+        # Emptiness and narrowing guards: every one of the four trees must still be read.
+        foreach ($Tree in 'source/', 'tests/', 'docs/examples/', 'docs/development/') {
+            @($Used | Where-Object { $_.RelativePath.StartsWith($Tree) }).Count |
+                Should -BeGreaterThan 0 -Because ('this check must read at least one tracked file under {0}; zero means its scope narrowed and that tree went unchecked' -f $Tree)
+        }
+
+        $RegisterPath = 'docs/live-verification/README.md'
+        $RegisterFile = @($script:DocHygieneFiles | Where-Object { $_.RelativePath -eq $RegisterPath })
+
+        $RegisterFile.Count |
+            Should -Be 1 -Because ('the placeholder register lives in {0}, a tracked file in scope; without it every placeholder would read as unregistered' -f $RegisterPath)
+
+        $Register = Get-DocHygienePlaceholderRegister -Line $RegisterFile[0].Lines
+
+        @($Register.Rows | Where-Object { $_.Table -eq 'Id' -and $_.Status -eq 'Taken' }).Count |
+            Should -BeGreaterThan 0 -Because 'the register must yield at least one taken object-id row; zero means the reader found no table to check against'
+
+        @($Register.Rows | Where-Object { $_.Table -eq 'Address' -and $_.Status -eq 'Taken' }).Count |
+            Should -BeGreaterThan 0 -Because 'the register must yield at least one taken address row; zero means the reader found no table to check against'
+
+        # Known answer, against the SAMPLE register in BeforeAll rather than the real one, so that
+        # allocating the next slot never turns it red. Lines 2, 4 and 6 are the hits: a FREE id
+        # slot, a tail that is not a register placeholder at all, and a RESERVED address. Lines 1,
+        # 3 and 5 are taken slots -- 5 one of the hex outliers -- and pass.
+        #
+        # Every sample is built by CONCATENATION. This file is in scope too, and a placeholder
+        # written out whole would be a use of it on one of its own lines.
+        $Prefix = '00000000-0000-0000-0000-'
+        $Sample = @(
+            ('id ' + $Prefix + '000000000' + '046')
+            ($Prefix + '000000000' + '077')
+            ('person' + '1' + '@example.com')
+            ($Prefix + '100000000' + '046')
+            ($Prefix + '000000000' + 'abc')
+            ('person' + '14' + '@example.com')
+        )
+
+        $SampleRegister = Get-DocHygienePlaceholderRegister -Line @($script:DocHygieneSampleRegister -split '\r?\n')
+        $SampleHits = @(Get-DocHygieneUnregisteredPlaceholderLocation -File @([PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample }) -Register $SampleRegister)
+
+        ($SampleHits -join ', ') |
+            Should -Be 'sample:2, sample:4, sample:6' -Because 'the known-answer sample must yield exactly its FREE id slot, its non-register tail and its reserved address; anything else means the scan stopped reading the register, or stopped finding a placeholder'
+
+        $Hits = @(Get-DocHygieneUnregisteredPlaceholderLocation -File $Used -Register $Register)
+
+        @($Hits).Count |
+            Should -Be 0 -Because ('every placeholder used in source/, tests/, docs/examples/ or docs/development/ must be registered as taken in {0}, in the same commit that uses it: allocate from the FREE row, add a row with a unique slot description, and move the Allocate sentence on. Locations, values deliberately not shown: {1}' -f $RegisterPath, ($Hits -join ', '))
     }
 
     It 'Should carry no credential in any tracked file in scope' {

@@ -55,11 +55,18 @@ Placeholders are allocated under two different rules, and confusing them is how 
 The register below is the second rule's allocation. **Its only purpose is to stop two different
 objects from being given the same placeholder**, which is the defect this programme has hit more
 often than any other: a redaction pass reuses a number, and from then on two unrelated objects look
-like one. That is also a defect no automated gate can see. `tests/QA/dochygiene.tests.ps1` checks
-that every identifier IS a placeholder; nothing in it can check that a placeholder means what the
-last person thought it meant. **The unique description per row is that check.** Writing one forces
-you to say what slot you are taking, and a slot that is already described is a collision you can see
-before you commit.
+like one.
+
+`tests/QA/dochygiene.tests.ps1` reads this register and fails on the ways it can disagree with
+itself or with the tree: two rows whose slots overlap, a slot description that repeats, a table
+without exactly one FREE row, an "Allocate from" sentence below that disagrees with the FREE rows,
+a slot taken at or above a FREE start that is not one of the named outliers, a placeholder cell it
+cannot read, and a placeholder used in `source/`, `tests/`, `docs/examples/` or `docs/development/`
+that is not registered here as taken. What it still cannot check is whether a description means
+what the last person thought it meant: two objects given one registered slot look, to the gate,
+like one object used twice. **The unique description per row is that human check.** Writing one
+forces you to say what slot you are taking, and a slot that is already described is a collision you
+can see before you commit.
 
 Each row is a placeholder, a GENERIC description of the slot, and whether it is taken. **A
 description says what KIND of object occupies the slot and where it is read -- never which object.**
@@ -102,7 +109,7 @@ Addresses follow the same global rule outside the checklists:
 | `person46` and up | -- | **FREE. Allocate from here.** |
 
 `...0aa`, `...abc` and `...099` sit outside the counting sequence for historical reasons and are
-listed so they are not handed out twice. Allocate new object ids from `...063` and new addresses
+listed so they are not handed out twice. Allocate new object ids from `...066` and new addresses
 from `person46`, and add a row here in the same commit that uses them -- a placeholder that is used
 but not registered is exactly the state the next person allocates over.
 
@@ -209,6 +216,25 @@ That second rule is about SHAPE, not a list of approved values, and that is deli
 satisfied by adding an entry to something. The three pinned exceptions named in the register above
 are the whole of the list and do not grow.
 
+**A tenant's initial domain is held to four fictional labels.** The label in front of
+`.onmicrosoft.com`, `.onmicrosoft.us` or `.onmschina.cn` names exactly one tenant, as surely as its
+tenant id does, and none of the rules above reads it. The gate fails on any such label outside a
+fixed allowlist of four -- `contoso`, `fabrikam`, `other` and `oer-sovereign-verify-doesnotexist` --
+in every tracked file under `docs/`, `specs/`, `source/` and `tests/`. It reads `%40` as `@`, so a
+user principal name URL-encoded into a request path is found, and `\.` as `.`, so a domain written
+as a regular expression in a test is found too. A bare `onmicrosoft.com` with no label in front of
+it names no tenant and passes. Replace a real label with `contoso`: the allowlist does not grow to
+make the gate green, and an entry that no other file uses any more fails it until it is removed.
+
+**The placeholder register above is read, not just cited.** The gate parses it and fails when it
+disagrees with itself, on the defects listed in the register's own section, and when a placeholder
+used in `source/`, `tests/`, `docs/examples/` or `docs/development/` -- an all-zeros object id or a
+`personN@example.com` address -- does not fall in a row marked taken. A reserved or FREE slot counts
+as unregistered. It reads the three characters after `...` as hexadecimal, which is how `...0aa` and
+`...abc` take their place in the order; it reads a status cell as FREE when it says FREE, as taken
+when it starts with "taken", and as reserved otherwise; and it reports a row it cannot read rather
+than skipping it.
+
 **A stand-in in angle brackets is written as code.** GitHub reads `<id>`, `<oer-live-cc>` or any
 other `<word>` outside code as an HTML tag and renders nothing, so the redaction disappears from the
 page and the sentence around it stops making sense. Put the stand-in inside backticks, or write it as
@@ -217,5 +243,5 @@ same gate fails on such a bracket in any tracked `.md` under `docs/` or `specs/`
 and `CHANGELOG.md`. Fenced blocks and code spans are skipped.
 
 The gate is a backstop, not a substitute for redacting as you write. It cannot see the one failure
-the register above exists to prevent -- a placeholder that means two different things -- because
-every value involved is already a valid placeholder.
+the register above exists to prevent -- one registered placeholder given to two different objects --
+because every value involved is already a valid, registered placeholder.

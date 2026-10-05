@@ -150,10 +150,12 @@ per-function PSScriptAnalyzer, and a unit test file for every exported function)
 exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
 own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
 `Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
-tenant object ids, non-documentation email addresses and credentials out of every tracked file under
-`docs/`, `specs/`, `source/` and `tests/`, enumerating tracked files with `git ls-files` and reading
-their content from disk, and also checks that tracked Markdown under `docs/`, `specs/`,
-`README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
+tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
+addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
+`tests/`, enumerating tracked files with `git ls-files` and reading their content from disk; reads
+the placeholder register in `docs/live-verification/README.md`, failing on a register at odds
+with itself or a placeholder used without a row; and also checks that tracked Markdown under
+`docs/`, `specs/`, `README.md` and `CHANGELOG.md` holds no angle bracket GitHub would render as a tag),
 `docsync.tests.ps1` (binds `README.md` to the about topic), and `testhygiene.tests.ps1` (every unit
 test file that imports the module installs, checks and uninstalls the transport tripwire; read
 statically, importing nothing).
@@ -166,7 +168,16 @@ seventy existing `1111...`/`aaaa...` fixtures untouched and still readable. Exac
 are pinned by name -- the module's own manifest GUID, the Microsoft Graph Command Line Tools app id,
 and the Reader built-in role definition id. **Do not add a fourth: allocate a placeholder instead**,
 from the register in `docs/live-verification/README.md`, which also records the next free
-`...NNN` and `personN`. A credential-shaped literal that a test needs (the bearer-scrub fixtures)
+`...NNN` and `personN`. **The gate reads that register**, so it is red on a placeholder used in
+`source/`, `tests/`, `docs/examples/` or `docs/development/` without a row marked taken, and on a
+register that disagrees with itself -- overlapping rows, a repeated slot description, a table without
+exactly one FREE row, an "Allocate from" sentence that disagrees with the FREE rows, or a slot taken
+at or above a FREE start that is not a named outlier. Add the row in the same commit that uses the
+slot. **It also holds tenant domains** (`.onmicrosoft.com`, `.onmicrosoft.us`, `.onmschina.cn`) to a
+fixed allowlist of four labels, `contoso`, `fabrikam`, `other` and
+`oer-sovereign-verify-doesnotexist`, reading `%40` as `@` and `\.` as `.`, so a URL-encoded UPN and a
+regex-form domain are caught too. Replace a real label with `contoso`; never widen the allowlist to
+make the gate green. A credential-shaped literal that a test needs (the bearer-scrub fixtures)
 must carry `NOT-A-REAL-TOKEN` inside the VALUE; `REDACTED` works the same way.
 `Why: docs/development/rationale.md#bearer-scrub-tests`
 
