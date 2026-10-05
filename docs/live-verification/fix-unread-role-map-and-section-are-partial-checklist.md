@@ -1064,7 +1064,7 @@ Disconnect-OerLive
 **Expect:** the fence refused `0`; `IncompleteReads: 0; SkippedScopes: 0; SkippedEligibilityScopes:
 0` and `InventoryPartial errors: 0`, as in 2.1; the warnings, if any, about access reviews that are
 not access-package-scoped (skipped, not unread). **New:** `README.md has the section: True; entries:
-0`, and the section reads `Nothing. Export-OERInventory read everything it was asked to read ...`;
+0`, and the section reads ``Nothing. `Export-OERInventory` read everything it was asked to read ...``;
 `inventory.json validates: True`.
 **Failure looks like:** the section missing, or an entry in it -- the bundle would claim, or fail to
 claim, a read it did; `refused` above 0.
