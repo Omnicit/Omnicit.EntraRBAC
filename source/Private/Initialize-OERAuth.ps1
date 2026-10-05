@@ -69,6 +69,15 @@ function Initialize-OERAuth {
     (the table keeps no command alive) and used only for their identity, and the decision never
     reads a key.
 
+    Where it releases the latch, a success also remembers, keyed on the same invocation, which identity
+    the calling command signed in as (Register-OERSignInIdentity): the tenant, the method, the client
+    and the cloud, never a token. The module's transports refuse with SignInSuperseded a request made
+    while any command on the call stack remembers another identity than the module's state now
+    carries. In a pipeline every begin block runs first, so in
+    New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B the second sign-in would otherwise
+    make the first command create its group in B; and an outer command's nested cmdlets, which inherit
+    the session, would otherwise send under a state a later pipeline command switched.
+
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
     same application but a different tenant, and no Force is on the call (neither -ForceRefresh nor
@@ -238,6 +247,23 @@ function Initialize-OERAuth {
     # keys are the commands' own invocation objects -- each carries its command's bound parameters, a
     # tenant among them -- held weakly, so the table keeps no command alive, and used only for their
     # identity: the decision never reads a key. This function adds no other module variable for it.
+    #
+    # SEC (A20): the sign-in memory, beside the latch. Where the latch is released -- the cached return
+    # and the last statement of the big try -- the module also remembers, keyed on the same invocation
+    # ($SignInCaller), which identity the calling command signed in as (Register-OERSignInIdentity):
+    # the tenant, method, client and cloud, the terms of $ArmIdentityUnchanged below, as one string
+    # from Get-OERSignInIdentity, never a token. Both transports read it through
+    # Get-OERSignInSupersession before every request and refuse with SignInSuperseded
+    # (New-OERSignInSupersededError) a request made while ANY frame on the call stack remembers another
+    # identity than the state now carries. The pipeline case: every begin block runs first, so in
+    # New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B the second sign-in switches the
+    # state to B before New-OERGroup's process block runs, and the group would otherwise be created in
+    # B -- both sign-ins succeed, so neither the latch nor the A18 session gate sees it. And the nested
+    # case: an outer command whose nested cmdlets sign in without -TenantId inherit whatever state a
+    # later pipeline command switched to, so the walk does not stop at a nested frame whose memory
+    # equals the state. A command with no memory (a unit test that mocks this function) is not
+    # compared. The table ($script:_OERSignInIdentity, a ConditionalWeakTable) is the only other
+    # module variable this adds; its values are those identity strings.
     $SignInCaller = Lock-OERSignIn
 
     # Public first-party client 'Microsoft Graph Command Line Tools'. It is preauthorized for
@@ -504,8 +530,10 @@ function Initialize-OERAuth {
 
     if ($GraphCached -and $ArmCached) {
         Write-Verbose "[Initialize-OERAuth] Returning cached auth state for tenant '$EffectiveTenant'."
-        # SEC (A19): a cache hit is a success; release the calling command's latch.
+        # SEC (A19): a cache hit is a success; release the calling command's latch. SEC (A20): and
+        # remember which identity it signed in as.
         Unlock-OERSignIn -Invocation $SignInCaller
+        Register-OERSignInIdentity -Invocation $SignInCaller
         return
     }
 
@@ -1249,11 +1277,13 @@ function Initialize-OERAuth {
         }
 
         # SEC (A19): the new connection went the whole way -- Graph connected or cached, and the ARM
-        # token acquired or not asked for -- so release the calling command's latch. The LAST statement
+        # token acquired or not asked for -- so release the calling command's latch, and (SEC (A20))
+        # remember which identity it signed in as. The release and the memory are the LAST statements
         # of this try and deliberately not in the finally below: the finally also runs on every
         # terminating error and on ArmTokenAcquisitionFailed's early return, which must leave the
-        # command latched.
+        # command latched and must not remember that sign-in.
         Unlock-OERSignIn -Invocation $SignInCaller
+        Register-OERSignInIdentity -Invocation $SignInCaller
     } finally {
         # M5: drop this function's references to the materialized plaintext secret once the token
         # calls are done -- on the terminating paths as well as the success path, which the previous

@@ -3831,3 +3831,282 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
         }
     }
 }
+
+Describe 'Initialize-OERAuth sign-in memory (A20)' {
+    # In a pipeline every begin block runs first, so a later command's successful sign-in switches the
+    # module's state before an earlier command's process block sends anything. Where Initialize-OERAuth
+    # releases the latch it therefore also remembers which identity the calling command signed in as,
+    # and the transports compare that memory with the state (Get-OERSignInSupersession). These tests
+    # read the memory from the SAME frame that called Initialize-OERAuth: each probe below is one
+    # InModuleScope script block, whose $MyInvocation is the invocation Lock-OERSignIn returns for it.
+    BeforeAll {
+        # Calls Initialize-OERAuth with the given parameters from one script block, then reads that
+        # script block's own memory. Returns the record it raised (if any), whether the frame is
+        # remembered, the remembered value and the identity the state carries afterwards.
+        function script:Invoke-MemoryProbe {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Caught = $null
+                try { Initialize-OERAuth @P } catch { $Caught = $PSItem }
+                $Remembered = $null
+                $Held = $null -ne $script:_OERSignInIdentity -and
+                    $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Remembered)
+                @{ Caught = $Caught; Held = $Held; Remembered = $Remembered; Identity = Get-OERSignInIdentity }
+            }
+        }
+
+        # Connects the module once, from its own script block, as its own session.
+        function script:Connect-OwnSession {
+            InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERLastIssuedSession = $null
+        }
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        # Issues each token for the tenant it was requested for, and a distinct string per resource, so
+        # a test can show that neither token reaches the memory.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $Token = if ($Resource -match 'management') { 'fake-arm-token-NOT-A-REAL-TOKEN' } else { 'fake-graph-token-NOT-A-REAL-TOKEN' }
+            [pscustomobject]@{ Token = $Token; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own.
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+    }
+
+    Context 'remembered after a success' {
+        It 'is remembered after a cached return' {
+            Connect-OwnSession
+
+            $R = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Held | Should -BeTrue
+            $R.Remembered | Should -BeOfType ([string])
+            $R.Remembered | Should -BeExactly $R.Identity
+            $R.Remembered | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            # The probe was a cache hit: the one token is the connect's.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'is remembered after a new connection for Microsoft Graph only' {
+            $R = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Held | Should -BeTrue
+            $R.Remembered | Should -BeExactly $R.Identity
+            $R.Remembered | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'is remembered after a new connection for Microsoft Graph and Azure Resource Manager' {
+            $R = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Held | Should -BeTrue
+            $R.Remembered | Should -BeExactly $R.Identity
+            $R.Remembered | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'is remembered after an Azure Resource Manager token is added to a cached Microsoft Graph session' {
+            Connect-OwnSession
+
+            $R = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Held | Should -BeTrue
+            $R.Remembered | Should -BeExactly $R.Identity
+            $R.Remembered | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+    }
+
+    Context 'not remembered after a refusal' {
+        # Each refusal below comes after the module's own session is connected, so the state carries an
+        # identity throughout: a Register call on a refusal path would have stored it.
+        It 'is not remembered after MissingClientSecret' {
+            Connect-OwnSession
+
+            $R = Invoke-MemoryProbe -Parameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientSecret'; ClientId = '33333333-3333-3333-3333-333333333333'
+            }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+            $R.Identity | Should -Not -BeNullOrEmpty
+            $R.Held | Should -BeFalse
+        }
+
+        It 'is not remembered after GraphTokenAcquisitionFailed' {
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                      $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                      $Scope, $Force, $Claim)
+                if ($Tenant -eq '11111111-1111-1111-1111-111111111111') { throw [System.Exception]::new('AADSTS50076: interaction required') }
+                [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+            }
+            Connect-OwnSession
+
+            $R = Invoke-MemoryProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'GraphTokenAcquisitionFailed,Initialize-OERAuth'
+            $R.Identity | Should -Not -BeNullOrEmpty
+            $R.Held | Should -BeFalse
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'is not remembered after ArmTokenAcquisitionFailed''s early return, although the Graph session was connected' {
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                      $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                      $Scope, $Force, $Claim)
+                if ($Resource -match 'management') { throw [System.Exception]::new('ARM consent required') }
+                [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+            }
+
+            # Non-terminating: Write-CmdletError without -Terminating, then return.
+            $R = InModuleScope $script:moduleName {
+                $Err = $null
+                $Caught = $null
+                try {
+                    Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -IncludeARM -ErrorAction SilentlyContinue -ErrorVariable Err
+                } catch { $Caught = $PSItem }
+                $Remembered = $null
+                $Held = $null -ne $script:_OERSignInIdentity -and
+                    $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Remembered)
+                @{ Caught = $Caught; Ids = @($Err | ForEach-Object { $_.FullyQualifiedErrorId }); Held = $Held; Identity = Get-OERSignInIdentity }
+            }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Ids | Should -Contain 'ArmTokenAcquisitionFailed,Initialize-OERAuth'
+            # The state was rebuilt for the connected Graph session before the ARM token failed.
+            $R.Identity | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            $R.Held | Should -BeFalse
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+    }
+
+    Context 'replaced by a later sign-in' {
+        It 'replaces the memory when a later sign-in from the same frame succeeds for another tenant' {
+            $R = InModuleScope $script:moduleName {
+                $Value = $null
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+                $null = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Value)
+                $First = $Value
+                Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -AuthMethod 'Interactive'
+                $null = $script:_OERSignInIdentity.TryGetValue($MyInvocation, [ref]$Value)
+                @{ First = $First; Second = $Value; Identity = Get-OERSignInIdentity; Supersession = @(Get-OERSignInSupersession) }
+            }
+
+            $R.First | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            $R.Second | Should -BeExactly $R.Identity
+            $R.Second | Should -Match '^11111111-1111-1111-1111-111111111111\n'
+            # The frame's own memory now equals the state.
+            $R.Supersession.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+    }
+
+    Context 'seen from a nested command' {
+        # An outer command signs in to one tenant, and a command it calls signs in to another. From
+        # inside the nested command, after its own sign-in, the outer frame remembers a different
+        # identity than the state carries.
+        BeforeAll {
+            function script:Invoke-NestedProbe {
+                param([string]$NestedTenant)
+                InModuleScope $script:moduleName -Parameters @{ NestedTenant = $NestedTenant } {
+                    param($NestedTenant)
+                    function Invoke-NestedCommand {
+                        [CmdletBinding()]
+                        param([string]$Tenant)
+                        Initialize-OERAuth -TenantId $Tenant -AuthMethod 'Interactive'
+                        @(Get-OERSignInSupersession)
+                    }
+                    function Invoke-OuterCommand {
+                        [CmdletBinding()]
+                        param([string]$Tenant)
+                        Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+                        Invoke-NestedCommand -Tenant $Tenant
+                    }
+                    @{ Supersession = @(Invoke-OuterCommand -Tenant $NestedTenant) }
+                }
+            }
+        }
+
+        It 'names the outer command after the nested command signs in to another tenant' {
+            $R = Invoke-NestedProbe -NestedTenant '11111111-1111-1111-1111-111111111111'
+
+            $R.Supersession.Count | Should -Be 1
+            $R.Supersession[0] | Should -BeExactly 'Invoke-OuterCommand'
+            # The nested sign-in was a new connection, not a cache hit.
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        }
+
+        It 'returns nothing when the nested command signs in to the same tenant' {
+            $R = Invoke-NestedProbe -NestedTenant '44444444-4444-4444-4444-444444444444'
+
+            $R.Supersession.Count | Should -Be 0
+            # The nested sign-in was the cache hit.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        }
+    }
+
+    Context 'what the memory table stores' {
+        It 'adds no module variable but _OERSignInIdentity and stores only identity strings that carry no token' {
+            # Connected first, so the latch table and every tracker a new connection writes exist
+            # before the measurement.
+            Connect-OwnSession
+
+            $R = InModuleScope $script:moduleName {
+                Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+                $Before = @((Get-Variable -Scope Script).Name)
+                Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -AuthMethod 'Interactive' -IncludeARM
+                $After = @((Get-Variable -Scope Script).Name)
+                $Entries = @(foreach ($Pair in $script:_OERSignInIdentity) { $Pair })
+                @{
+                    Added       = @($After | Where-Object { $_ -notin $Before })
+                    Values      = @($Entries | ForEach-Object { $_.Value })
+                    ValueTypes  = @($Entries | ForEach-Object { $_.Value.GetType().FullName })
+                    HasArmToken = $null -ne $script:_OERAuthState.ArmToken
+                    Identity    = Get-OERSignInIdentity
+                }
+            }
+
+            # Not vacuous: the state the identity was read from held an ARM token.
+            $R.HasArmToken | Should -BeTrue
+            $R.Added | Should -Be @('_OERSignInIdentity')
+            $R.Values.Count | Should -Be 1
+            $R.Values[0] | Should -BeExactly $R.Identity
+            foreach ($ValueType in $R.ValueTypes) {
+                $ValueType | Should -BeExactly 'System.String'
+            }
+            foreach ($Value in $R.Values) {
+                $Value | Should -Not -Match 'NOT-A-REAL-TOKEN'
+                $Value | Should -Not -Match 'fake-graph-token'
+                $Value | Should -Not -Match 'fake-arm-token'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+        }
+    }
+}
