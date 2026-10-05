@@ -2558,3 +2558,72 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph request may leave under another session'
     }
 }
+
+Describe 'Initialize-OERAuth refusal leaves no ARM token for another tenant (A18, R20)' {
+    It 'G10: an Azure cmdlet naming another tenant, outside any try, sends no request with the cached token of the module''s own tenant' {
+        # The final review's probe shape. The refusal at the cmdlet's entry ends Initialize-OERAuth and
+        # the cmdlet carries on to its ARM calls, which send whatever ARM token the state holds.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            # Tenant A's session, with a cached ARM token for tenant A. Interactive, so an ARM 401 takes
+            # the forced-refresh path through Initialize-OERAuth, not the app-only refusal.
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                    ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-tenant-A' -AsPlainText -Force
+                    ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                    ArmTokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            } $Own
+            function global:Get-MgContext {
+                [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+            }
+            $global:OERArmStubCalls = 0
+            $global:OERArmStubTenantACalls = 0
+            # A MODULE-scope stub answers the ARM transport's request, so it never reaches the
+            # tripwire's global function. It records only WHETHER the bearer is tenant A's, never the
+            # header itself, and answers 401. The hang guard: exit past five calls. It is removed again
+            # below, before the runspace check reads the module scope.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-WebRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    $global:OERArmStubCalls++
+                    if ($global:OERArmStubCalls -gt 5) { exit }
+                    if ([string]$Headers['Authorization'] -like '*tenant-A*') { $global:OERArmStubTenantACalls++ }
+                    [pscustomobject]@{ StatusCode = 401; Content = '{}'; Headers = @{} }
+                }
+            }
+            # A plain call, as at a prompt: no try anywhere up the stack.
+            Get-OERSubscription -TenantId '77777777-7777-7777-7777-777777777777'
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest }
+            $Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+            'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+            'ARM CALLS: {0}' -f $global:OERArmStubCalls
+            'ARM CALLS WITH THE TENANT A TOKEN: {0}' -f $global:OERArmStubTenantACalls
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS WITH THE TENANT A TOKEN: 0'
+        ($R.Errors -join "`n") | Should -Match 'has changed since Omnicit\.EntraRBAC connected it'
+        # A Get-AzToken hit would be a sign-in for the other tenant over the changed session.
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no token call and no request may leave over the refusal'
+    }
+}

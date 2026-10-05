@@ -3421,4 +3421,81 @@ Describe 'Initialize-OERAuth Graph SDK session check (A18)' {
         $Next | Should -BeNullOrEmpty
         Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
     }
+
+    # R20: the refused caller carries on outside a try, and Invoke-OERArmRequest sends whatever ARM
+    # token the state holds. A request for another tenant, identity or cloud must leave none behind.
+    It 'A12: a refused call naming <Name> drops the cached ARM token, keeping the module''s own tenant and session' -ForEach @(
+        @{ Name = 'another tenant'; Parameters = @{ TenantId = '77777777-7777-7777-7777-777777777777' } }
+        @{ Name = 'another application'; Parameters = @{ ClientId = '88888888-8888-8888-8888-888888888888' } }
+        @{ Name = 'another cloud'; Parameters = @{ Environment = 'USGov' } }
+    ) {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -IncludeARM
+        }
+        $script:CurrentContext = $script:ForeignContext
+        $Before = InModuleScope $script:moduleName {
+            @{
+                HasArmToken = $null -ne $script:_OERAuthState.ArmToken
+                TenantId    = $script:_OERAuthState.TenantId
+                Fingerprint = $script:_OERAuthState.GraphSessionFingerprint
+            }
+        }
+        # Not vacuous: the connect above cached an ARM token.
+        $Before.HasArmToken | Should -BeTrue
+
+        $Caught = Invoke-InitializeCatching -Parameters $Parameters
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        $After = InModuleScope $script:moduleName {
+            @{
+                ArmToken         = $script:_OERAuthState.ArmToken
+                ArmTokenExpiry   = $script:_OERAuthState.ArmTokenExpiry
+                ArmResourceUrl   = $script:_OERAuthState.ArmResourceUrl
+                ArmTokenTenantId = $script:_OERAuthState.ArmTokenTenantId
+                TenantId         = $script:_OERAuthState.TenantId
+                Fingerprint      = $script:_OERAuthState.GraphSessionFingerprint
+            }
+        }
+        $After.ArmToken | Should -BeNullOrEmpty
+        $After.ArmTokenExpiry | Should -BeNullOrEmpty
+        $After.ArmResourceUrl | Should -BeNullOrEmpty
+        $After.ArmTokenTenantId | Should -BeNullOrEmpty
+        $After.TenantId | Should -BeExactly $Before.TenantId
+        $After.Fingerprint | Should -BeExactly $Before.Fingerprint
+        # The Graph token and the ARM token of the first connect, and nothing since.
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'A13: a refused Azure call for the module''s own tenant keeps the cached ARM token' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive' -IncludeARM
+            $script:A13ArmToken = $script:_OERAuthState.ArmToken
+            $script:A13ArmTokenExpiry = $script:_OERAuthState.ArmTokenExpiry
+            $script:A13ArmResourceUrl = $script:_OERAuthState.ArmResourceUrl
+            $script:A13ArmTokenTenantId = $script:_OERAuthState.ArmTokenTenantId
+        }
+        $script:CurrentContext = $script:ForeignContext
+
+        # An Azure cmdlet that names no tenant: Initialize-OERAuth -IncludeARM alone.
+        $Caught = Invoke-InitializeCatching -Parameters @{ IncludeARM = $true }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        $Kept = InModuleScope $script:moduleName {
+            @{
+                HadToken     = $null -ne $script:A13ArmToken
+                SameToken    = [object]::ReferenceEquals($script:A13ArmToken, $script:_OERAuthState.ArmToken)
+                SameExpiry   = $script:A13ArmTokenExpiry -eq $script:_OERAuthState.ArmTokenExpiry
+                SameResource = $script:A13ArmResourceUrl -ceq $script:_OERAuthState.ArmResourceUrl
+                SameTenant   = $script:A13ArmTokenTenantId -ceq $script:_OERAuthState.ArmTokenTenantId
+            }
+            Remove-Variable -Scope Script -Name A13ArmToken, A13ArmTokenExpiry, A13ArmResourceUrl, A13ArmTokenTenantId
+        }
+        $Kept.HadToken | Should -BeTrue
+        $Kept.SameToken | Should -BeTrue -Because 'the refused call names the module''s own tenant, identity and cloud'
+        $Kept.SameExpiry | Should -BeTrue
+        $Kept.SameResource | Should -BeTrue
+        $Kept.SameTenant | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+    }
 }

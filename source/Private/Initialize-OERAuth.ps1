@@ -51,7 +51,10 @@ function Initialize-OERAuth {
     AppOnlySessionCredentialUnavailable. A session that another Connect-MgGraph started raises a
     terminating GraphSessionChanged error before any Graph call, and the module never switches the
     session back by itself, since that would move the other session's calls to this module's tenant.
-    Only -ReclaimGraphSession, which Connect-OER passes, makes that a cache miss.
+    Only -ReclaimGraphSession, which Connect-OER passes, makes that a cache miss. When the refused
+    request names another tenant, identity or cloud than the session's, the cached Azure Resource
+    Manager token is dropped first, so a caller that carries on past the refusal has no token minted
+    for the session's tenant to send to Azure under a request for another.
 
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
@@ -305,34 +308,10 @@ function Initialize-OERAuth {
 
     $FiveMinutesFromNow = [DateTime]::UtcNow.AddMinutes(5)
 
-    # SEC (A18): the module's Graph calls go out under whichever Microsoft Graph PowerShell SDK session
-    # the PROCESS holds -- Invoke-OERGraphRequest passes no token of its own, and the SDK keeps one
-    # session per process -- so every predicate below describes the session those calls will use only
-    # while it is still the one this module connected. An operator's own Connect-MgGraph, or another
-    # tool's, replaces it; before this check the module's following Graph reads and writes went to that
-    # session's tenant while $script:_OERAuthState still named the first, and ARM, which keeps its own
-    # token, pointed at another tenant than Graph. Compared at EVERY entry, the cached return included.
-    #
-    # Untracked (no state, or one this function did not build) compares nothing and calls nothing.
-    # Absent (no session at all, after Disconnect-MgGraph for example) is a cache miss below, and the
-    # module connects again with a token of its own exactly as after a renewal; an inherited app-only
-    # identity cannot, and gets AppOnlySessionCredentialUnavailable. Changed is refused here, before
-    # any Graph call, and the module never switches the session back by itself: that would silently
-    # move the other session's calls to this module's tenant. Only Connect-OER, an explicit instruction
-    # to take the session back, passes -ReclaimGraphSession, which makes Changed a cache miss instead.
-    #
-    # This refusal ends this function, but NOT the cmdlet that called it. Measured 2026-10-05 in
-    # PowerShell 7: a terminating error a nested advanced function raises with ThrowTerminatingError
-    # stops that function, and its caller carries on with its next statement unless a try or trap is
-    # active somewhere up the call stack -- with the default error preference, not only under
-    # -ErrorAction SilentlyContinue. No public cmdlet wraps its Initialize-OERAuth call, so the cmdlet
-    # still reaches Invoke-OERGraphRequest, which is why that wrapper checks the session again before
-    # every Graph call. Unit tests cannot see this from inside Pester, whose try makes the refusal
-    # propagate; the wrapper's tests prove it in a runspace with no try.
+    # SEC (A18): the Microsoft Graph PowerShell SDK session the process holds, compared with the one
+    # this module connected -- read ONCE per entry, here, for the two GraphSession terms of
+    # $GraphCached and for the refusal below the ARM predicates. See the SEC (A18) comment there.
     $GraphSession = Get-OERGraphSessionState
-    if ($GraphSession -eq 'Changed' -and -not $ReclaimGraphSession) {
-        Write-CmdletError -ErrorRecord (New-OERGraphSessionChangedError) -Cmdlet $PSCmdlet -Terminating
-    }
 
     # I2: cache is only valid when tenant AND auth identity (AuthMethod + ClientId) all match.
     #
@@ -355,8 +334,8 @@ function Initialize-OERAuth {
     # cloud and re-acquires, which is the safe direction. Keep this term on its own line and
     # independently deletable, like every other term here, so its guard test stays mutation-provable.
     # The two GraphSession terms are A18's: a cached token describes nothing once the process no
-    # longer holds the session it was connected to, and Changed reaches them only under
-    # -ReclaimGraphSession, having been refused above otherwise.
+    # longer holds the session it was connected to. Changed gets past the refusal below, which sits
+    # before the cached return, only under -ReclaimGraphSession.
     [bool]$GraphCached = $script:_OERAuthState -and
         $script:_OERAuthState.AuthMethod -eq $EffectiveMethod -and
         $script:_OERAuthState.ClientId   -eq $EffectiveClientId -and
@@ -405,6 +384,60 @@ function Initialize-OERAuth {
         $script:_OERAuthState.AuthMethod -eq $EffectiveMethod -and
         $script:_OERAuthState.ClientId   -eq $EffectiveClientId -and
         $script:_OERAuthState.Environment -eq $EffectiveEnvironment
+
+    # SEC (A18): the module's Graph calls go out under whichever Microsoft Graph PowerShell SDK session
+    # the PROCESS holds -- Invoke-OERGraphRequest passes no token of its own, and the SDK keeps one
+    # session per process -- so every predicate above describes the session those calls will use only
+    # while it is still the one this module connected. An operator's own Connect-MgGraph, or another
+    # tool's, replaces it; before this check the module's following Graph reads and writes went to that
+    # session's tenant while $script:_OERAuthState still named the first, and ARM, which keeps its own
+    # token, pointed at another tenant than Graph. Compared at EVERY entry, the cached return included.
+    #
+    # Untracked (no state, or one this function did not build) compares nothing and calls nothing.
+    # Absent (no session at all, after Disconnect-MgGraph for example) is a cache miss above, and the
+    # module connects again with a token of its own exactly as after a renewal; an inherited app-only
+    # identity cannot, and gets AppOnlySessionCredentialUnavailable. Changed is refused here, before
+    # the cached return and before any Graph call, and the module never switches the session back by
+    # itself: that would silently move the other session's calls to this module's tenant. Only
+    # Connect-OER, an explicit instruction to take the session back, passes -ReclaimGraphSession, which
+    # makes Changed a cache miss instead. Nothing between the session read above and this refusal
+    # calls anything: only the predicate assignments sit there.
+    #
+    # This refusal ends this function, but NOT the cmdlet that called it. Measured 2026-10-05 in
+    # PowerShell 7: a terminating error a nested advanced function raises with ThrowTerminatingError
+    # stops that function, and its caller carries on with its next statement unless a try or trap is
+    # active somewhere up the call stack -- with the default error preference, not only under
+    # -ErrorAction SilentlyContinue. No public cmdlet wraps its Initialize-OERAuth call, so the cmdlet
+    # still reaches Invoke-OERGraphRequest, which is why that wrapper checks the session again before
+    # every Graph call. Unit tests cannot see this from inside Pester, whose try makes the refusal
+    # propagate; the wrapper's tests prove it in a runspace with no try.
+    #
+    # A refused request that names another tenant, identity or cloud first drops the cached ARM token.
+    # The cmdlet carries on past the refusal, as above, and its Azure Resource Manager calls send
+    # whatever ARM token the state holds: Invoke-OERArmRequest compares nothing, it sends
+    # $script:_OERAuthState.ArmToken. Left in place, a token minted for the module's own tenant
+    # answered a request for another one -- measured by the final review of this change, in a runspace
+    # with no try: Get-OERSubscription -TenantId naming a second tenant was refused, then listed the
+    # FIRST tenant's subscriptions with the first tenant's token. A request naming another tenant,
+    # identity or cloud must not leave a token minted for the old one behind: the rule the state
+    # rebuild below already applies on $ArmIdentityUnchanged, applied here because the refusal never
+    # reaches the rebuild. With no token the request carries an empty bearer, ARM answers 401, and the
+    # 401 path raises instead of re-acquiring (its forced refresh is refused here as well, and an
+    # app-only session never re-acquires), so no request carries a credential for the wrong tenant.
+    # ONLY then: a refused request for the module's own tenant, identity and cloud keeps its token,
+    # since its Azure calls go to the tenant it meant. The cost: once Connect-OER has taken the session
+    # back, an app-only session needs Connect-OER -IncludeARM again before an Azure cmdlet, since the
+    # module never keeps the certificate or the client secret; a delegated or managed identity session
+    # re-acquires its ARM token by itself.
+    if ($GraphSession -eq 'Changed' -and -not $ReclaimGraphSession) {
+        if (-not $ArmIdentityUnchanged) {
+            $script:_OERAuthState.ArmToken         = $null
+            $script:_OERAuthState.ArmTokenExpiry   = $null
+            $script:_OERAuthState.ArmResourceUrl   = $null
+            $script:_OERAuthState.ArmTokenTenantId = $null
+        }
+        Write-CmdletError -ErrorRecord (New-OERGraphSessionChangedError) -Cmdlet $PSCmdlet -Terminating
+    }
 
     if ($GraphCached -and $ArmCached) {
         Write-Verbose "[Initialize-OERAuth] Returning cached auth state for tenant '$EffectiveTenant'."

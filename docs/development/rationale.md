@@ -1855,9 +1855,25 @@ transport tripwire installed, and assert that no request goes out once the sessi
 **Azure Resource Manager is not refused.** The check is at every `Initialize-OERAuth` entry, so an
 Azure-only cmdlet's `-IncludeARM` entry raises `GraphSessionChanged` too, and inside a `try` that
 ends the cmdlet. Outside any `try` the cmdlet carries on (fact 1), and its Azure Resource Manager
-calls go out: `Invoke-OERArmRequest` is unchanged and sends the module's own cached ARM token, when
-one is cached, which another `Connect-MgGraph` does not touch, so those calls still go to the
-module's own tenant. An ARM-only cmdlet that has to acquire an ARM token is refused at its
+calls go out: `Invoke-OERArmRequest` is unchanged and sends whatever ARM token the state holds. For
+a cmdlet that names no other tenant, that is the module's own cached ARM token, when one is cached,
+which another `Connect-MgGraph` does not touch, so those calls still go to the module's own tenant
+with that token. A refused request that names another tenant, identity or cloud -- the
+`$ArmIdentityUnchanged` rule the state rebuild already applies -- drops that token first (`ArmToken`,
+`ArmTokenExpiry`, `ArmResourceUrl` and `ArmTokenTenantId`), so the cmdlet that carries on has none
+to send: its request carries an empty bearer, ARM refuses it with 401, and the 401 path raises,
+since its forced refresh is refused as well. Before the drop existed, the final review of this
+change MEASURED `Get-OERSubscription -TenantId` naming a second tenant, in a runspace with no `try`,
+being refused and then listing the first tenant's subscriptions with the first tenant's token. G10
+in `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Describe
+`Initialize-OERAuth refusal leaves no ARM token for another tenant (A18, R20)`) runs that call in a
+runspace with no `try` and pins that no request carries that token. A12 and A13 in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` pin the drop and its limit: a refused request for
+the module's own tenant, identity and cloud keeps its token, since its Azure calls go to the tenant
+it meant. The cost falls on an app-only session: once `Connect-OER` has taken the session back, it
+needs `Connect-OER -IncludeARM` again before an Azure cmdlet, since the module never keeps the
+certificate or the client secret; a delegated or managed identity session re-acquires its ARM token
+by itself. An ARM-only cmdlet that has to acquire an ARM token is refused at its
 `Initialize-OERAuth` entry like any other, before any token call. Any Graph call such a cmdlet makes
 goes through the gate like every other. The user-facing texts therefore never say that Azure
 Resource Manager calls are refused.
