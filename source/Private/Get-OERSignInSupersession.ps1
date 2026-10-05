@@ -23,11 +23,16 @@ function Get-OERSignInSupersession {
     goes on past a frame whose memory equals the state, since an outer command can differ while the
     command nested in it does not.
 
+    The name returned is that of a command whose frame is on the call stack, which is not always the
+    command making the request: a downstream pipeline command processes each object inside the
+    upstream command's output call, so for a request it makes there the frame found can be the upstream
+    command's (Up | Down, Up | ForEach-Object { Inner }).
+
     .EXAMPLE
     $Superseded = Get-OERSignInSupersession
     if ($Superseded) { throw (New-OERSignInSupersededError -Command $Superseded) }
 
-    Refuses a request made on behalf of a command whose sign-in another command has since replaced.
+    Refuses a request made while a command whose sign-in another command has since replaced runs.
     #>
     [CmdletBinding()]
     [OutputType([string])]

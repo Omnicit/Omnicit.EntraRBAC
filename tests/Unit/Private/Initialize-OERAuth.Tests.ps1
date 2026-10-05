@@ -3929,15 +3929,22 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
         }
 
-        It 'is remembered after an Azure Resource Manager token is added to a cached Microsoft Graph session' {
-            Connect-OwnSession
+        It 'is remembered after an Azure Resource Manager token is added to a cached Microsoft Graph session, equal to what the Graph-only sign-in remembered' {
+            # The Graph-only sign-in, from its own script block, as Connect-OwnSession does; the probe
+            # also returns what that frame remembered.
+            $Graph = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
 
             $R = Invoke-MemoryProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; IncludeARM = $true }
 
+            $Graph.Caught | Should -BeNullOrEmpty
+            $Graph.Held | Should -BeTrue
             $R.Caught | Should -BeNullOrEmpty
             $R.Held | Should -BeTrue
             $R.Remembered | Should -BeExactly $R.Identity
             $R.Remembered | Should -Match '^44444444-4444-4444-4444-444444444444\n'
+            # Adding the ARM token changes none of the four terms: a command that adds ARM to a Graph
+            # session another command signed in to remembers the same identity.
+            $R.Remembered | Should -BeExactly $Graph.Remembered
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
             Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
         }
@@ -4029,27 +4036,28 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
     }
 
     Context 'seen from a nested command' {
-        # An outer command signs in to one tenant, and a command it calls signs in to another. From
-        # inside the nested command, after its own sign-in, the outer frame remembers a different
+        # An outer command signs in, and a command it calls signs in again: to another tenant, to the
+        # same one, or adding an ARM token to the same session. Read from inside the nested command,
+        # after its own sign-in: only another tenant leaves the outer frame remembering a different
         # identity than the state carries.
         BeforeAll {
             function script:Invoke-NestedProbe {
-                param([string]$NestedTenant)
-                InModuleScope $script:moduleName -Parameters @{ NestedTenant = $NestedTenant } {
-                    param($NestedTenant)
+                param([string]$NestedTenant, [switch]$NestedIncludeARM)
+                InModuleScope $script:moduleName -Parameters @{ NestedTenant = $NestedTenant; NestedIncludeARM = [bool]$NestedIncludeARM } {
+                    param($NestedTenant, $NestedIncludeARM)
                     function Invoke-NestedCommand {
                         [CmdletBinding()]
-                        param([string]$Tenant)
-                        Initialize-OERAuth -TenantId $Tenant -AuthMethod 'Interactive'
+                        param([string]$Tenant, [bool]$IncludeARM)
+                        Initialize-OERAuth -TenantId $Tenant -AuthMethod 'Interactive' -IncludeARM:$IncludeARM
                         @(Get-OERSignInSupersession)
                     }
                     function Invoke-OuterCommand {
                         [CmdletBinding()]
-                        param([string]$Tenant)
+                        param([string]$Tenant, [bool]$IncludeARM)
                         Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
-                        Invoke-NestedCommand -Tenant $Tenant
+                        Invoke-NestedCommand -Tenant $Tenant -IncludeARM $IncludeARM
                     }
-                    @{ Supersession = @(Invoke-OuterCommand -Tenant $NestedTenant) }
+                    @{ Supersession = @(Invoke-OuterCommand -Tenant $NestedTenant -IncludeARM $NestedIncludeARM) }
                 }
             }
         }
@@ -4069,6 +4077,18 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
             $R.Supersession.Count | Should -Be 0
             # The nested sign-in was the cache hit.
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        }
+
+        It 'returns nothing when the nested command adds an Azure Resource Manager token for the same tenant' {
+            # The apply handlers' shape: an outer command signed in for Microsoft Graph, and an Azure
+            # cmdlet it calls adds -IncludeARM to that cached session.
+            $R = Invoke-NestedProbe -NestedTenant '44444444-4444-4444-4444-444444444444' -NestedIncludeARM
+
+            $R.Supersession.Count | Should -Be 0
+            # The nested sign-in added an ARM token to the cached Graph session: one Graph token, one ARM
+            # token, one connect.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
         }
     }
 

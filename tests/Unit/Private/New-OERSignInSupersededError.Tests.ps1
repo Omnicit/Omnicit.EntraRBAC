@@ -47,8 +47,8 @@ Describe 'New-OERSignInSupersededError' {
         $script:Record.Exception | Should -BeOfType ([System.Exception])
         $script:Record.Exception.Message | Should -BeExactly (
             'Another OER command in the same pipeline signed in to a different tenant or identity after this command ' +
-            'signed in, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run the ' +
-            'commands as separate statements, so that each one signs in and finishes before the next one starts.')
+            'signed in, so Omnicit.EntraRBAC sends nothing while this command runs: this request was not sent. Run ' +
+            'the commands as separate statements, so that each one signs in and finishes before the next one starts.')
     }
 
     It 'names no tenant in its message' {
