@@ -57,7 +57,9 @@ before it merges.
 - **D. A refused sign-in that names another tenant leaves no ARM token behind** ("drop the cached ARM
   token when a refused sign-in names another tenant", decision R20 of the step). A cmdlet carries on
   past the refusal when it is called outside a try, and its Azure calls send the module's cached ARM
-  token; a request naming another tenant, identity or cloud therefore drops that token first.
+  token; a request naming another tenant, identity or cloud therefore drops that token first. (Since
+  round 1, F below, those Azure calls are refused with `SignInRefused` before anything is sent; the
+  drop stays as a second guard.)
 - **E. The paged read ends on a refused page** ("end a paged Graph read that a refusal interrupts"),
   and the fingerprint is compared ordinally ("compare the Graph SDK session fingerprint ordinally").
 - **F. Round 1: a command whose sign-in is refused sends nothing** ("Latch a command whose sign-in was
@@ -669,7 +671,8 @@ Disconnect-OerLive
 
 **Expect:** the noperm identity line `True`; `subscriptions returned 0`; errors starting with
 `GraphSessionChanged` (any further error is the Azure call that carries on with no token, which Azure
-Resource Manager refuses); `Graph requests: 0`; `the module held an ARM token before: True; after:
+Resource Manager refuses; since round 1 that Azure call is refused with `SignInRefused` before it is
+sent, so this check run again on the round's build shows `SignInRefused` there); `Graph requests: 0`; `the module held an ARM token before: True; after:
 False`; the state still names the test tenant `True`. `00000000-0000-0000-0000-000000000099` is a
 deliberately non-existent id; nothing signs in to it. Before this branch's final fix the same call
 returned the TEST tenant's subscriptions under the other tenant's name (measured offline in the
@@ -731,6 +734,13 @@ $WebMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Nam
 $WebFence = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($WebMeta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($WebMeta)))`nend { `$global:S84bArmCalls++; Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters }"
 Set-Item -Path function:global:Invoke-WebRequest -Value ([scriptblock]::Create($WebFence))
 function global:Get-AzToken { $global:S84bTokenCalls++; throw 'S84b fence: no token request is made in this check.' }
+# The fences must be what the module's unqualified calls resolve to; otherwise the refused sign-in
+# below would reach the real Get-AzToken and open an interactive prompt. Stop before any call if not.
+$FencesHold = ((& $Module { Get-Command -Name Get-AzToken }).CommandType -eq 'Function') -and
+    ((& $Module { Get-Command -Name Invoke-MgGraphRequest }).CommandType -eq 'Function') -and
+    ((& $Module { Get-Command -Name Invoke-WebRequest }).CommandType -eq 'Function')
+Write-OerLiveStep "The module resolves Get-AzToken, Invoke-MgGraphRequest and Invoke-WebRequest to the fences: $FencesHold"
+if (-not $FencesHold) { Disconnect-OerLive; throw 'STOP: the fences do not shadow the module''s calls; nothing was called.' }
 function Invoke-S84bR1 {
     # A plain call, outside any try, as at a prompt. Prints counts, error ids and the module's state;
     # never a token, never an error record.
@@ -753,8 +763,8 @@ function Invoke-S84bR1 {
 $null = Invoke-S84bR1 -Label '3.1 Get-OERGroup naming another tenant' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' -TenantId '00000000-0000-0000-0000-000000000099' }
 ```
 
-**Expect:** the identity lines `True`; the worktree's build `True`, the latch `True`; `output objects
-0`; errors including `GraphTokenAcquisitionFailed` (the refused sign-in, the fence's token refusal
+**Expect:** the identity lines `True`; the worktree's build `True`, the latch `True`; the fences
+`True`; `output objects 0`; errors including `GraphTokenAcquisitionFailed` (the refused sign-in, the fence's token refusal
 inside it) and `SignInRefused` (the Graph request the cmdlet carried on to); `Graph requests: 0; ARM
 requests: 0; token requests: 1`; `session state: Own`; the state still names the test tenant `True`;
 `a refused command is on this prompt's call stack: False` (the refused command has ended).
@@ -780,7 +790,8 @@ $Subs = $null
 `Graph requests: 0; ARM requests: 0; token requests: 1`; `subscriptions returned 0`; the ARM token
 held before `True` and still `True` (a failed sign-in rebuilds nothing; the latch, not a dropped token,
 keeps it from being sent). Before this round the same call carried on to Azure Resource Manager with
-the test tenant's token under the other tenant's name (F1, measured offline in step 4b).
+the test tenant's token under the other tenant's name (inferred from F1, which step 4b measured offline
+on the Graph half: `Get-OERGroup` reached `Invoke-MgGraphRequest` after `GraphTokenAcquisitionFailed`).
 **Failure looks like:** `ARM requests: 1` or more, or `subscriptions returned 1` or more -- the test
 tenant's subscriptions listed under another tenant's name.
 
