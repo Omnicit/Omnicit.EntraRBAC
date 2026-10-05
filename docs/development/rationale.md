@@ -1522,6 +1522,43 @@ is why it is proposed here and not built in this branch.
    operator is shown a second device code on the ARM call "has not yet been observed live" --
    consistent with what this spike measured, not a contradiction of it.
 
+### A client secret reaches AzAuth as a string
+
+`-ClientSecret` is a `[securestring]` on `Connect-OER` and on `Initialize-OERAuth`, and it stays one:
+the module never accepts or stores a plain string (CLAUDE.md, Authentication Architecture and
+SECURITY rule 5). There is one place the plain text exists, and it is the hand-over to AzAuth.
+
+AzAuth 2.10.0 declares `Get-AzToken -ClientSecret` as `String` (its help). For a client secret
+sign-in `Initialize-OERAuth` therefore converts the secret with
+`[System.Net.NetworkCredential]::new('', $ClientSecret).Password` -- a .NET call, not a parameter
+binding -- and puts the result in the `Get-AzToken` splat. The Graph splat and, with `-IncludeARM`,
+the ARM splat are each a shallow clone of that one splat, and both acquisitions go through
+`Invoke-AzTokenCall`'s non-device-code branch (`return Get-AzToken @TokenParameter`). So the secret
+is bound to a `String` parameter once for each token requested: once for the Graph token, and a
+second time for the ARM token when `-IncludeARM` makes the call acquire both. The device-code
+branch of that helper never carries a secret.
+
+PowerShell module logging (Event 4103, `LogPipelineExecutionDetails` or the "Turn on Module
+Logging" policy) records bound parameter values. That is the mechanism
+[#directory-role-assignments](#directory-role-assignments) records for a token, and the reason
+`Get-OERTokenObjectId` takes a `[securestring]`. On a machine where module logging covers AzAuth,
+the string bound to `-ClientSecret` is therefore written to the log in plain text. INFERRED from
+that mechanism: no capture of an event for this parameter is recorded here.
+
+**This module cannot change it.** The parameter that receives the plain text belongs to AzAuth and
+is a string, so the value it is handed has to be one, and there is no equivalent of the
+`Get-OERTokenObjectId` shape to move to. Nothing the module does afterwards withdraws a log entry
+either. `Remove-OERErrorRecord` clears the `Authorization` header of a request message and nothing
+else -- never a request body, and never a parameter binding -- and the `finally` block in
+`Initialize-OERAuth` that sets the splats' `ClientSecret` to `$null` only drops the module's own
+references to the string, once the token calls are done.
+
+**What to do.** Prefer a certificate (`-Certificate` or `-CertificatePath`) or a managed identity
+(`-ManagedIdentity`): neither hands AzAuth a secret string. Where a secret is unavoidable, keep
+module logging from covering AzAuth on that machine, and treat the log of a machine where it does
+as holding the secret. The same warning is in `Connect-OER`'s `-ClientSecret` help and beside the
+client secret line in the README's Quick Start.
+
 ## profile-path
 
 Tenant profiles live at `<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`.

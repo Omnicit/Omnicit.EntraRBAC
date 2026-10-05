@@ -116,7 +116,8 @@ Connect-OER -TenantId 'contoso.onmicrosoft.com'
 # Device code (headless / SSH)
 Connect-OER -TenantId 'contoso.onmicrosoft.com' -DeviceCode
 
-# Client secret (SecureString -- never plain text)
+# Client secret -- a SecureString on the way in, but AzAuth receives it as plain text for each
+# token, so prefer a certificate or a managed identity (see the Connect-OER help)
 $Secret = Read-Host 'Client secret' -AsSecureString
 Connect-OER -TenantId 'contoso.onmicrosoft.com' -ClientId '<appId>' -ClientSecret $Secret
 

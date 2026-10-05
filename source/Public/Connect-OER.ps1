@@ -72,6 +72,10 @@ function Connect-OER {
 
     .PARAMETER ClientSecret
     A SecureString containing the application client secret used for app-registration sign-in.
+    The module converts it to plain text to hand it to AzAuth's Get-AzToken, whose -ClientSecret
+    parameter is a string, once for each token it requests (the Graph token, and the ARM token with
+    -IncludeARM). On a machine where PowerShell module logging covers AzAuth, that value is logged
+    in plain text. Prefer -Certificate, -CertificatePath or -ManagedIdentity.
 
     .PARAMETER Certificate
     An in-memory X509Certificate2 used for certificate-based app-registration sign-in.
