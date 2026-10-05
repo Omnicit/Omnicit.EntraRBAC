@@ -376,14 +376,19 @@ measured, so a reader does not have to assemble it from them.
 
 **The mechanism.** `$PSCmdlet.WriteError()` deposits the record it writes into every
 `-ErrorVariable` and `$Error` collector already listening on the call stack, the instant it runs --
-before, and independently of, whatever `-ErrorAction` does next. Three facts follow:
+before, and independently of, whatever `-ErrorAction` does next. Three facts:
 
 - A `catch` further up can stop the resulting exception from becoming a hard stop. It can never
-  retract a deposit already made. A read that SUCCEEDED, or an apply step that ends `Updated`, can
-  therefore still leave error records in the operator's own `-ErrorVariable` and `$Error`.
+  retract a deposit from an `-ErrorVariable`, which the engine fills as the record is raised, before
+  any `catch` runs. Only `$global:Error` has a way back, and only through `Remove-OERErrorRecord`,
+  which removes the matching entry by exception reference (see [#bearer-scrub](#bearer-scrub)). A
+  read that SUCCEEDED, or an apply step that ends `Updated`, can therefore still leave error
+  records in the operator's own `-ErrorVariable` and `$Error`.
 - An array subexpression `@( )` around the call runs it as its own nested pipeline, and the record
   is deposited again on the way out.
-- Piping the call onward before the `@( )` closes leaks nothing.
+- Piping the call onward before the `@( )` closes leaks nothing to the caller, although a local
+  `-ErrorVariable` still receives the record. This one is a measurement, not a consequence of the
+  other two.
 
 **What was measured, and where.** Each number comes from the comment at its site, which is found by
 the quoted text and not by line number.
@@ -407,17 +412,23 @@ the quoted text and not by line number.
 
 **The remedies, and where each is used.**
 
-1. *Capture, then inspect.* `-ErrorAction SilentlyContinue` with a LOCAL `-ErrorVariable`, and no
-   `@( )` around the call, or a pipe onward before the `@( )` closes. `SilentlyContinue` means
-   "captured", not "ignored": the records are inspected afterwards, so a failed read is still a
-   failed read. Used by the existence probe of `Sync-OERStructureAccessReview` and the access review
-   read of `Get-OERInventory`; the probe's comment names the group and administrative-unit reads in
-   `Get-OERInventory` as the same idiom. The local collection also holds records raised inside
-   nested calls even when an inner catch swallowed them, so only a record the cmdlet itself
-   published counts. The probe's comment measured a throttled attempt that was retried and then
-   succeeded with zero matches: it left three `TooManyRequests` records and one bare, message-less
-   exception beside the genuine not-found record. A published record carries the calling cmdlet's
-   name as a comma-separated segment of its `FullyQualifiedErrorId`.
+1. *Capture, then inspect.* `-ErrorAction SilentlyContinue` with a LOCAL `-ErrorVariable`, and the
+   call piped onward: the pipe is the only measured shape that leaks 0 to the caller, so the call is
+   never a bare call inside `@( )` and never a bare assignment, which leak 1 each.
+   `SilentlyContinue` means "captured", not "ignored": the records are inspected afterwards, so a
+   failed read is still a failed read. Both sites pipe onward. The existence probe of
+   `Sync-OERStructureAccessReview` reads `... -ErrorVariable ProbeErrors | Where-Object { ... }`
+   and wraps only the filtered variable in `@( )`. The access review read of `Get-OERInventory`
+   reads `@(call ... | Where-Object { ... })`, and its comment says the pipe is load-bearing and
+   the filter is not to be simplified away. The group and administrative-unit reads of
+   `Get-OERInventory`, which the probe's comment names as the same idiom, share the capture but not
+   the pipe: each is a bare call inside `@( )`, the shape measured above to leak 1. The local
+   collection also holds records raised inside nested calls even when an inner catch swallowed
+   them, so only a record the cmdlet itself published counts. The probe's comment measured a
+   throttled attempt that was retried and then succeeded with zero matches: it left three
+   `TooManyRequests` records and one bare, message-less exception beside the genuine not-found
+   record. A published record carries the calling cmdlet's name as a comma-separated segment of its
+   `FullyQualifiedErrorId`.
 2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
    the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
    caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
@@ -434,11 +445,16 @@ the quoted text and not by line number.
    reach the caller. In `Sync-OERStructureGroup` step 4 (pimPolicy), the `catch` around
    `Set-OERGroupPimPolicy -ErrorAction Stop` scrubs the caught record with `Remove-OERErrorRecord`,
    writes it again through the engine's own cmdlet with `$Caller.WriteError($PSItem)`, and adds a
-   Failed result row carrying that same record. The handler's other `catch` blocks around child
+   Failed result row carrying that same record. "Once" means once as a record the engine writes:
+   the child's own `WriteError` has already deposited its record into the caller's
+   `-ErrorVariable` before the `catch` runs, and the `catch` neither retracts nor repeats that.
+   `Remove-OERErrorRecord`, called first, scrubs the bearer token from the shared request object
+   and drops the matching `$global:Error` entry. The handler's other `catch` blocks around child
    writes have the same shape. See [#approver-lookup](#approver-lookup) for the same rule stated
    for the approver lookups.
 
-None of the three retracts a deposit an inner call has already made: the first two avoid making
+None of the three retracts a deposit that an inner call has already made into the caller's
+`-ErrorVariable`: the first confines the deposit to a local collection, the second avoids making
 it, and the third publishes one on purpose. A test that asserts on a `-ErrorVariable` therefore
 narrows to the record the cmdlet published, as [#bearer-scrub-tests](#bearer-scrub-tests)
 describes.

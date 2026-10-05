@@ -195,10 +195,10 @@ would close a code span the line already has; quotes alone do not escape it. An 
 exactly the reference algorithm -- write a bare URL instead, or put the markup in backticks. Fenced
 blocks and code spans are skipped with the algorithm documented in
 `ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`. That
-algorithm is the maintainer's `Test-MdAngleBrackets.py`, a script kept outside this repository (the
-gate's own comment says so), and deliberately not CommonMark's: never "correct" it towards
-CommonMark, and carry a change made to it here to the external checker too, so the two keep agreeing
-hit for hit.
+algorithm is the maintainer's `Test-MdAngleBrackets.py`, a script kept outside this repository that
+the gate follows where the two differ (the gate's own comment says so), and deliberately not
+CommonMark's: never "correct" it towards CommonMark, and carry a change made on either side to the
+other, so the two keep agreeing hit for hit.
 
 **`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
 its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned
@@ -903,8 +903,9 @@ bug.
   test at the module boundary and away from the wrapper's own retry, scrub and conversion logic. A
   `Mock -ModuleName Omnicit.EntraRBAC Invoke-MgGraphRequest` does win from the module scope, so it
   works; mock the raw SDK call only where the test is about the wrapper itself, as
-  `Invoke-OERGraphRequest.Tests.ps1` is, or drives the real wrapper on purpose to get the record it
-  builds, as parts of `Get-OERGroup.Tests.ps1` do.
+  `Invoke-OERGraphRequest.Tests.ps1` is, or drives the real wrapper on purpose to observe what it
+  does with a failure (the records it builds or leaves, its retries), as parts of
+  `Get-OERGroup.Tests.ps1` do.
 - **Every unit test file that imports the module installs the transport tripwire.** In its root
   `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
   and calls `Install-OERTransportTripwire`; it ends with a root
