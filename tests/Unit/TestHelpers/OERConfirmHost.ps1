@@ -11,6 +11,13 @@
 # fakes. Do that with Set-Item on function:script: inside & (Get-Module Omnicit.EntraRBAC) { ... },
 # which replaces the function in that runspace's private copy of the module only -- the parent
 # runspace's module, and therefore every other test, is untouched.
+#
+# The transport tripwire (OERTransportTripwire.ps1) does not cross the boundary either: the
+# answering runspace has its own global scope, so the parent's global replacements are invisible
+# there. Invoke-OERWithConfirmAnswer therefore installs the same replacements in that runspace from
+# the parent's definitions, shares the parent's hit list with it, and after the scenario records a
+# hit for every name that no longer resolves there -- so the parent's root AfterAll check covers the
+# answering runspace too. A run without an installed tripwire is refused.
 
 class OERAnsweringHostUI : System.Management.Automation.Host.PSHostUserInterface {
     [string]$Answer = '&No'
@@ -126,7 +133,8 @@ function Invoke-OERWithConfirmAnswer {
     which no in-process Pester construct can produce, and to assert on the ShouldProcess target
     text, which goes straight to the host and so survives no stream redirection. The scriptblock is
     transported as text, so it must be self-contained -- it cannot close over variables from the
-    calling test.
+    calling test. The transport tripwire is installed in the answering runspace from the parent's
+    definitions and shares the parent's hit list, and a run without an installed tripwire is refused.
     .PARAMETER Script
     The self-contained scriptblock to run inside the answering runspace. It is responsible for
     importing the module and installing its own fakes, because Pester mocks do not cross runspaces.
@@ -163,9 +171,12 @@ function Invoke-OERWithConfirmAnswer {
     $Runspace.Open()
     $Shell = [powershell]::Create()
     try {
+        # First statement inside the try, so a refusal still disposes the runspace in the finally.
+        Install-OERTransportTripwireInRunspace -Runspace $Runspace
         $Shell.Runspace = $Runspace
         $null = $Shell.AddScript($Script.ToString())
         $Output = $Shell.Invoke()
+        Test-OERTransportTripwireInRunspace -Runspace $Runspace
         [PSCustomObject]@{
             Output   = @($Output)
             Warnings = @($Shell.Streams.Warning | ForEach-Object { $_.Message })
