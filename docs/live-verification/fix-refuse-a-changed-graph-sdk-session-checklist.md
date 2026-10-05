@@ -10,7 +10,8 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 Microsoft Graph request below is a read. The prefix `oer-s84b-` appears only in the name of a group
 that does not exist, `oer-s84b-does-not-exist`, which the module is asked to read. There is no
 prerequisite script and no teardown of objects. Section 3 (round 1) runs `Invoke-OERStructure` with
-`-WhatIf` only, and its sign-in for another tenant is refused before anything is read.
+`-WhatIf` only, and its sign-in for another tenant is refused before anything is read. Section 4 (round 2)
+signs in again as `oer-live-cc-noperm` inside a pipeline and reads only.
 
 **Who runs it.** The dedicated certificate identity `oer-live-cc`, through the OerLive library, which
 lives beside the operator's copy of this file outside the repository ([README.md](README.md), first
@@ -73,6 +74,19 @@ before it merges.
   throw ("End both transports at every throw they raise", finding F3) and gates the transport gates
   statically (finding F7).
 
+- **G. Round 2: a command sends nothing under a sign-in a later command replaced** ("Remember which
+  identity each command signed in as", "Refuse a request while a command runs whose sign-in was
+  replaced", "Hold the supersession gate and its helpers in place statically", decision A20). Round 1's finding F-E: in a pipeline every `begin` block
+  runs first, and almost every OER cmdlet signs in in its `begin` block, so an upstream command's
+  `process` block acted under the session a downstream command's sign-in had switched to --
+  `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B` created the group in B, with no
+  error. Where a sign-in succeeds, `Initialize-OERAuth` now remembers, keyed on the command that
+  called it, the identity the module's state carries (tenant, method, client and cloud, never a
+  token); both transports refuse with the new `SignInSuperseded` a request made while any command on
+  the call stack remembers another identity than the state now carries. A downstream command runs
+  inside the upstream command's output, so in such a pipeline its requests are refused too while the
+  upstream command runs. A pipeline therefore works in one tenant with one identity; separate
+  statements switch freely.
 A live tenant is needed for what mocks cannot show: what `Get-MgContext` really holds after the
 module's `Connect-MgGraph -AccessToken` and after a certificate `Connect-MgGraph` for another app in the
 same tenant (section 1, which decides whether the fingerprint tells them apart); that the latest
@@ -107,6 +121,20 @@ on this branch the module's read is refused before any Graph request leaves (sec
   `AppOnlySessionCredentialUnavailable`, `GraphConnectFailed` and the others) sets the same latch:
   each is its own case in the A19 Describe of `Initialize-OERAuth.Tests.ps1`.
 
+- **Round 2, the cases section 4 does not run live** (class B). Only the test tenant is reachable, so
+  a pipeline naming TWO tenants that both sign in successfully cannot run here; section 4 switches
+  the identity instead, which the same four-term comparison refuses. In
+  `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`, Describe `A command whose sign-in a later
+  command in the pipeline replaced sends nothing (A20, F-E)`, in runspaces with no `try` around the
+  pipeline and the real `Initialize-OERAuth`: two commands naming two tenants (P1); the reported
+  shape with the real `New-OERGroup | Add-OERGroupMember`, which sends nothing (P1b); an outer command
+  whose nested public cmdlet inherited the switched state (P2); a downstream command inside
+  `ForEach-Object` in the upstream command's output (P5); the same identity twice and two separate
+  statements, which send (P3, P4); and the cached-return sign-in remembered as well as a new
+  connection (P6). The token-refresh and claims-challenge retries whose sign-in changed the identity
+  are refused (Graph S6, S7; ARM B5), and every gate's `return` holds under `-ErrorAction
+  SilentlyContinue` (Graph S9 to S11, ARM B8 and B9). The gate order -- session, latch, supersession
+  -- is S8a to S8f and B7.
 ## Setup, once
 
 **You need:**
@@ -895,6 +923,186 @@ Verdict: PASS. A plain Get-OERGroup of oer-s84b-does-not-exist without -TenantId
 [oer-s84b] Fences removed: True
 ```
 
+## 4. Round 2: a command sends nothing under a sign-in a later command replaced
+
+Added in round 2 (decision A20). Round 1's finding F-E: in a pipeline every `begin` block runs
+first, and almost every OER cmdlet signs in in its `begin` block, so an upstream command's `process`
+block acted under the session a downstream command's sign-in had switched to --
+`New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B` created the group in B, with no error.
+Both sign-ins succeed, so neither the latch (section 3) nor the session gate (section 2) sees it.
+Round 2 remembers, where a sign-in succeeds, which identity -- tenant, method, client and cloud -- the
+command that signed in got, keyed on that command; both transports refuse a request with the new
+`SignInSuperseded` while any command on the call stack remembers another identity than the module's
+state now carries.
+
+**How the identity is switched here.** A public cmdlet chooses a tenant with `-TenantId`, never an
+identity, and the only tenant this file can reach is the test tenant: a sign-in to another tenant
+falls back to an interactive prompt (section 3). `Connect-OER` is the public cmdlet that chooses an
+identity. 4.1 and 4.2 run it INSIDE the pipeline, in `ForEach-Object -Begin`, as
+`oer-live-cc-noperm`, which this file already signs in as: that `begin` runs after the upstream
+cmdlet's `begin` and before its `process`, exactly where a downstream OER cmdlet's own sign-in
+runs. The four terms are compared together, so one tenant with two identities exercises the same
+comparison as two tenants. No permission is added, no file outside this step's own is needed, and
+nothing is written. Token requests are real here (no token fence): `Connect-OER` signs in with the
+certificate.
+
+**4.1 to 4.4 run in ONE process**, in order. Each check that changes identity signs in again with
+`Connect-OerLive -Arm` (which runs `Disconnect-OER` and `Disconnect-MgGraph` first) before its own
+pipeline.
+
+### 4.1. Get-OERGroup, then a sign-in as another identity in the same pipeline: refused, and no Graph request leaves
+
+- [ ] **4.1** `Get-OERGroup` of `oer-s84b-does-not-exist` piped into `ForEach-Object -Begin { Connect-OER ... }` signing in as `oer-live-cc-noperm`: the errors include `SignInSuperseded` naming `Get-OERGroup`, and the fence counts 0 Graph requests.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s84b-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s84b'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($Module.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase)); it carries the supersession gate: $([bool](& $Module { Get-Command -Name Get-OERSignInSupersession -ErrorAction Ignore }))"
+# The fences: global functions the module's unqualified calls resolve to (a function outranks a
+# cmdlet). Graph and ARM requests are counted and forwarded to the real cmdlets, module-qualified.
+# Token requests are NOT fenced here: Connect-OER signs in for real, with the certificate.
+$GraphMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-MgGraphRequest -CommandType Cmdlet))
+$GraphFence = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($GraphMeta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($GraphMeta)))`nend { `$global:S84bGraphCalls++; Microsoft.Graph.Authentication\Invoke-MgGraphRequest @PSBoundParameters }"
+Set-Item -Path function:global:Invoke-MgGraphRequest -Value ([scriptblock]::Create($GraphFence))
+$WebMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-WebRequest -CommandType Cmdlet))
+$WebFence = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($WebMeta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($WebMeta)))`nend { `$global:S84bArmCalls++; Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters }"
+Set-Item -Path function:global:Invoke-WebRequest -Value ([scriptblock]::Create($WebFence))
+$FencesHold = ((& $Module { Get-Command -Name Invoke-MgGraphRequest }).CommandType -eq 'Function') -and
+    ((& $Module { Get-Command -Name Invoke-WebRequest }).CommandType -eq 'Function')
+Write-OerLiveStep "The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: $FencesHold"
+if (-not $FencesHold) { Disconnect-OerLive; throw 'STOP: the fences do not shadow the module''s calls; nothing was called.' }
+$Cert = Get-Item -LiteralPath ('Cert:\CurrentUser\My\{0}' -f $Cfg.CertificateThumbprint)
+function Get-S84bR2Who {
+    # Who the module and the Graph SDK session are, as True/False only.
+    $S = & $Module { $script:_OERAuthState }
+    $Ctx = Get-MgContext
+    "the state names the test tenant: $(([string]$S.TenantId).ToLowerInvariant() -eq $Cfg.TenantId); the state's client is oer-live-cc: $(([string]$S.ClientId).ToLowerInvariant() -eq $Cfg.AppId); is oer-live-cc-noperm: $(([string]$S.ClientId).ToLowerInvariant() -eq $Cfg.NoPermAppId); the Graph SDK session is oer-live-cc-noperm's: $([string]$Ctx.AppName -eq 'oer-live-cc-noperm'); session state: $(& $Module { Get-OERGraphSessionState }); the module holds an ARM token: $([bool]$S.ArmToken)"
+}
+function Invoke-S84bR2 {
+    # A plain call, outside any try, as at a prompt. Prints counts, error ids (with the target of a
+    # SignInSuperseded or SignInRefused, which is a command name), and who the module is now; never a
+    # token, never an error record.
+    param([string]$Label, [scriptblock]$Call)
+    $global:S84bGraphCalls = 0; $global:S84bArmCalls = 0
+    $All = @(& $Call 2>&1)
+    $Out = @($All | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
+    $Errs = @($All | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+    $Ids = @($Errs | ForEach-Object {
+            $Id = ([string]$_.FullyQualifiedErrorId -split ',')[0]
+            if ($Id -in 'SignInSuperseded', 'SignInRefused') { "$Id ($($_.TargetObject))" } else { $Id }
+        })
+    Write-OerLiveStep "$($Label): output objects $($Out.Count); errors: $(if ($Ids) { $Ids -join ', ' } else { 'none' }); Graph requests: $global:S84bGraphCalls; ARM requests: $global:S84bArmCalls; $(Get-S84bR2Who)"
+    foreach ($E in @($Errs | Group-Object { ([string]$_.FullyQualifiedErrorId -split ',')[0] } | ForEach-Object { $_.Group[0] })) {
+        $Text = ConvertTo-OerLiveRedacted -Text $E.Exception.Message
+        if ($Text.Length -gt 300) { $Text = $Text.Substring(0, 300) + ' ...' }
+        Write-OerLiveStep "$($Label): $($E.FullyQualifiedErrorId); category $($E.CategoryInfo.Category) -- $Text"
+    }
+    , $Out
+}
+Write-OerLiveStep "Before 4.1: $(Get-S84bR2Who)"
+$null = Invoke-S84bR2 -Label '4.1 Get-OERGroup, then Connect-OER as oer-live-cc-noperm in the same pipeline' -Call {
+    Get-OERGroup -Group 'oer-s84b-does-not-exist' |
+        ForEach-Object -Begin { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.NoPermAppId -Certificate $Cert } -Process { $_ }
+}
+```
+
+**Expect:** the identity lines `True`; the worktree's build `True`, the supersession gate `True`; the
+fences `True`; before 4.1 the state's client is `oer-live-cc` (`True`); then `output objects 0`;
+errors `SignInSuperseded (Get-OERGroup)` and nothing else; `Graph requests: 0; ARM requests: 0`;
+afterwards the state names the test tenant `True`, its client is `oer-live-cc-noperm` (`True`), the
+Graph SDK session is `oer-live-cc-noperm`'s `True`, `session state: Own` (`Connect-OER` connected the
+module as the new identity), and the module holds an ARM token `False` (a sign-in as another
+identity without `-IncludeARM` drops the previous identity's ARM token).
+**Failure looks like:** `Graph requests: 1` and `GroupNotFound` or a 403 -- `Get-OERGroup`'s read went
+out under `oer-live-cc-noperm`'s session, the identity it never signed in as (F-E); `SignInRefused`
+or `GraphSessionChanged` instead of `SignInSuperseded` -- another gate caught it, so this check proves
+nothing about the new one; the state's client still `oer-live-cc` -- `Connect-OER` did not run in the
+pipeline's `begin`; a 401 or 403 for `oer-live-cc` -- STOP.
+
+Result:
+
+### 4.2. Get-OERSubscription, then a sign-in as another identity in the same pipeline: no Azure Resource Manager request leaves
+
+- [ ] **4.2** The same with `Get-OERSubscription`, after signing in again as `oer-live-cc` with an ARM token: the errors include `SignInSuperseded` naming `Get-OERSubscription`, no subscription is returned, and the fence counts 0 ARM requests.
+
+```powershell
+Connect-OerLive -Arm
+Write-OerLiveStep "Before 4.2: $(Get-S84bR2Who)"
+$Subs = Invoke-S84bR2 -Label '4.2 Get-OERSubscription, then Connect-OER as oer-live-cc-noperm in the same pipeline' -Call {
+    Get-OERSubscription |
+        ForEach-Object -Begin { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.NoPermAppId -Certificate $Cert } -Process { $_ }
+}
+Write-OerLiveStep "4.2: subscriptions returned $(@($Subs).Count)"
+$Subs = $null
+```
+
+**Expect:** the identity lines `True`; before 4.2 the state's client is `oer-live-cc` and the module
+holds an ARM token (`True`); then `output objects 0`; errors `SignInSuperseded (Get-OERSubscription)`;
+`Graph requests: 0; ARM requests: 0`; afterwards the state's client is `oer-live-cc-noperm` and the
+module holds an ARM token `False`; `subscriptions returned 0`. Before this round the ARM request went
+out after the identity switch with no ARM token at all, or -- for a downstream sign-in that kept an
+ARM token -- with the downstream identity's (inferred from F-E; measured offline in the unit tests,
+class B below).
+**Failure looks like:** `ARM requests: 1` or more -- the request was sent for a command whose sign-in
+was replaced; any subscription returned.
+
+Result:
+
+### 4.3. The same identity twice in one pipeline: nothing is refused
+
+- [ ] **4.3** After signing in again as `oer-live-cc`, `Get-OERGroup` piped into `ForEach-Object -Begin { Connect-OER ... }` signing in as `oer-live-cc` again: no `SignInSuperseded`, the read answers `GroupNotFound`, and the fence counts 1 Graph request.
+
+```powershell
+Connect-OerLive -Arm
+Write-OerLiveStep "Before 4.3: $(Get-S84bR2Who)"
+$null = Invoke-S84bR2 -Label '4.3 Get-OERGroup, then Connect-OER as oer-live-cc again in the same pipeline' -Call {
+    Get-OERGroup -Group 'oer-s84b-does-not-exist' |
+        ForEach-Object -Begin { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.AppId -Certificate $Cert } -Process { $_ }
+}
+```
+
+**Expect:** the identity lines `True`; `output objects 0`; errors `GroupNotFound` only; `Graph
+requests: 1; ARM requests: 0`; the state's client is `oer-live-cc` before and after, `session state:
+Own`. The same tenant, method, client and cloud are no supersession, so a pipeline that does not
+change identity works exactly as before.
+**Failure looks like:** `SignInSuperseded` -- the comparison refuses an identical sign-in (a false
+refusal of every ordinary pipeline); `Graph requests: 0` with no error -- the read never ran.
+
+Result:
+
+### 4.4. Two separate statements, two identities: nothing is refused
+
+- [ ] **4.4** As separate statements: `Get-OERGroup` as `oer-live-cc`, then `Connect-OER` as `oer-live-cc-noperm`, then `Get-OERGroup` again: no `SignInSuperseded`; the first read answers `GroupNotFound` and the second is SENT under `oer-live-cc-noperm` and answered with a 403; 1 Graph request each.
+
+```powershell
+$null = Invoke-S84bR2 -Label '4.4a Get-OERGroup as oer-live-cc, a statement of its own' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' }
+$null = Invoke-S84bR2 -Label '4.4b Connect-OER as oer-live-cc-noperm, a statement of its own' -Call { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.NoPermAppId -Certificate $Cert }
+$null = Invoke-S84bR2 -Label '4.4c Get-OERGroup as oer-live-cc-noperm, a statement of its own' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' }
+# Unqualified on purpose: a scope-qualified function: path removes nothing (CLAUDE.md, Testing
+# Conventions). With no function of these names in this script's scope, the removal walks up and
+# removes the global fence -- which is exactly what is meant here.
+foreach ($Name in 'Invoke-MgGraphRequest', 'Invoke-WebRequest') { Remove-Item -Path "function:$Name" -ErrorAction SilentlyContinue }
+Write-OerLiveStep "Fences removed: $(-not (Test-Path function:Invoke-MgGraphRequest) -and -not (Test-Path function:Invoke-WebRequest))"
+Disconnect-OerLive
+```
+
+**Expect:** 4.4a `errors: GroupNotFound; Graph requests: 1`, the state's client `oer-live-cc`; 4.4b
+`errors: none; Graph requests: 0`, the state's client `oer-live-cc-noperm`; 4.4c `Graph requests: 1`
+and an error that carries the 403 Graph gave `oer-live-cc-noperm` (the identity holds no permission),
+never `SignInSuperseded`; `Fences removed: True`. A finished command is on no call stack, so the next
+statement is never compared with it: switching tenants or identities between statements works as
+before.
+**Failure looks like:** `SignInSuperseded` in 4.4c -- a finished command's memory outlived it; 4.4c
+`Graph requests: 0` -- the read was not sent at all; a 403 in 4.4a -- STOP (`oer-live-cc` lost a
+permission).
+
+Result:
+
 ## Teardown
 
 ### T.1. No session is left, nothing carries the prefix, and the main clone is untouched
@@ -992,3 +1200,33 @@ Verdict: PASS. Run 2026-10-05 19:49 UTC: every identity line True; no object sta
 [oer-s84b] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False
 [oer-s84b] Main clone: branch main; HEAD 2a86120
 ```
+
+### T.3. Round 2: no session is left, nothing carries the prefix, and the main clone is untouched
+
+- [ ] **T.3** After sections 3 and 4 of round 2, the same teardown as T.1: `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main`; the redaction map is deleted after the write-up.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s84b-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s84b'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Left = @(Find-OerLivePrefixed -ThrowOnUnread)
+Disconnect-OerLive
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "Prefixed objects: $($Left.Count); a Graph SDK session is left: $([bool](Get-MgContext)); the module holds a session: $([bool](& $Module { $script:_OERAuthState }))"
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+```
+
+**Expect:** the identity lines `True`; the sweep's "no ... starting with 'oer-s84b-' is left";
+`Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False`; the
+main clone on `main`. After the results are copied into this file: `Clear-OerLiveRedactionMap`, and
+`raw\s84b\` deleted.
+**Failure looks like:** a prefixed object -- nothing here creates one: STOP and report it; a session
+left -- run `Disconnect-OER` and `Disconnect-MgGraph` again.
+
+Result:
