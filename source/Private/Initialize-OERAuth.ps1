@@ -56,6 +56,15 @@ function Initialize-OERAuth {
     Manager token is dropped first, so a caller that carries on past the refusal has no token minted
     for the session's tenant to send to Azure under a request for another.
 
+    Every entry first latches the command that called this function (Lock-OERSignIn), and only a
+    success releases it (Unlock-OERSignIn): the cached return, or a new connection that went the whole
+    way. Every refusal, terminating error and early return -- ArmTokenAcquisitionFailed's included --
+    leaves that command latched, since outside any try a command carries on past a terminating error
+    this function raises, and the module's transports send nothing for a latched command
+    (SignInRefused). The latch is keyed on that command's invocation, so a command it calls, or a
+    pipeline neighbour, that signs in successfully does not release it. It holds no token and no
+    tenant value.
+
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
     same application but a different tenant, and no Force is on the call (neither -ForceRefresh nor
@@ -184,6 +193,36 @@ function Initialize-OERAuth {
         # Connect-OER only; see .PARAMETER ReclaimGraphSession.
         [switch]$ReclaimGraphSession
     )
+
+    # SEC (A19): the sign-in latch. Set here, before anything else, for the command that called this
+    # function, and released only where a sign-in succeeded: at the cached return below, and as the
+    # last statement of a new connection that went the whole way -- after the ARM step, inside the big
+    # try and never in its finally. Every refusal, terminating error and early return leaves it set,
+    # ArmTokenAcquisitionFailed's early return included, although the Graph session is connected by
+    # then. A terminating error ends this function but not the command that called it: outside any try
+    # that command carries on with its next statement (see the SEC (A18) comment below), so a command
+    # whose sign-in for tenant B failed or was refused would otherwise send its Graph and ARM calls
+    # under the session tenant A left -- for Invoke-OERStructure -Prune, B's document applied to A.
+    # Invoke-OERGraphRequest and Invoke-OERArmRequest read the latch through Get-OERSignInRefusal and
+    # refuse every call of a latched command with SignInRefused (New-OERSignInRefusedError).
+    #
+    # Keyed on the calling command's INVOCATION, not a module boolean that any success releases.
+    # Almost every public cmdlet calls this function in its begin block, and the apply handlers call
+    # public cmdlets (New-OERGroup, Set-OERGroup, Get-OERRoleAssignment, ...) that call it again
+    # without -TenantId, inherit the session and hit the cache: inside a refused
+    # Invoke-OERStructure -TenantId B, the first nested cmdlet would release a boolean and every later
+    # write would go to A. A pipeline does the same: in Get-OERGroup -TenantId B | Remove-OERGroup both
+    # begin blocks run first, so Remove-OERGroup's cache hit would release a boolean before
+    # Get-OERGroup's process block reads. A transport refuses when ANY frame on its call stack is
+    # latched, so a nested command's own success releases only its own entry and the refused outer
+    # command stays latched, and a pipeline neighbour's success releases only its own. A command that
+    # finishes leaves every call stack, so the next command is not refused: Connect-OER, or a new
+    # command whose sign-in succeeds, sends again.
+    #
+    # The table ($script:_OERSignInLatch, a ConditionalWeakTable) holds its keys weakly and never keeps
+    # a finished command alive. Every value in it is the boolean $true: it holds no token and no tenant
+    # value, and this function adds no other module variable for it.
+    $SignInCaller = Lock-OERSignIn
 
     # Public first-party client 'Microsoft Graph Command Line Tools'. It is preauthorized for
     # delegated Microsoft Graph scopes, so interactive and device-code sign-in can request the
@@ -410,8 +449,11 @@ function Initialize-OERAuth {
     # active somewhere up the call stack -- with the default error preference, not only under
     # -ErrorAction SilentlyContinue. No public cmdlet wraps its Initialize-OERAuth call, so the cmdlet
     # still reaches Invoke-OERGraphRequest, which is why that wrapper checks the session again before
-    # every Graph call. Unit tests cannot see this from inside Pester, whose try makes the refusal
-    # propagate; the wrapper's tests prove it in a runspace with no try.
+    # every Graph call. This refusal, like every other one in this function, also leaves the sign-in
+    # latch set for the calling command (SEC (A19), at the top of this function), so both transports
+    # refuse that command's calls with SignInRefused. Unit tests cannot see the carrying on from inside
+    # Pester, whose try makes the refusal propagate; the wrapper's tests prove it in a runspace with no
+    # try.
     #
     # A refused request that names another tenant, identity or cloud first drops the cached ARM token.
     # The cmdlet carries on past the refusal, as above, and its Azure Resource Manager calls send
@@ -442,6 +484,8 @@ function Initialize-OERAuth {
 
     if ($GraphCached -and $ArmCached) {
         Write-Verbose "[Initialize-OERAuth] Returning cached auth state for tenant '$EffectiveTenant'."
+        # SEC (A19): a cache hit is a success; release the calling command's latch.
+        Unlock-OERSignIn -Invocation $SignInCaller
         return
     }
 
@@ -1183,6 +1227,13 @@ function Initialize-OERAuth {
             # M5: clear plaintext-bearing ARM token variable to reduce its in-memory lifetime.
             $ArmToken = $null
         }
+
+        # SEC (A19): the new connection went the whole way -- Graph connected or cached, and the ARM
+        # token acquired or not asked for -- so release the calling command's latch. The LAST statement
+        # of this try and deliberately not in the finally below: the finally also runs on every
+        # terminating error and on ArmTokenAcquisitionFailed's early return, which must leave the
+        # command latched.
+        Unlock-OERSignIn -Invocation $SignInCaller
     } finally {
         # M5: drop this function's references to the materialized plaintext secret once the token
         # calls are done -- on the terminating paths as well as the success path, which the previous
