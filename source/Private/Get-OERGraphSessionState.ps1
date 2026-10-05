@@ -35,7 +35,11 @@ function Get-OERGraphSessionState {
     if ($null -eq $Current) {
         return 'Absent'
     }
-    if ($Current -ceq $State['GraphSessionFingerprint']) {
+    # Ordinal, not -ceq: -ceq compares with the invariant culture, which ignores characters of zero
+    # weight -- a soft hyphen in one value compared equal to none (measured 2026-10-05). A stored
+    # $null casts to '', which never equals the non-empty fingerprint of a session that exists, so
+    # it stays Changed.
+    if ([string]::Equals($Current, [string]$State['GraphSessionFingerprint'], [System.StringComparison]::Ordinal)) {
         return 'Own'
     }
     'Changed'

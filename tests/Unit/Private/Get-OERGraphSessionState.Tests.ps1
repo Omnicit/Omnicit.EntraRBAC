@@ -105,7 +105,7 @@ Describe 'Get-OERGraphSessionState' {
         InModuleScope Omnicit.EntraRBAC { Get-OERGraphSessionState } | Should -BeExactly 'Changed'
     }
 
-    It 'is Changed for a session that differs from the recorded one only in letter case (ordinal comparison)' {
+    It 'is Changed for a session that differs from the recorded one only in letter case (case-sensitive comparison)' {
         $Upper = [pscustomobject]@{
             AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
             ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
@@ -119,6 +119,27 @@ Describe 'Get-OERGraphSessionState' {
         $script:OwnContext.Account | Should -BeExactly 'admin@contoso.com'
         Mock -ModuleName Omnicit.EntraRBAC Get-MgContext { $script:OwnContext }
         InModuleScope Omnicit.EntraRBAC -Parameters @{ F = $UpperFingerprint } {
+            param($F)
+            $script:_OERAuthState = @{ TenantId = '44444444-4444-4444-4444-444444444444'; GraphSessionFingerprint = $F }
+        }
+        InModuleScope Omnicit.EntraRBAC { Get-OERGraphSessionState } | Should -BeExactly 'Changed'
+    }
+
+    It 'is Changed for a session whose AppName differs only by a soft hyphen (ordinal comparison)' {
+        # -ceq compares with the invariant culture, which gives a soft hyphen (U+00AD) no weight, so
+        # 'oer-test-app' and the same name with one inserted compare equal there. Built at run time,
+        # since this file is ASCII only.
+        $SoftHyphened = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = 'admin@contoso.com'; AppName = ('oer-test' + [char]0xAD + '-app'); Environment = 'Global'
+            Scopes = @('Group.ReadWrite.All')
+        }
+        # The stored fingerprint is the fixture context's, whose AppName is the plain 'oer-test-app'.
+        $script:OwnContext.AppName | Should -BeExactly 'oer-test-app'
+        $script:SoftHyphenContext = $SoftHyphened
+        Mock -ModuleName Omnicit.EntraRBAC Get-MgContext { $script:SoftHyphenContext }
+        InModuleScope Omnicit.EntraRBAC -Parameters @{ F = $script:OwnFingerprint } {
             param($F)
             $script:_OERAuthState = @{ TenantId = '44444444-4444-4444-4444-444444444444'; GraphSessionFingerprint = $F }
         }
