@@ -36,9 +36,12 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
     - requireApproval, approvers { users[], groups[] } -- users are UPNs or object ids and groups are
       group display names or object ids; both are resolved to object ids before the diff, so the diff
       only ever compares ids with ids. An approver that does not resolve reports Failed and changes
-      nothing. Only the side the document declares is sent: declaring users alone leaves the live
-      group approvers in place, and the reverse, and an empty array clears that side. A declared
-      requireApproval false takes precedence and the approvers are not sent.
+      nothing: the row carries ApproverNotFound for an approver that matches nothing,
+      AmbiguousApproverName (naming the candidate ids) for a group display name several groups share,
+      and the lookup's own error for a lookup that failed. Only the side the document declares is
+      sent: declaring users alone leaves the live group approvers in place, and the reverse, and an
+      empty array clears that side. A declared requireApproval false takes precedence and the
+      approvers are not sent.
     - authenticationContextId (empty string disables it)
     - requireMfaOnActiveAssignment, requireJustificationOnActiveAssignment
     Notification rules and any other field are NOT applied; Test-OERStructureSchema warns about
@@ -116,16 +119,30 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
         # -- Resolve declared approver names to object ids BEFORE the diff ------------------
         # The live approvers carry object ids, so a declared UPN or group name must become an id
         # first; otherwise the diff would compare a name with an id and report a change every run.
+        # Three outcomes, three records, one Failed row each and no write: an ambiguous name is
+        # AmbiguousApproverName (the resolver's text names the candidate ids), only an approver that
+        # matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
+        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
+        # itself.
         $Declared = $Item
         try {
             $Declared = Resolve-OERDeclaredApprover -Declared $Item
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                'ApproverNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                $Label)
+            $ErrRec = $PSItem
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($PSItem.Exception.Message)", $PSItem.Exception),
+                    'AmbiguousApproverName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $PSItem.TargetObject)
+            } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)': $($PSItem.Exception.Message)", $PSItem.Exception),
+                    'ApproverNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $Label)
+            }
             $Caller.WriteError($ErrRec)
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
                 -Detail "could not resolve an approver: $($PSItem.Exception.Message); the policy was not changed" `

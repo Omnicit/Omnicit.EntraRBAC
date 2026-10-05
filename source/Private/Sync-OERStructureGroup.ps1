@@ -110,7 +110,9 @@ function Sync-OERStructureGroup {
        eligibility only when it declares eligibility. A declared approver (a UPN or a group display
        name) is resolved to an object id before the diff, for each access type in turn; an approver
        that does not resolve reports Failed for that access type ONLY -- the other access type
-       (member/owner) and every later step still run.
+       (member/owner) and every later step still run. The row carries ApproverNotFound for an
+       approver that matches nothing, AmbiguousApproverName (naming the candidate ids) for a group
+       display name several groups share, and the lookup's own error for a lookup that failed.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -964,15 +966,29 @@ function Sync-OERStructureGroup {
 
                 # Declared approver names are resolved to object ids BEFORE the diff, so the diff
                 # compares ids with ids (a UPN or a group name never equals a live approver id).
+                # Three outcomes, three records, one Failed row each and no read or write of this
+                # access type's policy: an ambiguous name is AmbiguousApproverName (the resolver's text
+                # names the candidate ids), only an approver that matches nothing (ApproverUnresolved)
+                # is ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not
+                # evidence that the approver is missing, so it is published as itself.
                 try {
                     $Declared = Resolve-OERDeclaredApprover -Declared $Declared
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                        'ApproverNotFound',
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $Name)
+                    $ErrRec = $PSItem
+                    if (Test-OERAmbiguousNameError -Record $PSItem) {
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
+                            'AmbiguousApproverName',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $PSItem.TargetObject)
+                    } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
+                            'ApproverNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $Name)
+                    }
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
                         -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($PSItem.Exception.Message)" `

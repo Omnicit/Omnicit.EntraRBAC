@@ -34,7 +34,9 @@ function Sync-OERStructureRoleManagementPolicy {
     - requireApproval, approvers { users[], groups[] } -- users are UPNs or object ids and groups are
       group display names or object ids; both are resolved to object ids by Resolve-OERDeclaredApprover
       before the diff, so the diff only ever compares ids with ids. An approver that does not resolve
-      reports Failed and changes nothing.
+      reports Failed and changes nothing: the row carries ApproverNotFound for an approver that
+      matches nothing, AmbiguousApproverName (naming the candidate ids) for a group display name
+      several groups share, and the lookup's own error for a lookup that failed.
     - authenticationContextId (empty string disables it)
     - requireMfaOnActiveAssignment, requireJustificationOnActiveAssignment
     Fields the document does not declare are never compared and never sent. Notification rules and
@@ -111,16 +113,30 @@ function Sync-OERStructureRoleManagementPolicy {
         # -- Resolve declared approver names to object ids BEFORE the diff ------------------
         # The diff compares ids with ids. A user declared by UPN never matched the live approver
         # (whose description is a display name), so the policy reported a change on every run.
+        # Three outcomes, three records, one Failed row each and no write: an ambiguous name is
+        # AmbiguousApproverName (the resolver's text names the candidate ids), only an approver that
+        # matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a 403, an
+        # exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is published as
+        # itself.
         $Declared = $Item
         try {
             $Declared = Resolve-OERDeclaredApprover -Declared $Item
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
-                'ApproverNotFound',
-                [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                $Label)
+            $ErrRec = $PSItem
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
+                    'AmbiguousApproverName',
+                    [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                    $PSItem.TargetObject)
+            } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("Could not resolve an approver declared for '$($Item.role)' at '$($Item.scope)': $($PSItem.Exception.Message)", $PSItem.Exception),
+                    'ApproverNotFound',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                    $Label)
+            }
             $Caller.WriteError($ErrRec)
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Failed' `
                 -Detail "could not resolve an approver: $($PSItem.Exception.Message); the policy was not changed" `

@@ -2985,3 +2985,59 @@ planned as a create (measured live: six assignments that exist, as an identity w
 the management group), and a read that failed part way would have handed the prune pass an incomplete
 list. The read now carries `-ErrorAction Stop`, so the entry is `Failed` with the read error published
 as itself, nothing is created or planned, and the prune pass for that scope does not run.
+
+## approver-lookup
+
+Sprint 8 step 3 (BL-14, decision A5) made the PIM approver lookups follow the rule every other lookup
+on the cohort's list follows: an ambiguous name is reported as `Ambiguous*`, a failed lookup is
+published as itself, and `*NotFound` means only that nothing matched.
+
+**Why the exception went.** The approver lookups shared the decided exception with the principal and
+Azure role definition lookups: every throw out of an approver lookup became `ApproverNotFound`. That
+took in a 403, an exhausted 429 and a group display name that several groups share, so an identity
+without the right to read groups was told that an approver who exists did not, and an ambiguous name
+was reported missing instead of naming its candidates. Unlike the other two, the approver exception
+had no written reason anywhere -- not here, not in CLAUDE.md, not in a commit message -- and the
+approved scope of the step took BL-14 in. The principal and Azure role definition lookups keep their
+exception; nothing in this step changes them.
+
+**What is published.** Six call sites: `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy`
+and `Set-OERRoleManagementPolicy`, and the approver step of the three apply handlers
+(`Sync-OERStructureGroup` step 4, `Sync-OERStructureRoleManagementPolicy` and
+`Sync-OERStructureDirectoryRoleManagementPolicy`). At each of them:
+
+- an approver that matches nothing is `ApproverNotFound`, with the message, category
+  (`ObjectNotFound`) and target it always had;
+- an ambiguous name is the new `AmbiguousApproverName`, category `InvalidArgument`, the approver
+  value as target, and a message that carries the resolver's text, which names the candidate ids;
+- anything else is published as itself, once: `$PSCmdlet.WriteError($PSItem)` in a cmdlet, and
+  `$Caller.WriteError($PSItem)` plus a Failed row carrying that record in a handler.
+
+Every path still returns before anything is read or written for that policy. No published id is
+removed or renamed: `ApproverNotFound` stays, for exactly what it always meant. The only change a
+caller can see is the id and category of a failure that was never a missing approver.
+
+**How the three are told apart.** `Resolve-OERPrincipal` used to signal "not found" by throwing a bare
+string, which a catch cannot tell apart from a failure. It now throws an ErrorRecord with the internal
+id `PrincipalUnresolved` (category `ObjectNotFound`, the value as target, the same message text). Both
+approver resolvers -- `Resolve-OERApproverInput` for the two Microsoft Graph cmdlets and
+`Resolve-OERDeclaredApprover` for the handlers -- wrap only that record, as `ApproverUnresolved`; an
+`AmbiguousName` record and every other failure leave them exactly as thrown, scrubbed first.
+`Set-OERRoleManagementPolicy` calls `Resolve-OERPrincipal` itself, since its approver body and its
+blank-value rule differ from `Resolve-OERApproverInput`'s, so the not-found record it sees is
+`PrincipalUnresolved` rather than `ApproverUnresolved`; it maps that one to `ApproverNotFound`.
+
+**Why the internal ids differ from the published ones.** A record thrown inside a nested command is
+collected into the calling cmdlet's `-ErrorVariable` even when the cmdlet catches it (measured, see
+[#bearer-scrub-tests](#bearer-scrub-tests)). An `ApproverNotFound` thrown by a resolver would sit next
+to the one the cmdlet writes, and a caller counting `ApproverNotFound` records would see it twice. So
+`PrincipalUnresolved` and `ApproverUnresolved` share no prefix with a published id. They do appear in
+a caller's `-ErrorVariable` beside the published record, where a record whose id was the bare message
+text sat before, so a test that counts what a cmdlet published filters on the published id, or on
+the cmdlet's own record.
+
+**The principal lookups are unchanged.** The other callers of `Resolve-OERPrincipal` --
+`Get-OERRoleAssignment`, `Get-OEREligibleRoleAssignment`, `Get-OERActiveRoleAssignment`, and
+`Resolve-OERPrincipalOrId` with every cmdlet that uses it -- read only the message and
+`Test-OERAmbiguousNameError`, so they publish the same ids and messages as before. Their existing
+tests pass without a change, which is the proof.

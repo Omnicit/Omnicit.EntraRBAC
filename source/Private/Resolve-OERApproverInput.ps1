@@ -15,15 +15,20 @@ function Resolve-OERApproverInput {
     are de-duplicated separately.
 
     Resolution is all or nothing: the first value that does not resolve throws, so a caller never
-    goes on with a partial list. The throw is an ErrorRecord with category ObjectNotFound, the value
-    that did not resolve as its TargetObject, and the resolver's message as its message; the caller
-    reports it under its own ApproverNotFound id, with that message and target. Its ErrorId is
+    goes on with a partial list, and the throw tells three outcomes apart. Only a value that matches
+    nothing (Resolve-OERPrincipal's PrincipalUnresolved record) is wrapped: an ErrorRecord with
+    category ObjectNotFound, the value that did not resolve as its TargetObject, the resolver's
+    message as its message and the resolver's exception as its inner exception; the caller reports it
+    under its own ApproverNotFound id, with that message and target. Its ErrorId is
     ApproverUnresolved, deliberately NOT ApproverNotFound: PowerShell also collects a record thrown
     inside a nested command into the calling cmdlet's -ErrorVariable, even when the cmdlet catches
     it, so an ApproverNotFound thrown here would sit next to the one the cmdlet writes and a caller
-    counting ApproverNotFound records would see it several times. Returns one object whose User and
-    Group are [string[]] arrays of object ids (empty when nothing was supplied). Makes one
-    Resolve-OERPrincipal call per non-blank value; no other Graph call.
+    counting ApproverNotFound records would see it several times. An ambiguous display name (the
+    resolver's AmbiguousName record, naming the candidate ids) and a lookup that failed (a 403, an
+    exhausted 429, a 5xx) are not a missing approver: each is scrubbed and rethrown exactly as it was
+    thrown, so the caller can report the first as AmbiguousApproverName and the second as itself.
+    Returns one object whose User and Group are [string[]] arrays of object ids (empty when nothing
+    was supplied). Makes one Resolve-OERPrincipal call per non-blank value; no other Graph call.
 
     .PARAMETER User
     The user approver values, each a user principal name or user object id. $null or an empty list
@@ -67,6 +72,11 @@ function Resolve-OERApproverInput {
         }
     } catch {
         Remove-OERErrorRecord -Record $PSItem
+        # Only a value that matches nothing is a missing approver. An ambiguous name and a failed
+        # lookup leave as they were thrown, for the caller to report as what they are.
+        if (-not ([string]$PSItem.FullyQualifiedErrorId).StartsWith('PrincipalUnresolved', [System.StringComparison]::Ordinal)) {
+            throw
+        }
         throw [System.Management.Automation.ErrorRecord]::new(
             [System.Exception]::new($PSItem.Exception.Message, $PSItem.Exception),
             'ApproverUnresolved',

@@ -13,7 +13,13 @@ Describe 'Resolve-OERDeclaredApprover' {
                     'Approvers' = '22222222-2222-2222-2222-222222222222'
                 }
                 $Key = if ($User) { $User } else { $Group }
-                if (-not $Map.ContainsKey($Key)) { if ($User) { throw "User '$User' was not found." } else { throw "Group '$Group' was not found." } }
+                if (-not $Map.ContainsKey($Key)) {
+                    # The record the real Resolve-OERPrincipal throws for a value that matches nothing.
+                    $Text = if ($User) { "User '$User' was not found." } else { "Group '$Group' was not found." }
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new($Text), 'PrincipalUnresolved',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Key)
+                }
                 [PSCustomObject]@{ PrincipalId = $Map[$Key]; PrincipalType = $(if ($User) { 'User' } else { 'Group' }) }
             }
         }
@@ -122,14 +128,18 @@ Describe 'Resolve-OERDeclaredApprover' {
         }
     }
 
-    It 'throws a message containing was not found for an unresolvable user' {
-        InModuleScope Omnicit.EntraRBAC {
+    It 'throws ApproverUnresolved with the resolver''s message and the value as target for an unresolvable user' {
+        $Caught = InModuleScope Omnicit.EntraRBAC {
             $Declared = [PSCustomObject]@{
                 scope = '/s'; role = 'Contributor'; requireApproval = $true
-                approvers = [PSCustomObject]@{ users = @('nobody@example.com') }
+                approvers = [PSCustomObject]@{ users = @('person1@example.com', 'nobody@example.com') }
             }
-            { Resolve-OERDeclaredApprover -Declared $Declared } | Should -Throw '*was not found*'
+            try { Resolve-OERDeclaredApprover -Declared $Declared; $null } catch { $PSItem }
         }
+        $Caught.FullyQualifiedErrorId | Should -Be 'ApproverUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Caught.TargetObject | Should -Be 'nobody@example.com'
+        $Caught.Exception.Message | Should -Be "User 'nobody@example.com' was not found."
     }
 
     It 'keeps a declared empty users array declared and empty on the copy' {
@@ -141,6 +151,68 @@ Describe 'Resolve-OERDeclaredApprover' {
             $Copy = Resolve-OERDeclaredApprover -Declared $Declared
             @($Copy.approvers.users).Count | Should -Be 0
             Test-OERDeclaredProperty -Node $Copy.approvers -Name 'users' | Should -Be $true
+        }
+    }
+}
+
+Describe 'Resolve-OERDeclaredApprover: only a principal that matches nothing is ApproverUnresolved (Sprint 8 step 3, BL-14)' {
+    # The real Resolve-OERPrincipal runs here; only the lookups under it answer. The three apply
+    # handlers report ApproverUnresolved as ApproverNotFound, an ambiguous name as
+    # AmbiguousApproverName and anything else as itself, so this helper must hand them the three
+    # shapes unmixed.
+    It 'wraps the real resolver''s PrincipalUnresolved as ApproverUnresolved, keeping its message, the value as target and the cause' {
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            Mock Resolve-OERGroupId { $null }
+            $Declared = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "groups": [ "missing-approvers" ] } }' | ConvertFrom-Json
+            try { Resolve-OERDeclaredApprover -Declared $Declared; $null } catch { $PSItem }
+        }
+        $Caught.FullyQualifiedErrorId | Should -Be 'ApproverUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Caught.TargetObject | Should -Be 'missing-approvers'
+        $Caught.Exception.Message | Should -Be "Group 'missing-approvers' was not found."
+        $Caught.Exception.InnerException.Message | Should -Be "Group 'missing-approvers' was not found."
+    }
+
+    It 'lets <Shape> through as it was thrown, never as ApproverUnresolved' -ForEach @(
+        @{ Shape = 'an ambiguous group name'; Id = 'AmbiguousName'; Category = 'InvalidArgument'; Text = "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222)." }
+        @{ Shape = 'a refused (403) lookup'; Id = 'Authorization_RequestDenied'; Category = 'PermissionDenied'; Text = 'Authorization_RequestDenied: Insufficient privileges to complete the operation.' }
+    ) {
+        $Result = InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $Id; Category = $Category; Text = $Text } {
+            param($Id, $Category, $Text)
+            $script:BL14Thrown = [System.Exception]::new($Text)
+            $script:BL14Id = $Id
+            $script:BL14Category = $Category
+            Mock Resolve-OERGroupId {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    $script:BL14Thrown, $script:BL14Id, [System.Management.Automation.ErrorCategory]$script:BL14Category, 'dup-approvers')
+            }
+            $Declared = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "groups": [ "dup-approvers" ] } }' | ConvertFrom-Json
+            $Caught = try { Resolve-OERDeclaredApprover -Declared $Declared; $null } catch { $PSItem }
+            [PSCustomObject]@{ Caught = $Caught; SameException = [object]::ReferenceEquals($Caught.Exception, $script:BL14Thrown) }
+        }
+        $Result.Caught.FullyQualifiedErrorId | Should -Be $Id
+        $Result.Caught.CategoryInfo.Category | Should -Be $Category
+        $Result.Caught.TargetObject | Should -Be 'dup-approvers'
+        $Result.SameException | Should -BeTrue
+    }
+
+    It 'scrubs a failed lookup before it lets it through' {
+        $Result = InModuleScope Omnicit.EntraRBAC {
+            $script:BL14Thrown = [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.')
+            Mock Resolve-OERPrincipal {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    $script:BL14Thrown, 'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+            Mock Remove-OERErrorRecord { }
+            $Declared = '{ "role": "Reports Reader", "requireApproval": true, "approvers": { "users": [ "person9@example.com" ] } }' | ConvertFrom-Json
+            $Caught = try { Resolve-OERDeclaredApprover -Declared $Declared; $null } catch { $PSItem }
+            [PSCustomObject]@{ Id = [string]$Caught.FullyQualifiedErrorId }
+        }
+        # Reached: the record left the helper as itself.
+        $Result.Id | Should -Be 'Authorization_RequestDenied'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record -and [string]$Record.FullyQualifiedErrorId -eq 'Authorization_RequestDenied' -and
+            $Record.Exception.Message -like '*Insufficient privileges*'
         }
     }
 }

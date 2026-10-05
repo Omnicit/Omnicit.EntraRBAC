@@ -47,10 +47,14 @@ function Set-OERDirectoryRoleManagementPolicy {
     example) is never replaced by either parameter and is sent back unchanged. An explicit empty
     list clears its side. Supplying approvers on either side implies approval is required, even
     beside -RequireApproval $false. Every approver value is resolved to an object id first (a user
-    by user principal name or id, a group by display name or id); a value that does not resolve is
-    a non-terminating ApproverNotFound error and nothing is read or sent. Approval required with no
-    approver left -- -RequireApproval $true on a stage without one, or approver parameters that
-    clear every approver -- is a non-terminating ApproverRequired error and nothing is sent.
+    by user principal name or id, a group by display name or id), and nothing is read or sent unless
+    every value resolves: a value that matches nothing is a non-terminating ApproverNotFound error, a
+    group display name that several groups share is a non-terminating AmbiguousApproverName error
+    whose message names the candidate ids, and a lookup that fails (insufficient permission,
+    throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
+    Approval required with no approver left -- -RequireApproval $true on a stage without one, or
+    approver parameters that clear every approver -- is a non-terminating ApproverRequired error and
+    nothing is sent.
     -RequireApproval alone changes only whether approval is required: the live stage and its
     approvers stay on the rule for a later re-enable. Stage fields this cmdlet has no parameter for
     (the approval timeout, whether approvers must justify) carry over from the live stage; a policy
@@ -121,12 +125,17 @@ function Set-OERDirectoryRoleManagementPolicy {
     The user approvers, each a user principal name or user object id, resolved to object ids before
     anything is read or sent. Replaces the user approvers on the live stage; the group approvers are
     kept. An empty list clears the user side. Supplying it implies approval is required. The same
-    user named twice (by user principal name and by id, or in another letter case) is sent once.
+    user named twice (by user principal name and by id, or in another letter case) is sent once. A
+    value that matches no user refuses the whole call with ApproverNotFound; a lookup that fails
+    refuses it too, reported as that error itself.
 
     .PARAMETER ApproverGroup
     The group approvers, each a group display name or group object id, resolved to object ids before
     anything is read or sent. Replaces the group approvers on the live stage; the user approvers are
-    kept. An empty list clears the group side. Supplying it implies approval is required.
+    kept. An empty list clears the group side. Supplying it implies approval is required. A value
+    that matches no group refuses the whole call with ApproverNotFound, and a display name several
+    groups share refuses it with AmbiguousApproverName, naming the candidate ids (pass the object id
+    instead); a lookup that fails refuses it too, reported as that error itself.
 
     .PARAMETER AuthenticationContextId
     Authentication context claim value required on activation (e.g. c1). An empty string disables
@@ -311,12 +320,24 @@ function Set-OERDirectoryRoleManagementPolicy {
         # 5. Approvers are resolved to object ids before the policy is read, all or nothing, by
         #    Resolve-OERApproverInput (shared with Set-OERGroupPimPolicy: a blank value is skipped, the
         #    same principal named twice is kept once in first-seen order). The refusal is reported
-        #    here, under this cmdlet's id.
+        #    here, under this cmdlet's id. Three outcomes, three reports: an ambiguous name is
+        #    AmbiguousApproverName (the resolver's text names the candidate ids), only an approver
+        #    that matches nothing (ApproverUnresolved) is ApproverNotFound, and anything else -- a
+        #    403, an exhausted 429, a 5xx -- is not evidence that the approver is missing, so it is
+        #    published as itself.
         try {
             $ApproverInput = Resolve-OERApproverInput -User $ApproverUser -Group $ApproverGroup
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($PSItem.TargetObject)': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+                return
+            }
+            if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+                return
+            }
+            $PSCmdlet.WriteError($PSItem)
             return
         }
 

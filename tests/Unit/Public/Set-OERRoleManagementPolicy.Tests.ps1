@@ -323,6 +323,113 @@ Describe 'Set-OERRoleManagementPolicy' {
             }
         }
     }
+
+    Context 'approvers: missing, ambiguous and failed are three outcomes (Sprint 8 step 3, BL-14)' {
+        # This cmdlet calls Resolve-OERPrincipal itself, once per approver value, so a value that
+        # matches nothing reaches its catch as the resolver's PrincipalUnresolved record. The real
+        # Resolve-OERPrincipal runs here; only the lookups under it answer. Approvers are resolved
+        # before the policy is read, so a refused call reaches Azure Resource Manager not at all. Each
+        # test filters -ErrorVariable to the records this cmdlet wrote itself, since a record thrown
+        # inside a nested command is collected there as well.
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Method -eq 'GET' -or -not $Method } {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @(
+                            [PSCustomObject]@{
+                                id = 'Approval_EndUser_Assignment'; ruleType = 'RoleManagementPolicyApprovalRule'
+                                setting = [PSCustomObject]@{ isApprovalRequired = $false; approvalMode = 'NoApproval'; approvalStages = @() }
+                                target = [PSCustomObject]@{ caller = 'EndUser'; operations = @('All'); level = 'Assignment' }
+                            }
+                        ) }
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Method -eq 'PATCH' } {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @($Body.properties.rules) } }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId -ParameterFilter { $UserPrincipalName -eq 'person1@example.com' } { '11111111-1111-1111-1111-111111111111' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'pim-approvers' } { '33333333-3333-3333-3333-333333333333' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'missing-approvers' } { $null }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'dup-approvers' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, " +
+                        '22222222-2222-2222-2222-222222222222). Re-run with the object id instead of the display name.'),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'dup-approvers')
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERUserId -ParameterFilter { $UserPrincipalName -eq 'person9@example.com' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+        }
+
+        It 'resolves user and group approvers to object ids and sends them as the primary approvers' {
+            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'pim-approvers' -Confirm:$false
+            $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and
+                ((@(@(($Body.properties.rules | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }).setting.approvalStages)[0].primaryApprovers).id -join ',') -eq
+                    '11111111-1111-1111-1111-111111111111,33333333-3333-3333-3333-333333333333')
+            }
+        }
+
+        It 'reports an approver that matches nothing as ApproverNotFound, with the message, category and target it always had' {
+            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person1@example.com' -ApproverGroup 'missing-approvers' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'ApproverNotFound,Set-OERRoleManagementPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Own[0].TargetObject | Should -Be 'missing-approvers'
+            $Own[0].Exception.Message | Should -Be "Group 'missing-approvers' was not found."
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'reports an ambiguous approver name as AmbiguousApproverName naming the candidates, never as ApproverNotFound' {
+            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverGroup 'dup-approvers' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'AmbiguousApproverName,Set-OERRoleManagementPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be 'dup-approvers'
+            $Own[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+            $Own[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'reports a failed approver lookup as itself, once, never as ApproverNotFound' {
+            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied,Set-OERRoleManagementPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $Own[0].Exception.Message | Should -Match 'Insufficient privileges'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
+        }
+
+        It 'scrubs a failed approver lookup before it publishes it as itself' {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+            Set-OERRoleManagementPolicy -PolicyId 'pol-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            # Reached: the catch published the record as itself.
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERRoleManagementPolicy' }).Count | Should -Be 1
+            # A prefix match: $PSCmdlet.WriteError appends ',<cmdlet>' to this same record, in place,
+            # before the filter is evaluated.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
+                $Record.Exception.Message -like '*Insufficient privileges*'
+            }
+        }
+    }
 }
 
 Describe 'Set-OERRoleManagementPolicy verbose output' {

@@ -2624,7 +2624,12 @@ Describe 'Sync-OERStructureGroup' {
                 Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
                 Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
                 Mock Set-OERGroupPimPolicy { }
-                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                # The record the real Resolve-OERPrincipal throws for a value that matches nothing.
+                Mock Resolve-OERPrincipal {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("User 'nobody@example.com' was not found."), 'PrincipalUnresolved',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'nobody@example.com')
+                }
                 Mock Initialize-OERAuth { }
                 Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
                 Mock Resolve-OERStructureDefault { $null }
@@ -2683,6 +2688,126 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke Set-OERGroupPimPolicy -Times 1 -Exactly -ParameterFilter {
                     @($ApproverGroup) -contains '22222222-2222-2222-2222-222222222222' -and
                     @($ApproverGroup) -notcontains 'Approvers'
+                }
+            }
+        }
+    }
+
+    Context 'pimPolicy step 4: a declared approver, missing, ambiguous and failed are three outcomes (Sprint 8 step 3, BL-14)' {
+        # The real Resolve-OERDeclaredApprover and Resolve-OERPrincipal run here; only the lookups under
+        # them answer, and the group itself ('role_sec_x' -> g-1) keeps an unfiltered mock, so the
+        # filtered mocks answer only an approver value. The approver sits in the OWNER block: each
+        # outcome is one Failed owner row carrying the record the handler published, the owner policy is
+        # neither read nor written, and member still processes. The handler's own record is the one
+        # whose id ends in ',Invoke-SyncGroupViaCaller': -ErrorVariable also collects what was thrown
+        # inside.
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+                Mock Resolve-OERGroupId { 'g-1' }
+                Mock Get-OERGroup { [PSCustomObject]@{ Id = 'g-1'; Description = $null; MailNickname = $null; Members = @(); PimEligibility = @() } }
+                Mock Get-OERGroupPimPolicy { [PSCustomObject]@{ ActivationMaxHours = 8 } }
+                Mock Set-OERGroupPimPolicy { }
+                Mock Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'missing-approvers' } { $null }
+                Mock Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'dup-approvers' } {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new(
+                            "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, " +
+                            '22222222-2222-2222-2222-222222222222). Re-run with the object id instead of the display name.'),
+                        'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'dup-approvers')
+                }
+                Mock Resolve-OERUserId -ParameterFilter { $UserPrincipalName -eq 'person9@example.com' } {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+                }
+                function script:New-BL14Item ([string]$Side, [string]$Value) {
+                    ('{ "displayName": "role_sec_x", "pimPolicy": { "member": { "activationMaxHours": 8 }, ' +
+                    '"owner": { "requireApproval": true, "approvers": { "' + $Side + '": [ "' + $Value + '" ] } } } }') | ConvertFrom-Json
+                }
+            }
+        }
+
+        It 'reports an approver that matches nothing as ApproverNotFound, with the message, category and target it always had' {
+            InModuleScope $script:moduleName {
+                $r = @(Invoke-SyncGroupViaCaller -Item (New-BL14Item -Side 'groups' -Value 'missing-approvers') -ErrorAction SilentlyContinue -ErrorVariable Err)
+                $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
+                $OwnerFailed.Count | Should -Be 1
+                $OwnerFailed[0].Detail | Should -Be "pimPolicy (owner) not applied: could not resolve an approver: Group 'missing-approvers' was not found."
+                [string]$OwnerFailed[0].Error.FullyQualifiedErrorId | Should -Match '^ApproverNotFound'
+                @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGroupViaCaller' })
+                $Own.Count | Should -Be 1
+                $Own[0].FullyQualifiedErrorId | Should -Be 'ApproverNotFound,Invoke-SyncGroupViaCaller'
+                $Own[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+                $Own[0].TargetObject | Should -Be 'role_sec_x'
+                $Own[0].Exception.Message | Should -Be "Could not resolve an approver declared in pimPolicy (owner) of group 'role_sec_x': Group 'missing-approvers' was not found."
+                Should -Invoke Get-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+            }
+        }
+
+        It 'reports an ambiguous approver name as AmbiguousApproverName naming the candidates, never as ApproverNotFound' {
+            InModuleScope $script:moduleName {
+                $r = @(Invoke-SyncGroupViaCaller -Item (New-BL14Item -Side 'groups' -Value 'dup-approvers') -ErrorAction SilentlyContinue -ErrorVariable Err)
+                $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
+                $OwnerFailed.Count | Should -Be 1
+                $OwnerFailed[0].Detail | Should -Match '11111111-1111-1111-1111-111111111111'
+                [string]$OwnerFailed[0].Error.FullyQualifiedErrorId | Should -Match '^AmbiguousApproverName'
+                @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGroupViaCaller' })
+                $Own.Count | Should -Be 1
+                $Own[0].FullyQualifiedErrorId | Should -Be 'AmbiguousApproverName,Invoke-SyncGroupViaCaller'
+                $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+                $Own[0].TargetObject | Should -Be 'dup-approvers'
+                $Own[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+                $Own[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+                Should -Invoke Get-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+            }
+        }
+
+        It 'reports a failed approver lookup as itself, once, never as ApproverNotFound' {
+            InModuleScope $script:moduleName {
+                $r = @(Invoke-SyncGroupViaCaller -Item (New-BL14Item -Side 'users' -Value 'person9@example.com') -ErrorAction SilentlyContinue -ErrorVariable Err)
+                $OwnerFailed = @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -match 'pimPolicy \(owner\)' })
+                $OwnerFailed.Count | Should -Be 1
+                $OwnerFailed[0].Detail | Should -Match 'Insufficient privileges'
+                [string]$OwnerFailed[0].Error.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+                @($r | Where-Object { $_.Detail -match 'pimPolicy \(member\)' }).Count | Should -Be 1
+                $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncGroupViaCaller' })
+                $Own.Count | Should -Be 1
+                $Own[0].FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied,Invoke-SyncGroupViaCaller'
+                $Own[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+                Should -Invoke Get-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+                Should -Invoke Set-OERGroupPimPolicy -Times 0 -ParameterFilter { $AccessType -eq 'owner' }
+            }
+        }
+
+        It 'scrubs a failed approver lookup before it publishes it as itself' {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERDeclaredApprover -ParameterFilter { $Declared.PSObject.Properties.Name -contains 'approvers' } {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+                }
+                Mock Resolve-OERDeclaredApprover { $Declared }
+                Mock Remove-OERErrorRecord { }
+                $null = @(Invoke-SyncGroupViaCaller -Item (New-BL14Item -Side 'users' -Value 'person9@example.com') -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the handler published the record as itself.
+                @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Invoke-SyncGroupViaCaller' }).Count | Should -Be 1
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
+                    $Record.Exception.Message -like '*Insufficient privileges*'
                 }
             }
         }

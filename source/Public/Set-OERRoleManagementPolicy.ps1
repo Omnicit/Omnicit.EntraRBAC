@@ -68,11 +68,18 @@ function Set-OERRoleManagementPolicy {
 
     .PARAMETER ApproverUser
     Primary approver users (user principal name or object id); each resolved to a User approver.
-    Resolution is all-or-nothing -- if any approver value cannot be resolved, no approvers are set.
+    Resolution is all-or-nothing and happens before the scope, the role or the policy is read: if
+    any approver value cannot be resolved, nothing is read or sent. A value that matches no user is
+    a non-terminating ApproverNotFound error; a lookup that fails (insufficient permission,
+    throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
     Supplying approvers implies RequireApproval = true, overriding any -RequireApproval $false.
 
     .PARAMETER ApproverGroup
-    Primary approver groups (display name or object id); each resolved to a Group approver.
+    Primary approver groups (display name or object id); each resolved to a Group approver, all or
+    nothing as for -ApproverUser. A value that matches no group is a non-terminating
+    ApproverNotFound error, a display name several groups share is a non-terminating
+    AmbiguousApproverName error naming the candidate ids (pass the object id instead), and a lookup
+    that fails is reported as that error itself.
 
     .PARAMETER AuthenticationContextId
     Authentication context claim value required on activation (e.g. c1). An empty string disables the
@@ -203,6 +210,13 @@ function Set-OERRoleManagementPolicy {
             return
         }
 
+        # Approvers are resolved before the scope, the role and the policy, all or nothing. This cmdlet
+        # calls Resolve-OERPrincipal itself (its approver body and blank-value rule differ from
+        # Resolve-OERApproverInput's), so a value that matches nothing reaches this catch as the
+        # resolver's own PrincipalUnresolved record. Three outcomes, three reports: an ambiguous name
+        # is AmbiguousApproverName (the resolver's text names the candidate ids), only an approver
+        # that matches nothing is ApproverNotFound, and anything else -- a 403, an exhausted 429, a
+        # 5xx -- is not evidence that the approver is missing, so it is published as itself.
         if ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup')) {
             $Approvers = [System.Collections.Generic.List[object]]::new()
             try {
@@ -218,7 +232,15 @@ function Set-OERRoleManagementPolicy {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
+                if (Test-OERAmbiguousNameError -Record $PSItem) {
+                    Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$Value': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $Value -Cmdlet $PSCmdlet
+                    return
+                }
+                if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('PrincipalUnresolved', [System.StringComparison]::Ordinal)) {
+                    Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $Value -Cmdlet $PSCmdlet
+                    return
+                }
+                $PSCmdlet.WriteError($PSItem)
                 return
             }
             $Setting.PrimaryApprovers = $Approvers.ToArray()
