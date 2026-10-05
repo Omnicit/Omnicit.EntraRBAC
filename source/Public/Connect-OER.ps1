@@ -36,7 +36,8 @@ function Connect-OER {
     unlabelled default. To sign in to a different tenant, pass an explicit -TenantId (or
     -TenantAlias). A client secret sign-in for the same application also needs -Force to move to
     another tenant in the same PowerShell session: AzAuth keeps its credential for the whole
-    process, and Disconnect-OER clears only this module's session, not that credential.
+    process, and Disconnect-OER clears this module's session and the Graph SDK session, not that
+    credential.
 
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
@@ -47,11 +48,13 @@ function Connect-OER {
     the same process, the next OER cmdlet refuses its Microsoft Graph calls with a
     GraphSessionChanged error instead of sending them under that session, and the error can be
     reported more than once for one cmdlet. The module never switches the session back by itself.
-    Run Connect-OER to connect the module again, which takes the session back and so replaces the
-    other one, or use a new PowerShell process. If the session is closed with Disconnect-MgGraph
-    instead of Disconnect-OER, the next OER cmdlet signs in again by itself, except on an app-only
-    session (client secret or certificate), which reports AppOnlySessionCredentialUnavailable until
-    Connect-OER is run with the secret or certificate.
+    Run Connect-OER with the same sign-in the session used -- for an app-only session, its
+    certificate or client secret, since a bare Connect-OER signs in interactively -- to connect the
+    module again, which takes the session back and so replaces the other one, or use a new
+    PowerShell process. If the session is closed with Disconnect-MgGraph instead of Disconnect-OER,
+    the next OER cmdlet signs in again by itself, except on an app-only session (client secret or
+    certificate), which reports AppOnlySessionCredentialUnavailable until Connect-OER is run with
+    the secret or certificate.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with

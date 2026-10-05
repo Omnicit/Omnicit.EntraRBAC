@@ -1021,7 +1021,7 @@ with the team may be in Swedish.
 | Module | Floor | Purpose |
 |---|---|---|
 | `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
-| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken` and `Invoke-MgGraphRequest` (inside wrapper) |
+| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside wrapper) and `Get-MgContext` (the Graph SDK session check) |
 
 That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
 `ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for

@@ -1688,17 +1688,21 @@ and calls `Disconnect-MgGraph`.
 
 **Why the module checks which session the process holds.** The SDK keeps one session per process,
 and `Invoke-OERGraphRequest` passes no token of its own: it calls `Invoke-MgGraphRequest`, so every
-Graph call goes out under whichever session the SDK holds at that moment. Before the check existed,
-an operator's own `Connect-MgGraph` -- or another tool's -- made while the module's cache was still
-valid was followed by OER cmdlets that returned from the cache without reconnecting. Their Graph
-reads and writes then went to that session's tenant while `$script:_OERAuthState` still named the
-module's, and Azure Resource Manager, which keeps its own token, could point at another tenant
-than Graph. A forced refresh, a claims challenge or the five-minute window reconnected and put the
-module's session back, so the window was bounded, but nothing announced it. The premise -- that
-another `Connect-MgGraph` replaces the session and carries the module's next Graph calls -- is READ
-IN THE SOURCE (the SDK facts below). Section 1 of the live checklist of the change that added the
-check, `docs/live-verification/fix-refuse-a-changed-graph-sdk-session-checklist.md`, is where it is
-observed live.
+Graph call goes out under whichever session the SDK holds at that moment -- INFERRED, the second
+half of the premise below. Before the check existed, an operator's own `Connect-MgGraph`, or
+another tool's, made while the module's cache was still valid was followed by OER cmdlets that
+returned from the cache without reconnecting. Their Graph reads and writes would then go to that
+session's tenant while `$script:_OERAuthState` still named the module's, and Azure Resource Manager,
+which keeps its own token, could point at another tenant than Graph. A forced refresh, a claims
+challenge or the five-minute window reconnected and put the module's session back, so the window
+was bounded, but nothing announced it.
+
+The premise has two halves, with different evidence. That another `Connect-MgGraph` REPLACES the
+module's session is READ IN THE SOURCE (the SDK facts below). That `Invoke-MgGraphRequest` then
+CARRIES the module's next Graph calls under the replacing session is INFERRED: which session it
+authenticates with was not read. Check 1.3, in section 1 of the live checklist of the change that
+added the check, `docs/live-verification/fix-refuse-a-changed-graph-sdk-session-checklist.md`,
+measures that half live.
 
 **The SDK facts the check stands on.** READ IN THE SOURCE of `microsoftgraph/msgraph-sdk-powershell`
 at tag `v2.41.1`, not executed:
@@ -1732,7 +1736,7 @@ compare two empty values as equal.
 
 NOT YET MEASURED: the values `Get-MgContext` really holds after the module's own connect, and after
 a certificate connect for another application in the same tenant -- that is, whether the fingerprint
-tells those two apart live. Section 1 of the same live checklist measures them.
+tells those two apart live. Check 1.1, in section 1 of the same live checklist, measures them.
 
 **The fingerprint.** `Get-OERGraphSessionFingerprint` is its single owner. It reads eight
 properties of the context by name -- `AuthType`, `TokenCredentialType`, `ClientId`, `TenantId`,
@@ -1835,11 +1839,11 @@ are refused, never that the cmdlet stops.
 A paged read that a refusal interrupts ends. The paging `catch` re-throws, and under fact 3 that
 resumes after the whole `try` statement, so the `catch` sets `$PageFailed` and the loop checks it
 straight after the `try` statement: `if ($PageFailed) { return }`. Under
-`-ErrorAction SilentlyContinue` or `Ignore` outside any `try`, a failed page -- the refusal
-included -- therefore ends the read with nothing on the success channel instead of looping. It is
-`return`, not `break`, so the caller never gets a partial collection that reads as complete. Inside
-a `try` the refusal propagates, with `PartialValue`, `NextLink` and `PageNumber` on its exception as
-for any failed page.
+`-ErrorAction SilentlyContinue` or `Ignore` outside any `try`, a page whose request fails (the
+refusal included) therefore ends the read with nothing on the success channel instead of looping.
+It is `return`, not `break`, so on that path the caller gets no partial collection that reads as
+complete. Inside a `try` the refusal propagates, with `PartialValue`, `NextLink` and `PageNumber` on
+its exception, as for any page whose request fails.
 
 The proofs run in a runspace with no `try`. Pester runs every test inside one, where all three facts
 turn into propagation, so a test there cannot see a cmdlet carry on. G6, G6b, G7 and G9 in
@@ -1851,17 +1855,20 @@ transport tripwire installed, and assert that no request goes out once the sessi
 **Azure Resource Manager is not refused.** The check is at every `Initialize-OERAuth` entry, so an
 Azure-only cmdlet's `-IncludeARM` entry raises `GraphSessionChanged` too, and inside a `try` that
 ends the cmdlet. Outside any `try` the cmdlet carries on (fact 1), and its Azure Resource Manager
-calls go out: `Invoke-OERArmRequest` is unchanged and sends the module's own cached ARM token, which
-another `Connect-MgGraph` does not touch, so those calls still go to the module's own tenant. Any
-Graph call such a cmdlet makes goes through the gate like every other. The user-facing texts
-therefore never say that Azure Resource Manager calls are refused.
+calls go out: `Invoke-OERArmRequest` is unchanged and sends the module's own cached ARM token, when
+one is cached, which another `Connect-MgGraph` does not touch, so those calls still go to the
+module's own tenant. An ARM-only cmdlet that has to acquire an ARM token is refused at its
+`Initialize-OERAuth` entry like any other, before any token call. Any Graph call such a cmdlet makes
+goes through the gate like every other. The user-facing texts therefore never say that Azure
+Resource Manager calls are refused.
 
 **What is still not covered.**
 
 - A session swapped by another runspace between the gate and the request. The gate reads the
   session, and the SDK reads it again when it sends; a `Connect-MgGraph` in another runspace of the
   same process in between is not caught.
-- The live values of the eight properties: section 1 of the live checklist named above.
+- The live values of the eight properties (check 1.1) and the carrying half of the premise (check
+  1.3), both in section 1 of the live checklist named above.
 
 **The message, in four places.** `Connect-OER`'s and `Disconnect-OER`'s `.DESCRIPTION`, the
 README's `### Disconnect` and the about topic's `GRAPH SDK SESSION` section, which sits outside
@@ -1869,10 +1876,11 @@ README's `### Disconnect` and the about topic's `GRAPH SDK SESSION` section, whi
 each in its own medium's voice: `Connect-OER`, and the automatic sign-in of any other cmdlet, sets up
 a Graph SDK session with the module's token; another `Connect-MgGraph` that replaces it makes the
 next OER cmdlet refuse its Microsoft Graph calls with `GraphSessionChanged`; the module never
-switches the session back by itself, and `Connect-OER` or a new PowerShell process are the ways
-out; after a `Disconnect-MgGraph` run instead of `Disconnect-OER` the next cmdlet signs in again by
-itself, except on an app-only session; and `Disconnect-OER` ends whichever session the process
-holds.
+switches the session back by itself, and `Connect-OER` run with the same sign-in the session used
+(for an app-only session, its certificate or client secret, since a bare `Connect-OER` signs in
+interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
+instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
+and `Disconnect-OER` ends whichever session the process holds.
 
 **The old guidance, and what was known about it.** Until the check existed, the same four texts
 told the operator to run `Disconnect-OER` before their own `Connect-MgGraph` in the same process, or

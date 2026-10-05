@@ -15,8 +15,9 @@ function Disconnect-OER {
     the same process, the next OER cmdlet refuses its Microsoft Graph calls with a
     GraphSessionChanged error instead of sending them under that session, and the error can be
     reported more than once for one cmdlet. The module never switches the session back by itself:
-    Connect-OER connects the module again and takes the session back, and a new PowerShell process
-    is the other way.
+    Connect-OER, run with the same sign-in the session used -- for an app-only session, its
+    certificate or client secret, since a bare Connect-OER signs in interactively -- connects the
+    module again and takes the session back, and a new PowerShell process is the other way.
 
     Disconnect-OER closes whichever Microsoft Graph PowerShell SDK session the process holds: it
     clears the module's state, including its record of the session the module connected, and calls
