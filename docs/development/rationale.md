@@ -603,28 +603,41 @@ helper -- anything else fails the gate, naming the file and line. Non-vacuity: m
 files, more than 2700 `CommandAst` nodes, and at least one recognised `-Az`-shaped call still found,
 so a matcher that stopped matching cannot pass by finding nothing to complain about.
 
-**10. Transport gate hygiene** (Sprint 8 step 4b, A18 and A19). The gates that stand in front of
-every request -- the sign-in latch gate in both transports, and the Graph SDK session gate in the
-Graph transport, both described under [#auth-state](#auth-state) -- are only as good as the claim
-that no request can go around them, and this gate machine-checks that claim from the source. Four ownership rules, read from the command
-names the shared walk collected per file: `Get-MgContext` is called only in
-`Get-OERGraphSessionFingerprint`, `Lock-OERSignIn` and `Unlock-OERSignIn` only in
-`Initialize-OERAuth`, `Invoke-MgGraphRequest` only in the Graph wrapper and `Invoke-WebRequest` only
-in the ARM wrapper -- each with a positive count for its owner, so a rule cannot hold over nothing.
-And one structural rule, read from the two wrappers' own ASTs: every send sits in the BODY of a try
-that holds exactly one call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
+**10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20). The gates that stand in front
+of every request -- the Graph SDK session gate in the Graph transport, and the sign-in latch gate
+and the sign-in supersession gate in both transports, all described under
+[#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
+this gate machine-checks that claim from the source. Ownership rules, read from the command names
+the shared walk collected per file: `Get-MgContext` is called only in
+`Get-OERGraphSessionFingerprint`; `Lock-OERSignIn`, `Unlock-OERSignIn` and
+`Register-OERSignInIdentity` only in `Initialize-OERAuth`; `Get-OERSignInRefusal` and
+`Get-OERSignInSupersession` only in the two wrappers; `Get-OERSignInIdentity` only in
+`Register-OERSignInIdentity` and `Get-OERSignInSupersession`; `Invoke-MgGraphRequest` only in the
+Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper -- and every listed owner must really
+call its command, so a rule cannot hold over nothing and a stale owner is a failure. A pairing rule,
+read from `Initialize-OERAuth`: each `Register-OERSignInIdentity` call is the statement directly
+after an `Unlock-OERSignIn` call in the same block, each call standing alone and both passing
+`-Invocation` the same variable, and the two are called equally often -- two pairs, counted
+exactly, so a new success end is a deliberate edit of that number. A dropped memory write leaves
+that success path unremembered with nothing but `Initialize-OERAuth`'s own tests to show it, and a
+`Register-OERSignInIdentity` made conditional, piped, assigned or handed its invocation
+positionally is refused rather than judged. And one structural rule,
+read from the two wrappers' own ASTs: every send sits in the BODY of a try that holds exactly one
+call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
 `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
-`Invoke-ArmCall`), and that try is preceded, in the very block that holds it, by its session gate (Graph only) and its
-latch gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between
-a gate and any request, and the ARM bearer token materialized only after the latch gate -- every
-`$Plain =` assignment, `.ArmToken` read and `['ArmToken']` or `["ArmToken"]` index read in
-`Invoke-ArmCall` starts after it. A gate in an
-enclosing block does not count. The statement counts are exact, not floors: three Graph transport
-statements, one ARM statement, exactly one direct `Invoke-MgGraphRequest` inside
-`Invoke-GraphAttempt`, and two bearer markers, so a new send path is a deliberate edit of those
-numbers and never a statement the scan silently cannot place. A known-answer table of twenty-nine
-miniature regressions runs the checker itself in every run, each with the verdict it must reach. ARM
-has no session gate by design (its token is not a Graph SDK session), so none is required there.
+`Invoke-ArmCall`), and that try is preceded, in the very block that holds it and in this order, by
+its session gate (Graph only), its latch gate and its supersession gate, each a throw followed by a
+return, with no `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request, and
+the ARM bearer token materialized only after the last gate -- every `$Plain =` assignment,
+`.ArmToken` read and `['ArmToken']` or `["ArmToken"]` index read in `Invoke-ArmCall` starts after
+it. A gate in an enclosing block does not count, and a gate out of order is a violation of its own.
+The statement counts are exact, not floors: three Graph transport statements, one ARM statement,
+exactly one direct `Invoke-MgGraphRequest` inside `Invoke-GraphAttempt`, and two bearer markers, so
+a new send path is a deliberate edit of those numbers and never a statement the scan silently
+cannot place. A known-answer table of forty-five miniature regressions -- a case per way of breaking
+a rule, the order of the gates included -- and one of nine for the pairing rule run the checker
+itself in every run, each with the verdict it must reach. ARM has no session gate by design (its
+token is not a Graph SDK session), so none is required there.
 And one call-site rule, read from the `Initialize-OERAuth` call nodes the shared walk keeps per file
 (final review of round 1, F1): the latch is set on the frame that calls `Initialize-OERAuth`, so the
 nearest enclosing function of every call under `source/` must be the file's own top-level function
@@ -640,7 +653,9 @@ a call. Its own known-answer table of eleven miniatures covers a direct call, st
 `.`, a nested function, `ForEach-Object`, a call in no function, both transport exceptions, a
 refresh moved to another nested function and a call in a wrapper's top-level function.
 Its stated limits: it proves the SHAPE of a gate, not that its condition can be true, which is the
-unit suites' job; a command name built at run time is invisible to it, as to the Az context gate;
+unit suites' job, and so is the proof that `Get-OERSignInSupersession` walks every frame of the
+call stack; the pairing rule proves where `Register-OERSignInIdentity` stands, not what it stores;
+a command name built at run time is invisible to it, as to the Az context gate;
 the ownership scan resolves a module-qualified name and the three `Invoke-WebRequest` aliases
 and nothing else -- `Invoke-RestMethod`, which the module calls nowhere, is not scanned; and a bearer
 read spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker.
@@ -2141,6 +2156,161 @@ that a plain command after it, on the same state, sends its request. The latch's
 pinned in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1` (Describe
 `Initialize-OERAuth sign-in latch (A19)`), and each wrapper's gate in its own test file (Describes
 `Invoke-OERGraphRequest sign-in latch gate (A19)` and `Invoke-OERArmRequest sign-in latch gate (A19)`).
+
+### A command sends nothing under a sign-in a later command replaced
+
+**The finding (F-E).** Round 1 of step 4b stopped on it, and it is older than the round: it was
+present in the first version. In a pipeline every `begin` block runs before any `process` block,
+and almost every public cmdlet signs in in its `begin` block and acts in its `process` block -- 70
+of 71 when the finding was made. So the first command's `process` block acts under the session a
+LATER command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B`
+created the group in B, with no error. MEASURED in plain PowerShell 7, with no module code: two
+functions that each sign in in their `begin` block, piped one into the other, report "creates grp
+under session B (named A)". The rest was read in the code.
+
+**Why neither round 1 gate sees it.** Both sign-ins succeed. The latch holds a command only while
+its sign-in is refused, and each of the two commands released its own entry at its own success. The
+session gate compares the Graph SDK session with the one the module's own `Connect-MgGraph` left,
+and the downstream command's `Connect-MgGraph` is the module's own session -- for B. Everything the
+two gates read is true; what is wrong is which command the session was signed in for.
+
+**The memory.** Where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases
+the latch: at the cached return, and as the last statement of a new connection that went the whole
+way -- `Register-OERSignInIdentity` remembers which identity the calling command signed in as, keyed
+on the same invocation the latch uses (`$SignInCaller`, which `Lock-OERSignIn` returned at entry).
+The table, `$script:_OERSignInIdentity`, is a `ConditionalWeakTable` like the latch's: created on
+first use, keyed weakly on the commands' own invocation objects, and used only for their identity.
+Its value is one string from `Get-OERSignInIdentity`: the state's TenantId, AuthMethod, ClientId and
+Environment, in that fixed order, each read as a string (a missing one as empty) and joined by a
+line feed -- the four terms `$ArmIdentityUnchanged` compares, and never a token. A later success of
+the same command replaces its value, and a success that leaves no state removes its entry, so that
+command is no longer compared. One function builds both the remembered and the compared value, so
+the list of terms cannot drift between the two.
+
+**The gate.** Both transports ask `Get-OERSignInSupersession` before every request. It returns at
+once, without reading the call stack, when the table was never created -- the case in every unit
+test that mocks `Initialize-OERAuth`. Otherwise it reads the current identity once, walks
+`Microsoft.PowerShell.Utility\Get-PSCallStack` from the innermost frame outwards, and returns the
+name of the first frame whose invocation the table holds with a value that is not `-eq` the current
+identity -- `'a script block'` when that frame has no command name. The comparison is PowerShell's
+`-eq`, which ignores case, as `$ArmIdentityUnchanged` compares the same terms. A frame the table
+does not hold is not compared, so a command with no memory is never refused by this gate. When it
+returns a name, the transport throws the record `New-OERSignInSupersededError` builds --
+`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and fixed text that
+names no tenant, account or token -- followed by a `return`, for fact 2 under
+[The Graph SDK session](#the-graph-sdk-session).
+
+**Why any frame, and not the nearest.** The nested case. The apply handlers and several public
+cmdlets call public cmdlets that sign in again without `-TenantId` (see "Why the key is the command"
+under the previous subsection). In `Outer -TenantId A | Down -TenantId B`, a cmdlet nested in
+`Outer`'s `process` block signs in after `Down`'s `begin` block switched the state to B, hits B's
+cache and remembers B. Its own frame matches the state, so a walk that stopped at the nearest
+remembering frame would let it write to B on `Outer`'s behalf. The walk goes on past a frame whose
+memory equals the state and finds `Outer`, which remembers A.
+
+**Why the innermost frame that differs is the target.** In the nested case the inner frames
+inherited the current state and match it. The command whose sign-in another command replaced is the
+outer one, and it is the command the message speaks to ("Run the commands as separate statements").
+The first frame that differs, walking outwards, is the closest such command to the request.
+
+**Why no state counts as a difference.** When the module holds no state at all -- after a
+`Disconnect-OER` run inside the pipeline, for example -- there is no current identity, and a
+remembered string is never `-eq` to `$null`, so every remembering frame differs and the request is
+refused with `SignInSuperseded`. Refusing is the safe direction: the request would otherwise go out
+under no session of the module's, or with no token. The cost is that such a pipeline reports
+`SignInSuperseded` instead of an authentication failure.
+
+**The order of the three gates.** In `Invoke-OERGraphRequest` the supersession gate stands straight
+after each latch gate, which stands straight after each session gate: at the head of each attempt
+(the first, each throttled retry, each page under `-All`), and after the `Initialize-OERAuth` call
+of the claims-challenge step-up and of the token-rejected retry. In `Invoke-OERArmRequest` it stands
+once, in `Invoke-ArmCall`, straight after the latch gate and before the bearer token is
+materialized. The session gate comes first, so a changed session is still reported as
+`GraphSessionChanged`; the latch gate next, so a command whose own sign-in was refused is still
+reported as `SignInRefused`. All three stand outside the attempt's `try`, whose `catch` would turn a
+refusal into a Graph failure. At the two Graph retry sites, and on the ARM 401 retry, the
+supersession gate also refuses a step-up or a refresh whose sign-in changed the state's identity: a
+command on the call stack still remembers the identity from before it.
+
+**What it costs.** A pipeline that deliberately spans tenants or identities is refused, and more of
+it than its first command. MEASURED on 2026-10-05, in plain PowerShell and in the round's
+end-to-end tests: a downstream command processes each object inside the upstream command's output
+call, with the upstream command's frame still on the call stack, in `Up | Down` and in
+`Up | ForEach-Object { Inner }` alike. So in
+`Get-OERGroup -TenantId A | ForEach-Object { New-OERGroup -TenantId B ... }` the downstream
+`New-OERGroup` sends nothing to B -- its requests are refused, the refusal naming `Get-OERGroup` --
+and `Get-OERGroup`'s next page is refused too. That is the any-frame rule working as decided, and it
+is the rule the user-facing texts state: one pipeline works in one tenant with one identity. A
+cross-tenant copy is two statements, each of which signs in and finishes before the next one starts:
+`$Groups = @(Get-OERGroup -TenantId A ...)`, then
+`foreach ($Group in $Groups) { New-OERGroup -TenantId B ... }`. (`$Groups | New-OERGroup ...` is not
+the shape, since `New-OERGroup` binds nothing from the pipeline.) The same pipeline naming the same
+tenant and identity twice sends every request, and so do two separate statements naming different
+tenants.
+
+**What the operator sees.** A public cmdlet catches the transport's refusal the way it catches any
+failed request: it writes it as an error record -- or the apply engine as a `Failed` row -- and
+carries on; the refused request is simply not sent. The record's target is the command whose
+sign-in was replaced, which is not always the command that wrote it: a downstream command's record
+names the upstream command, and its `FullyQualifiedErrorId` names the command that wrote it
+(`SignInSuperseded,<writer>` in the tests' terms). Where a cmdlet re-publishes a failed lookup
+under its own id, the refusal travels in that record's message instead: `New-OERGroup` reports its
+refused name lookup as `GroupResolveFailed`, so for `New-OERGroup` the operator sees that id and
+not `SignInSuperseded`. MEASURED in the round's end-to-end tests: a transport throw caught nowhere
+at all ends the whole script it runs in, which is why the stand-ins there catch each request the
+way the public cmdlets do. The texts therefore say that such a command sends nothing, never that it
+stops or that a refused request ends the statement.
+
+**A consequence, stated.** By the same rule, an outer command whose NESTED cmdlet deliberately signs
+in to another tenant or identity is refused for the outer command: the outer frame's memory differs
+from the state the nested sign-in left. No cmdlet under `source/` does that today -- read in the
+code, every nested sign-in passes the outer command's own `-TenantId`, or none. This is the rule
+working, not a limit to work around: work in another tenant belongs in a statement of its own.
+
+**Known limits.**
+
+- Runspaces in one process (step 4b's F5). Each runspace imports its own copy of the module, with
+  its own state and its own memory, so a sign-in in another runspace is never compared (INFERRED
+  from how PowerShell scopes a module's state, not measured in this round). What the runspaces
+  share is the process's Graph SDK session, which only the session gate covers, with the gaps listed
+  under [The Graph SDK session](#the-graph-sdk-session). Each tenant still belongs in its own
+  process.
+- `Invoke-OERStructure` signs in in its `process` block, not in `begin`. In
+  `Invoke-OERStructure -TenantId A ... | X -TenantId B`, X's `begin` block signs in to B first, then
+  `Invoke-OERStructure`'s own sign-in switches the state back to A. `Invoke-OERStructure` sends to
+  A, as it should, and it is X whose requests -- made inside `Invoke-OERStructure`'s output, with X
+  remembering B -- are refused. The any-frame rule covers both directions. Read in the code, not
+  measured.
+- A command that signs in again inside its own `process` block, to another tenant, replaces its own
+  memory, and nothing compares that second sign-in with its first: it is the same command's own
+  choice.
+
+**The user-facing texts.** The README's `### Disconnect` section and the about topic's
+`GRAPH SDK SESSION` section close with the same paragraph, outside `SWITCHING TENANTS` so that the
+README binding of that section stays untouched: one OER pipeline works in one tenant with one
+identity; if a later command in it signs in to a different tenant or identity, an earlier command
+sends nothing more, every request made while it runs refused with `SignInSuperseded`, the requests
+of a command handling its output included, and a cmdlet that reports a failed lookup under an error
+of its own carries the refusal's message in that error; the commands run as separate statements,
+with objects collected in a variable first to move them between tenants. Both give the
+two-statement example and, commented out, the `ForEach-Object` pipeline it replaces. `Connect-OER`'s
+help carries the same rule in two sentences, beside the general case of a refused sign-in.
+
+**The proof.** The two places the memory is written are pinned in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe
+`Initialize-OERAuth sign-in memory (A20)`. Each wrapper's gate is pinned in its own test file,
+Describes `Invoke-OERGraphRequest sign-in supersession gate (A20)` and
+`Invoke-OERArmRequest sign-in supersession gate (A20)`, including its place after the session and
+latch gates and, in a runspace with no `try`, the `return` after each `throw`. End to end, the
+Describe `A command whose sign-in a later command in the pipeline replaced sends nothing (A20, F-E)`
+in `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` runs the real `Initialize-OERAuth` and
+both transports over stubbed token, connect and send calls, in a runspace with no `try` around the
+pipeline: P1 two commands naming different tenants, P1b the F-E pipeline itself with the real
+`New-OERGroup` and `Add-OERGroupMember` (nothing is created), P2 the nested case, P5 the
+`ForEach-Object` shape and P6 a sign-in that was a cached return, with P3 and P4 as the positive
+controls. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
+their order, the pairing of each memory write with its latch release, and the helpers' owners in
+place.
 
 ## profile-path
 

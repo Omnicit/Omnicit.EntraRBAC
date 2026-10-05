@@ -542,6 +542,28 @@ the latch is keyed on the frame that calls it, and such a frame ends at once (th
 refreshes, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the one exception).
 `Why: docs/development/rationale.md#auth-state`
 
+**A command sends nothing under a sign-in a later command replaced.** In a pipeline every `begin`
+block runs first, so an upstream command's `process` block would act under the session a downstream
+command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B`
+created the group in B. Both sign-ins succeed, so neither the latch nor the session gate sees it. So
+where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases the latch --
+`Register-OERSignInIdentity` remembers, keyed weakly on the calling command's invocation, the
+identity the state carries: tenant, method, client and cloud, the terms `$ArmIdentityUnchanged`
+compares, never a token. `Get-OERSignInIdentity` is the single owner of that identity. Both
+transports ask `Get-OERSignInSupersession` before every request and refuse it with
+`SignInSuperseded` (`New-OERSignInSupersededError` owns the id and the message) while ANY frame on
+the call stack remembers another identity than the state now carries. So an outer command whose
+nested cmdlets inherited the switched state is refused too, and so is a downstream command's request
+made inside the upstream command's output call, where the upstream frame is still on the stack. The
+order is fixed: in the Graph wrapper the session gate, then the latch gate, then the supersession
+gate; in the ARM wrapper the latch gate, then the supersession gate. A command with no memory is not
+compared. A pipeline must not span
+tenants or identities: run the commands as separate statements, for example collecting into a
+variable first. Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but
+directly after an `Unlock-OERSignIn` with the same invocation, and never read the supersession
+outside the two transports.
+`Why: docs/development/rationale.md#auth-state`
+
 | Parameter set | Key parameters | Use case |
 |---|---|---|
 | `Interactive` (default) | `-TenantId`, `-Interactive` | Admin at a keyboard (system browser) |
@@ -993,18 +1015,23 @@ bug.
   consume it, so an intermediate variable cannot hide the same defect); the module never calling
   an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
   and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
-  `Lock-OERSignIn`/`Unlock-OERSignIn` only in `Initialize-OERAuth`, `Invoke-MgGraphRequest` only in
-  the Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper, and every send a wrapper makes
-  in the body of a try that holds exactly one call path (in the Graph transport one
-  `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try
-  preceded, in the very
-  block that holds it, by its session gate (Graph only) and its latch gate, each a throw followed by
-  a return, with no `Initialize-OERAuth` or `Start-Sleep` between them and any request, the ARM
-  bearer token (`.ArmToken` or `['ArmToken']`) materialized only after the latch gate, and the
-  transport statements counted exactly (three Graph, one ARM) so a new send path cannot escape the
-  scan; and every `Initialize-OERAuth` call standing directly in its file's own function (in the two
-  wrappers, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`) and never in a nested function
-  or a scriptblock inside it, since the sign-in latch is keyed on the frame that calls it.
+  `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
+  `Initialize-OERAuth`, `Get-OERSignInRefusal` and `Get-OERSignInSupersession` only in the two
+  transport wrappers, `Get-OERSignInIdentity` only in `Register-OERSignInIdentity` and
+  `Get-OERSignInSupersession`, `Invoke-MgGraphRequest` only in the Graph wrapper and
+  `Invoke-WebRequest` only in the ARM wrapper, every listed owner really calling it; every
+  `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
+  same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
+  a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
+  `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try preceded, in the very block that
+  holds it and in this order, by its session gate (Graph only), its latch gate and its supersession
+  gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between the
+  earliest gate and any request, the ARM bearer token (`.ArmToken` or `['ArmToken']`) materialized
+  only after the last gate, and the transport statements counted exactly (three Graph, one ARM) so a
+  new send path cannot escape the scan; and every `Initialize-OERAuth` call standing directly in
+  its file's own function (in the two wrappers, in `Invoke-GraphSingle` and
+  `Invoke-ArmCallWithRefresh`) and never in a nested function or a scriptblock inside it, since the
+  sign-in latch is keyed on the frame that calls it.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in

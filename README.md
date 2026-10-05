@@ -184,6 +184,28 @@ Runspaces in one process -- `ForEach-Object -Parallel` and `Start-ThreadJob` -- 
 session, so a parallel fan-out across tenants in one process gets `GraphSessionChanged`; run each
 tenant in its own process instead, with `Start-Job` or a separate PowerShell process.
 
+One OER pipeline works in one tenant with one identity. If a later command in the same pipeline
+signs in to a different tenant or identity, an earlier command in it sends nothing more: every
+request made while the earlier command runs is refused with `SignInSuperseded`, including the
+requests of a command that handles its output, a `ForEach-Object` script block among them. Where a
+cmdlet reports a failed lookup under an error of its own, that error carries the refusal's message
+instead. Run the commands as separate statements; to move objects between tenants, collect them in
+a variable first:
+
+```powershell
+# Read in one tenant, then write in another, as two statements
+$Filter = "startswith(displayName,'role_sec_')"
+$Groups = @(Get-OERGroup -TenantId $TenantA -Filter $Filter)
+foreach ($Group in $Groups) {
+    New-OERGroup -TenantId $TenantB -DisplayName $Group.DisplayName
+}
+
+# Not as one pipeline: New-OERGroup would run inside Get-OERGroup's
+# output and send nothing
+# Get-OERGroup -TenantId $TenantA ... |
+#     ForEach-Object { New-OERGroup -TenantId $TenantB ... }
+```
+
 ### Switching tenants
 
 One PowerShell session works in one tenant at a time. Whether a later `Connect-OER` call naming a
