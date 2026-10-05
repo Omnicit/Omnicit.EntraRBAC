@@ -9,6 +9,11 @@ function Disconnect-OER {
     disconnects the Microsoft Graph session (Disconnect-MgGraph). After calling this command the
     next OER cmdlet will trigger a fresh sign-in.
 
+    Connect-OER sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
+    Connect-MgGraph with the module's token, and so does the automatic sign-in of any other OER
+    cmdlet. Disconnect-OER closes that session. Run Disconnect-OER before your own Connect-MgGraph
+    in the same process, or use a new PowerShell process.
+
     An Az PowerShell session you started yourself is deliberately LEFT ALONE. Omnicit.EntraRBAC
     never establishes an Az context: -IncludeARM only acquires an Azure Resource Manager token,
     which the module sends itself from its own Azure cmdlets. Any Az context on the machine

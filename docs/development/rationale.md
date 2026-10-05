@@ -1559,6 +1559,55 @@ module logging from covering AzAuth on that machine, and treat the log of a mach
 as holding the secret. The same warning is in `Connect-OER`'s `-ClientSecret` help and beside the
 client secret line in the README's Quick Start.
 
+### The Graph SDK session
+
+`Initialize-OERAuth` hands the Graph token it acquired to the Microsoft Graph PowerShell SDK:
+`Connect-MgGraph -AccessToken` with `-NoWelcome` and `-ErrorAction Stop`, plus `-Environment` outside
+`Global`, and **no `-ContextScope`**, so the SDK's own default applies. Every sign-in the module makes
+goes through that one call -- `Connect-OER` and the first-use sign-in of any other cmdlet alike -- so
+an OER session always comes with an SDK session in the same process. A call that finds a cached
+session returns before `Connect-MgGraph`, so the SDK session is started once per sign-in and not once
+per cmdlet. `Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears
+`$script:_OERAuthState` and calls `Disconnect-MgGraph`.
+
+The message is the same in four places, each in its own medium's voice: `Connect-OER`'s and
+`Disconnect-OER`'s `.DESCRIPTION`, the README's `### Disconnect`, and the about topic's
+`GRAPH SDK SESSION` section, which sits outside `SWITCHING TENANTS` so that the README binding of
+that section stays untouched. `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the
+current process (it calls `Connect-MgGraph` with the module's token), and `Disconnect-OER` closes it.
+Run `Disconnect-OER` before your own `Connect-MgGraph` in the same process, or use a new process.
+
+**How well it is known that `Disconnect-OER` alone is enough.**
+
+- MEASURED, for a certificate sign-in: check T.8 in
+  `docs/live-verification/feat-pim-group-approval-checklist.md` ran `Disconnect-OER`, then
+  `Connect-MgGraph` with a certificate thumbprint and `-ContextScope Process`, and passed on
+  2026-09-28 as the dedicated certificate identity: both identity lines `True`, then the two
+  read-back counts, `0` and `0`.
+- REPORTED, not saved, for a delegated interactive sign-in: check T.4 in
+  `docs/live-verification/fix-withhold-prune-on-unresolved-entries-checklist.md` ran `Disconnect-OER`
+  and then `Connect-MgGraph` with delegated scopes and `-ContextScope Process`. Its result reads
+  "Output was not preserved; the operator reports every step completed as expected", dated
+  2026-09-24. There is no captured output to point at.
+
+**No crash is recorded anywhere, and the help claims none.** The caution in those two checklists
+comes from commit `c2a5c70`, which wrote it as the reason for the order of the steps: `Connect-OER`
+leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
+otherwise try to read as an MSAL cache. Both checks disconnected first, so neither one ran the
+opposite order, and no other record shows it going wrong. The guidance is therefore given as a
+precaution and never as a described failure, and the measured-versus-reported wording stays in
+this record rather than in user-facing help.
+
+**Why the guidance is still worth giving.** The SDK session is process-wide and belongs to
+Microsoft.Graph.Authentication, not to this module. `$script:_OERAuthState` is the module's own
+record of it, which is a different thing: the SDK session is not part of that variable, so it can
+outlive the module's state, and the one call that ends both together is `Disconnect-OER`. INFERRED
+from the two code facts above and never run: an operator's own `Connect-MgGraph`, made while the
+module's cache is still warm, replaces the SDK session; the next OER cmdlet then returns from its
+cache without reconnecting, and its Graph calls go out under the operator's session instead of the
+one the module believes it holds. That is a reasoned hazard, not an observed one, and it is the
+reason to disconnect first rather than a tidy habit.
+
 ## profile-path
 
 Tenant profiles live at `<home>/.config/Omnicit.EntraRBAC/Profiles/<alias>.psd1`.

@@ -35,6 +35,11 @@ function Connect-OER {
     to move to another tenant in the same PowerShell session: AzAuth keeps its credential for the
     whole process, and Disconnect-OER clears only this module's session, not that credential.
 
+    Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
+    calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
+    OER cmdlet. Disconnect-OER closes that session. Run Disconnect-OER before your own
+    Connect-MgGraph in the same process, or use a new PowerShell process.
+
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
     -TenantAlias.

@@ -268,6 +268,15 @@ SWITCHING TENANTS
         Connect-OER -TenantId '00000000-0000-0000-0000-000000000000' `
             -ClientId $AppId -ClientSecret $Secret -Force
 
+GRAPH SDK SESSION
+
+    Connect-OER sets up a Microsoft Graph PowerShell SDK session in the current
+    process: it calls Connect-MgGraph with the module's token, and so does the
+    automatic sign-in of any other OER cmdlet. Disconnect-OER closes that session.
+
+    Run Disconnect-OER before your own Connect-MgGraph in the same process, or use
+    a new PowerShell process.
+
 SOVEREIGN CLOUDS
 
     Connect-OER -Environment selects the sovereign cloud a session signs in to and
