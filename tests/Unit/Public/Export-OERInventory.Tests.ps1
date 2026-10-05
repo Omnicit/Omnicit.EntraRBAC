@@ -923,6 +923,37 @@ Describe 'Export-OERInventory (partial coverage is reported, not swallowed)' {
             Should -Not -Match 'collection read\(s\) failed' -Because 'one report standing for three collections must not be reported as one collection'
     }
 
+    It 'opens the export InventoryPartial message by saying objects were left out for a shared name when that is the only cause' {
+        # F5. Get-OERInventory leaves out two live objects that share a name and names them in its own
+        # InventoryPartial. Nothing is unread and nothing is written as null, so an opening that
+        # spoke only of collections that could not be read would be untrue of this export.
+        Mock -ModuleName $script:moduleName Get-OERInventory {
+            Write-Error -Message 'This inventory is PARTIAL: 1 collection(s) or object(s) were left out because two or more live objects share a name.' `
+                -ErrorId 'InventoryPartial' -Category LimitsExceeded `
+                -TargetObject 'groups/Dup' -ErrorAction Continue
+            $inv = [PSCustomObject]@{
+                Version = '1.0'
+                Groups = @()
+                AdministrativeUnits = @(); Catalogs = @(); AccessPackages = @()
+                AccessReviews = @(); RoleAssignments = @(); RoleManagementPolicies = @()
+            }
+            $inv.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.Inventory')
+            $inv
+        }
+
+        $Bundle = Export-OERInventory -OutputPath (Join-Path $TestDrive 'ir-dup') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorVariable ExErr -ErrorAction SilentlyContinue
+
+        # Reach proof: the inventory read ran, its one report is the only entry, and Export raised its own error.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        @($Bundle.IncompleteReads) | Should -Be @('groups/Dup')
+        $Partial = @($ExErr | Where-Object { $_.FullyQualifiedErrorId -eq 'InventoryPartial,Export-OERInventory' })
+        $Partial.Count | Should -Be 1
+        $Partial[0].Exception.Message | Should -Match 'groups/Dup'
+        $Partial[0].Exception.Message |
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
+    }
+
     It 'still writes the whole bundle under -ErrorAction Stop when the inner read was partial' {
         # The inner Get-OERInventory call must PIN -ErrorAction Continue. Unpinned it inherits
         # $ErrorActionPreference from Export's scope, so under -ErrorAction Stop -- the usage both
@@ -1862,7 +1893,7 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         # The lead-in must be true when the only entry is groupsRoster, or a collection written as null
         # for want of a name: neither is "a collection that could not be read" alone.
         $Partial[0].Exception.Message |
-            Should -BeLike '*1 partial Entra ID read entry(ies) name collections that could not be read, or could not be written without an empty name, and are NOT stated as facts in the bundle*'
+            Should -BeLike '*1 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle*'
         $Partial[0].Exception.Message |
             Should -BeLike '*A section named alone is written as an empty array, which does not mean the tenant has none, and the entry groupsRoster means groupsRoster.json is empty since the group roster could not be read*'
     }

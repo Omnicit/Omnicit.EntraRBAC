@@ -883,7 +883,8 @@ function Get-OERInventory {
                     # no UPN for the role member, and the id resolves verbatim (a display name does not).
                     # The role projects as its friendly name when the directory-role name map has one for
                     # it, and otherwise falls back to the role id -- emitting role:null would fail schema
-                    # validation and make the unit un-appliable. A name map that could not be READ at all
+                    # validation and make the unit un-appliable. A role name that is only whitespace counts
+                    # as missing, so it falls back to the role id too. A name map that could not be READ at all
                     # never gets here: Get-OERAdministrativeUnit then omits ScopedRoles, and the branch
                     # below reports it unread. A role or principal that is STILL blank after those
                     # fallbacks cannot be written either (an empty name is refused by the validator), so
@@ -892,7 +893,7 @@ function Get-OERInventory {
                     $SrProjected = @(foreach ($S in @($Au.ScopedRoles)) {
                         if (-not $S) { continue }
                         $SrPrincipal = if ($S.PrincipalId) { [string]$S.PrincipalId } else { [string]$S.PrincipalDisplayName }
-                        $SrRole = if ($S.RoleName) { [string]$S.RoleName } else { [string]$S.RoleId }
+                        $SrRole = if (-not [string]::IsNullOrWhiteSpace([string]$S.RoleName)) { [string]$S.RoleName } else { [string]$S.RoleId }
                         if ([string]::IsNullOrWhiteSpace($SrRole) -or [string]::IsNullOrWhiteSpace($SrPrincipal)) {
                             $SrNameless = $true
                             continue
@@ -1960,7 +1961,7 @@ function Get-OERInventory {
             } else { '' }
             Write-CmdletError `
                 -Message ([System.Exception]::new(
-                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
+                    "This inventory is PARTIAL: $($UnreadCollections.Count) collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read). " +
                     "Unread: $($UnreadCollections -join ', '). A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null, which the apply engine reads as " +
                     'leave untouched; do not hand-edit it to an empty array, and do not treat this document as a full tenant snapshot.' +
                     $CauseClause)) `

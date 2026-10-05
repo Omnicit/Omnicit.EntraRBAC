@@ -664,6 +664,38 @@ Describe 'Get-OERInventory' {
             $Scoped = @((Get-OERInventory -Include AdministrativeUnits).AdministrativeUnits[0].scopedRoles)[0]
             $Scoped.role | Should -Be '22222222-2222-2222-2222-222222222222'
         }
+
+        It 'treats a directory role name that is only whitespace as missing: the role id is written, scopedRoles is not null and nothing is reported' {
+            # F4. A RoleName of '   ' is truthy, so a bare truthiness test would keep it, then refuse
+            # it as blank a line later and write the whole collection as null with an InventoryPartial,
+            # although the role id was there to fall back to.
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERAdministrativeUnit {
+                [PSCustomObject]@{
+                    Id = 'au-1'; DisplayName = 'au_hr'; Description = $null
+                    IsMemberManagementRestricted = $false; MembershipType = 'Assigned'; Visibility = $null
+                    Members = @()
+                    ScopedRoles = @([PSCustomObject]@{
+                        RoleName = '   '
+                        RoleId = '22222222-2222-2222-2222-222222222222'
+                        PrincipalId = '33333333-3333-3333-3333-333333333333'
+                        PrincipalDisplayName = 'Anna'
+                    })
+                }
+            }
+            $Inv = Get-OERInventory -Include AdministrativeUnits -ErrorAction SilentlyContinue -ErrorVariable InvErr
+
+            # Positive proof first: the unit was read and projected, with its scoped role written.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERAdministrativeUnit -Times 1 -Exactly
+            $Au = @($Inv.AdministrativeUnits)[0]
+            $Au.displayName | Should -BeExactly 'au_hr'
+            $Au.PSObject.Properties.Name -contains 'scopedRoles' | Should -BeTrue
+            $null -eq $Au.scopedRoles | Should -BeFalse -Because 'the role id is a name the apply engine accepts, so the collection is a fact and not an explicit null'
+            @($Au.scopedRoles).Count | Should -Be 1
+            $Au.scopedRoles[0].role | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            $Au.scopedRoles[0].principal | Should -BeExactly '33333333-3333-3333-3333-333333333333'
+            $InvPartial = @(@($InvErr) | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+            $InvPartial.Count | Should -Be 0 -Because 'nothing was left unread, so no InventoryPartial names the unit''s scopedRoles'
+        }
     }
 
     Context 'Catalogs section' {
@@ -2486,6 +2518,26 @@ Describe 'Get-OERInventory' {
             Assert-DupDocumentValid -Inventory $Inv
         }
 
+        It 'opens the InventoryPartial message by saying objects were left out for a shared name when that is the only cause' {
+            # F5. Two live objects sharing a name is neither an unread collection nor a collection
+            # written as null for want of a name: the objects are simply not written. The lead-in
+            # must be true of that case alone, or it tells the operator a read failed that did not.
+            $script:DupGroups = @(
+                New-DupGroup -Name 'Dup' -Id $script:DupGrp1
+                New-DupGroup -Name 'dup' -Id $script:DupGrp2
+            )
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable InvErr
+            # Reach proof: the groups were read, both were left out, and the shared name is the one cause.
+            Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+            @($Inv.groups).Count | Should -Be 0
+            $Partial = Get-DupPartial -Record @($InvErr)
+            $Partial.Count | Should -Be 1
+            [string]$Partial[0].TargetObject | Should -BeExactly 'groups/Dup'
+            $Partial[0].Exception.Message | Should -Match 'Two or more live objects share the name groups/Dup'
+            $Partial[0].Exception.Message |
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
+        }
+
         It 'writes every group of a unique name and reports nothing when no two names collide' {
             $script:DupGroups = @(
                 New-DupGroup -Name 'Alpha' -Id $script:DupGrp1
@@ -4255,7 +4307,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a section named alone too, which is neither a members nor a
             # nameless collection: the list could not be read at all.
             $Read.Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
             $Read.Partial[0].Exception.Message |
                 Should -BeLike '*Unread: groups. A section reported here by its name alone could not be read at all and is written as an empty array, which does not mean the tenant has none. A members, scopedRoles, resources or resourceRoles key reported here is an explicit null*'
         }
@@ -4906,7 +4958,7 @@ Describe 'Get-OERInventory' {
             # The lead-in is true of a collection that was READ but could not be written without an empty
             # name, not only of an unread one.
             $Partial[0].Exception.Message |
-                Should -BeLike '*PARTIAL: 1 collection(s) could not be read, or could not be written without an empty name, and are not stated as facts in the document*'
+                Should -BeLike '*PARTIAL: 1 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document*'
         }
 
         It 'writes the package''s resourceRoles as an explicit null, and names it, when a binding has no role name' {
