@@ -2468,10 +2468,17 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
 
     It 'G8: a session that changes between pages ends the paged read with GraphSessionChanged, keeping the pages already read' {
         Set-TrackedGateState
+        $script:GatePage = 0
         Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
             # Page 1 is answered; another Connect-MgGraph then replaces the session before page 2.
+            # Only page 1 links on: with the loop-head gate lost, page 2 ends the walk and the test
+            # fails on the missing refusal instead of paging forever.
+            $script:GatePage++
             $script:GateCurrent = $script:GateForeignContext
-            @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+            if ($script:GatePage -eq 1) {
+                return @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+            }
+            @{ value = @('p2a') }
         }
 
         $Caught = InModuleScope $script:moduleName {
@@ -2529,13 +2536,20 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
             }
             # A MODULE-scope stub answers page 1, so the request never reaches the tripwire's global
             # function. It is removed again below, before the runspace check reads the module scope.
+            # Only page 1 links on, and the stub has a hang guard of its own (exit past five calls):
+            # with the loop-head gate lost, Get-MgContext is never called again, so its guard would
+            # never fire.
             & (Get-Module Omnicit.EntraRBAC) {
                 function script:Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param($Method, $Uri, $Body)
                     $global:OERGateStubCalls++
+                    if ($global:OERGateStubCalls -gt 5) { exit }
                     $global:OERGateSessionSwapped = $true
-                    @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+                    if ($global:OERGateStubCalls -eq 1) {
+                        return @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+                    }
+                    @{ value = @('p2a') }
                 }
             }
             $Result = & (Get-Module Omnicit.EntraRBAC) { Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue }
