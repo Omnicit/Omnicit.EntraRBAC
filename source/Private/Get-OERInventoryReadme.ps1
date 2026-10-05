@@ -82,11 +82,12 @@ function Get-OERInventoryReadme {
         $Partial = @'
 ## What this export could not read
 
-This bundle is PARTIAL: `Export-OERInventory` could not read everything it was asked to, so do not
-treat it as a full tenant snapshot. Each entry below names collections or objects that could not be
-read, could not be written without an empty name, or were left out because two or more live
-objects share a name; none of them is stated as a fact in this bundle, and "Unread collections"
-below says how each kind is written.
+This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was
+asked to, so do not treat it as a full tenant snapshot. Each entry below names collections or objects
+that could not be read, could not be written without an empty name, or were left out because two or
+more live objects share a name; none of them is stated as a fact in this bundle. "Unread
+collections" below says how an unread collection is written; an object left out for a shared name is
+absent from `inventory.json` and the per-area files, which does not mean the tenant has none.
 '@
         $Partial + "`n`n" + ($Bullets -join "`n")
     } else {
@@ -130,7 +131,8 @@ includes a predefined prompt that turns it into appliable improvement proposals.
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (for example with Test-Json).
 - `rbac-architect-prompt.md` -- the predefined prompt. Open it, optionally edit the
-  "USER PREFERENCES" block, then give it to any LLM together with the JSON files above.
+  "USER PREFERENCES" block, then give it to any LLM together with this README and the JSON files
+  above.
 
 ## Which groups are covered
 

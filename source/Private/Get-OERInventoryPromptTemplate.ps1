@@ -47,7 +47,7 @@ improvement proposals at increasing maturity. Each proposal MUST be a complete, 
 Invoke-OERStructure document (schema below) so it can be applied directly by the Omnicit.EntraRBAC
 PowerShell module.
 
-# Inputs (attached JSON files)
+# Inputs (attached files)
 
 - README.md -- read its section "What this export could not read" first: it lists every collection,
   object or Azure scope this export could not read, or says that nothing was left unread; anything

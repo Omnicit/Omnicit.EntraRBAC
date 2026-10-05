@@ -184,8 +184,12 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         ((Get-TestBullets -Section $Section) -join "`n") | Should -BeExactly ($Expected -join "`n")
         # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
         $Collapsed = $Section -replace '\s+', ' '
-        $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read everything it was asked to, so do not treat it as a full tenant snapshot.'))
-        $Collapsed | Should -Match ([regex]::Escape('Each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle, and "Unread collections" below says how each kind is written.'))
+        $Collapsed | Should -Match ([regex]::Escape('This bundle is PARTIAL: `Export-OERInventory` could not read, or could not write, everything it was asked to, so do not treat it as a full tenant snapshot.'))
+        $Collapsed | Should -Match ([regex]::Escape('Each entry below names collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name; none of them is stated as a fact in this bundle.'))
+        # "Unread collections" covers an unread collection only; an object left out for a shared name
+        # is said to be absent here, since that section does not describe it.
+        $Collapsed | Should -Match ([regex]::Escape('"Unread collections" below says how an unread collection is written; an object left out for a shared name is absent from `inventory.json` and the per-area files, which does not mean the tenant has none.'))
+        $Collapsed | Should -Not -Match ([regex]::Escape('says how each kind is written'))
         # The partial state never carries the complete state's claim.
         $Section | Should -Not -Match 'Nothing\.'
         $Section | Should -Not -Match 'read everything it was asked to read'
@@ -283,6 +287,10 @@ Describe 'Get-OERInventoryReadme (what this export could not read)' {
         $Collapsed = $Md -replace '\s+', ' '
         $Collapsed | Should -Match ([regex]::Escape('2. Provide the prompt, this README and the JSON files to any capable LLM.'))
         $Collapsed | Should -Not -Match ([regex]::Escape('2. Provide the prompt and the JSON files to any capable LLM.'))
+        # The Files bullet for the prompt says the same as the next steps: the README goes with it,
+        # since the prompt's Inputs list opens with this README.
+        $Collapsed | Should -Match ([regex]::Escape('then give it to any LLM together with this README and the JSON files above.'))
+        $Collapsed | Should -Not -Match ([regex]::Escape('then give it to any LLM together with the JSON files above.'))
         $Collapsed | Should -Match ([regex]::Escape('under "What this export could not read" above'))
     }
 

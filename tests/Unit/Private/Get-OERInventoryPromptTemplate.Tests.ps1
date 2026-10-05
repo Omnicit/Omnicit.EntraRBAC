@@ -263,9 +263,12 @@ Describe 'Get-OERInventoryPromptTemplate' {
             # unread data changes how each of them is read.
             $Bullet = 'README.md -- read its section "What this export could not read" first: it lists every collection, object or Azure scope this export could not read, or says that nothing was left unread; anything listed there is unknown, not empty'
             $Collapsed | Should -Match ([regex]::Escape($Bullet))
-            $InputsStart = $Collapsed.IndexOf('# Inputs (attached JSON files)')
+            # The heading says "attached files", not "attached JSON files": the README it opens with is
+            # Markdown, and the bundle README tells the reader to attach it too.
+            $InputsStart = $Collapsed.IndexOf('# Inputs (attached files)')
             $InputsStart | Should -BeGreaterThan -1
-            $Collapsed.IndexOf('- ' + $Bullet) | Should -Be ($InputsStart + '# Inputs (attached JSON files) '.Length) -Because 'the README is the FIRST bullet of the Inputs list'
+            $Collapsed | Should -Not -Match ([regex]::Escape('# Inputs (attached JSON files)'))
+            $Collapsed.IndexOf('- ' + $Bullet) | Should -Be ($InputsStart + '# Inputs (attached files) '.Length) -Because 'the README is the FIRST bullet of the Inputs list'
             $Collapsed.IndexOf($Bullet) | Should -BeLessThan $Collapsed.IndexOf('- inventory.json -- the current state')
             # The two places that used to point at "the partial report" now point at the README too.
             $Collapsed | Should -Match ([regex]::Escape('(the export reports it as partial, and README.md lists it under "What this export could not read")'))
