@@ -184,13 +184,14 @@ Runspaces in one process -- `ForEach-Object -Parallel` and `Start-ThreadJob` -- 
 session, so a parallel fan-out across tenants in one process gets `GraphSessionChanged`; run each
 tenant in its own process instead, with `Start-Job` or a separate PowerShell process.
 
-One OER pipeline works in one tenant with one identity. If a later command in the same pipeline
-signs in to a different tenant or identity, an earlier command in it sends nothing more: every
-request made while the earlier command runs is refused with `SignInSuperseded`, including the
-requests of a command that handles its output, a `ForEach-Object` script block among them. Where a
-cmdlet reports a failed lookup under an error of its own, that error carries the refusal's message
-instead. Run the commands as separate statements; to move objects between tenants, collect them in
-a variable first:
+One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
+different tenants or identities, a command whose sign-in another one replaced sends nothing more:
+every request made while it runs is refused with `SignInSuperseded`, including the requests of a
+command that handles its output, a `ForEach-Object` script block among them. Most OER cmdlets sign
+in before any command in the pipeline processes input, so that is usually the first command. A
+cmdlet that reports a failed lookup under an error of its own carries the refusal's message in that
+error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one. Run the commands as separate
+statements; to move objects between tenants, collect them in a variable first:
 
 ```powershell
 # Read in one tenant, then write in another, as two statements
@@ -205,6 +206,10 @@ foreach ($Group in $Groups) {
 # Get-OERGroup -TenantId $TenantA ... |
 #     ForEach-Object { New-OERGroup -TenantId $TenantB ... }
 ```
+
+The second statement switches tenant in the same PowerShell process, so whether it reaches the
+tenant it names depends on the sign-in type, as [Switching tenants](#switching-tenants) below
+describes.
 
 ### Switching tenants
 

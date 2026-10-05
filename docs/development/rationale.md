@@ -2161,10 +2161,12 @@ pinned in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1` (Describe
 
 **The finding (F-E).** Round 1 of step 4b stopped on it, and it is older than the round: it was
 present in the first version. In a pipeline every `begin` block runs before any `process` block,
-and almost every public cmdlet signs in in its `begin` block and acts in its `process` block -- 70
-of 71 when the finding was made. So the first command's `process` block acts under the session a
-LATER command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B`
-created the group in B, with no error. MEASURED in plain PowerShell 7, with no module code: two
+and almost every public cmdlet signs in in its `begin` block and acts in its `process` block:
+counted from the source on 2026-10-06, 84 of the 86 public `Initialize-OERAuth` call sites stand in
+a `begin` block, and the other two, in `Invoke-OERStructure` and `Connect-OER`, in `process`. So
+the first command's `process` block acts under the session a LATER command's sign-in switched to:
+`New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B` created the group in B, with no
+error. MEASURED in plain PowerShell 7, with no module code: two
 functions that each sign in in their `begin` block, piped one into the other, report "creates grp
 under session B (named A)". The rest was read in the code.
 
@@ -2233,16 +2235,19 @@ supersession gate also refuses a step-up or a refresh whose sign-in changed the 
 command on the call stack still remembers the identity from before it.
 
 **What it costs.** A pipeline that deliberately spans tenants or identities is refused, and more of
-it than its first command. MEASURED on 2026-10-05, in plain PowerShell and in the round's
-end-to-end tests: a downstream command processes each object inside the upstream command's output
-call, with the upstream command's frame still on the call stack, in `Up | Down` and in
-`Up | ForEach-Object { Inner }` alike. So in
+it than the command whose sign-in was replaced. MEASURED on 2026-10-05, in plain PowerShell and in
+the round's end-to-end tests: a downstream command processes each object inside the upstream
+command's output call, with the upstream command's frame still on the call stack, in `Up | Down`
+and in `Up | ForEach-Object { Inner }` alike. So in
 `Get-OERGroup -TenantId A | ForEach-Object { New-OERGroup -TenantId B ... }` the downstream
 `New-OERGroup` sends nothing to B -- its requests are refused, the refusal naming `Get-OERGroup` --
-and `Get-OERGroup`'s next page is refused too. That is the any-frame rule working as decided, and it
-is the rule the user-facing texts state: one pipeline works in one tenant with one identity. A
-cross-tenant copy is two statements, each of which signs in and finishes before the next one starts:
-`$Groups = @(Get-OERGroup -TenantId A ...)`, then
+and any later request `Get-OERGroup` makes is refused too: the next group's member read under
+`-IncludeMembers`, for example. Its listing itself goes out under A, since `Get-OERGroup` reads
+every page of a `-Filter` or `-All` listing before it emits the first group (read in the code).
+That is the any-frame rule working as decided, and it is the rule the user-facing texts state: one
+pipeline works in one tenant with one identity. A cross-tenant copy is two statements, each of
+which signs in and finishes before the next one starts: `$Groups = @(Get-OERGroup -TenantId A ...)`,
+then
 `foreach ($Group in $Groups) { New-OERGroup -TenantId B ... }`. (`$Groups | New-OERGroup ...` is not
 the shape, since `New-OERGroup` binds nothing from the pipeline.) The same pipeline naming the same
 tenant and identity twice sends every request, and so do two separate statements naming different
@@ -2275,12 +2280,14 @@ working, not a limit to work around: work in another tenant belongs in a stateme
   share is the process's Graph SDK session, which only the session gate covers, with the gaps listed
   under [The Graph SDK session](#the-graph-sdk-session). Each tenant still belongs in its own
   process.
-- `Invoke-OERStructure` signs in in its `process` block, not in `begin`. In
+- `Invoke-OERStructure` and `Connect-OER` sign in in their `process` block, not in `begin`. In
   `Invoke-OERStructure -TenantId A ... | X -TenantId B`, X's `begin` block signs in to B first, then
-  `Invoke-OERStructure`'s own sign-in switches the state back to A. `Invoke-OERStructure` sends to
-  A, as it should, and it is X whose requests -- made inside `Invoke-OERStructure`'s output, with X
-  remembering B -- are refused. The any-frame rule covers both directions. Read in the code, not
-  measured.
+  `Invoke-OERStructure`'s own sign-in switches the state to A. `Invoke-OERStructure` sends every
+  request to A, as it should, its `-Prune` deletions included, and it is X whose requests -- made
+  inside `Invoke-OERStructure`'s output, with X remembering B -- are refused. `Connect-OER` outputs
+  nothing, so no command downstream of it runs per object. The any-frame rule covers both
+  directions, and the user-facing texts therefore speak of the command whose sign-in another one
+  replaced, which is usually, not always, the first. Read in the code, not measured.
 - A command that signs in again inside its own `process` block, to another tenant, replaces its own
   memory, and nothing compares that second sign-in with its first: it is the same command's own
   choice.
@@ -2288,13 +2295,17 @@ working, not a limit to work around: work in another tenant belongs in a stateme
 **The user-facing texts.** The README's `### Disconnect` section and the about topic's
 `GRAPH SDK SESSION` section close with the same paragraph, outside `SWITCHING TENANTS` so that the
 README binding of that section stays untouched: one OER pipeline works in one tenant with one
-identity; if a later command in it signs in to a different tenant or identity, an earlier command
-sends nothing more, every request made while it runs refused with `SignInSuperseded`, the requests
-of a command handling its output included, and a cmdlet that reports a failed lookup under an error
-of its own carries the refusal's message in that error; the commands run as separate statements,
+identity; if commands in it sign in to different tenants or identities, a command whose sign-in
+another one replaced sends nothing more, every request made while it runs refused with
+`SignInSuperseded`, the requests of a command handling its output included; most cmdlets sign in
+before any command in the pipeline processes input, so that is usually the first command; a cmdlet
+that reports a failed lookup under an error of its own, `New-OERGroup`'s `GroupResolveFailed` for
+one, carries the refusal's message in that error instead; the commands run as separate statements,
 with objects collected in a variable first to move them between tenants. Both give the
-two-statement example and, commented out, the `ForEach-Object` pipeline it replaces. `Connect-OER`'s
-help carries the same rule in two sentences, beside the general case of a refused sign-in.
+two-statement example, the `ForEach-Object` pipeline it replaces commented out, and a pointer to
+the limits per sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
+`Connect-OER`'s help carries the same rule in two sentences, beside the general case of a refused
+sign-in.
 
 **The proof.** The two places the memory is written are pinned in
 `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe

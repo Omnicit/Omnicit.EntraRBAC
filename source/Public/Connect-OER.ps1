@@ -63,10 +63,10 @@ function Connect-OER {
     (or, in the case above, GraphSessionChanged for a Microsoft Graph request) instead of going out
     under the session an earlier sign-in left. A cmdlet it calls, or a neighbour in the same
     pipeline, that signs in successfully does not change that. Run Connect-OER, or a new command
-    whose sign-in succeeds, to send requests again. An OER command whose sign-in a later command in
-    the same pipeline replaced with a different tenant or identity sends nothing more either: each
-    request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
-    tenant with one identity, so run such commands as separate statements.
+    whose sign-in succeeds, to send requests again. An OER command whose sign-in another command in
+    the same pipeline later replaced with a different tenant or identity sends nothing more either:
+    each request made while it runs is refused with a SignInSuperseded error. One pipeline works in
+    one tenant with one identity, so run such commands as separate statements.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with

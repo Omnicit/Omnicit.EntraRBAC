@@ -48,15 +48,15 @@ reported as itself, and only a missing approver is `ApproverNotFound`.
 
 `New-OERAccessReviewDefinition` and `Invoke-OERStructure` report a failed read of the access package
 they derive the catalog from as itself (`CatalogDerivationFailed` stays for a package with no
-catalog). `Remove-OERAccessReviewDefinition` warns before confirmation if it cannot check the
-definition for a Lifecycle access review; a confirmed delete still happens.
+catalog). `Remove-OERAccessReviewDefinition` warns before confirmation if it cannot read the
+definition to check for a Lifecycle access review; a confirmed delete still happens.
 `Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances` `$null` when unread.
 
 OER cmdlets send no Graph request once another `Connect-MgGraph` replaces the module's Graph SDK
 session (`GraphSessionChanged`), and nothing when their sign-in fails or is refused
 (`SignInRefused`); `Connect-OER` connects again. Nothing is sent while a command runs whose sign-in
-a later command in its pipeline replaced with another tenant or identity (`SignInSuperseded`); run
-them as separate statements.
+another command in its pipeline later replaced with another tenant or identity
+(`SignInSuperseded`); run such commands as separate statements.
 
 `Connect-OER`'s help says a client secret reaches AzAuth as plain text and recommends a certificate
 or managed identity.

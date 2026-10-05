@@ -554,14 +554,15 @@ transports ask `Get-OERSignInSupersession` before every request and refuse it wi
 `SignInSuperseded` (`New-OERSignInSupersededError` owns the id and the message) while ANY frame on
 the call stack remembers another identity than the state now carries. So an outer command whose
 nested cmdlets inherited the switched state is refused too, and so is a downstream command's request
-made inside the upstream command's output call, where the upstream frame is still on the stack. The
-order is fixed: in the Graph wrapper the session gate, then the latch gate, then the supersession
-gate; in the ARM wrapper the latch gate, then the supersession gate. A command with no memory is not
-compared. A pipeline must not span
-tenants or identities: run the commands as separate statements, for example collecting into a
-variable first. Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but
-directly after an `Unlock-OERSignIn` with the same invocation, and never read the supersession
-outside the two transports.
+made inside the upstream command's output call, where the upstream frame is still on the stack.
+`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, so downstream of them it
+is the downstream command that is refused. The order is fixed: in the Graph wrapper the session
+gate, then the latch gate, then the supersession gate; in the ARM wrapper the latch gate, then the
+supersession gate. A command with no memory is not compared. A pipeline must not span tenants or
+identities: run the commands as separate statements, for example collecting into a variable first.
+Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after
+an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
+transports.
 `Why: docs/development/rationale.md#auth-state`
 
 | Parameter set | Key parameters | Use case |
