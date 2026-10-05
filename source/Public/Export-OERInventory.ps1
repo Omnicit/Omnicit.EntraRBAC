@@ -89,6 +89,12 @@ function Export-OERInventory {
     Get-OERInventory help describes; Invoke-OERStructure never removes a catalog, access package or
     assignment policy that is absent from the document.
 
+    The bundle says so itself. The generated README.md carries a section named "What this export
+    could not read": one bullet per IncompleteReads, SkippedScopes and SkippedEligibilityScopes
+    entry, or the statement that nothing was left unread, so whoever receives the bundle (an LLM,
+    say) can tell a collection that was not read from one that is empty. The lists go into README.md
+    only, never into inventory.json or any other file that is validated or applied.
+
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
     oer-inventory-<tenantId>-<yyyyMMdd-HHmmss>, so inventory.json is at
@@ -545,7 +551,12 @@ function Export-OERInventory {
         }
         $WrittenFiles.Add('rbac-architect-prompt.md')
         if ($ShouldWrite) {
-            (Get-OERInventoryReadme) | Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
+            # All three lists are complete by now (the roster read above was the last to add an
+            # IncompleteReads entry), and they go into the README alone: inventory.json is the apply
+            # document and must stay exactly the shape the schema describes. The parameters are
+            # mandatory, so a README that claims a complete read cannot be written by forgetting one.
+            (Get-OERInventoryReadme -IncompleteReads @($IncompleteReads) -SkippedScopes @($SkippedScopes) -SkippedEligibilityScopes @($SkippedEligibilityScopes)) |
+                Set-Content -Path (Join-Path $BundlePath 'README.md') -Encoding utf8
         }
         $WrittenFiles.Add('README.md')
 
