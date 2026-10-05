@@ -929,6 +929,17 @@ function Invoke-OERGraphRequest {
         # below has no loop and a second failure throws), so each command can step up as needed.
         $ClaimsJson = Get-ClaimsFromException $AttemptError
 
+        # EVERY THROW FROM HERE TO THE END OF THIS FUNCTION IS FOLLOWED BY A RETURN, and none of them
+        # is tidiness. Measured 2026-10-05 in PowerShell 7: under -ErrorAction SilentlyContinue or
+        # Ignore, with no try up the call stack, a function carries on past its OWN throw to its next
+        # statement, and a throw inside a CATCH block resumes after the whole try statement -- so the
+        # two retry catches below set a flag that is read straight after their try instead. Carrying
+        # on here sent the step-up or the forced refresh an app-only refusal exists to prevent, and
+        # the retry after it; handed back $null as though a failed retry had answered; let a failed
+        # step-up retry fall into the token-rejected path, which signed in again and sent a third
+        # request; and raised the first attempt's error again after a failed refresh retry's own.
+        # This matters on the single-request path only: under -All the paging loop calls this
+        # function inside a try, so each of these throws propagates to the paging catch.
         if ($ClaimsJson) {
             # App-only sessions (ClientSecret/ClientCertificate) cannot perform an interactive ACRS
             # step-up, and the module deliberately does not cache the secret/certificate material to
@@ -945,6 +956,7 @@ function Invoke-OERGraphRequest {
                     'AppOnlyClaimsChallengeUnsatisfiable',
                     [System.Management.Automation.ErrorCategory]::AuthenticationError,
                     $SingleUri)
+                return
             }
 
             Write-Verbose "[Invoke-OERGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
@@ -979,15 +991,20 @@ function Invoke-OERGraphRequest {
             # second failure comes back as DATA, and returning it here would hand the caller a Graph
             # error body as though the step-up had worked.
             $RetryAttempt = $null
+            $ClaimsRetryFailed = $false
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
                 $RetryAttempt = Invoke-GraphAttempt -Parameters $InvokeParams -Expected $SingleExpectedErrorCode -RequestUri $SingleUri
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                # Read straight after this try statement, where a suppressed throw resumes.
+                $ClaimsRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            if ($ClaimsRetryFailed) { return }
             if ($RetryAttempt.Kind -ne 'Failure') { return $RetryAttempt.Value }
             throw Convert-GraphHttpException $RetryAttempt.Value
+            return
         }
 
         # -- Token rejected/expired (not a claims challenge) -- re-auth and retry --
@@ -1030,6 +1047,7 @@ function Invoke-OERGraphRequest {
                     'AppOnlyTokenRefreshUnsatisfiable',
                     [System.Management.Automation.ErrorCategory]::AuthenticationError,
                     $SingleUri)
+                return
             }
 
             Write-Verbose "[Invoke-OERGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
@@ -1057,19 +1075,27 @@ function Invoke-OERGraphRequest {
             }
             # Same reason as the claims retry above: a soft failure must not read as a success.
             $RefreshAttempt = $null
+            $RefreshRetryFailed = $false
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
                 $RefreshAttempt = Invoke-GraphAttempt -Parameters $InvokeParams -Expected $SingleExpectedErrorCode -RequestUri $SingleUri
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                # Read straight after this try statement, where a suppressed throw resumes.
+                $RefreshRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            if ($RefreshRetryFailed) { return }
             if ($RefreshAttempt.Kind -ne 'Failure') { return $RefreshAttempt.Value }
             throw Convert-GraphHttpException $RefreshAttempt.Value
+            return
         }
 
         # -- Not recoverable -- convert and re-throw --
+        # The last statement of this function, so this return changes nothing today; it keeps the rule
+        # above true for a statement someone adds below it.
         throw Convert-GraphHttpException $AttemptError
+        return
     }
 
     # -- Per-CALL wait budget, shared by every page of a -All enumeration --
@@ -1207,6 +1233,11 @@ function Invoke-OERGraphRequest {
                 'GraphExpectedCodeOnLaterPage',
                 [System.Management.Automation.ErrorCategory]::OperationStopped,
                 $NextUri)
+            # This throw sits after the paging try, so under -ErrorAction SilentlyContinue or Ignore,
+            # with no try up the call stack, the loop carried on past it: the marker added no item and
+            # named no next link, so the walk ended and returned the pages before it as the whole
+            # collection. The same reason as the paging catch's check above: return, never break.
+            return
         }
         foreach ($Item in @($Page.value)) { if ($null -ne $Item) { $AllValues.Add($Item) } }
         $NextUri = [string]$Page['@odata.nextLink']

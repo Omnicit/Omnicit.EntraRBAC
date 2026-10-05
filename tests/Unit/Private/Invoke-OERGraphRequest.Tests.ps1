@@ -3242,3 +3242,244 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'the refused command sends nothing, and the second command is answered by the stub'
     }
 }
+
+Describe 'Invoke-OERGraphRequest stops at each of its own throws, outside any try (F3)' {
+    # Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries
+    # on past its own throw to its next statement, and a throw inside a CATCH block resumes after the
+    # whole try statement. Pester's It is a try, so each test runs the wrapper in a runspace with no
+    # try and observes what the statement after the throw would do: send a second request, sign in,
+    # hand back $null or a partial collection as the answer, or raise a second record for the failure.
+    #
+    # The throws inside Invoke-GraphSingle are probed on the single-request path only: under -All the
+    # paging loop calls Invoke-GraphSingle inside a try, so each of them propagates to the paging
+    # catch, which has its own flag. GraphExpectedCodeOnLaterPage is raised after that try, under -All.
+    BeforeAll {
+        # Runs one probe in a runspace with no try. The state is one Initialize-OERAuth did not build
+        # (no session fingerprint, and the fresh import holds no latch table), so neither gate refuses
+        # anything and only the throw under test can stop the wrapper.
+        #   -Respond is pasted into a MODULE-scope Invoke-MgGraphRequest stub, after its counter
+        #     ($global:OERStopGraphCalls) and its hang guard (exit past five calls), so Set-Variable
+        #     -Scope 1 writes into Invoke-GraphAttempt's scope exactly as the SDK's -StatusCodeVariable
+        #     does. The stub is removed again, unqualified from the module scope, before the runspace
+        #     check reads the module scope.
+        #   -Call runs in the module scope inside @(), so an explicit $null on the success channel
+        #     counts as one item and nothing counts as none.
+        # Initialize-OERAuth is replaced in the module scope by a counter that succeeds without signing
+        # anything in (hang guard: exit past five calls): the retry after it would be sent. It is not a
+        # transport name, so the runspace check does not read it, and the runspace is discarded with it.
+        # The error ids are read from $Error, cleared just before the call: SilentlyContinue keeps a
+        # suppressed throw off the error stream, not out of $Error.
+        function script:Invoke-GraphStopProbe {
+            param(
+                [Parameter(Mandatory)][ValidateSet('Interactive', 'ClientCertificate')][string]$AuthMethod,
+                [Parameter(Mandatory)][scriptblock]$Respond,
+                [Parameter(Mandatory)][scriptblock]$Call
+            )
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+& (Get-Module Omnicit.EntraRBAC) {
+    param($Method)
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = $Method
+        ClientId = '33333333-3333-3333-3333-333333333333'; Environment = 'Global'
+        GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+    }
+} '__AUTHMETHOD__'
+$global:OERStopGraphCalls = 0
+$global:OERStopInitCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Invoke-MgGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
+            [string]$StatusCodeVariable, [string]$ResponseHeadersVariable)
+        $global:OERStopGraphCalls++
+        if ($global:OERStopGraphCalls -gt 5) { exit }
+__RESPOND__
+    }
+    function script:Initialize-OERAuth {
+        [CmdletBinding()]
+        param($TenantId, $AuthMethod, $ClientId, $ClaimsChallenge, [switch]$ForceRefresh, [switch]$IncludeARM)
+        $global:OERStopInitCalls++
+        if ($global:OERStopInitCalls -gt 5) { exit }
+    }
+}
+$Error.Clear()
+$Result = @(& (Get-Module Omnicit.EntraRBAC) {
+__CALL__
+})
+$Ids = @($Error | ForEach-Object { [string]$_.FullyQualifiedErrorId })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-MgGraphRequest }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-MgGraphRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'RESULT COUNT: {0}' -f $Result.Count
+'GRAPH CALLS: {0}' -f $global:OERStopGraphCalls
+'INIT CALLS: {0}' -f $global:OERStopInitCalls
+foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__AUTHMETHOD__', $AuthMethod).Replace('__RESPOND__', $Respond.ToString()).Replace('__CALL__', $Call.ToString())
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The FullyQualifiedErrorId of every record a probe found in $Error.
+        function script:Get-StopProbeErrorId {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -like 'ERROR ID: *' } | ForEach-Object { "$_" -replace '^ERROR ID: ', '' })
+        }
+    }
+
+    It 'S1: an app-only claims challenge ends the call: one request, no step-up, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod ClientCertificate -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-step-up') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Reached: the refusal is the one record the call leaves.
+        Get-StopProbeErrorId -Probe $R | Should -Be @('AppOnlyClaimsChallengeUnsatisfiable')
+        $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S2: a claims-challenge retry that raises ends the call without handing back $null' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            if ($global:OERStopGraphCalls -eq 2) { throw [System.Exception]::new('{"error":{"code":"StepUpRetryDenied","message":"still denied"}}') }
+            @{ value = @('third-request') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Reached: the retry's own failure, converted in the claims-retry catch.
+        Get-StopProbeErrorId -Probe $R | Should -Be @('StepUpRetryDenied')
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        # Not $null as though the step-up had answered: nothing at all.
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S3: a claims-challenge retry answered as data with a failure ends the call before the token-rejected path' {
+        # -ExpectedErrorCode: each answer arrives as data. The first is a 401 carrying a claims challenge
+        # in its body, so the step-up runs; the retry answers 403. Carrying on past that throw falls
+        # into the token-rejected path, which reads the FIRST answer's 401 and signs in again.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                Set-Variable -Name $StatusCodeVariable -Value 401 -Scope 1
+                return ('{"error":{"code":"InvalidAuthenticationToken","message":"Continuous access evaluation: claims=eyJhY2Nlc3MiOnt9fQ"}}' | ConvertFrom-Json -AsHashtable)
+            }
+            if ($global:OERStopGraphCalls -eq 2) {
+                Set-Variable -Name $StatusCodeVariable -Value 403 -Scope 1
+                return ('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}' | ConvertFrom-Json -AsHashtable)
+            }
+            Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1
+            @{ value = @('third-request') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'beta/x' -ExpectedErrorCode 'ResourceTypeNotSupported' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Reached: the retry's 403 is the one record the call leaves.
+        Get-StopProbeErrorId -Probe $R | Should -Be @('Authorization_RequestDenied')
+        # The step-up only: no forced refresh after it, and no third request.
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S4: an app-only rejected token ends the call: one request, no refresh, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod ClientCertificate -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('AppOnlyTokenRefreshUnsatisfiable')
+        $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S5: a token-rejected retry that raises ends the call without handing back $null' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            if ($global:OERStopGraphCalls -eq 2) { throw [System.Exception]::new('{"error":{"code":"RefreshRetryDenied","message":"still denied"}}') }
+            @{ value = @('third-request') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Reached: the retry's own failure, converted in the refresh-retry catch.
+        Get-StopProbeErrorId -Probe $R | Should -Be @('RefreshRetryDenied')
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S6: a token-rejected retry answered as data with a failure leaves that failure as the only record' {
+        # -ExpectedErrorCode again: a 401 without a claims challenge, then a 403 from the retry. Carrying
+        # on past the retry's throw reaches the final throw, which converts the FIRST answer's 401 and
+        # raises it as a second record for the same call.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                Set-Variable -Name $StatusCodeVariable -Value 401 -Scope 1
+                return ('{"error":{"code":"InvalidAuthenticationToken","message":"Lifetime validation failed, the token is expired."}}' | ConvertFrom-Json -AsHashtable)
+            }
+            if ($global:OERStopGraphCalls -eq 2) {
+                Set-Variable -Name $StatusCodeVariable -Value 403 -Scope 1
+                return ('{"error":{"code":"Authorization_RequestDenied","message":"Insufficient privileges."}}' | ConvertFrom-Json -AsHashtable)
+            }
+            Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1
+            @{ value = @('third-request') }
+        } -Call {
+            Invoke-OERGraphRequest -Method GET -Uri 'beta/x' -ExpectedErrorCode 'ResourceTypeNotSupported' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # The retry's 403, and not the first answer's 401 raised after it.
+        Get-StopProbeErrorId -Probe $R | Should -Be @('Authorization_RequestDenied')
+        $R.Output | Should -Contain 'INIT CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S7: a declared code on a later page ends the paged read without the partial collection' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-GraphStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopGraphCalls -eq 1) {
+                Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1
+                return @{ value = @('a', 'b', 'c'); '@odata.nextLink' = 'https://graph.microsoft.com/beta/x?$skiptoken=p2' }
+            }
+            Set-Variable -Name $StatusCodeVariable -Value 400 -Scope 1
+            ('{"error":{"code":"ResourceTypeNotSupported","message":"nope"}}' | ConvertFrom-Json -AsHashtable)
+        } -Call {
+            Invoke-OERGraphRequest -Uri 'beta/x' -All -ExpectedErrorCode 'ResourceTypeNotSupported' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('GraphExpectedCodeOnLaterPage')
+        $R.Output | Should -Contain 'GRAPH CALLS: 2'
+        # Nothing on the success channel: three items must never read as the whole collection.
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

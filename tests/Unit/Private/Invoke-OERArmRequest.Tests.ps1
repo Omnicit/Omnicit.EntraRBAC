@@ -1247,3 +1247,183 @@ Describe 'Invoke-OERArmRequest sign-in latch gate (A19)' {
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no request may leave over a refused refresh'
     }
 }
+
+Describe 'Invoke-OERArmRequest stops at each of its own throws, outside any try (F3)' {
+    # Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries
+    # on past its own throw to its next statement, and a throw inside a CATCH block resumes after the
+    # whole try statement. Pester's It is a try, so each test runs the wrapper in a runspace with no
+    # try and observes what the statement after the throw would do: send a second request, hand back
+    # an error body or a partial collection as the answer, or raise a second record for the failure.
+    #
+    # None of the nested functions here is called inside a try, so a suppressed throw in one of them
+    # also lets every caller above it carry on. A request that got no response therefore reaches the
+    # top of the wrapper as no object at all, and the wrapper ends there instead of converting it.
+    BeforeAll {
+        # Runs one probe in a runspace with no try, on an ARM state Initialize-OERAuth did not build
+        # (the fresh import holds no latch table, so the latch gate refuses nothing).
+        #   -Respond is pasted into a MODULE-scope Invoke-WebRequest stub, after its counter
+        #     ($global:OERStopArmCalls) and its hang guard (exit past five calls). The stub is removed
+        #     again, unqualified from the module scope, before the runspace check reads the module
+        #     scope.
+        #   -Call runs in the module scope inside @(), so an explicit $null on the success channel
+        #     counts as one item and nothing counts as none.
+        # Initialize-OERAuth is replaced in the module scope by a counter that succeeds without signing
+        # anything in (hang guard: exit past five calls): the retry after it would be sent. It is not a
+        # transport name, so the runspace check does not read it, and the runspace is discarded with it.
+        # The error ids are read from $Error, cleared just before the call: SilentlyContinue keeps a
+        # suppressed throw off the error stream, not out of $Error.
+        function script:Invoke-ArmStopProbe {
+            param(
+                [Parameter(Mandatory)][ValidateSet('Interactive', 'ClientCertificate')][string]$AuthMethod,
+                [Parameter(Mandatory)][scriptblock]$Respond,
+                [Parameter(Mandatory)][scriptblock]$Call
+            )
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+& (Get-Module Omnicit.EntraRBAC) {
+    param($Method)
+    $script:_OERAuthState = @{
+        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = $Method
+        ClientId = '33333333-3333-3333-3333-333333333333'; Environment = 'Global'
+        ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+        ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+        ArmResourceUrl = 'https://management.azure.com/'
+    }
+} '__AUTHMETHOD__'
+$global:OERStopArmCalls = 0
+$global:OERStopInitCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        $global:OERStopArmCalls++
+        if ($global:OERStopArmCalls -gt 5) { exit }
+__RESPOND__
+    }
+    function script:Initialize-OERAuth {
+        [CmdletBinding()]
+        param($TenantId, $AuthMethod, $ClientId, $ClaimsChallenge, [switch]$ForceRefresh, [switch]$IncludeARM)
+        $global:OERStopInitCalls++
+        if ($global:OERStopInitCalls -gt 5) { exit }
+    }
+}
+$Error.Clear()
+$Result = @(& (Get-Module Omnicit.EntraRBAC) {
+__CALL__
+})
+$Ids = @($Error | ForEach-Object { [string]$_.FullyQualifiedErrorId })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'RESULT COUNT: {0}' -f $Result.Count
+'ARM CALLS: {0}' -f $global:OERStopArmCalls
+'INIT CALLS: {0}' -f $global:OERStopInitCalls
+foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__AUTHMETHOD__', $AuthMethod).Replace('__RESPOND__', $Respond.ToString()).Replace('__CALL__', $Call.ToString())
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The FullyQualifiedErrorId of every record a probe found in $Error.
+        function script:Get-StopProbeErrorId {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -like 'ERROR ID: *' } | ForEach-Object { "$_" -replace '^ERROR ID: ', '' })
+        }
+    }
+
+    It 'S1: a request that gets no response leaves ArmTransportError as the only record, and nothing returned' {
+        # Carrying on past the throw in Invoke-ArmCall's catch built a status-0 response out of the
+        # request that never got one, and the wrapper converted that into a second record (ArmError).
+        # Ending Invoke-ArmCall there hands its callers no object; converting THAT at the top of the
+        # wrapper would raise a parameter-binding record instead.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            throw [System.Exception]::new('No such host is known.')
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S2: an app-only rejected token ends the call: one request, no refresh, nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod ClientCertificate -Respond {
+            if ($global:OERStopArmCalls -eq 1) { return [pscustomobject]@{ StatusCode = 401; Content = '{}'; Headers = @{} } }
+            [pscustomobject]@{ StatusCode = 200; Content = '{"value":["after-refresh"]}'; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('AppOnlyTokenRefreshUnsatisfiable')
+        $R.Output | Should -Contain 'INIT CALLS: 0'
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S3: a non-2xx answer ends the call without handing back its error body as data' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            [pscustomobject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"denied"}}'; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('AuthorizationFailed')
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S4: a non-2xx later page ends the paged read without the partial collection' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a","b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            [pscustomobject]@{ StatusCode = 500; Content = '{"error":{"code":"InternalServerError","message":"boom"}}'; Headers = @{} }
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('InternalServerError')
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        # Nothing on the success channel: two items must never read as the whole collection.
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'S5: a later page that gets no response leaves ArmTransportError as the only record, and nothing returned' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmStopProbe -AuthMethod Interactive -Respond {
+            if ($global:OERStopArmCalls -eq 1) {
+                return [pscustomobject]@{
+                    StatusCode = 200; Headers = @{}
+                    Content    = '{"value":["a","b"],"nextLink":"https://management.azure.com/subscriptions?api-version=2022-12-01&$skiptoken=p2"}'
+                }
+            }
+            throw [System.Exception]::new('The response ended prematurely.')
+        } -Call {
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All -ErrorAction SilentlyContinue
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        Get-StopProbeErrorId -Probe $R | Should -Be @('ArmTransportError')
+        $R.Output | Should -Contain 'ARM CALLS: 2'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

@@ -127,12 +127,15 @@ function Invoke-OERArmRequest {
             $InvokeParams.Body        = ($CallBody | ConvertTo-Json -Depth 100)
             $InvokeParams.ContentType = 'application/json'
         }
+        $TransportFailed = $false
         try {
             $Raw = Invoke-WebRequest @InvokeParams
         } catch {
             # Security hygiene: the failed request (carrying the Authorization: Bearer header) lives in
             # $Error -- remove it FIRST, before anything else, uniformly with the Graph wrapper.
             Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $TransportFailed = $true
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new("Azure Resource Manager request failed before a response was received: $($PSItem.Exception.Message)"),
                 'ArmTransportError',
@@ -141,6 +144,14 @@ function Invoke-OERArmRequest {
         } finally {
             $Plain = $null
         }
+        # The throw above does not always end this function. Measured 2026-10-05 in PowerShell 7: under
+        # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a throw inside a CATCH
+        # block resumes AFTER the whole try statement -- here, once the finally has run -- so a return
+        # placed after that throw would never run. Carrying on built a status-0 response out of a
+        # request that never got one, and the wrapper raised a second record for it (ArmError). No
+        # object at all goes back instead; every caller above hands that on without sending anything,
+        # and the top of the wrapper ends the call on it.
+        if ($TransportFailed) { return }
         # Normalize to a { StatusCode; Content; Headers } shape for the status logic, the throttle
         # backoff and Convert-ArmHttpException.
         #
@@ -311,6 +322,10 @@ function Invoke-OERArmRequest {
                 'AppOnlyTokenRefreshUnsatisfiable',
                 [System.Management.Automation.ErrorCategory]::AuthenticationError,
                 $CallPath)
+            # Load-bearing: under -ErrorAction SilentlyContinue or Ignore, with no try up the call
+            # stack, this function carried on past its own throw to the forced refresh an app-only
+            # session cannot satisfy, and sent the retry after it.
+            return
         }
         Write-Verbose "[Invoke-OERArmRequest] ARM token rejected (status=401). Forcing re-authentication and retrying once..."
         # Forward the cached ClientId so the SAME principal is re-acquired. Without it a user-assigned
@@ -449,8 +464,21 @@ function Invoke-OERArmRequest {
     $Response = Invoke-ArmCallWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
         -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
 
+    # EVERY THROW IN THIS FUNCTION IS FOLLOWED BY A RETURN (one inside a catch, by a flag read straight
+    # after its try), and none of them is tidiness. Measured 2026-10-05 in PowerShell 7: under
+    # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on past
+    # its OWN throw to its next statement -- and so does every caller of a nested function that threw,
+    # since a return there ends only that nested function.
+    #
+    # No response object at all means a nested function already raised and returned: the latch gate
+    # or the transport failure in Invoke-ArmCall, or the app-only refusal in Invoke-ArmCallWithRefresh.
+    # Its record is the call's answer. Converting the missing response would add a parameter-binding
+    # record of its own, since Convert-ArmHttpException requires one.
+    if ($null -eq $Response) { return }
     if ([int]$Response.StatusCode -lt 200 -or [int]$Response.StatusCode -gt 299) {
         throw (Convert-ArmHttpException -Response $Response -Path $Path)
+        # Carrying on parsed the error body and returned it as data.
+        return
     }
 
     if (-not $Response.Content) { return $null }
@@ -473,8 +501,14 @@ function Invoke-OERArmRequest {
         # path must back off exactly like the single-request path -- it is not the exception.
         $PageResponse = Invoke-ArmCallWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
             -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+        # The same two checks as for the first page above. return, never break: break would hand back
+        # the pages so far as though they were the whole collection.
+        if ($null -eq $PageResponse) { return }
         if ([int]$PageResponse.StatusCode -lt 200 -or [int]$PageResponse.StatusCode -gt 299) {
             throw (Convert-ArmHttpException -Response $PageResponse -Path $NextPath)
+            # Carrying on read the error body as a page with no next link, so the walk ended and
+            # returned the pages before it as the whole collection.
+            return
         }
         $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
         if ($null -ne $Page.value) { foreach ($Item in $Page.value) { $AllValues.Add($Item) } }
