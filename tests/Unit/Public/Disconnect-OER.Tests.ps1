@@ -113,3 +113,41 @@ Describe 'Disconnect-OER and the sovereign cloud state' {
         }
     }
 }
+
+# -------------------------------------------------------------------------------------------------
+# Graph SDK session (A18). The fingerprint of the session the module connected lives in the auth
+# state, so replacing the whole state with $null forgets it with no statement of its own. These
+# tests keep that true: after a disconnect the module tracks no session, compares nothing and never
+# reads the SDK's session to find out.
+# -------------------------------------------------------------------------------------------------
+Describe 'Disconnect-OER and the Graph SDK session fingerprint (A18)' {
+    BeforeEach {
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
+        Mock -ModuleName $script:moduleName Disconnect-AzAccount {}
+        # A stable fake session, so a state check that reached the SDK would read this and not the
+        # real, process-wide one.
+        Mock -ModuleName $script:moduleName Get-MgContext {
+            [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+        }
+    }
+
+    It 'forgets the recorded fingerprint with the state, so the module tracks no session' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = '{"TenantId":"x"}' }
+            # The precondition: a tracked state, so the 'Untracked' below is the disconnect's doing.
+            $script:_OERAuthState.ContainsKey('GraphSessionFingerprint') | Should -BeTrue
+        }
+
+        Disconnect-OER -Confirm:$false
+
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState | Should -BeNullOrEmpty
+            Get-OERGraphSessionState | Should -Be 'Untracked'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 0 -Exactly
+    }
+}

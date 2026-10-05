@@ -299,6 +299,11 @@ function Connect-OER {
         # every cmdlet that does not name one.
         if ($ResolvedEnvironment) { $AuthParams.Environment = $ResolvedEnvironment }
         if ($Force) { $AuthParams.ForceRefresh = $true }
+        # SEC (A18): Connect-OER is the operator's explicit instruction to connect, so a Microsoft Graph
+        # PowerShell SDK session that another Connect-MgGraph started after the module connected is a
+        # cache miss here and is replaced -- the one place the module takes the session back. Every
+        # other cmdlet refuses that session with GraphSessionChanged instead; see Initialize-OERAuth.
+        $AuthParams.ReclaimGraphSession = $true
 
         Initialize-OERAuth @AuthParams
     }
