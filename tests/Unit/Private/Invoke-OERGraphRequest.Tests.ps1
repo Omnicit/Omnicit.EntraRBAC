@@ -2362,6 +2362,8 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
     }
 
     It 'G6: refuses before any Graph call when a plain call carries on past Initialize-OERAuth''s refusal' {
+        # The hit list is shared by the whole file, so each runspace test counts its own delta.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
         $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
             Import-Module Omnicit.EntraRBAC
             $Own = [pscustomobject]@{
@@ -2392,10 +2394,46 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
         }
         $R.Output | Should -Contain 'END OF SCRIPT REACHED'
         ($R.Errors -join "`n") | Should -Match 'has changed since Omnicit\.EntraRBAC connected it'
-        @($global:OERTransportTripwireHits).Count | Should -Be 0 -Because 'no Graph request may leave under another session'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph request may leave under another session'
+    }
+
+    It 'G6b: an interactive state is refused by Initialize-OERAuth itself, before any token call, under -ErrorAction SilentlyContinue' {
+        # G6's app-only state would also be stopped by AppOnlySessionCredentialUnavailable if the
+        # refusal were ever continued past. An interactive state needs no credential material, so a
+        # continued Initialize-OERAuth would reach Get-AzToken or Connect-MgGraph -- the tripwire.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                }
+            } $Own
+            function global:Get-MgContext {
+                [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+            }
+            Get-OERGroup -Group 'oer-s84b-gate-probe' -ErrorAction SilentlyContinue
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no token call and no Graph request may leave under another session'
     }
 
     It 'G7: refuses before any Graph call when the wrapper runs under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
         $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
             Import-Module Omnicit.EntraRBAC
             $Own = [pscustomobject]@{
@@ -2425,6 +2463,98 @@ Describe 'Invoke-OERGraphRequest Graph SDK session gate (A18)' {
             'END OF SCRIPT REACHED'
         }
         $R.Output | Should -Contain 'END OF SCRIPT REACHED'
-        @($global:OERTransportTripwireHits).Count | Should -Be 0 -Because 'no Graph request may leave under another session'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph request may leave under another session'
+    }
+
+    It 'G8: a session that changes between pages ends the paged read with GraphSessionChanged, keeping the pages already read' {
+        Set-TrackedGateState
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            # Page 1 is answered; another Connect-MgGraph then replaces the session before page 2.
+            $script:GateCurrent = $script:GateForeignContext
+            @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Uri 'v1.0/groups' -All } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        @($Caught.Exception.PartialValue) | Should -Be @('p1a', 'p1b')
+        $Caught.Exception.PageNumber | Should -Be 2
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'G9: a paged read refused partway through ends, outside any try, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                }
+            } $Own
+            $global:OERGateStubCalls = 0
+            $global:OERGateContextCalls = 0
+            $global:OERGateSessionSwapped = $false
+            # The module's own session until page 1 has been answered, then another Connect-MgGraph's.
+            # The hang guard: exit is not governed by an error preference, so a loop that never ends
+            # stops here and the script never reaches its last line.
+            function global:Get-MgContext {
+                $global:OERGateContextCalls++
+                if ($global:OERGateContextCalls -gt 10) { exit }
+                if (-not $global:OERGateSessionSwapped) {
+                    return [pscustomobject]@{
+                        AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                        ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                        Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+                    }
+                }
+                [pscustomobject]@{
+                    AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+                    ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+                    Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+                }
+            }
+            # A MODULE-scope stub answers page 1, so the request never reaches the tripwire's global
+            # function. It is removed again below, before the runspace check reads the module scope.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    $global:OERGateStubCalls++
+                    $global:OERGateSessionSwapped = $true
+                    @{ value = @('p1a', 'p1b'); '@odata.nextLink' = 'https://graph.microsoft.com/v1.0/groups?$skiptoken=x' }
+                }
+            }
+            $Result = & (Get-Module Omnicit.EntraRBAC) { Invoke-OERGraphRequest -Uri 'v1.0/groups' -All -ErrorAction SilentlyContinue }
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-MgGraphRequest }
+            $Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-MgGraphRequest -CommandType Function -ErrorAction Ignore }
+            'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'STUB CALLS: {0}' -f $global:OERGateStubCalls
+            'CONTEXT CALLS: {0}' -f $global:OERGateContextCalls
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'STUB CALLS: 1'
+        # Nothing on the success channel: a partial collection must never read as a complete one.
+        $R.Output | Should -Contain 'RESULT IS NULL: True'
+        $ContextCalls = [int](@($R.Output | Where-Object { "$_" -like 'CONTEXT CALLS: *' })[0] -replace '^CONTEXT CALLS: ', '')
+        $ContextCalls | Should -BeLessOrEqual 3
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph request may leave under another session'
     }
 }

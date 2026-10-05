@@ -1078,6 +1078,7 @@ function Invoke-OERGraphRequest {
     while ($NextUri) {
         $PageNumber++
         Write-Verbose "[Invoke-OERGraphRequest] Fetching page $PageNumber..."
+        $PageFailed = $false
         try {
             $Page = Invoke-GraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body -CallBudget $CallBudget `
                 -SingleExpectedErrorCode $ExpectedErrorCode
@@ -1087,6 +1088,8 @@ function Invoke-OERGraphRequest {
             # already scrubbed on its own internal catch paths, but this is a SEPARATE catch clause
             # and the source-hygiene gate counts scrub-first PER CATCH, not per call chain.
             Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $PageFailed = $true
 
             # -- Issue #73: a failure on page N no longer discards what pages 1..N-1 already read --
             # F1, MEASURED (docs/development/rationale.md#graph-wrapper): a note property attached to
@@ -1115,6 +1118,19 @@ function Invoke-OERGraphRequest {
                 "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
             throw
         }
+        # The throw above does not always end this function. Measured 2026-10-05 in PowerShell 7:
+        # under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a throw inside
+        # a CATCH block resumes AFTER the whole try statement -- here -- and not at the catch's next
+        # statement, so a return placed after that throw would never run. The loop then carried on
+        # with the previous page still in $Page: it appended that page again and re-read its next
+        # link, for ever -- a failed later page re-sent its request each turn, and a page the session
+        # gate refuses (A18) was refused each turn while $AllValues kept growing. A failed FIRST page
+        # returned an empty collection as though the read had found nothing.
+        #
+        # return, not break: break would hand back the partial collection as though it were complete,
+        # which is the defect class -All exists to prevent. The caller asked for silence, and gets
+        # nothing on the success channel.
+        if ($PageFailed) { return }
         # A -All GET can return an empty body (e.g. no results at all); indexing into a $null page
         # would otherwise throw a non-terminating InvalidOperation that becomes TERMINATING under a
         # caller's -ErrorAction Stop. Treat it as the end of the collection instead.
