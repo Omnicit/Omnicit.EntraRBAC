@@ -4,6 +4,18 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+
+    # One stable Graph SDK context for every test in this file, unless a test mocks its own. The
+    # tests that run the real Initialize-OERAuth would otherwise read the REAL, process-wide
+    # Get-MgContext -- empty on CI, a developer's own session on a workstation -- and, since the
+    # module compares that session at every entry, their outcome would depend on the machine.
+    $script:DefaultGraphContext = [pscustomobject]@{
+        AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+        ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+        Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'
+        Scopes = @('Group.ReadWrite.All')
+    }
+    Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
 }
 
 AfterAll {

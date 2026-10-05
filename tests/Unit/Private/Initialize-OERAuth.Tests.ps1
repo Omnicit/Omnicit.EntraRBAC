@@ -3189,3 +3189,236 @@ Describe 'Initialize-OERAuth Graph SDK session fingerprint (A18)' {
         Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
     }
 }
+
+Describe 'Initialize-OERAuth Graph SDK session check (A18)' {
+    BeforeAll {
+        # Connects the module once, as its own session, and then replaces the session the mocked SDK
+        # holds -- another Connect-MgGraph's context, or $null for none. The module's own reconnect
+        # puts $script:OwnContext back through the Connect-MgGraph mock below.
+        function script:Connect-OwnThenSwap {
+            param([AllowNull()][object]$Context)
+            InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+            }
+            $script:CurrentContext = $Context
+        }
+
+        # Calls Initialize-OERAuth with the given parameters and returns the record it raised, or
+        # nothing when it raised none.
+        function script:Invoke-InitializeCatching {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Caught = $null
+                try { Initialize-OERAuth @P } catch { $Caught = $PSItem }
+                $Caught
+            }
+        }
+
+        function script:Get-RecordedFingerprint {
+            InModuleScope $script:moduleName { $script:_OERAuthState.GraphSessionFingerprint }
+        }
+
+        function script:Get-ContextFingerprint {
+            param([object]$Context)
+            InModuleScope $script:moduleName -Parameters @{ C = $Context } { param($C) Get-OERGraphSessionFingerprint -Context $C }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERLastIssuedSession = $null
+        }
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        # Another Connect-MgGraph's session: a certificate sign-in as another app, in another tenant.
+        $script:ForeignContext = [pscustomobject]@{
+            AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+            ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = '44444444-4444-4444-4444-444444444444' }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own.
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { }
+    }
+
+    It 'A1: refuses a cache hit under another session with a terminating GraphSessionChanged' {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -Be '44444444-4444-4444-4444-444444444444'
+        $Caught.Exception.Message | Should -Match 'Connect-OER'
+        $Caught.Exception.Message | Should -Not -Match '66666666-6666-6666-6666-666666666666'
+        $Caught.Exception.Message | Should -Not -Match '55555555-5555-5555-5555-555555555555'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'A2: connects again with a token of its own when the process holds no session' {
+        Connect-OwnThenSwap -Context $null
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        Get-RecordedFingerprint | Should -BeExactly (Get-ContextFingerprint -Context $script:OwnContext)
+    }
+
+    It 'A3: carries on from the cache under the same session, reading it once per entry' {
+        Connect-OwnThenSwap -Context $script:OwnContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        # One read by the rebuild after the connect, one by the second entry. The first entry has no
+        # state, so it reads nothing.
+        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 2 -Exactly
+    }
+
+    It 'A4: takes the session back under -ReclaimGraphSession, connecting again' {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{
+            TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; ReclaimGraphSession = $true
+        }
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        # The Connect-MgGraph mock put the module's own session back, and that is what is recorded.
+        Get-RecordedFingerprint | Should -BeExactly (Get-ContextFingerprint -Context $script:OwnContext)
+    }
+
+    It 'A5: compares nothing for a state it did not build, and returns from the cache as before' {
+        InModuleScope $script:moduleName {
+            # The hand-built shape the rest of this file uses: no GraphSessionFingerprint key.
+            $script:_OERAuthState = @{
+                TenantId         = '44444444-4444-4444-4444-444444444444'
+                AuthMethod       = 'Interactive'
+                ClientId         = ''
+                Environment      = 'Global'
+                Account          = 'user@contoso'
+                GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ArmToken         = $null
+                ArmTokenExpiry   = $null
+                ArmResourceUrl   = $null
+                ClaimsSatisfied  = $false
+            }
+        }
+        # Even another session in the process: an untracked state is not compared at all.
+        $script:CurrentContext = $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 0
+    }
+
+    It 'A6: refuses -ForceRefresh under another session instead of switching the session back' {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{
+            TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; ForceRefresh = $true
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'A7: refuses a claims-challenge step-up under another session, with no new token' {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters @{
+            TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; ClaimsChallenge = '{}'
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'A8: refuses a renewal inside the five-minute window under another session, with no new token' {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+        InModuleScope $script:moduleName { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'A9: refuses <Name> under another session, with no new token' -ForEach @(
+        @{ Name = 'an ARM-only call (-IncludeARM)'; Parameters = @{ IncludeARM = $true } }
+        @{ Name = 'a call naming another tenant'; Parameters = @{ TenantId = '77777777-7777-7777-7777-777777777777' } }
+    ) {
+        Connect-OwnThenSwap -Context $script:ForeignContext
+
+        $Caught = Invoke-InitializeCatching -Parameters $Parameters
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        # The module's own tenant, never the one the call named.
+        $Caught.TargetObject | Should -Be '44444444-4444-4444-4444-444444444444'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'A10: an inherited app-only identity with no session raises AppOnlySessionCredentialUnavailable naming Disconnect-MgGraph' {
+        # Get-AzToken is mocked, so the certificate path is never read.
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'ClientCertificate' `
+                -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'TestDrive:\oer-test.pfx'
+        }
+        $script:CurrentContext = $null
+
+        $Caught = Invoke-InitializeCatching
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'AppOnlySessionCredentialUnavailable*'
+        $Caught.Exception.Message | Should -Match 'Disconnect-MgGraph'
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+    }
+
+    It 'A11: the module''s own renewal records the new session, and the next call is a cache hit' {
+        Connect-OwnThenSwap -Context $script:OwnContext
+        InModuleScope $script:moduleName { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2) }
+        # The renewal's Connect-MgGraph will leave a session with another grant. The SDK still holds
+        # the old one until then.
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All', 'User.Read')
+        }
+
+        $Caught = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Get-RecordedFingerprint | Should -BeExactly (Get-ContextFingerprint -Context $script:OwnContext)
+
+        # The renewed session is the module's own: the next entry is a cache hit, not a refusal.
+        $Next = Invoke-InitializeCatching -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+        $Next | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+    }
+}
