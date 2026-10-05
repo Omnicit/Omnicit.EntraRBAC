@@ -165,8 +165,17 @@ you want to end that one too.
 
 `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
 `Connect-MgGraph` with the module's token, and so does the automatic sign-in of any other OER
-cmdlet. `Disconnect-OER` closes that session. Run `Disconnect-OER` before your own `Connect-MgGraph`
-in the same process, or use a new PowerShell process.
+cmdlet. `Disconnect-OER` closes whichever session the process holds, even one another
+`Connect-MgGraph` started.
+
+If another `Connect-MgGraph` -- yours, or another tool's -- replaces the module's session in the
+same process, the next OER cmdlet refuses its Microsoft Graph calls with `GraphSessionChanged`
+instead of sending them under that session, and the error can be reported more than once for one
+cmdlet. The module never switches the session back by itself. Run `Connect-OER` to connect the
+module again, which takes the session back, or use a new PowerShell process. If the session is
+closed with `Disconnect-MgGraph` instead of `Disconnect-OER`, the next OER cmdlet signs in again by
+itself, except on an app-only session (client secret or certificate), which reports
+`AppOnlySessionCredentialUnavailable` until you run `Connect-OER` with the secret or certificate.
 
 ### Switching tenants
 

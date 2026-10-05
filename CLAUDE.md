@@ -508,6 +508,17 @@ auth identity, **and cloud**. The state also carries `SignedInObjectId`, the sig
 object id read from the Graph token's `oid` claim -- never the token itself.
 `Why: docs/development/rationale.md#auth-state`
 
+**The state also carries `GraphSessionFingerprint`**, which records the Microsoft Graph PowerShell
+SDK session the module's own `Connect-MgGraph` left in the process -- never a token, never the
+context object, and never written to any stream. `Get-OERGraphSessionFingerprint` is the single
+owner of the fingerprint and `Get-OERGraphSessionState` of the comparison. Every
+`Initialize-OERAuth` entry checks it, the cached return included, and so does
+`Invoke-OERGraphRequest` before every Graph call; a session another `Connect-MgGraph` started is
+refused with `GraphSessionChanged`. Only `Connect-OER` passes `-ReclaimGraphSession`, which takes
+the session back. Never add a second reclaim caller, and never make the module switch the session
+back by itself: either one moves the other session's Graph calls to this module's tenant.
+`Why: docs/development/rationale.md#auth-state`
+
 | Parameter set | Key parameters | Use case |
 |---|---|---|
 | `Interactive` (default) | `-TenantId`, `-Interactive` | Admin at a keyboard (system browser) |
