@@ -833,8 +833,11 @@ Result:
 
 ```powershell
 $null = Invoke-S84bR1 -Label '3.4 Get-OERGroup on the module''s own tenant afterwards' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' }
-foreach ($Name in 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Get-AzToken') { Remove-Item -Path "function:global:$Name" -ErrorAction SilentlyContinue }
-Write-OerLiveStep "Fences removed: $(-not (Test-Path function:global:Invoke-MgGraphRequest) -and -not (Test-Path function:global:Invoke-WebRequest) -and -not (Test-Path function:global:Get-AzToken))"
+# Unqualified on purpose: a scope-qualified function: path removes nothing (CLAUDE.md, Testing
+# Conventions). With no function of these names in this script's scope, the removal walks up and
+# removes the global fence -- which is exactly what is meant here.
+foreach ($Name in 'Invoke-MgGraphRequest', 'Invoke-WebRequest', 'Get-AzToken') { Remove-Item -Path "function:$Name" -ErrorAction SilentlyContinue }
+Write-OerLiveStep "Fences removed: $(-not (Test-Path function:Invoke-MgGraphRequest) -and -not (Test-Path function:Invoke-WebRequest) -and -not (Test-Path function:Get-AzToken))"
 Disconnect-OerLive
 ```
 
