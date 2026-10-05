@@ -1317,6 +1317,523 @@ BeforeAll {
                 (($CommandNode.Extent.Text -split "`n")[0].Trim())
         }
     }
+
+    <#
+        =====================================================================================
+        Pass 9: transport gate hygiene (Sprint 8 step 4b round 1, finding F7). Two gates stand in
+        front of the module's two transports, and a gate is worth only what holds it in place.
+
+          - The session gate (A18): never a Graph call under a Microsoft Graph SDK session this
+            module did not connect. Invoke-GraphSingle asks Get-OERGraphSessionState and throws
+            New-OERGraphSessionChangedError.
+          - The latch gate (A19): never a Graph or ARM call for a command whose sign-in was refused.
+            Both transports read Get-OERSignInRefusal and throw New-OERSignInRefusedError. ARM has
+            no session gate, by design: its token is not a Graph SDK session.
+
+        A gate refuses by throwing, and a throw alone is not a gate. Measured 2026-10-05, a function
+        carries on past its OWN throw under -ErrorAction SilentlyContinue or Ignore when no try is
+        active up the call stack, so a gate is a throw immediately followed by a return. Every unit
+        test of a gate runs inside Pester's own try, where everything propagates and a missing
+        return cannot show -- so no unit suite can see a gate that was deleted from one of the three
+        Graph send paths, or one that was moved to the wrong side of the bearer token. This pass
+        reads the structure of the two wrapper files instead.
+
+        WHAT A GATED STATEMENT IS. A transport statement is the nearest enclosing try of a call that
+        reaches the wire: Invoke-MgGraphRequest outside the nested helper Invoke-GraphAttempt (the
+        helper is the one direct sender, and is counted on its own), a call of Invoke-GraphAttempt,
+        or Invoke-WebRequest in the ARM wrapper. It is gated when a statement block that holds it,
+        or one that encloses it inside the SAME loop iteration, has every required gate among the
+        statements before it. The climb stops at a loop, so a gate placed before the retry loop is
+        refused: it would not run again after a throttle sleep. From the earliest required gate to
+        the transport statement, no statement may call Initialize-OERAuth or Start-Sleep, and
+        neither may the transport statement itself ahead of its request.
+
+        POSITION IS READ FROM THE TREE, never from a line number: a return added after an unrelated
+        throw elsewhere in these files moves every line below it and changes nothing here.
+
+        THE COUNTS ARE EXACT. Three Graph transport statements (the attempt loop, the claims retry
+        and the token refresh retry) and one ARM statement. A fourth statement that is gated still
+        reddens the gate, so a new send path is a deliberate edit of the expected number; one that
+        is ungated reddens the gate on its own.
+
+        KNOWN LIMITS, stated rather than implied. The gate proves the SHAPE of a gate, not that its
+        condition can be true: that is the unit suites' job. A command name built at run time
+        (a call through a variable) is invisible to GetCommandName(), the same limit the Az context
+        gate records. The ownership scan resolves a module-qualified name and the three
+        Invoke-WebRequest aliases and nothing else; Invoke-RestMethod is not scanned, since the
+        module calls it nowhere.
+        =====================================================================================
+    #>
+    $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
+    $script:transportGateArmPath = 'source\Private\Invoke-OERArmRequest.ps1'
+
+    # One owner file per command: the command may be CALLED nowhere else under source/. The owner
+    # is a file, not a function, so the rule is the same whichever function of that file calls it:
+    # Initialize-OERAuth calls Lock-OERSignIn once, at its entry, and Unlock-OERSignIn at each of
+    # its two successful ends.
+    $script:transportGateOwners = @(
+        [PSCustomObject]@{ Command = 'Get-MgContext'; Owner = 'source\Private\Get-OERGraphSessionFingerprint.ps1' }
+        [PSCustomObject]@{ Command = 'Lock-OERSignIn'; Owner = 'source\Private\Initialize-OERAuth.ps1' }
+        [PSCustomObject]@{ Command = 'Unlock-OERSignIn'; Owner = 'source\Private\Initialize-OERAuth.ps1' }
+        [PSCustomObject]@{ Command = 'Invoke-MgGraphRequest'; Owner = $script:transportGateGraphPath }
+        [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owner = $script:transportGateArmPath }
+    )
+    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest' }
+
+    # The command a call really names: a module-qualified call (Microsoft.PowerShell.Utility\Invoke-WebRequest)
+    # is the same command, and so is one of the Invoke-WebRequest aliases.
+    function Resolve-OERTransportCommandName {
+        param([string]$Name)
+
+        if ([string]::IsNullOrEmpty($Name)) { return $null }
+        $Bare = $Name -replace '^.*\\', ''
+        if ($script:transportGateAliases.ContainsKey($Bare)) { return $script:transportGateAliases[$Bare] }
+        return $Bare
+    }
+
+    function Get-OERCallName {
+        param($CommandAst)
+
+        return (Resolve-OERTransportCommandName -Name $CommandAst.GetCommandName())
+    }
+
+    # Every CommandAst under $Ast (nested functions and script blocks included) whose resolved name
+    # is one of $Name.
+    function Find-OERCallNamed {
+        param($Ast, [string[]]$Name)
+
+        $Found = $Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)
+        foreach ($Call in $Found) {
+            if ((Get-OERCallName -CommandAst $Call) -in $Name) { $Call }
+        }
+    }
+
+    # True when the first clause body of the if holds a throw of the named error factory that is
+    # immediately followed by a return. Both halves are load-bearing -- see the Pass 9 comment.
+    function Test-OERGateBody {
+        param($IfAst, [string]$ErrorFactory)
+
+        $Body = @($IfAst.Clauses[0].Item2.Statements)
+        for ($Index = 0; $Index -lt ($Body.Count - 1); $Index++) {
+            if ($Body[$Index] -isnot [System.Management.Automation.Language.ThrowStatementAst]) { continue }
+            if ($Body[$Index + 1] -isnot [System.Management.Automation.Language.ReturnStatementAst]) { continue }
+            if ($null -eq $Body[$Index].Pipeline) { continue }
+            if ((@(Find-OERCallNamed -Ast $Body[$Index].Pipeline -Name $ErrorFactory)).Count -gt 0) { return $true }
+        }
+        return $false
+    }
+
+    # The last session gate and the last latch gate among Statements[0..Before-1], as the index of
+    # the statement each one STARTS at (-1 when absent). The latch gate is the assignment of
+    # Get-OERSignInRefusal's result plus the if that reads it, so its start is the assignment; an if
+    # that calls Get-OERSignInRefusal in its own condition counts as well.
+    function Find-OERTransportGates {
+        param($Statements, [int]$Before)
+
+        $Found = @{ Session = -1; Latch = -1; LatchIf = $null }
+        for ($Index = 0; $Index -lt $Before; $Index++) {
+            $Statement = $Statements[$Index]
+            if ($Statement -isnot [System.Management.Automation.Language.IfStatementAst]) { continue }
+            $Condition = $Statement.Clauses[0].Item1
+
+            if ((@(Find-OERCallNamed -Ast $Condition -Name 'Get-OERGraphSessionState')).Count -gt 0 -and
+                (Test-OERGateBody -IfAst $Statement -ErrorFactory 'New-OERGraphSessionChangedError')) {
+                $Found.Session = $Index
+            }
+
+            if (-not (Test-OERGateBody -IfAst $Statement -ErrorFactory 'New-OERSignInRefusedError')) { continue }
+            if ((@(Find-OERCallNamed -Ast $Condition -Name 'Get-OERSignInRefusal')).Count -gt 0) {
+                $Found.Latch = $Index
+                $Found.LatchIf = $Statement
+                continue
+            }
+            if ($Index -eq 0) { continue }
+            $Previous = $Statements[$Index - 1]
+            if ($Previous -isnot [System.Management.Automation.Language.AssignmentStatementAst]) { continue }
+            if ($Previous.Left -isnot [System.Management.Automation.Language.VariableExpressionAst]) { continue }
+            if ((@(Find-OERCallNamed -Ast $Previous.Right -Name 'Get-OERSignInRefusal')).Count -eq 0) { continue }
+            $AssignedName = $Previous.Left.VariablePath.UserPath
+            $Reads = @($Condition.FindAll({
+                        $args[0] -is [System.Management.Automation.Language.VariableExpressionAst]
+                    }, $true) | Where-Object { $_.VariablePath.UserPath -eq $AssignedName })
+            if ($Reads.Count -eq 0) { continue }
+            $Found.Latch = $Index - 1
+            $Found.LatchIf = $Statement
+        }
+        return $Found
+    }
+
+    # The statement a call belongs to for gating: its nearest enclosing try inside $Boundary (the
+    # function that must hold every transport statement), else the innermost statement of a block.
+    function Get-OERTransportStatement {
+        param($Call, $Boundary)
+
+        $Innermost = $null
+        for ($Node = $Call.Parent; $null -ne $Node -and -not [System.Object]::ReferenceEquals($Node, $Boundary); $Node = $Node.Parent) {
+            if ($Node -is [System.Management.Automation.Language.TryStatementAst]) { return $Node }
+            $IsStatement = ($Node.Parent -is [System.Management.Automation.Language.StatementBlockAst]) -or
+            ($Node.Parent -is [System.Management.Automation.Language.NamedBlockAst])
+            if ($null -eq $Innermost -and $IsStatement) { $Innermost = $Node }
+        }
+        return $Innermost
+    }
+
+    # Climbs from a transport statement through the statement blocks that hold it, stopping at a loop
+    # or a function: the first block with every required gate before the statement decides. Returns
+    # the Reason it is NOT gated ($null when it is) and the latch gate's if statement.
+    function Get-OERTransportGateFailure {
+        param($Transport, [bool]$RequireSessionGate)
+
+        $FirstAbsent = $null
+        $Level = $Transport
+        while ($null -ne $Level) {
+            if ($Level -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                $Level -is [System.Management.Automation.Language.LoopStatementAst] -or
+                $Level -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) { break }
+
+            $Block = $Level.Parent
+            if ($Block -is [System.Management.Automation.Language.StatementBlockAst] -or
+                $Block -is [System.Management.Automation.Language.NamedBlockAst]) {
+                $Statements = @($Block.Statements)
+                $Index = [System.Array]::IndexOf($Statements, $Level)
+                $Gates = Find-OERTransportGates -Statements $Statements -Before $Index
+
+                $Absent = @()
+                if ($RequireSessionGate -and $Gates.Session -lt 0) { $Absent += 'the session gate' }
+                if ($Gates.Latch -lt 0) { $Absent += 'the latch gate' }
+
+                if ($Absent.Count -eq 0) {
+                    $Start = $Gates.Latch
+                    if ($RequireSessionGate -and $Gates.Session -lt $Start) { $Start = $Gates.Session }
+                    for ($Between = $Start; $Between -lt $Index; $Between++) {
+                        $Hit = @(Find-OERCallNamed -Ast $Statements[$Between] -Name 'Initialize-OERAuth', 'Start-Sleep') |
+                            Select-Object -First 1
+                        if ($Hit) {
+                            return [PSCustomObject]@{
+                                Reason    = 'has a call to {0} (line {1}) between the gates and itself' -f
+                                (Get-OERCallName -CommandAst $Hit), $Hit.Extent.StartLineNumber
+                                LatchGate = $null
+                            }
+                        }
+                    }
+                    return [PSCustomObject]@{ Reason = $null; LatchGate = $Gates.LatchIf }
+                }
+                if ($null -eq $FirstAbsent) { $FirstAbsent = $Absent }
+            }
+            $Level = $Level.Parent
+        }
+
+        return [PSCustomObject]@{
+            Reason    = 'is not preceded, in its own statement block or an enclosing one inside the same loop iteration, by {0}' -f
+            (@($FirstAbsent) -join ' and ')
+            LatchGate = $null
+        }
+    }
+
+    # One file's transport statements: every call of one of $TransportCommands inside $OwnerFunction,
+    # grouped by the statement it belongs to and each checked for its gates. A call outside the owner
+    # function is Misplaced; one inside $ExemptFunction (the nested helper that is the one direct
+    # sender) is only counted.
+    function Get-OERTransportGateReport {
+        param(
+            $Ast,
+            [string]$FileLabel,
+            [string]$OwnerFunction,
+            [string[]]$TransportCommands,
+            [string]$ExemptFunction,
+            [bool]$RequireSessionGate
+        )
+
+        $Definitions = @($Ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))
+        $Owners = @($Definitions | Where-Object { $_.Name -eq $OwnerFunction })
+        $ExemptCount = 0
+        if ($ExemptFunction) { $ExemptCount = @($Definitions | Where-Object { $_.Name -eq $ExemptFunction }).Count }
+        $Report = [PSCustomObject]@{
+            OwnerCount  = $Owners.Count
+            Owner       = $null
+            ExemptCount = $ExemptCount
+            ExemptCalls = 0
+            Statements  = [System.Collections.Generic.List[object]]::new()
+            Misplaced   = [System.Collections.Generic.List[string]]::new()
+            Violations  = [System.Collections.Generic.List[string]]::new()
+        }
+        if ($Owners.Count -ne 1) { return $Report }
+        $Report.Owner = $Owners[0]
+
+        $Groups = [System.Collections.Generic.List[object]]::new()
+        foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name $TransportCommands)) {
+            $InOwner = $false
+            $InExempt = $false
+            for ($Node = $Call.Parent; $null -ne $Node; $Node = $Node.Parent) {
+                if ($Node -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { continue }
+                if ($Node.Name -eq $OwnerFunction) { $InOwner = $true }
+                if ($ExemptFunction -and $Node.Name -eq $ExemptFunction) { $InExempt = $true }
+            }
+            if ($InExempt) { $Report.ExemptCalls++; continue }
+            if (-not $InOwner) {
+                $Report.Misplaced.Add(('{0}:{1} -- {2} is called outside {3}' -f
+                        $FileLabel, $Call.Extent.StartLineNumber, (Get-OERCallName -CommandAst $Call), $OwnerFunction))
+                continue
+            }
+
+            $Statement = Get-OERTransportStatement -Call $Call -Boundary $Report.Owner
+            $Group = $null
+            foreach ($Candidate in $Groups) {
+                if ([System.Object]::ReferenceEquals($Candidate.Statement, $Statement)) { $Group = $Candidate; break }
+            }
+            if ($null -eq $Group) {
+                $Group = [PSCustomObject]@{ Statement = $Statement; Calls = [System.Collections.Generic.List[object]]::new() }
+                $Groups.Add($Group)
+            }
+            $Group.Calls.Add($Call)
+        }
+
+        foreach ($Group in $Groups) {
+            $Failure = Get-OERTransportGateFailure -Transport $Group.Statement -RequireSessionGate $RequireSessionGate
+            $Reason = $Failure.Reason
+            if (-not $Reason) {
+                $FirstOffset = ($Group.Calls | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+                $Early = @(Find-OERCallNamed -Ast $Group.Statement -Name 'Initialize-OERAuth', 'Start-Sleep' |
+                        Where-Object { $_.Extent.StartOffset -lt $FirstOffset }) | Select-Object -First 1
+                if ($Early) {
+                    $Reason = 'has a call to {0} (line {1}) ahead of its own request' -f
+                    (Get-OERCallName -CommandAst $Early), $Early.Extent.StartLineNumber
+                }
+            }
+            $Line = $Group.Statement.Extent.StartLineNumber
+            $Report.Statements.Add([PSCustomObject]@{ Line = $Line; Reason = $Reason; LatchGate = $Failure.LatchGate })
+            if ($Reason) { $Report.Violations.Add(('{0}:{1} -- the transport statement {2}' -f $FileLabel, $Line, $Reason)) }
+        }
+        return $Report
+    }
+
+    # --- The two wrapper files, parsed from the text already read into $script:hygieneFiles. ---
+    $script:transportGateParseFailures = @()
+    $TransportAsts = @{}
+    foreach ($TransportPath in @($script:transportGateGraphPath, $script:transportGateArmPath)) {
+        $TransportFile = @($script:hygieneFiles | Where-Object {
+                ($_.RelativePath -replace '/', '\') -eq $TransportPath
+            })[0]
+        if (-not $TransportFile) {
+            $script:transportGateParseFailures += '{0} -- not among the scanned files' -f $TransportPath
+            continue
+        }
+        $TransportTokens = $null
+        $TransportErrors = $null
+        $TransportAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $TransportFile.Text, $TransportFile.Path, [ref]$TransportTokens, [ref]$TransportErrors)
+        if ($TransportErrors.Count -gt 0) {
+            $script:transportGateParseFailures += '{0} -- {1} parse error(s), first: {2}' -f
+                $TransportPath, $TransportErrors.Count, $TransportErrors[0].Message
+            continue
+        }
+        $TransportAsts[$TransportPath] = $TransportAst
+    }
+
+    $script:transportGraphReport = $null
+    if ($TransportAsts.ContainsKey($script:transportGateGraphPath)) {
+        $script:transportGraphReport = Get-OERTransportGateReport -Ast $TransportAsts[$script:transportGateGraphPath] `
+            -FileLabel $script:transportGateGraphPath -OwnerFunction 'Invoke-GraphSingle' `
+            -TransportCommands 'Invoke-MgGraphRequest', 'Invoke-GraphAttempt' -ExemptFunction 'Invoke-GraphAttempt' `
+            -RequireSessionGate $true
+    }
+
+    $script:transportArmReport = $null
+    $script:transportArmBearerMarkers = 0
+    $script:transportArmBearerViolations = @()
+    if ($TransportAsts.ContainsKey($script:transportGateArmPath)) {
+        $script:transportArmReport = Get-OERTransportGateReport -Ast $TransportAsts[$script:transportGateArmPath] `
+            -FileLabel $script:transportGateArmPath -OwnerFunction 'Invoke-ArmCall' `
+            -TransportCommands 'Invoke-WebRequest' -ExemptFunction '' -RequireSessionGate $false
+
+        # The bearer token is materialized by `$Plain = ...ArmToken...Password`; both the assignment
+        # and the ArmToken read are markers, so renaming the variable cannot slip a materialization
+        # in ahead of the gate. The `$Plain = $null` in the finally block is the clearing, not a marker.
+        if ($null -ne $script:transportArmReport.Owner) {
+            $BearerMarkers = @($script:transportArmReport.Owner.FindAll({
+                        $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                        $args[0].Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $args[0].Left.VariablePath.UserPath -eq 'Plain' -and
+                        $args[0].Right.Extent.Text.Trim() -ne '$null'
+                    }, $true))
+            $BearerMarkers += @($script:transportArmReport.Owner.FindAll({
+                        $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                        -not $args[0].Static -and
+                        $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                        $args[0].Member.Value -eq 'ArmToken'
+                    }, $true))
+            $script:transportArmBearerMarkers = $BearerMarkers.Count
+            foreach ($Marker in $BearerMarkers) {
+                foreach ($ArmStatement in $script:transportArmReport.Statements) {
+                    if ($null -eq $ArmStatement.LatchGate) { continue }
+                    if ($Marker.Extent.StartOffset -lt $ArmStatement.LatchGate.Extent.EndOffset) {
+                        $script:transportArmBearerViolations += '{0}:{1} -- the bearer token is materialized ahead of the latch gate: {2}' -f
+                            $script:transportGateArmPath, $Marker.Extent.StartLineNumber, $Marker.Extent.Text.Trim()
+                    }
+                }
+            }
+        }
+    }
+
+    # --- Who may call what: one pass over the command names Pass 1 already collected per file. ---
+    $script:transportOwnerSites = @{}
+    $script:transportOwnerOf = @{}
+    $script:transportOwnerViolations = @{}
+    foreach ($Rule in $script:transportGateOwners) {
+        $script:transportOwnerSites[$Rule.Command] = 0
+        $script:transportOwnerOf[$Rule.Command] = $Rule.Owner
+        $script:transportOwnerViolations[$Rule.Command] = [System.Collections.Generic.List[string]]::new()
+    }
+    foreach ($Unit in $script:sourceUnits) {
+        $UnitCounts = @{}
+        foreach ($Name in $Unit.CommandNames) {
+            $Canonical = Resolve-OERTransportCommandName -Name $Name
+            if ($script:transportOwnerSites.ContainsKey($Canonical)) { $UnitCounts[$Canonical] = 1 + [int]$UnitCounts[$Canonical] }
+        }
+        foreach ($Command in @($UnitCounts.Keys)) {
+            if ($Unit.RelativePath -eq $script:transportOwnerOf[$Command]) {
+                $script:transportOwnerSites[$Command] += $UnitCounts[$Command]
+            } else {
+                $script:transportOwnerViolations[$Command].Add(('{0} -- calls {1} ({2} time(s)); only {3} may' -f
+                        $Unit.RelativePath, $Command, $UnitCounts[$Command], $script:transportOwnerOf[$Command]))
+            }
+        }
+    }
+
+    # --- Known answers: the checker above must refuse each way of leaving a statement ungated. ---
+    # A guard that has only ever been shown green is a guard-shaped-but-inert test, so every case
+    # here is a miniature of a real regression and carries the verdict it must reach.
+    function New-OERGateFixtureText {
+        param([string[]]$Lines, [string]$Session, [string]$Latch, [string]$Between = '')
+
+        return (($Lines -join "`n").Replace('SESSION', $Session).Replace('LATCH', $Latch).Replace('BETWEEN', $Between))
+    }
+
+    $FixtureSession = 'if ((Get-OERGraphSessionState) -eq ''Changed'') { throw (New-OERGraphSessionChangedError); return }'
+    $FixtureLatch = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw (New-OERSignInRefusedError -Command $R); return }'
+    $FixtureLoop = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        BETWEEN'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureBeforeLoop = @(
+        'function Invoke-Fixture {'
+        '    SESSION'
+        '    LATCH'
+        '    while ($true) {'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureInsideTry = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        try { SESSION; LATCH; Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureNested = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        if ($true) { SESSION; LATCH }'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureSecond = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '    try { Invoke-MgGraphRequest @Other } catch { throw }'
+        '}'
+    )
+    $FixtureAuthInside = @(
+        'function Invoke-Fixture {'
+        '    while ($true) {'
+        '        SESSION'
+        '        LATCH'
+        '        try { Initialize-OERAuth @AuthParams; Invoke-MgGraphRequest @InvokeParams } catch { throw }'
+        '    }'
+        '}'
+    )
+    $FixtureAlias = @(
+        'function Invoke-Fixture {'
+        '    LATCH'
+        '    try { iwr @InvokeParams } catch { throw }'
+        '}'
+    )
+
+    $FixtureLatchNoReturn = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw (New-OERSignInRefusedError -Command $R) }'
+    $FixtureLatchOtherThrow = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw ''refused''; return }'
+    $FixtureLatchNoRead = '$R = Get-OERSignInRefusal; if ($true) { throw (New-OERSignInRefusedError -Command $R); return }'
+    $FixtureSessionNoReturn = 'if ((Get-OERGraphSessionState) -eq ''Changed'') { throw (New-OERGraphSessionChangedError) }'
+
+    $FixtureCases = @(
+        [PSCustomObject]@{ Name = 'both gates, a benign statement between'; Statements = 1; Violations = 0; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatch -Between '$A = $null') }
+        [PSCustomObject]@{ Name = 'latch gate missing'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch '') }
+        [PSCustomObject]@{ Name = 'session gate missing, one required'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session '' -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'session gate missing, none required (the ARM shape)'; Statements = 1; Violations = 0; Session = $false
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session '' -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'latch gate throws and never returns'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatchNoReturn) }
+        [PSCustomObject]@{ Name = 'session gate throws and never returns'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSessionNoReturn -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'latch gate throws something other than SignInRefused'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatchOtherThrow) }
+        [PSCustomObject]@{ Name = 'latch gate never reads the refusal'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatchNoRead) }
+        [PSCustomObject]@{ Name = 'Start-Sleep between the gates and the request'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatch -Between 'Start-Sleep -Seconds 1') }
+        [PSCustomObject]@{ Name = 'Initialize-OERAuth between the gates and the request'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureLoop -Session $FixtureSession -Latch $FixtureLatch -Between 'Initialize-OERAuth @AuthParams') }
+        [PSCustomObject]@{ Name = 'Initialize-OERAuth inside the transport statement, ahead of the request'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureAuthInside -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'gates before the retry loop'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureBeforeLoop -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'gates inside the try that holds the request'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureInsideTry -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'gates nested in an if block, not direct statements'; Statements = 1; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureNested -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'a second, ungated transport statement'; Statements = 2; Violations = 1; Session = $true
+            Text = (New-OERGateFixtureText -Lines $FixtureSecond -Session $FixtureSession -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'a gated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 0; Session = $false
+            Text = (New-OERGateFixtureText -Lines $FixtureAlias -Session '' -Latch $FixtureLatch) }
+        [PSCustomObject]@{ Name = 'an ungated call through an Invoke-WebRequest alias'; Statements = 1; Violations = 1; Session = $false
+            Text = (New-OERGateFixtureText -Lines $FixtureAlias -Session '' -Latch '') }
+    )
+
+    $script:transportGateKnownAnswerCount = 0
+    $script:transportGateKnownAnswerFailures = @()
+    foreach ($Case in $FixtureCases) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        if ($CaseErrors.Count -gt 0) {
+            $script:transportGateKnownAnswerFailures += '{0} -- the fixture does not parse: {1}' -f $Case.Name, $CaseErrors[0].Message
+            continue
+        }
+        $CaseCommands = if ($Case.Text -match '\biwr\b') { @('Invoke-WebRequest') } else { @('Invoke-MgGraphRequest') }
+        $CaseReport = Get-OERTransportGateReport -Ast $CaseAst -FileLabel $Case.Name -OwnerFunction 'Invoke-Fixture' `
+            -TransportCommands $CaseCommands -ExemptFunction '' -RequireSessionGate $Case.Session
+        $script:transportGateKnownAnswerCount++
+        if ($CaseReport.OwnerCount -ne 1 -or
+            $CaseReport.Statements.Count -ne $Case.Statements -or
+            $CaseReport.Violations.Count -ne $Case.Violations) {
+            $script:transportGateKnownAnswerFailures += '{0} -- expected {1} transport statement(s) and {2} violation(s), got {3} and {4}' -f
+                $Case.Name, $Case.Statements, $Case.Violations, $CaseReport.Statements.Count, $CaseReport.Violations.Count
+        }
+    }
 }
 
 Describe 'Source encoding' -Tags 'SourceHygiene' {
@@ -1875,6 +2392,141 @@ $script:azContextAllowedCommands, and do not reintroduce a per-file exemption --
 covers AzAuth's token surface and the module's own internal helper, and nothing else in this
 module calls an Az cmdlet at all. A new Az call is a design change that needs a decision recorded
 in docs/development/rationale.md, a manifest dependency, and new help text, not an entry here.
+'@
+    }
+}
+
+Describe 'Transport gate hygiene' -Tags 'SourceHygiene' {
+
+    It 'finds both transport wrappers, their nested functions and the exact number of transport statements' {
+        <#
+            Non-vacuity first, and the exact counts the rest of this Describe is measured against. A
+            scan that found no wrapper, or a transport statement fewer than the file really holds,
+            would make every assertion below pass over less than the tree -- green while proving
+            nothing, the failure this file exists to stop.
+
+            EXACT counts, not floors. Three Graph transport statements: the attempt loop, the claims
+            step-up retry and the token refresh retry, each a try whose body calls Invoke-MgGraphRequest
+            directly or Invoke-GraphAttempt. One ARM statement: the Invoke-WebRequest in Invoke-ArmCall.
+            Invoke-GraphAttempt is the one direct sender, so exactly one call of Invoke-MgGraphRequest
+            sits inside it. A new send path is a deliberate edit of these numbers, which is what makes
+            a call site that the scan cannot place a loud failure and not a silent one. The two
+            bearer markers are the `$Plain = ...` assignment and the ArmToken read beside it.
+        #>
+        $script:transportGateParseFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'a wrapper that does not parse yields no transport statement at all, so every gate below would pass over nothing; fix the syntax error rather than the gate')
+        $script:parseFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'a source file that does not parse drops out of the ownership scan below with no violation reported')
+        $script:sourceUnits.Count | Should -BeGreaterThan 195 -Because (
+            'source/ held well over 195 parseable files when this gate was written; below that the ownership scan has lost a directory, not shrunk')
+
+        $script:transportGraphReport | Should -Not -BeNullOrEmpty -Because 'the Graph wrapper must be among the scanned files'
+        $script:transportArmReport | Should -Not -BeNullOrEmpty -Because 'the ARM wrapper must be among the scanned files'
+
+        $script:transportGraphReport.OwnerCount | Should -Be 1 -Because (
+            'Invoke-GraphSingle must be found exactly once in the Graph wrapper; a rename or a second definition leaves this gate checking nothing')
+        $script:transportGraphReport.ExemptCount | Should -Be 1 -Because (
+            'Invoke-GraphAttempt must be found exactly once; it is the helper whose own Invoke-MgGraphRequest call is not a transport statement')
+        $script:transportGraphReport.ExemptCalls | Should -Be 1 -Because (
+            'Invoke-GraphAttempt holds exactly one direct Invoke-MgGraphRequest call; a second one is a send path this gate does not place')
+        $script:transportArmReport.OwnerCount | Should -Be 1 -Because (
+            'Invoke-ArmCall must be found exactly once in the ARM wrapper')
+
+        $script:transportGraphReport.Statements.Count | Should -Be 3 -Because (
+            'Invoke-GraphSingle holds three transport statements (the attempt loop, the claims retry and the token refresh retry); a different count means a send path was added or removed, and the expected number is then updated deliberately')
+        $script:transportArmReport.Statements.Count | Should -Be 1 -Because (
+            'Invoke-ArmCall holds one Invoke-WebRequest statement; a different count means a send path was added or removed')
+        $script:transportArmBearerMarkers | Should -Be 2 -Because (
+            'Invoke-ArmCall materializes the bearer token with one $Plain assignment and one ArmToken read; a different count means the markers this gate orders against the latch gate stopped matching')
+    }
+
+    It 'recognises a gated transport statement and flags each way of leaving one ungated' {
+        <#
+            The checker itself, run on miniatures of real regressions with the verdict each must
+            reach. The mutation proofs show the gate can fail on the real wrappers; these show it
+            keeps failing for the same reasons, and in this run, on every machine.
+        #>
+        $script:transportGateKnownAnswerCount | Should -Be 17 -Because (
+            'the known-answer table holds seventeen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:transportGateKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
+The transport gate checker no longer reaches the verdict a known-answer case requires. Each line
+names the case and the count it expected. The checker is what the other assertions in this Describe
+rest on, so fix it rather than the case; a case is changed only when the rule it models changed.
+'@
+    }
+
+    It 'reads the Graph SDK session with Get-MgContext only in Get-OERGraphSessionFingerprint.ps1' {
+        $script:transportOwnerSites['Get-MgContext'] | Should -BeGreaterThan 0 -Because (
+            'the owner must really call Get-MgContext, or this rule has nothing to be the only owner of')
+        $script:transportOwnerViolations['Get-MgContext'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Get-OERGraphSessionFingerprint is the single reader of the Microsoft Graph SDK session
+(CLAUDE.md ## Authentication Architecture): the session gate, Connect-OER and Initialize-OERAuth all
+compare fingerprints it builds, and a second Get-MgContext call is a second, unchecked reading of
+which session a request would go out under. Read the session through that helper.
+'@
+    }
+
+    It 'sets and releases the sign-in latch with Lock-OERSignIn and Unlock-OERSignIn only in Initialize-OERAuth.ps1' {
+        $script:transportOwnerSites['Lock-OERSignIn'] | Should -BeGreaterThan 0 -Because (
+            'Initialize-OERAuth must really call Lock-OERSignIn, or this rule has nothing to be the only owner of')
+        $script:transportOwnerSites['Unlock-OERSignIn'] | Should -BeGreaterThan 0 -Because (
+            'Initialize-OERAuth must really call Unlock-OERSignIn, or this rule has nothing to be the only owner of')
+        $Violations = @($script:transportOwnerViolations['Lock-OERSignIn']) + @($script:transportOwnerViolations['Unlock-OERSignIn'])
+        $Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+The sign-in latch is set at the entry of Initialize-OERAuth and released only when that sign-in
+succeeds (CLAUDE.md ## Authentication Architecture). A second place that sets it can refuse a command
+that signed in fine; a second place that releases it can reopen both transports for a command whose
+sign-in was refused, which is the very hole the latch closes. Keep both calls in Initialize-OERAuth.
+'@
+    }
+
+    It 'sends on the wire only from the two wrappers: Invoke-MgGraphRequest in the Graph wrapper, Invoke-WebRequest in the ARM wrapper' {
+        $script:transportOwnerSites['Invoke-MgGraphRequest'] | Should -BeGreaterThan 0 -Because (
+            'the Graph wrapper must really call Invoke-MgGraphRequest, or this rule has nothing to be the only owner of')
+        $script:transportOwnerSites['Invoke-WebRequest'] | Should -BeGreaterThan 0 -Because (
+            'the ARM wrapper must really call Invoke-WebRequest, or this rule has nothing to be the only owner of')
+        $Violations = @($script:transportOwnerViolations['Invoke-MgGraphRequest']) + @($script:transportOwnerViolations['Invoke-WebRequest'])
+        $Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+CLAUDE.md ## Graph Requests and ## ARM Requests: every Graph call goes through Invoke-OERGraphRequest and
+every ARM call through Invoke-OERArmRequest. Those two wrappers are where the session gate, the latch
+gate, the bearer scrub and the retry logic live, so a call to Invoke-MgGraphRequest or Invoke-WebRequest
+from any other file sends a request past all of them. Route the call through the wrapper.
+'@
+    }
+
+    It 'precedes every Graph transport statement with the session gate and the latch gate' {
+        $script:transportGraphReport.Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+Every request the Graph wrapper sends passes two gates first, in the statement block that holds the
+request: the session gate (an if on Get-OERGraphSessionState that throws New-OERGraphSessionChangedError
+and then returns) and the latch gate (the result of Get-OERSignInRefusal, and an if on it that throws
+New-OERSignInRefusedError and then returns). The return is load-bearing: a function carries on past its
+OWN throw under -ErrorAction SilentlyContinue or Ignore when no try is active up the call stack. The
+gates belong inside the retry loop, outside the try that wraps the request, and with nothing between
+them and the request that signs in again or sleeps. Add the missing gate; do not exempt a statement.
+'@
+    }
+
+    It 'sends a Graph request only from Invoke-GraphSingle and calls Invoke-GraphAttempt only there' {
+        $script:transportGraphReport.Misplaced -join "`n" | Should -BeNullOrEmpty -Because @'
+Invoke-GraphSingle is the one function whose transport statements this gate checks for both gates, so a
+call of Invoke-GraphAttempt or Invoke-MgGraphRequest from any other function in the Graph wrapper is a
+send path no gate stands in front of. Route the call through Invoke-GraphSingle.
+'@
+    }
+
+    It 'precedes the ARM transport statement with the latch gate and materializes the bearer token after it' {
+        $script:transportArmReport.Misplaced -join "`n" | Should -BeNullOrEmpty -Because (
+            'Invoke-ArmCall is the one function that sends an ARM request; a call of Invoke-WebRequest from any other function in the ARM wrapper is a send path no gate stands in front of')
+        $script:transportArmReport.Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+The ARM wrapper's one request passes the latch gate first: the result of Get-OERSignInRefusal, and an if
+on it that throws New-OERSignInRefusedError and then returns, in the statement block that holds the
+request and with no Initialize-OERAuth or Start-Sleep between them. ARM has no session gate, by design:
+its token is not a Graph SDK session. Add the missing gate; do not exempt a statement.
+'@
+        $script:transportArmBearerViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+The bearer token is materialized from the cached SecureString only at the request boundary, and only
+AFTER the latch gate: a gate placed after the materialization has already put the plaintext token of a
+refused command in memory. Keep the gate ahead of the $Plain assignment.
 '@
     }
 }

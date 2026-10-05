@@ -960,19 +960,25 @@ bug.
   therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
   by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Seven rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
+- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
   encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
   int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring; `Get-OERCloudEndpoint` as the sole
   owner of the cloud-to-endpoint table; `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
   single owners of the apply engine's declared-value rule (no direct read of a node's
   `PSObject.Properties.Name` in a `Sync-OERStructure*` handler outside the named, reasoned
   allowlist -- flagged on the read itself, not on the `-contains`-family operator that might later
-  consume it, so an intermediate variable cannot hide the same defect); and the module never calling
-  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above).
+  consume it, so an intermediate variable cannot hide the same defect); the module never calling
+  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
+  and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
+  `Lock-OERSignIn`/`Unlock-OERSignIn` only in `Initialize-OERAuth`, `Invoke-MgGraphRequest` only in
+  the Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper, and every request a wrapper
+  sends preceded, in its statement block and inside the same loop iteration, by its session gate
+  (Graph only) and its latch gate, each a throw followed by a return, with the transport statements
+  counted exactly (three Graph, one ARM) so a new send path cannot escape the scan.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
-  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- nine
+  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- ten
   `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
   exemption. The transport tripwire rule under these conventions is machine-checked separately, by
   `tests/QA/testhygiene.tests.ps1`.
