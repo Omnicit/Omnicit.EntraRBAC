@@ -292,6 +292,11 @@ GRAPH SDK SESSION
     AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret
     or certificate.
 
+    Runspaces in one process (ForEach-Object -Parallel, Start-ThreadJob) share
+    one Graph SDK session, so a parallel fan-out across tenants in one process
+    gets GraphSessionChanged; run each tenant in its own process instead, with
+    Start-Job or a separate PowerShell process.
+
 SOVEREIGN CLOUDS
 
     Connect-OER -Environment selects the sovereign cloud a session signs in to and

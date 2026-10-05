@@ -1883,6 +1883,10 @@ Resource Manager calls are refused.
 - A session swapped by another runspace between the gate and the request. The gate reads the
   session, and the SDK reads it again when it sends; a `Connect-MgGraph` in another runspace of the
   same process in between is not caught.
+- A session swapped by another runspace between the module's own `Connect-MgGraph` and the
+  fingerprint read straight after it. `Initialize-OERAuth` records whatever session the process holds
+  at that read, so another runspace's `Connect-MgGraph` landing in between is recorded as the
+  module's own session, and the module's Graph calls then go out under it without a refusal.
 - The live values of the eight properties (check 1.1) and the carrying half of the premise (check
   1.3), both in section 1 of the live checklist named above.
 
@@ -1896,7 +1900,11 @@ switches the session back by itself, and `Connect-OER` run with the same sign-in
 (for an app-only session, its certificate or client secret, since a bare `Connect-OER` signs in
 interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
 instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
-and `Disconnect-OER` ends whichever session the process holds.
+and `Disconnect-OER` ends whichever session the process holds. The README and the about topic add
+one sentence the two help texts do not carry: runspaces in one process (`ForEach-Object -Parallel`,
+`Start-ThreadJob`) share one Graph SDK session, so a parallel fan-out across tenants in one process
+gets `GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate
+PowerShell process).
 
 **The old guidance, and what was known about it.** Until the check existed, the same four texts
 told the operator to run `Disconnect-OER` before their own `Connect-MgGraph` in the same process, or

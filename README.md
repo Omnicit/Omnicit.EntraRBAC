@@ -179,6 +179,10 @@ or use a new PowerShell process. If the session is closed with `Disconnect-MgGra
 (client secret or certificate), which reports `AppOnlySessionCredentialUnavailable` until you run
 `Connect-OER` with the secret or certificate.
 
+Runspaces in one process -- `ForEach-Object -Parallel` and `Start-ThreadJob` -- share one Graph SDK
+session, so a parallel fan-out across tenants in one process gets `GraphSessionChanged`; run each
+tenant in its own process instead, with `Start-Job` or a separate PowerShell process.
+
 ### Switching tenants
 
 One PowerShell session works in one tenant at a time. Whether a later `Connect-OER` call naming a

@@ -386,7 +386,8 @@ function Initialize-OERAuth {
         $script:_OERAuthState.Environment -eq $EffectiveEnvironment
 
     # SEC (A18): the module's Graph calls go out under whichever Microsoft Graph PowerShell SDK session
-    # the PROCESS holds -- Invoke-OERGraphRequest passes no token of its own, and the SDK keeps one
+    # the PROCESS holds (INFERRED from the SDK source, and measured live by check 1.3 of this change's
+    # live checklist) -- Invoke-OERGraphRequest passes no token of its own, and the SDK keeps one
     # session per process -- so every predicate above describes the session those calls will use only
     # while it is still the one this module connected. An operator's own Connect-MgGraph, or another
     # tool's, replaces it; before this check the module's following Graph reads and writes went to that

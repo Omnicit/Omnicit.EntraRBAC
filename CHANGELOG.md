@@ -57,6 +57,7 @@ definition to check for a Lifecycle access review; a confirmed delete still happ
 Every Microsoft Graph call an OER cmdlet makes is refused with `GraphSessionChanged` when another
 `Connect-MgGraph` in the same process has replaced the Graph SDK session the module connected,
 instead of going out under that session; `Connect-OER` connects the module again.
+
 `Connect-OER`'s help says a client secret reaches AzAuth as plain text for each token and recommends
 a certificate or managed identity.
 
