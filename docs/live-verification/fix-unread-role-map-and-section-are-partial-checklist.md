@@ -918,7 +918,7 @@ does not check"). The bundles go to `raw\s82\`, which is deleted when the result
 
 ### R.0. The module loads from the round's build in the round's own worktree
 
-- [ ] **R.0** The session's `Repo` is the round's worktree, whose build carries E, F and G, and the main clone is on `main`, never switched.
+- [x] **R.0** The session's `Repo` is the round's worktree, whose build carries E, F and G, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -946,11 +946,20 @@ changes; `The worktree's build carries E: True; F: True; G: True`.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main
 clone; any `False` on the last line -- build the worktree first, never while the gate runs.
 
-Result:
+Result: 2026-10-05 03:12 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the round's own worktree, not the main clone; the main clone is on main at 2a86120, never switched; the worktree on s8-steg2-r1 at b1e44c2 (the PR head) with 0 tracked changes; the worktree's build (sources at 883d820; b1e44c2 changes only this checklist) carries E, F and G.
+
+[oer-s82] The module loads from a worktree that is not the main clone: True
+[oer-s82] Main clone: branch main; HEAD 2a86120
+[oer-s82] Worktree: branch s8-steg2-r1; HEAD b1e44c2 docs: quote the README's complete-read sentence as the export writes it; tracked changes: 0
+[oer-s82] The worktree's build carries E: True; F: True; G: True
+```
 
 ### R.1. 1.1 again: the bundle itself names the three sections and the roster as unread
 
-- [ ] **R.1** The no-permission export of 1.1 writes a `README.md` whose `What this export could not read` lists `groups, administrativeUnits, accessReviews` and `groupsRoster`; `inventory.json` carries no part of the list; the prompt says where it is; both partial messages open with G's wording.
+- [x] **R.1** The no-permission export of 1.1 writes a `README.md` whose `What this export could not read` lists `groups, administrativeUnits, accessReviews` and `groupsRoster`; `inventory.json` carries no part of the list; the prompt says where it is; both partial messages open with G's wording.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1013,11 +1022,37 @@ list: False`; `The prompt says where the list is: True`.
 could not read (the defect of F); `inventory.json carries the list: True` -- the list leaked into the
 document that is validated and applied; `refused` above 0.
 
-Result:
+Result: 2026-10-05 03:12 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 4 requests, 0 not a GET, refused 0. As in 1.1: four warnings (403 on groups, administrative units and access reviews, and the roster), IncompleteReads 2 entries, 2 InventoryPartial errors. NEW: both openings name objects left out because two or more live objects share a name (G); the bundle's README.md has 'What this export could not read' before '## Files', says the bundle is PARTIAL and lists exactly 2 entries, 'Entra ID: groups, administrativeUnits, accessReviews' and 'Entra ID: groupsRoster' (F); inventory.json keeps the version and the nine sections and carries no part of the list; the prompt says where the list is.
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2-r1\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s82] Fence: requests 4, not a GET 0, refused 0
+[oer-s82] Warnings: 4
+[oer-s82] IncompleteReads: 2 [groups, administrativeUnits, accessReviews; groupsRoster]
+[oer-s82] InventoryPartial errors: 2
+[oer-s82] Opening (InventoryPartial,Get-OERInventory): This inventory is PARTIAL: 3 collection(s) or object(s) could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are not stated as facts in the document (an accessReviews entry named as unread may still carry an id where a name could not be read).
+[oer-s82] Opening (InventoryPartial,Export-OERInventory): This inventory bundle is PARTIAL: 2 partial Entra ID read entry(ies) name collections or objects that could not be read, could not be written without an empty name, or were left out because two or more live objects share a name, and are NOT stated as facts in the bundle -- one entry can name several collections, so read the entries rather than this count: groups, administrativeUnits, accessReviews; groupsRoster.
+[oer-s82] README.md has the section: True; before '## Files': True
+[oer-s82] The section says PARTIAL: True
+[oer-s82] Entries in the section: 2
+[oer-s82] Entry: - Entra ID: `groups, administrativeUnits, accessReviews`
+[oer-s82] Entry: - Entra ID: `groupsRoster`
+[oer-s82] inventory.json keys: version, groups, administrativeUnits, catalogs, accessPackages, accessReviews, directoryRoleManagementPolicies, directoryRoleAssignments, roleAssignments, roleManagementPolicies
+[oer-s82] inventory.json carries the list: False
+[oer-s82] The prompt says where the list is: True
+```
 
 ### R.2. 2.1 again: the bundle says that everything was read
 
-- [ ] **R.2** The same export as `oer-live-cc` is complete, and its `README.md` says so in `What this export could not read`.
+- [x] **R.2** The same export as `oer-live-cc` is complete, and its `README.md` says so in `What this export could not read`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1069,11 +1104,34 @@ not access-package-scoped (skipped, not unread). **New:** `README.md has the sec
 **Failure looks like:** the section missing, or an entry in it -- the bundle would claim, or fail to
 claim, a read it did; `refused` above 0.
 
-Result:
+Result: 2026-10-05 03:12 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Fence: 399 requests, 3 not a GET (getByIds), refused 0. IncompleteReads 0, SkippedScopes 0, SkippedEligibilityScopes 0 and no InventoryPartial, as in 2.1; the only warning is the known aggregate for 1 access review that is not access-package-scoped (skipped, not unread). NEW: README.md has the section with 0 entries and says that Export-OERInventory read everything it was asked to read (F); inventory.json validates (0 Errors). Summary: groups 10 (RBAC-relevant only), administrative units 1, access reviews 5, roster 97 -- the first run's test objects are gone, as T.3 recorded.
+
+[oer-s82] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg2-r1\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s82] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s82] Fence: requests 399, not a GET 3, refused 0
+[oer-s82] Summary: groups 10, administrative units 1, access reviews 5, roster 97
+[oer-s82] Warning: Get-OERInventory: skipped 1 access review definition(s) that are not access-package-scoped. Only access-package reviews round-trip through Invoke-OERStructure; group, application and directory-role reviews are not captured.
+[oer-s82] IncompleteReads: 0; SkippedScopes: 0; SkippedEligibilityScopes: 0
+[oer-s82] InventoryPartial errors: 0
+[oer-s82] README.md has the section: True; entries: 0
+[oer-s82] The section: Nothing. `Export-OERInventory` read everything it was asked to read: no collection, section, group roster or Azure scope was reported as unread, and no `InventoryPartial` error was raised. The coverage limits below still apply -- they describe what this bundle never captures, not a read that failed.
+[oer-s82] inventory.json validates: True; Errors: 0
+```
 
 ### R.3. Read back, and clean up
 
-- [ ] **R.3** The main clone is still on `main` at the HEAD R.0 recorded, and the redaction map and `raw\s82\` are deleted after the write-up.
+- [x] **R.3** The main clone is still on `main` at the HEAD R.0 recorded, and the redaction map and `raw\s82\` are deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1093,4 +1151,11 @@ folders of R.1 and R.2. After the results are copied into this file: `Clear-OerL
 and `raw\s82\` deleted.
 **Failure looks like:** the main clone on another branch or HEAD -- record it in the report.
 
-Result:
+Result: 2026-10-05 03:12 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The main clone is on main at 2a86120, the HEAD R.0 recorded, never switched; raw\s82 held the two export folders of R.1 and R.2. After this write-up the redaction map is cleared and raw\s82\ deleted.
+
+[oer-s82] Main clone: branch main; HEAD 2a86120
+[oer-s82] raw\s82 holds: export-r.1, export-r.2
+```
