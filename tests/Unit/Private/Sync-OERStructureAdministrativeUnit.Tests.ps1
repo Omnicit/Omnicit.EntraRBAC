@@ -1892,4 +1892,315 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
     }
+
+    # Decision A16 (finding F1): one directory role has two ids, its directoryRole object id and its role
+    # template id, and Graph may store a scoped role membership under the other id than the one the
+    # document declared. Get-OERDirectoryRoleNameMap keys an activated role by both ids, so a declared GUID
+    # and a live RoleId the map gives the same name are the same role. These tests run the REAL
+    # Get-OERAdministrativeUnit, Get-OERDirectoryRoleNameMap, Add-OERAdministrativeUnitScopedRole and
+    # Remove-OERAdministrativeUnitScopedRole under the handler; only the transport, Initialize-OERAuth and
+    # the two lookups are mocked. The transport simulates the tenant in $script: state, so a second run
+    # sees what the first one wrote.
+    Context 'a scoped role declared by GUID matches through the directory role name map (decision A16)' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:AuId = '11111111-1111-1111-1111-111111111111'
+                $script:A16RolesUri = "v1.0/directory/administrativeUnits/$($script:AuId)/scopedRoleMembers"
+                $script:A16UserAdministrator = [PSCustomObject]@{
+                    id = 'aaaaaaaa-0000-0000-0000-000000000001'; roleTemplateId = 'bbbbbbbb-0000-0000-0000-000000000002'; displayName = 'User Administrator'
+                }
+                $script:A16ReportsReader = [PSCustomObject]@{
+                    id = 'aaaaaaaa-0000-0000-0000-000000000011'; roleTemplateId = 'bbbbbbbb-0000-0000-0000-000000000012'; displayName = 'Reports Reader'
+                }
+                $script:A16DirectoryRoles = @($script:A16UserAdministrator)
+                $script:A16Memberships = [System.Collections.Generic.List[object]]::new()
+                # 'ObjectId': Graph stores a posted template id as the role's object id (an object id
+                # stays). 'TemplateId': Graph stores a posted object id as the role's template id.
+                $script:A16Premise = 'ObjectId'
+                $script:A16NextMembership = 0
+                $script:A16DirectoryRoleReads = 0
+                # The directoryRoles read with this sequence number throws (0: none does).
+                $script:A16FailDirectoryRoleRead = 0
+                $script:A16Declared = $null
+                $script:A16NewMembership = {
+                    param([string]$Id, [string]$RoleId, [string]$PrincipalId)
+                    [PSCustomObject]@{
+                        id                   = $Id
+                        administrativeUnitId = $script:AuId
+                        roleId               = $RoleId
+                        roleMemberInfo       = [PSCustomObject]@{ id = $PrincipalId; displayName = "Display $PrincipalId" }
+                    }
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERAdministrativeUnitId { $script:AuId }
+                Mock Resolve-OERStructurePrincipal {
+                    param($Reference)
+                    switch ($Reference) {
+                        'person1@example.com' { 'cccccccc-0000-0000-0000-000000000003' }
+                        'person2@example.com' { 'cccccccc-0000-0000-0000-000000000013' }
+                        default { $null }
+                    }
+                }
+                Mock Invoke-OERGraphRequest {
+                    $Verb = if ($Method) { $Method.ToUpperInvariant() } else { 'GET' }
+                    if ($Verb -eq 'GET' -and $Uri -eq 'v1.0/directoryRoles') {
+                        $script:A16DirectoryRoleReads++
+                        if ($script:A16DirectoryRoleReads -eq $script:A16FailDirectoryRoleRead) { throw 'TooManyRequests (injected map failure)' }
+                        return [PSCustomObject]@{ value = @($script:A16DirectoryRoles) }
+                    }
+                    if ($Verb -eq 'GET' -and $Uri -eq $script:A16RolesUri) {
+                        return [PSCustomObject]@{ value = @($script:A16Memberships) }
+                    }
+                    if ($Verb -eq 'POST' -and $Uri -eq $script:A16RolesUri) {
+                        $Posted = [string]$Body.roleId
+                        $Known = @($script:A16DirectoryRoles | Where-Object { $_.id -eq $Posted -or $_.roleTemplateId -eq $Posted }) | Select-Object -First 1
+                        $Stored = $Posted
+                        if ($Known -and $script:A16Premise -eq 'ObjectId') { $Stored = [string]$Known.id }
+                        if ($Known -and $script:A16Premise -eq 'TemplateId') { $Stored = [string]$Known.roleTemplateId }
+                        $script:A16NextMembership++
+                        $Membership = & $script:A16NewMembership "srm-$($script:A16NextMembership)" $Stored ([string]$Body.roleMemberInfo.id)
+                        $script:A16Memberships.Add($Membership)
+                        return $Membership
+                    }
+                    if ($Verb -eq 'DELETE' -and $Uri -like "$($script:A16RolesUri)/*") {
+                        $MembershipId = $Uri.Substring($script:A16RolesUri.Length + 1)
+                        $Existing = @($script:A16Memberships | Where-Object { $_.id -eq $MembershipId }) | Select-Object -First 1
+                        if (-not $Existing) { throw "unexpected Graph call DELETE of an unknown membership $Uri" }
+                        $null = $script:A16Memberships.Remove($Existing)
+                        return $null
+                    }
+                    if ($Verb -eq 'GET' -and $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)/members") {
+                        return [PSCustomObject]@{ value = @() }
+                    }
+                    if ($Verb -eq 'GET' -and $Uri -eq "v1.0/directory/administrativeUnits/$($script:AuId)") {
+                        return [PSCustomObject]@{ id = $script:AuId; displayName = 'AU-IT' }
+                    }
+                    throw "unexpected Graph call $Verb $Uri"
+                }
+            }
+        }
+
+        It '1: Graph stores the <Stores>, the role is declared by its <Form>: run 1 adds it once and run 2 leaves it alone under -Prune' -ForEach @(
+            # Finding F1 exactly: the document declares the template id, Graph stores the object id.
+            @{ Premise = 'ObjectId'; Stores = 'object id'; Form = 'template id'; Declared = 'bbbbbbbb-0000-0000-0000-000000000002'; Stored = 'aaaaaaaa-0000-0000-0000-000000000001' }
+            @{ Premise = 'ObjectId'; Stores = 'object id'; Form = 'object id'; Declared = 'aaaaaaaa-0000-0000-0000-000000000001'; Stored = 'aaaaaaaa-0000-0000-0000-000000000001' }
+            @{ Premise = 'TemplateId'; Stores = 'template id'; Form = 'template id'; Declared = 'bbbbbbbb-0000-0000-0000-000000000002'; Stored = 'bbbbbbbb-0000-0000-0000-000000000002' }
+            @{ Premise = 'TemplateId'; Stores = 'template id'; Form = 'object id'; Declared = 'aaaaaaaa-0000-0000-0000-000000000001'; Stored = 'bbbbbbbb-0000-0000-0000-000000000002' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Premise = $Premise; Declared = $Declared; Stored = $Stored } {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                $script:A16Premise = $Premise
+                $script:A16Declared = $Declared
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = $Declared; principal = 'person1@example.com' })
+                }
+
+                $r1 = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err1)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Uri -eq $script:A16RolesUri -and $Body.roleId -eq $script:A16Declared
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+                @($r1 | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added scopedRole '$Declared' for 'person1@example.com'" }).Count | Should -Be 1
+                @($r1 | Where-Object { $_.Action -in 'Removed', 'Extra', 'Failed', 'Skipped' }).Count | Should -Be 0
+                @($Err1).Count | Should -Be 0
+                # The premise took effect: the tenant holds the membership under the id it stores.
+                $script:A16Memberships.Count | Should -Be 1
+                $script:A16Memberships[0].roleId | Should -BeExactly $Stored
+
+                $r2 = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err2)
+
+                # Run 2 neither adds nor removes. It matched the live role (the Unchanged row below), so these
+                # absence assertions are not vacuous.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+                @($r2 | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "scopedRole '$Declared' for 'person1@example.com' already present" }).Count | Should -Be 1
+                @($r2 | Where-Object { $_.Action -in 'Removed', 'Extra', 'Failed', 'Skipped', 'Updated' }).Count | Should -Be 0
+                @($Err2).Count | Should -Be 0
+                $script:A16Memberships.Count | Should -Be 1
+                $script:A16Memberships[0].roleId | Should -BeExactly $Stored
+            }
+        }
+
+        It '2: the F1 case without -Prune on run 2 reports the role Unchanged and no Extra row' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                $script:A16Premise = 'ObjectId'
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = 'bbbbbbbb-0000-0000-0000-000000000002'; principal = 'person1@example.com' })
+                }
+
+                $r1 = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+                @($r1 | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                $script:A16Memberships[0].roleId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+
+                $r2 = @(Invoke-SyncAuViaCaller -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                # The Unchanged row proves run 2 reached the live role, so the absence assertions are not vacuous.
+                @($r2 | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
+                @($r2 | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "scopedRole 'bbbbbbbb-0000-0000-0000-000000000002' for 'person1@example.com' already present" }).Count | Should -Be 1
+                @($r2 | Where-Object { $_.Action -in 'Removed', 'Failed', 'Skipped', 'Updated' }).Count | Should -Be 0
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+                $script:A16Memberships.Count | Should -Be 1
+            }
+        }
+
+        It '3: a declared GUID the map does not name is added, and the live role is pruned, as before' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000003'))
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = 'dddddddd-0000-0000-0000-000000000004'; principal = 'person1@example.com' })
+                }
+
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.roleId -eq 'dddddddd-0000-0000-0000-000000000004'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'DELETE' -and $Uri -eq "$($script:A16RolesUri)/srm-seed-1"
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared scopedRole 'User Administrator' (principal 'cccccccc-0000-0000-0000-000000000003')" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -in 'Failed', 'Skipped', 'Extra' }).Count | Should -Be 0
+                $script:A16Memberships.Count | Should -Be 1
+                [string]$script:A16Memberships[0].roleId | Should -BeExactly 'dddddddd-0000-0000-0000-000000000004'
+            }
+        }
+
+        It '4: a declared GUID the map names differently from the live role is added, and the live role is pruned, as before' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                $script:A16DirectoryRoles = @($script:A16UserAdministrator, $script:A16ReportsReader)
+                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000003'))
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    # Reports Reader's template id, while the live membership carries User Administrator's object id.
+                    scopedRoles = @([PSCustomObject]@{ role = 'bbbbbbbb-0000-0000-0000-000000000012'; principal = 'person1@example.com' })
+                }
+
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.roleId -eq 'bbbbbbbb-0000-0000-0000-000000000012'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'DELETE' -and $Uri -eq "$($script:A16RolesUri)/srm-seed-1"
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared scopedRole 'User Administrator' (principal 'cccccccc-0000-0000-0000-000000000003')" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -in 'Failed', 'Skipped', 'Extra' }).Count | Should -Be 0
+                $script:A16Memberships.Count | Should -Be 1
+                [string]$script:A16Memberships[0].roleId | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000011'
+            }
+        }
+
+        It '5: a name looked up without a key is never a match: a declared GUID and an unnamed live role, neither in the map, are added and pruned' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                # person1 holds a role the map does not name; person2 holds a named User Administrator
+                # membership, declared by name, which opens the gate of the handler's map read.
+                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'eeeeeeee-0000-0000-0000-000000000005' 'cccccccc-0000-0000-0000-000000000003'))
+                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-2' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000013'))
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @(
+                        [PSCustomObject]@{ role = 'dddddddd-0000-0000-0000-000000000004'; principal = 'person1@example.com' },
+                        [PSCustomObject]@{ role = 'User Administrator'; principal = 'person2@example.com' }
+                    )
+                }
+
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'POST' -and $Body.roleId -eq 'dddddddd-0000-0000-0000-000000000004' -and
+                    $Body.roleMemberInfo.id -eq 'cccccccc-0000-0000-0000-000000000003'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Method -eq 'DELETE' -and $Uri -eq "$($script:A16RolesUri)/srm-seed-1"
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' }
+                # The gate opened, so the map was there to be misread: the reader's read, the handler's
+                # read and the real Add's best-effort read after its POST (measured).
+                Should -Invoke Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "scopedRole 'User Administrator' for 'person2@example.com' already present" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added scopedRole 'dddddddd-0000-0000-0000-000000000004' for 'person1@example.com'" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -like "*(principal 'cccccccc-0000-0000-0000-000000000003')" }).Count | Should -Be 1
+                @($r | Where-Object { $_.Action -in 'Failed', 'Skipped', 'Extra' }).Count | Should -Be 0
+                @($script:A16Memberships | Where-Object { $_.id -eq 'srm-seed-2' }).Count | Should -Be 1
+            }
+        }
+
+        It '6: reports Failed, and adds and removes no scoped role, when the handler''s map read fails' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                }
+                # The reader's read (the first) succeeds and names the live role; the handler's (the
+                # second) fails.
+                $script:A16FailDirectoryRoleRead = 2
+                $script:A16Memberships.Add((& $script:A16NewMembership 'srm-seed-1' 'aaaaaaaa-0000-0000-0000-000000000001' 'cccccccc-0000-0000-0000-000000000003'))
+                $Item = [PSCustomObject]@{
+                    displayName = 'AU-IT'
+                    members     = $null
+                    scopedRoles = @([PSCustomObject]@{ role = 'bbbbbbbb-0000-0000-0000-000000000002'; principal = 'person1@example.com' })
+                }
+
+                $r = @(Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue)
+
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
+                # Both reads were reached, so the absence assertions above are not vacuous.
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly -ParameterFilter { $Uri -eq 'v1.0/directoryRoles' }
+                # The unit's own property row precedes step 3; the Failed row is the only scoped-role row.
+                @($r).Count | Should -Be 2
+                @($r | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq 'administrative unit properties match' }).Count | Should -Be 1
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeLike '*failed to read the directory roles that match a scopedRole declared by role id*'
+                $Failed[0].Detail | Should -BeLike '*injected map failure*'
+                $null -ne $Failed[0].Error | Should -BeTrue -Because 'the underlying ErrorRecord travels with the Failed row'
+                $Failed[0].Error.Exception.Message | Should -BeLike "*'v1.0/directoryRoles'*injected map failure*"
+                $script:A16Memberships.Count | Should -Be 1
+                [string]$script:A16Memberships[0].id | Should -BeExactly 'srm-seed-1'
+            }
+        }
+    }
 }

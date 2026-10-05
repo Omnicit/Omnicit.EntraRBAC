@@ -23,19 +23,28 @@ function Get-OERDirectoryRoleNameMap {
     name for that principal and no live role of that principal matches it; otherwise the unnamed role
     is reconciled as before. That case has not been seen live.
 
+    Sync-OERStructureAdministrativeUnit also reads the map itself, with -ThrowOnFailure, to match a role
+    the document declares by role id (decision A16): a declared id and a live role id the map gives the
+    same name are one role, since the map keys a role by both of its ids. A declared or live id the map
+    does not name matches on the id alone.
+
     .PARAMETER ThrowOnFailure
     When set, a failed read of the directory roles throws (after the error record is scrubbed) instead of
     returning an empty map. The exception names the read ('v1.0/directoryRoles'), carries the cause in its
     message and keeps the original exception as its InnerException. Without it the function stays
-    best-effort, which is what the two other callers rely on: Get-OERAdministrativeUnitScopedRole, a read
-    that only enriches its listing, and Add-OERAdministrativeUnitScopedRole, which only names the role in
-    its output after the POST has succeeded. Get-OERAdministrativeUnit -IncludeScopedRoles sets the
-    switch, because an empty map there would give every scoped role an empty RoleName that the apply
-    engine reads as roles nobody declared. With the switch a read that SUCCEEDS and lists no activated
-    role is treated as unread as well, and throws the same way with a message saying the listing came
-    back empty: the map is read only for an administrative unit that has scoped roles, so at least one
-    directory role is expected to be activated, and an empty answer is taken as evidence of a bad
-    read. Without the switch that listing is returned as an empty map.
+    best-effort, which is what the two callers that do not set it rely on:
+    Get-OERAdministrativeUnitScopedRole, a read that only enriches its listing, and
+    Add-OERAdministrativeUnitScopedRole, which only names the role in its output after the POST has
+    succeeded. Get-OERAdministrativeUnit -IncludeScopedRoles sets the switch, because an empty map there
+    would give every scoped role an empty RoleName that the apply engine reads as roles nobody declared.
+    Sync-OERStructureAdministrativeUnit sets it as well when it reads the map to match a role declared by
+    role id (decision A16), because with an empty map there a live membership carrying the role's other
+    id would be added again and removed under -Prune. With the switch a read that SUCCEEDS and lists no
+    activated role is treated as unread as well, and throws the same way with a message saying the
+    listing came back empty: the map is read only for an administrative unit that has scoped roles
+    (Sync-OERStructureAdministrativeUnit reads it only for a unit that has a live scoped role whose name
+    was read), so at least one directory role is expected to be activated, and an empty answer is taken
+    as evidence of a bad read. Without the switch that listing is returned as an empty map.
 
     .EXAMPLE
     $Map = Get-OERDirectoryRoleNameMap
