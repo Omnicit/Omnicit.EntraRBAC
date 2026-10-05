@@ -713,7 +713,7 @@ is reachable throughout and 3.4 needs no token.
 
 ### 3.1. Get-OERGroup naming another tenant: the sign-in is refused, and no Graph request leaves
 
-- [ ] **3.1** After `Connect-OER` to the test tenant, `Get-OERGroup -TenantId` naming a tenant that does not exist: the sign-in is refused, the errors include `SignInRefused`, and the fence counts 0 Graph requests.
+- [x] **3.1** After `Connect-OER` to the test tenant, `Get-OERGroup -TenantId` naming a tenant that does not exist: the sign-in is refused, the errors include `SignInRefused`, and the fence counts 0 Graph requests.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -773,11 +773,31 @@ the module's session (F1); no `SignInRefused` with 0 requests -- the request nev
 so the check proves nothing; `token requests: 0` -- the sign-in was never attempted (another
 refusal path); a 401/403 -- STOP.
 
-Result:
+Result: 2026-10-05 19:49 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Run 2026-10-05 19:48 UTC as oer-live-cc (every identity line True), with the module from the round's worktree build (2c89c82 code; the latch present) and the three fences resolving for the module (True). Get-OERGroup -TenantId naming the non-existent placeholder tenant ...099: no output object; errors GraphTokenAcquisitionFailed (the fence refused the token request of the sign-in for the other tenant) and SignInRefused (the Graph request the cmdlet carried on to, refused by the latch before it was sent); Graph requests 0, ARM requests 0, token requests 1; session state Own; the state still names the test tenant; no refused command on the prompt's call stack afterwards. A first run at 19:47 UTC gave the same results; its only difference was the cleanup line in 3.4 (a scope-qualified Remove-Item that removes nothing), fixed in the checklist and run again.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b-r1\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] The module is the worktree's build: True; it carries the latch: True
+[oer-s84b] The module resolves Get-AzToken, Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s84b] 3.1 Get-OERGroup naming another tenant: output objects 0; errors: GraphTokenAcquisitionFailed, SignInRefused; Graph requests: 0; ARM requests: 0; token requests: 1; session state: Own; the state still names the test tenant: True; a refused command is on this prompt's call stack: False
+[oer-s84b] 3.1 Get-OERGroup naming another tenant: GraphTokenAcquisitionFailed,Initialize-OERAuth; category AuthenticationError -- Failed to acquire a Microsoft Graph token: S84b fence: no token request is made in this check.
+[oer-s84b] 3.1 Get-OERGroup naming another tenant: SignInRefused,Get-OERGroup; category AuthenticationError -- The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+```
 
 ### 3.2. Get-OERSubscription naming another tenant: no Azure Resource Manager request leaves
 
-- [ ] **3.2** The same with `Get-OERSubscription -TenantId` naming the tenant that does not exist: the fence counts 0 ARM requests.
+- [x] **3.2** The same with `Get-OERSubscription -TenantId` naming the tenant that does not exist: the fence counts 0 ARM requests.
 
 ```powershell
 $HadArm = [bool](& $Module { $script:_OERAuthState.ArmToken })
@@ -795,11 +815,20 @@ on the Graph half: `Get-OERGroup` reached `Invoke-MgGraphRequest` after `GraphTo
 **Failure looks like:** `ARM requests: 1` or more, or `subscriptions returned 1` or more -- the test
 tenant's subscriptions listed under another tenant's name.
 
-Result:
+Result: 2026-10-05 19:49 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Get-OERSubscription -TenantId naming the placeholder tenant ...099: 0 subscriptions; errors GraphTokenAcquisitionFailed and SignInRefused (the ARM request, refused before the bearer was built); Graph requests 0, ARM requests 0, token requests 1; session state Own; the state still names the test tenant. The module held an ARM token for the test tenant before (True) and still holds it (True): the failed sign-in rebuilt nothing, and the latch, not a dropped token, kept it from being sent.
+
+[oer-s84b] 3.2 Get-OERSubscription naming another tenant: output objects 0; errors: GraphTokenAcquisitionFailed, SignInRefused; Graph requests: 0; ARM requests: 0; token requests: 1; session state: Own; the state still names the test tenant: True; a refused command is on this prompt's call stack: False
+[oer-s84b] 3.2 Get-OERSubscription naming another tenant: GraphTokenAcquisitionFailed,Initialize-OERAuth; category AuthenticationError -- Failed to acquire a Microsoft Graph token: S84b fence: no token request is made in this check.
+[oer-s84b] 3.2 Get-OERSubscription naming another tenant: SignInRefused,Get-OERSubscription; category AuthenticationError -- The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+[oer-s84b] 3.2: subscriptions returned 0; the module held an ARM token for the test tenant before: True; and still holds it: True
+```
 
 ### 3.3. Invoke-OERStructure naming another tenant, -WhatIf: no request, and no planned change
 
-- [ ] **3.3** `Invoke-OERStructure -TenantId` naming the tenant that does not exist, `-WhatIf`, with a minimal document (one group, one role assignment): 0 Graph and 0 ARM requests, and no row says Created, Updated or Removed.
+- [x] **3.3** `Invoke-OERStructure -TenantId` naming the tenant that does not exist, `-WhatIf`, with a minimal document (one group, one role assignment): 0 Graph and 0 ARM requests, and no row says Created, Updated or Removed.
 
 ```powershell
 $DocPath = Join-Path ([System.IO.Path]::GetTempPath()) ('s84b-r1-' + [guid]::NewGuid().ToString('N') + '.json')
@@ -825,11 +854,20 @@ and is deleted at once; it names the test subscription, which is never printed.
 module's cache for the test tenant, released the latch of the outer command (the design this round
 rules out); a "would create" row -- a refused read was planned against as an absent object.
 
-Result:
+Result: 2026-10-05 19:49 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Invoke-OERStructure -TenantId naming the placeholder tenant ...099, -WhatIf, with a temp document declaring one group (oer-s84b-does-not-exist) and one role assignment at the test subscription (the document deleted at once, the subscription never printed): 2 rows, both Failed; errors GraphTokenAcquisitionFailed and SignInRefused twice (the nested cmdlets' reads); Graph requests 0, ARM requests 0, token requests 1 -- the nested cmdlets' own sign-ins hit the cache for the test tenant and did not release the outer command's latch. No row says Created, Updated or Removed, and no row plans a creation.
+
+[oer-s84b] 3.3 Invoke-OERStructure -WhatIf naming another tenant: output objects 2; errors: GraphTokenAcquisitionFailed, SignInRefused, SignInRefused; Graph requests: 0; ARM requests: 0; token requests: 1; session state: Own; the state still names the test tenant: True; a refused command is on this prompt's call stack: False
+[oer-s84b] 3.3 Invoke-OERStructure -WhatIf naming another tenant: GraphTokenAcquisitionFailed,Initialize-OERAuth; category AuthenticationError -- Failed to acquire a Microsoft Graph token: S84b fence: no token request is made in this check.
+[oer-s84b] 3.3 Invoke-OERStructure -WhatIf naming another tenant: SignInRefused,Invoke-OERStructure; category AuthenticationError -- The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+[oer-s84b] 3.3: rows by action: Failed 2; a row says Created, Updated or Removed: False; a row plans a creation ('would create'): False
+```
 
 ### 3.4. A plain command afterwards is sent, and the latch is released
 
-- [ ] **3.4** A plain `Get-OERGroup` without `-TenantId` afterwards succeeds on the module's own session, with one Graph request and no token request.
+- [x] **3.4** A plain `Get-OERGroup` without `-TenantId` afterwards succeeds on the module's own session, with one Graph request and no token request.
 
 ```powershell
 $null = Invoke-S84bR1 -Label '3.4 Get-OERGroup on the module''s own tenant afterwards' -Call { Get-OERGroup -Group 'oer-s84b-does-not-exist' }
@@ -847,7 +885,15 @@ on this prompt's call stack: False`; `Fences removed: True`.
 **Failure looks like:** `SignInRefused` on this plain command -- the latch outlived the refused
 commands; `token requests: 1` -- the cache was lost by the refusals.
 
-Result:
+Result: 2026-10-05 19:49 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. A plain Get-OERGroup of oer-s84b-does-not-exist without -TenantId afterwards: GroupNotFound, Graph requests 1, ARM requests 0, token requests 0 (a cache hit), session state Own; no refused command on the call stack; the fences removed (True).
+
+[oer-s84b] 3.4 Get-OERGroup on the module's own tenant afterwards: output objects 0; errors: GroupNotFound; Graph requests: 1; ARM requests: 0; token requests: 0; session state: Own; the state still names the test tenant: True; a refused command is on this prompt's call stack: False
+[oer-s84b] 3.4 Get-OERGroup on the module's own tenant afterwards: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'oer-s84b-does-not-exist'.
+[oer-s84b] Fences removed: True
+```
 
 ## Teardown
 
@@ -901,7 +947,7 @@ Verdict: PASS. No object starting with oer-s84b- exists in any of the six collec
 
 ### T.2. Round 1: no session is left, nothing carries the prefix, and the main clone is untouched
 
-- [ ] **T.2** After section 3, the same teardown as T.1: `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main`; the redaction map is deleted after the write-up.
+- [x] **T.2** After section 3, the same teardown as T.1: `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main`; the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -927,4 +973,22 @@ main clone on `main`. After the results are copied into this file: `Clear-OerLiv
 **Failure looks like:** a prefixed object -- nothing here creates one: STOP and report it; a session
 left -- run `Disconnect-OER` and `Disconnect-MgGraph` again.
 
-Result:
+Result: 2026-10-05 19:49 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Run 2026-10-05 19:49 UTC: every identity line True; no object starting with oer-s84b- in any of the six collections (this round creates none); after Disconnect-OerLive no Graph SDK session is left and the module holds no session; the main clone is on main at 2a86120, the HEAD S.1 recorded in step 4b, never switched. The redaction map is cleared and raw\s84b\ deleted after this write-up.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b-r1\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s84b-' is left.
+[oer-s84b] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False
+[oer-s84b] Main clone: branch main; HEAD 2a86120
+```
