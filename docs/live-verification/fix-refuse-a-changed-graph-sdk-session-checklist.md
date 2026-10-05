@@ -86,7 +86,10 @@ before it merges.
   the call stack remembers another identity than the state now carries. A downstream command runs
   inside the upstream command's output, so in such a pipeline its requests are refused too while the
   upstream command runs. A pipeline therefore works in one tenant with one identity; separate
-  statements switch freely.
+  statements switch freely. Not closed by this round, and reported as a finding of it: `Invoke-OERStructure`
+  without `-TenantId` signs in in its `process` block, after a downstream command's `begin`, so it
+  inherits -- and remembers -- the tenant that command switched to, and nothing differs.
+
 A live tenant is needed for what mocks cannot show: what `Get-MgContext` really holds after the
 module's `Connect-MgGraph -AccessToken` and after a certificate `Connect-MgGraph` for another app in the
 same tenant (section 1, which decides whether the fingerprint tells them apart); that the latest
