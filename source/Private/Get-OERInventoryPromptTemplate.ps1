@@ -384,9 +384,17 @@ schema.json. Any valid name works; these are common least-privilege choices:
   administrativeUnits[].scopedRoles[].role): User Administrator, Helpdesk Administrator, Groups
   Administrator, Authentication Administrator, License Administrator.
 - requestorScope.scope (accessPackages[].assignmentPolicies[].requestorScope): AllMemberUsers,
-  AllConfiguredConnectedOrganizationUsers, SpecificDirectoryUsers, NotSpecified. Use NotSpecified
-  for administrator-assignment-only. Do NOT write NoSubjects: it is a legacy beta spelling the
-  service does not accept, so it is substituted with NotSpecified and warned about on every apply.
+  AllDirectoryUsers, AllExternalUsers, AllConfiguredConnectedOrganizationUsers,
+  AllDirectoryServicePrincipals, AllDirectoryAgentIdentities, SpecificDirectoryUsers (with users
+  and/or groups), NotSpecified. Use NotSpecified for administrator-assignment-only. Do NOT write
+  NoSubjects: it is a legacy beta spelling the service does not accept, so it is substituted with
+  NotSpecified and warned about on every apply. The module does not model connected organization
+  or service principal targets: for a policy the inventory shows as
+  SpecificConnectedOrganizationUsers or SpecificDirectoryServicePrincipals, omit requestorScope so
+  the apply keeps the live scope and its targets (the apply refuses SpecificDirectoryServicePrincipals
+  whenever it is declared, and an update that declares SpecificConnectedOrganizationUsers). A policy
+  the inventory shows as unknownFutureValue is refused by the apply whatever you declare; leave it
+  out of the document.
 - requestorSettings.managerLevel: integer 1-4 (1 = direct manager, 2 = manager's manager, etc.).
   Use allowManagerRequest=true with a managerLevel to enable on-behalf requests by managers.
 - approverInfoVisibility (assignmentPolicies[].approvalStages[]): Default (tenant policy),

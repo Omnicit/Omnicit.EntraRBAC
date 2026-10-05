@@ -391,7 +391,9 @@ be included in access packages:
 - `New-OERAccessPackageApprovalStage` -- compose an approval stage (duration, approvers,
   justification requirement, escalation)
 - `New-OERAccessPackageRequestorScope` -- compose the requestor scope (`AllMemberUsers`,
-  `AllConfiguredConnectedOrganizationUsers`, `NoSubjects`, or a specific user/group list)
+  `AllDirectoryUsers`, `AllExternalUsers`, `AllConfiguredConnectedOrganizationUsers`,
+  `AllDirectoryServicePrincipals`, `AllDirectoryAgentIdentities`, a specific user/group list, or
+  `NotSpecified` / `-AdminAssignmentOnly` for administrator assignment only)
 - `New-OERAccessPackageRequestorSettings` -- compose the granular requestor settings
   (self-request, manager request and manager level, custom schedule, self-extend)
 

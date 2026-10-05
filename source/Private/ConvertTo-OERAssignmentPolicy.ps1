@@ -13,8 +13,10 @@ function ConvertTo-OERAssignmentPolicy {
     the input.
 
     The projection surfaces the description, the requestor scope (friendly scope plus the specific target
-    user/group ids), the requestor settings (self-service and on-behalf toggles plus manager level), the
-    approval toggles, the full per-stage approver sets (manager, users, groups, internal/external
+    user/group ids; connected organization and service principal targets are not projected, and an
+    allowedTargetScope with no friendly form -- unknownFutureValue, or a value newer than this
+    module -- is passed through unchanged), the requestor settings (self-service and on-behalf
+    toggles plus manager level), the approval toggles, the full per-stage approver sets (manager, users, groups, internal/external
     sponsors, escalation approvers, escalation days, approver-justification flag and approver-information
     visibility), the expiration (days, hours, or a fixed date-time), and the notification toggle. All
     GUID lists are lowercased and sorted so a downstream set comparison is order- and case-insensitive.
@@ -95,12 +97,23 @@ function ConvertTo-OERAssignmentPolicy {
         $PackageId = if ($AccessPackageId) { $AccessPackageId } else { $InputObject.accessPackage.id }
 
         # -- Requestor scope (friendly inverse of allowedTargetScope + specific targets) ----
+        # Every Microsoft Graph v1.0 allowedTargetScope value has a row here except
+        # unknownFutureValue, which falls through to the raw pass-through below: the module never
+        # sends 'Prefer: include-unknown-enum-members', so that value means "a member this module
+        # cannot read", and Sync-OERStructureAccessPackage refuses to write a policy carrying it.
+        # specificDirectoryServicePrincipals is read (so the inventory names it) although
+        # New-OERAccessPackageRequestorScope refuses to build it: its service principal targets are
+        # not projected below, which collects singleUser and groupMembers targets only.
         $ScopeFriendlyMap = @{
             allMemberUsers                          = 'AllMemberUsers'
             allDirectoryUsers                       = 'AllDirectoryUsers'
+            allExternalUsers                        = 'AllExternalUsers'
             specificDirectoryUsers                  = 'SpecificDirectoryUsers'
             specificConnectedOrganizationUsers      = 'SpecificConnectedOrganizationUsers'
             allConfiguredConnectedOrganizationUsers = 'AllConfiguredConnectedOrganizationUsers'
+            allDirectoryServicePrincipals           = 'AllDirectoryServicePrincipals'
+            allDirectoryAgentIdentities             = 'AllDirectoryAgentIdentities'
+            specificDirectoryServicePrincipals      = 'SpecificDirectoryServicePrincipals'
             # Dead in practice, kept deliberately: Graph cannot return an allowedTargetScope its own
             # v1.0 enum does not contain, so this row never fires. Do NOT "restore symmetry" by
             # mirroring it back into New-OERAccessPackageRequestorScope's WRITE map -- that map

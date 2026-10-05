@@ -79,6 +79,45 @@ Describe 'ConvertTo-OERAssignmentPolicy' {
             }
         }
 
+        It 'maps <Graph> to its friendly form <Friendly>' -ForEach @(
+            @{ Graph = 'allExternalUsers'; Friendly = 'AllExternalUsers' }
+            @{ Graph = 'allDirectoryServicePrincipals'; Friendly = 'AllDirectoryServicePrincipals' }
+            @{ Graph = 'allDirectoryAgentIdentities'; Friendly = 'AllDirectoryAgentIdentities' }
+            @{ Graph = 'specificDirectoryServicePrincipals'; Friendly = 'SpecificDirectoryServicePrincipals' }
+        ) {
+            InModuleScope 'Omnicit.EntraRBAC' -Parameters @{ Graph = $Graph; Friendly = $Friendly } {
+                param($Graph, $Friendly)
+                $p = @{ id = 'pol-1'; displayName = 'Scoped'; allowedTargetScope = $Graph }
+                $Out = ConvertTo-OERAssignmentPolicy -InputObject $p
+                $Out.RequestorScope.scope | Should -BeExactly $Friendly
+                # The raw Graph value is kept beside the friendly one.
+                $Out.AllowedTargetScope | Should -BeExactly $Graph
+            }
+        }
+
+        It 'passes unknownFutureValue through raw, so the export names it and the engine can refuse it' {
+            InModuleScope 'Omnicit.EntraRBAC' {
+                $p = @{ id = 'pol-1'; displayName = 'Future'; allowedTargetScope = 'unknownFutureValue' }
+                (ConvertTo-OERAssignmentPolicy -InputObject $p).RequestorScope.scope | Should -BeExactly 'unknownFutureValue'
+            }
+        }
+
+        It 'projects no user or group target from service principal or connected organization targets' {
+            InModuleScope 'Omnicit.EntraRBAC' {
+                $p = @{
+                    id = 'pol-1'; displayName = 'Partners'; allowedTargetScope = 'specificConnectedOrganizationUsers'
+                    specificAllowedTargets = @(
+                        @{ '@odata.type' = '#microsoft.graph.connectedOrganizationMembers'; connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' }
+                        @{ '@odata.type' = '#microsoft.graph.singleServicePrincipal'; servicePrincipalId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }
+                    )
+                }
+                $Rs = (ConvertTo-OERAssignmentPolicy -InputObject $p).RequestorScope
+                $Rs.scope | Should -BeExactly 'SpecificConnectedOrganizationUsers'
+                @($Rs.users).Count | Should -Be 0
+                @($Rs.groups).Count | Should -Be 0
+            }
+        }
+
         It 'projects approval stages with durationDays and a manager flag' {
             InModuleScope 'Omnicit.EntraRBAC' {
                 $p = @{

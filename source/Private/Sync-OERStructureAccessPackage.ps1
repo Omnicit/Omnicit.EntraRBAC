@@ -72,7 +72,18 @@ function Sync-OERStructureAccessPackage {
        scalars and reports Updated (with the changed field names); no difference reports Unchanged. An
        undeclared requestorScope is never sent on update -- the live scope (including any
        SpecificDirectoryUsers targets) is preserved by Set-OERAccessPackageAssignmentPolicy instead of
-       being reset to the AllMemberUsers default. An absent policy is created from the same desired
+       being reset to the AllMemberUsers default. Three requestor scopes are refused rather than
+       written, each as a Failed row for that policy reached before ShouldProcess, so also under
+       -WhatIf, with nothing written for it: a live policy whose allowedTargetScope reads as
+       unknownFutureValue (whatever the entry declares; the module never sends the
+       'Prefer: include-unknown-enum-members' header that would name it); a declared
+       SpecificDirectoryServicePrincipals scope (New-OERAccessPackageRequestorScope refuses it with
+       InvalidPolicyInput, since its service principal targets are not modelled -- on create too); and
+       an UPDATE that would send a declared SpecificConnectedOrganizationUsers scope, whose
+       connected organization targets are not modelled either, so the write would drop them. Omit
+       requestorScope from such an entry to update the other fields while keeping the live scope. A
+       declared SpecificConnectedOrganizationUsers that does not differ reports Unchanged, and a
+       create with it is not refused. An absent policy is created from the same desired
        parts with New-OERAccessPackageAssignmentPolicy. Explicit per-approver identities ARE now
        diffed: -User/-Group, -Manager/-ManagerLevel,
        -InternalSponsor/-ExternalSponsor, -AlternateUser/-AlternateGroup, -EscalationDays,
@@ -952,6 +963,22 @@ function Sync-OERStructureAccessPackage {
                 }
                 $ExistingPol = $MatchingPolicies | Select-Object -First 1
 
+                # A live policy whose allowedTargetScope reads as unknownFutureValue carries a scope
+                # Microsoft Graph only names when asked with 'Prefer: include-unknown-enum-members',
+                # which this module never sends. Its real scope (and any targets that go with it) is
+                # therefore unreadable here, and a full-PUT update would overwrite it with whatever the
+                # entry declares or carry the placeholder back. Refuse the policy whatever the entry
+                # declares, before the parts are built, the diff runs or ShouldProcess is asked -- so
+                # it reads the same under -WhatIf -- as a Failed row without an ErrorRecord, the same
+                # form as the missing tenant default in Build-OERPolicyParts (no Graph error to carry).
+                if ($ExistingPol -and [string]$ExistingPol.RequestorScope.scope -eq 'unknownFutureValue') {
+                    ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                        -Detail ("Microsoft Graph returned allowedTargetScope 'unknownFutureValue', a value this module " +
+                            "cannot read without the 'Prefer: include-unknown-enum-members' header, so nothing was " +
+                            "written for assignmentPolicy '$PolName'.")
+                    continue
+                }
+
                 # Build the desired parts once (used by the diff and by the Set/New call).
                 $Parts = Build-OERPolicyParts -PolicyEntry $PolEntry -PolicyName $PolName -Alias $TenantAlias
                 if (-not $Parts.Success) {
@@ -989,6 +1016,26 @@ function Sync-OERStructureAccessPackage {
 
                     if (-not $Change.Differs) {
                         ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Unchanged' -Detail "assignmentPolicy '$PolName' matches"
+                        continue
+                    }
+                    # A declared requestorScope is sent whole: the builder's specificAllowedTargets
+                    # REPLACE the live ones. For SpecificConnectedOrganizationUsers the builder has no
+                    # targets to give -- this module does not model connected organization targets (the
+                    # projection and the diff know users and groups only) -- so the update would send
+                    # the scope with an empty target list and drop every connected organization the live
+                    # policy names (measured: the PUT body carried specificAllowedTargets []). Refuse
+                    # that write before ShouldProcess, so it reads the same under -WhatIf. Omitting
+                    # requestorScope from the entry leaves -RequestorScope off the Set call, which
+                    # carries the live scope and its targets forward as one unit. A diff with no
+                    # difference already returned Unchanged above (nothing written, nothing lost), and
+                    # create is not refused (no live target to lose).
+                    if ((@($Parts.DeclaredFields) -contains 'requestorScope') -and
+                        [string]$Parts.RequestorScope.AllowedTargetScope -eq 'specificConnectedOrganizationUsers') {
+                        ConvertTo-OERStructureResult -Section 'accessPackages' -Item $Name -Action 'Failed' `
+                            -Detail ("assignmentPolicy '$PolName' declares requestorScope SpecificConnectedOrganizationUsers, " +
+                                'but this module does not model connected organization targets, so the update would ' +
+                                'drop any the live policy names; nothing was written for it. Omit requestorScope ' +
+                                'from the entry to update the other fields while keeping the live scope.')
                         continue
                     }
                     if (-not $Caller.ShouldProcess($Name, "Update assignmentPolicy '$PolName'")) {
