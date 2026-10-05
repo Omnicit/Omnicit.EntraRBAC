@@ -4900,3 +4900,330 @@ Describe 'Sync-OERStructureAccessPackage' {
         }
     }
 }
+
+# BL-11: the requestor scope takes every Microsoft Graph v1.0 allowedTargetScope value. Every test
+# below walks the REAL New-OERAccessPackageRequestorScope, ConvertTo-OERPolicyBody and
+# ConvertTo-OERAssignmentPolicy -- each live policy is the real projection of a raw Graph fixture --
+# with only authentication, the package-level reads and the transport mocked, so what is asserted is
+# what the engine decides. Where the write itself is the question (R5), the REAL
+# Set-/New-OERAccessPackageAssignmentPolicy run too and the body is read where it leaves, at the
+# transport. Elsewhere Set/New are mocked so "nothing written" is a call count of zero.
+Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor scope (BL-11)' {
+    BeforeAll {
+        function New-Bl11RawPolicy {
+            param(
+                [string]$Id = '11111111-1111-1111-1111-111111111111',
+                [string]$DisplayName = 'Partners',
+                [string]$Description = 'live description',
+                [Parameter(Mandatory)][string]$AllowedTargetScope,
+                [object[]]$SpecificAllowedTargets = @()
+            )
+            @{
+                id                      = $Id
+                displayName             = $DisplayName
+                description             = $Description
+                accessPackage           = @{ id = 'ap-1' }
+                allowedTargetScope      = $AllowedTargetScope
+                specificAllowedTargets  = @($SpecificAllowedTargets)
+                expiration              = @{ type = 'noExpiration' }
+                requestApprovalSettings = @{
+                    isApprovalRequiredForAdd         = $false
+                    isApprovalRequiredForUpdate      = $false
+                    isRequestorJustificationRequired = $false
+                    stages                           = @()
+                }
+                notificationSettings    = @{ isAssignmentNotificationDisabled = $false }
+            }
+        }
+
+        function New-Bl11ConnectedOrgTarget {
+            @{
+                '@odata.type'           = '#microsoft.graph.connectedOrganizationMembers'
+                connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                description             = 'Partner organization'
+            }
+        }
+
+        # Runs the handler for one document item against the given raw live policies and returns the
+        # rows, the error records it published, and every PUT/POST the transport received.
+        function Invoke-Bl11Sync {
+            param([PSCustomObject]$Item, [object[]]$Live = @(), [bool]$UseWhatIf = $false)
+            InModuleScope 'Omnicit.EntraRBAC' -Parameters @{ Item = $Item; Live = $Live; UseWhatIf = $UseWhatIf } {
+                param($Item, $Live, $UseWhatIf)
+                $script:OERTestBl11Live = @($Live)
+                function Invoke-SyncApViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                    Sync-OERStructureAccessPackage -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+                }
+                $Published = $null
+                $Rows = @(Invoke-SyncApViaCaller -Item $Item -WhatIf:$UseWhatIf -WarningAction SilentlyContinue `
+                        -ErrorAction SilentlyContinue -ErrorVariable Published)
+                [PSCustomObject]@{
+                    Rows      = $Rows
+                    Published = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+                    Sent      = @($script:OERTestBl11Sent)
+                }
+            }
+        }
+    }
+
+    BeforeEach {
+        # Defined inside the module's scope so each mock body runs there: it reads the module-scoped
+        # fixtures below and calls the private ConvertTo-OERAssignmentPolicy. A mock body written in
+        # the test file runs in the test file's session state instead, where neither is visible.
+        InModuleScope $script:moduleName {
+            $script:OERTestBl11Live = @()
+            $script:OERTestBl11Sent = [System.Collections.Generic.List[hashtable]]::new()
+            Mock Initialize-OERAuth { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Get-OERAccessPackage {
+                [PSCustomObject]@{ Id = 'ap-1'; DisplayName = 'AP'; Description = $null; IsHidden = $false }
+            }
+            Mock Resolve-OERStructureDefault { $null }
+            # The live policies are the REAL projection of the raw fixtures the test hands in.
+            Mock Get-OERAccessPackageAssignmentPolicy {
+                foreach ($Raw in @($script:OERTestBl11Live)) {
+                    if ($null -ne $Raw) { ConvertTo-OERAssignmentPolicy -InputObject $Raw }
+                }
+            }
+            # The transport: every PUT/POST is recorded with its body; a GET of a policy by id answers
+            # with its raw fixture (the read-modify-write baseline of the real Set); anything else is an
+            # empty page.
+            Mock Invoke-OERGraphRequest {
+                if ($Method -eq 'PUT' -or $Method -eq 'POST') {
+                    $script:OERTestBl11Sent.Add(@{ Method = $Method; Uri = $Uri; Body = $Body })
+                    return @{ id = '99999999-9999-9999-9999-999999999999'; displayName = $Body.displayName; allowedTargetScope = $Body.allowedTargetScope }
+                }
+                foreach ($Raw in @($script:OERTestBl11Live)) {
+                    if ($null -ne $Raw -and $Uri -like "*entitlementManagement/assignmentPolicies/$($Raw.id)*") { return $Raw }
+                }
+                [PSCustomObject]@{ value = @() }
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName {
+            $script:OERTestBl11Live = $null
+            $script:OERTestBl11Sent = $null
+        }
+    }
+
+    Context 'a scope the builder now maps round-trips (R2)' {
+        It 'reports an unchanged export of an <Graph> policy Unchanged and calls no Set or New (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Graph = 'allExternalUsers'; Friendly = 'AllExternalUsers'; UseWhatIf = $false }
+            @{ Graph = 'allExternalUsers'; Friendly = 'AllExternalUsers'; UseWhatIf = $true }
+            @{ Graph = 'allDirectoryServicePrincipals'; Friendly = 'AllDirectoryServicePrincipals'; UseWhatIf = $false }
+            @{ Graph = 'allDirectoryServicePrincipals'; Friendly = 'AllDirectoryServicePrincipals'; UseWhatIf = $true }
+            @{ Graph = 'allDirectoryAgentIdentities'; Friendly = 'AllDirectoryAgentIdentities'; UseWhatIf = $false }
+            @{ Graph = 'allDirectoryAgentIdentities'; Friendly = 'AllDirectoryAgentIdentities'; UseWhatIf = $true }
+        ) {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { }
+            $Raw = New-Bl11RawPolicy -DisplayName 'Wide' -AllowedTargetScope $Graph
+            # The entry Get-OERInventory exports for this policy: requestorScope.scope is the live
+            # projection's friendly scope, and an empty users/groups list is left out.
+            $Exported = InModuleScope $script:moduleName -Parameters @{ Raw = $Raw } {
+                param($Raw)
+                (ConvertTo-OERAssignmentPolicy -InputObject $Raw).RequestorScope.scope
+            }
+            $Exported | Should -BeExactly $Friendly
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @([PSCustomObject]@{
+                        displayName    = 'Wide'
+                        description    = 'live description'
+                        requestorScope = [PSCustomObject]@{ scope = $Exported }
+                    })
+            }
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @($Raw) -UseWhatIf $UseWhatIf
+
+            # Positive proof: the policy reached the diff, which is the only place Unchanged comes from.
+            @($Run.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "assignmentPolicy 'Wide' matches" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 0
+            $Run.Published.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 0
+            $Run.Sent.Count | Should -Be 0
+        }
+    }
+
+    Context 'SpecificDirectoryServicePrincipals is refused by the builder (R3)' {
+        It 'reports a declared SpecificDirectoryServicePrincipals Failed with InvalidPolicyInput and calls no Set or New (<Kind>, WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Kind = 'unchanged export of a live policy'; HasLive = $true; UseWhatIf = $false }
+            @{ Kind = 'unchanged export of a live policy'; HasLive = $true; UseWhatIf = $true }
+            @{ Kind = 'policy to create'; HasLive = $false; UseWhatIf = $false }
+            @{ Kind = 'policy to create'; HasLive = $false; UseWhatIf = $true }
+        ) {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { }
+            $Live = if ($HasLive) {
+                @(New-Bl11RawPolicy -DisplayName 'Agents' -AllowedTargetScope 'specificDirectoryServicePrincipals' -SpecificAllowedTargets @(
+                        @{ '@odata.type' = '#microsoft.graph.singleServicePrincipal'; servicePrincipalId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb' }
+                    ))
+            } else { @() }
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Agents", "description": "live description", "requestorScope": { "scope": "SpecificDirectoryServicePrincipals" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live $Live -UseWhatIf $UseWhatIf
+
+            # Positive proof: the builder was reached and refused, and its record is on the row.
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeLike "failed to build assignmentPolicy 'Agents': Requestor scope 'SpecificDirectoryServicePrincipals' needs specificAllowedTargets naming service principals*nothing was sent."
+            $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'InvalidPolicyInput,*'
+            $Failed[0].Error.CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Failed[0].Error.TargetObject | Should -Be 'SpecificDirectoryServicePrincipals'
+            # Exactly two records are published (measured, the same in all four cases): the builder's
+            # own non-terminating InvalidPolicyInput record, written under the handler's -ErrorAction
+            # Stop and caught, and the handler's re-publication of that error through the caller (its
+            # id carries the caller's command name, not the builder's).
+            @($Run.Published | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidPolicyInput,*' }).Count | Should -Be 2
+            @($Run.Published | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('InvalidPolicyInput,New-OERAccessPackageRequestorScope', 'InvalidPolicyInput,Invoke-SyncApViaCaller')
+            # Refused before the diff and ShouldProcess: no Unchanged, Skipped, Updated or Created row for it.
+            @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy 'Agents'*" -and $_.Action -ne 'Failed' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 0
+            $Run.Sent.Count | Should -Be 0
+        }
+    }
+
+    Context 'a live unknownFutureValue is refused (R4)' {
+        It 'reports a live unknownFutureValue policy Failed and calls no Set or New, whatever the entry declares (<Declares>, WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ Declares = 'a changed description'; Policy = '{ "displayName": "Future", "description": "new description" }'; UseWhatIf = $false }
+            @{ Declares = 'a changed description'; Policy = '{ "displayName": "Future", "description": "new description" }'; UseWhatIf = $true }
+            @{ Declares = 'requestorScope AllMemberUsers'; Policy = '{ "displayName": "Future", "requestorScope": { "scope": "AllMemberUsers" } }'; UseWhatIf = $false }
+            @{ Declares = 'requestorScope AllMemberUsers'; Policy = '{ "displayName": "Future", "requestorScope": { "scope": "AllMemberUsers" } }'; UseWhatIf = $true }
+            @{ Declares = 'nothing but its name'; Policy = '{ "displayName": "Future" }'; UseWhatIf = $false }
+        ) {
+            Mock -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy { }
+            Mock -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy { }
+            $Raw = New-Bl11RawPolicy -DisplayName 'Future' -AllowedTargetScope 'unknownFutureValue'
+            $Item = [PSCustomObject]@{
+                displayName        = 'AP'
+                catalog            = 'CAT'
+                assignmentPolicies = @($Policy | ConvertFrom-Json)
+            }
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @($Raw) -UseWhatIf $UseWhatIf
+
+            # Positive proof: the live policy was read and the refusal row names it.
+            Should -Invoke -ModuleName $script:moduleName Get-OERAccessPackageAssignmentPolicy -Times 1 -Exactly
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeExactly ("Microsoft Graph returned allowedTargetScope 'unknownFutureValue', a value this module " +
+                "cannot read without the 'Prefer: include-unknown-enum-members' header, so nothing was written for " +
+                "assignmentPolicy 'Future'.")
+            # A refusal without a Graph error: no record on the row, and none published.
+            $Failed[0].Error | Should -BeNullOrEmpty
+            $Run.Published.Count | Should -Be 0
+            @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy 'Future'*" -and $_.Action -ne 'Failed' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0
+            Should -Invoke -ModuleName $script:moduleName New-OERAccessPackageAssignmentPolicy -Times 0
+            $Run.Sent.Count | Should -Be 0
+        }
+    }
+
+    Context 'SpecificConnectedOrganizationUsers on update (R5)' {
+        It 'measured: the real Set sends a built SpecificConnectedOrganizationUsers scope with no target, and keeps the live target when -RequestorScope is omitted' {
+            # The measurement that decided the engine guard below, kept at the cmdlet layer: the
+            # builder has no connected organization targets to give, and Set PUTs the declared scope
+            # whole, so the live target is dropped; with -RequestorScope omitted it is carried forward.
+            $Raw = New-Bl11RawPolicy -AllowedTargetScope 'specificConnectedOrganizationUsers' -SpecificAllowedTargets @(New-Bl11ConnectedOrgTarget)
+            InModuleScope $script:moduleName -Parameters @{ Raw = $Raw } { param($Raw) $script:OERTestBl11Live = @($Raw) }
+            $Scope = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers -ErrorAction Stop
+            Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' `
+                -Description 'new description' -RequestorScope $Scope -Confirm:$false -ErrorAction Stop | Out-Null
+            Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' `
+                -Description 'new description' -Confirm:$false -ErrorAction Stop | Out-Null
+            $Sent = InModuleScope $script:moduleName { @($script:OERTestBl11Sent) }
+
+            $Sent.Count | Should -Be 2
+            $Sent[0].Method | Should -Be 'PUT'
+            $Sent[0].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
+            @($Sent[0].Body.specificAllowedTargets).Count | Should -Be 0 -Because 'a declared scope replaces the live targets and the builder has none for connected organizations'
+            $Sent[1].Method | Should -Be 'PUT'
+            $Sent[1].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
+            @($Sent[1].Body.specificAllowedTargets).Count | Should -Be 1
+            $Sent[1].Body.specificAllowedTargets[0].'@odata.type' | Should -Be '#microsoft.graph.connectedOrganizationMembers'
+            $Sent[1].Body.specificAllowedTargets[0].connectedOrganizationId | Should -Be 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        }
+
+        It 'refuses an update that declares requestorScope SpecificConnectedOrganizationUsers before ShouldProcess, and sends nothing (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            $Raw = New-Bl11RawPolicy -AllowedTargetScope 'specificConnectedOrganizationUsers' -SpecificAllowedTargets @(New-Bl11ConnectedOrgTarget)
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Partners", "description": "new description", "requestorScope": { "scope": "SpecificConnectedOrganizationUsers" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @($Raw) -UseWhatIf $UseWhatIf
+
+            # Positive proof: the diff found the description change and the refusal row was written.
+            $Failed = @($Run.Rows | Where-Object { $_.Action -eq 'Failed' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Detail | Should -BeExactly ("assignmentPolicy 'Partners' declares requestorScope SpecificConnectedOrganizationUsers, " +
+                'but this module does not model connected organization targets, so the update would drop any ' +
+                'the live policy names; nothing was written for it. Omit requestorScope from the entry to update ' +
+                'the other fields while keeping the live scope.')
+            $Failed[0].Error | Should -BeNullOrEmpty
+            $Run.Published.Count | Should -Be 0
+            # Before ShouldProcess: no "would update" Skipped row, and the real Set never ran (its
+            # read-modify-write GET of the policy was never made, and nothing was PUT).
+            @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy 'Partners'*" -and $_.Action -ne 'Failed' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter {
+                $Uri -like '*entitlementManagement/assignmentPolicies/11111111-1111-1111-1111-111111111111*'
+            }
+            $Run.Sent.Count | Should -Be 0
+        }
+
+        It 'updates the other fields and keeps the live connected organization target when requestorScope is omitted' {
+            $Raw = New-Bl11RawPolicy -AllowedTargetScope 'specificConnectedOrganizationUsers' -SpecificAllowedTargets @(New-Bl11ConnectedOrgTarget)
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Partners", "description": "new description" } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @($Raw)
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "updated assignmentPolicy 'Partners' (description)" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $Run.Sent.Count | Should -Be 1
+            $Run.Sent[0].Method | Should -Be 'PUT'
+            $Run.Sent[0].Body.description | Should -Be 'new description'
+            $Run.Sent[0].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
+            @($Run.Sent[0].Body.specificAllowedTargets).Count | Should -Be 1
+            $Run.Sent[0].Body.specificAllowedTargets[0].connectedOrganizationId | Should -Be 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        }
+
+        It 'reports a declared SpecificConnectedOrganizationUsers that does not differ Unchanged and sends nothing (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            $Raw = New-Bl11RawPolicy -AllowedTargetScope 'specificConnectedOrganizationUsers' -SpecificAllowedTargets @(New-Bl11ConnectedOrgTarget)
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Partners", "description": "live description", "requestorScope": { "scope": "SpecificConnectedOrganizationUsers" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @($Raw) -UseWhatIf $UseWhatIf
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "assignmentPolicy 'Partners' matches" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -ne 'Unchanged' }).Count | Should -Be 0
+            $Run.Published.Count | Should -Be 0
+            $Run.Sent.Count | Should -Be 0
+        }
+
+        It 'creates a policy declaring SpecificConnectedOrganizationUsers, since there is no live target to lose' {
+            $Item = '{ "displayName": "AP", "catalog": "CAT", "assignmentPolicies": [ { "displayName": "Partners", "requestorScope": { "scope": "SpecificConnectedOrganizationUsers" } } ] }' |
+                ConvertFrom-Json
+
+            $Run = Invoke-Bl11Sync -Item $Item -Live @()
+
+            @($Run.Rows | Where-Object { $_.Action -eq 'Created' -and $_.Detail -eq "created assignmentPolicy 'Partners'" }).Count | Should -Be 1
+            @($Run.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $Run.Sent.Count | Should -Be 1
+            $Run.Sent[0].Method | Should -Be 'POST'
+            $Run.Sent[0].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
+        }
+    }
+}

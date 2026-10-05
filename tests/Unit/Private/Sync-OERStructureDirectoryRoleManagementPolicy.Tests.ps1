@@ -50,7 +50,12 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy' {
                     'Other Approvers'     = 'bbbbbbbb-0000-0000-0000-000000000003'
                 }
                 $Key = if ($User) { $User } else { $Group }
-                if (-not $Map.ContainsKey($Key)) { throw "Principal '$Key' was not found." }
+                if (-not $Map.ContainsKey($Key)) {
+                    # The record the real Resolve-OERPrincipal throws for a value that matches nothing.
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Principal '$Key' was not found."), 'PrincipalUnresolved',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Key)
+                }
                 [PSCustomObject]@{ PrincipalId = $Map[$Key]; PrincipalType = $(if ($User) { 'User' } else { 'Group' }) }
             }
         }
@@ -275,6 +280,116 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: an emptied approver si
             $Records[0].Detail | Should -Match 'could not read'
             $Records[0].Detail | Should -Match 'was not found'
             Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+        }
+    }
+}
+
+Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: a declared approver, missing, ambiguous and failed are three outcomes (Sprint 8 step 3, BL-14)' {
+    # The real Resolve-OERDeclaredApprover and Resolve-OERPrincipal run here (this Describe mocks
+    # neither); only the lookups under them answer. Every outcome is one Failed row carrying the record
+    # the handler published, and nothing is written. The handler's own record is the one whose id ends
+    # in ',Invoke-SyncDrmpViaCaller': -ErrorVariable also collects what was thrown inside.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncDrmpViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureDirectoryRoleManagementPolicy -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Initialize-OERAuth {}
+            Mock Get-OERDirectoryRoleManagementPolicy {
+                [PSCustomObject]@{
+                    PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
+                    Scope = '/'; RoleName = 'Reports Reader'; RequireApproval = $false; Approvers = @()
+                }
+            }
+            Mock Set-OERDirectoryRoleManagementPolicy {}
+            Mock Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'missing-approvers' } { $null }
+            Mock Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'dup-approvers' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, " +
+                        '22222222-2222-2222-2222-222222222222). Re-run with the object id instead of the display name.'),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'dup-approvers')
+            }
+            Mock Resolve-OERUserId -ParameterFilter { $UserPrincipalName -eq 'person9@example.com' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+        }
+    }
+
+    It 'reports an approver that matches nothing as ApproverNotFound, with the message, category and target it always had' {
+        InModuleScope $script:moduleName {
+            $Item = '{ "role": "Reports Reader", "approvers": { "groups": [ "missing-approvers" ] } }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -Be "could not resolve an approver: Group 'missing-approvers' was not found.; the policy was not changed"
+            [string]$Records[0].Error.FullyQualifiedErrorId | Should -Match '^ApproverNotFound'
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncDrmpViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'ApproverNotFound,Invoke-SyncDrmpViaCaller'
+            $Own[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Own[0].TargetObject | Should -Be 'Reports Reader'
+            $Own[0].Exception.Message | Should -Be "Could not resolve an approver declared for 'Reports Reader': Group 'missing-approvers' was not found."
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+        }
+    }
+
+    It 'reports an ambiguous approver name as AmbiguousApproverName naming the candidates, never as ApproverNotFound' {
+        InModuleScope $script:moduleName {
+            $Item = '{ "role": "Reports Reader", "approvers": { "groups": [ "dup-approvers" ] } }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -Match '11111111-1111-1111-1111-111111111111'
+            [string]$Records[0].Error.FullyQualifiedErrorId | Should -Match '^AmbiguousApproverName'
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncDrmpViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'AmbiguousApproverName,Invoke-SyncDrmpViaCaller'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be 'dup-approvers'
+            $Own[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+            $Own[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+        }
+    }
+
+    It 'reports a failed approver lookup as itself, once, never as ApproverNotFound' {
+        InModuleScope $script:moduleName {
+            $Item = '{ "role": "Reports Reader", "approvers": { "users": [ "person9@example.com" ] } }' | ConvertFrom-Json
+            $Records = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+            @($Records).Action | Should -Be @('Failed')
+            $Records[0].Detail | Should -Match 'Insufficient privileges'
+            [string]$Records[0].Error.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Invoke-SyncDrmpViaCaller' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied,Invoke-SyncDrmpViaCaller'
+            $Own[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+        }
+    }
+
+    It 'scrubs a failed approver lookup before it publishes it as itself' {
+        InModuleScope $script:moduleName {
+            Mock Resolve-OERDeclaredApprover {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+            Mock Remove-OERErrorRecord {}
+            $Item = '{ "role": "Reports Reader", "approvers": { "users": [ "person9@example.com" ] } }' | ConvertFrom-Json
+            $null = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # Reached: the handler published the record as itself.
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Invoke-SyncDrmpViaCaller' }).Count | Should -Be 1
+            # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+            # before the filter is evaluated.
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
+                $Record.Exception.Message -like '*Insufficient privileges*'
+            }
         }
     }
 }

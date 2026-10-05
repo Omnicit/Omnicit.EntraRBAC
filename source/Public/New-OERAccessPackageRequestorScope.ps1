@@ -20,15 +20,27 @@ function New-OERAccessPackageRequestorScope {
     notSpecified -- the same state, administrator direct assignment only -- and every call that
     uses it emits a warning naming the substitution.
 
+    SpecificDirectoryServicePrincipals binds but is refused: that scope needs specificAllowedTargets
+    naming service principals, which this module does not model. The call emits no object and writes
+    a non-terminating InvalidPolicyInput error instead, so no policy is ever sent with that scope and
+    no targets. SpecificConnectedOrganizationUsers is built, but with no specificAllowedTargets for
+    the same reason (the module does not model connected organization targets either): on an update,
+    omit -RequestorScope to keep a live policy's connected organizations.
+
     .PARAMETER Scope
     The allowed target scope. Must be one of:
-    AllMemberUsers, AllDirectoryUsers, SpecificDirectoryUsers,
+    AllMemberUsers, AllDirectoryUsers, AllExternalUsers, SpecificDirectoryUsers,
     SpecificConnectedOrganizationUsers, AllConfiguredConnectedOrganizationUsers,
-    NoSubjects, or NotSpecified. NotSpecified is the administrator-direct-assignment-only
+    AllDirectoryServicePrincipals, AllDirectoryAgentIdentities,
+    SpecificDirectoryServicePrincipals, NoSubjects, or NotSpecified. Every value except NoSubjects and
+    SpecificDirectoryServicePrincipals is sent as the Microsoft Graph v1.0 allowedTargetScope value of
+    the same name with a lowercase first letter. NotSpecified is the administrator-direct-assignment-only
     scope (equivalent to -AdminAssignmentOnly) and is what the portal "Who can get access: None"
     option produces; it round-trips through the inventory. NoSubjects stays bindable for
     compatibility with existing scripts and apply documents but is mapped to notSpecified with a
     warning, since the v1.0 service has no noSubjects value to send.
+    SpecificDirectoryServicePrincipals binds so the inventory's value is recognised, but is refused
+    with an InvalidPolicyInput error and no object (see the description).
 
     .PARAMETER User
     Zero or more user principal names or user object ids (GUIDs) allowed to request the package. Used
@@ -68,9 +80,13 @@ function New-OERAccessPackageRequestorScope {
         [ValidateSet(
             'AllMemberUsers',
             'AllDirectoryUsers',
+            'AllExternalUsers',
             'SpecificDirectoryUsers',
             'SpecificConnectedOrganizationUsers',
             'AllConfiguredConnectedOrganizationUsers',
+            'AllDirectoryServicePrincipals',
+            'AllDirectoryAgentIdentities',
+            'SpecificDirectoryServicePrincipals',
             'NoSubjects',
             'NotSpecified'
         )]
@@ -88,12 +104,31 @@ function New-OERAccessPackageRequestorScope {
         [string]$TenantId
     )
     process {
+        # SpecificDirectoryServicePrincipals is in the ValidateSet so a value the inventory exports
+        # binds and is reported by name, but it cannot be built: that scope is only meaningful with
+        # specificAllowedTargets naming service principals, and this module models user and group
+        # targets only. Building it would send the scope with no targets at all, so it is refused
+        # here, before anything is resolved -- and Sync-OERStructureAccessPackage, which calls this
+        # builder with -ErrorAction Stop, reports the policy Failed before its diff and ShouldProcess.
+        # It is deliberately absent from the write map below.
+        if ($PSCmdlet.ParameterSetName -eq 'Scoped' -and $Scope -eq 'SpecificDirectoryServicePrincipals') {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "Requestor scope '$Scope' needs specificAllowedTargets naming service principals, which " +
+                    'this module does not model, so the scope cannot be built and nothing was sent.')) `
+                -ErrorId 'InvalidPolicyInput' -Category InvalidArgument -TargetObject $Scope -Cmdlet $PSCmdlet
+            return
+        }
+
         $ScopeMap = @{
             AllMemberUsers                          = 'allMemberUsers'
             AllDirectoryUsers                       = 'allDirectoryUsers'
+            AllExternalUsers                        = 'allExternalUsers'
             SpecificDirectoryUsers                  = 'specificDirectoryUsers'
             SpecificConnectedOrganizationUsers      = 'specificConnectedOrganizationUsers'
             AllConfiguredConnectedOrganizationUsers = 'allConfiguredConnectedOrganizationUsers'
+            AllDirectoryServicePrincipals           = 'allDirectoryServicePrincipals'
+            AllDirectoryAgentIdentities             = 'allDirectoryAgentIdentities'
             # Issue #86: NoSubjects maps to notSpecified, NOT to 'noSubjects'. 'noSubjects' is the
             # legacy BETA requestorSettings.scopeType spelling and is not a member of the v1.0
             # allowedTargetScope enum at all, so sending it put an out-of-enum value on the wire and

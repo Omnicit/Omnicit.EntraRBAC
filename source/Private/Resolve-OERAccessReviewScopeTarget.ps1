@@ -13,10 +13,11 @@ function Resolve-OERAccessReviewScopeTarget {
     and FailedKind/FailedValue describing the first unresolved input ($null when all resolve).
     FailedErrorId and FailedMessage are optional companions to FailedKind/FailedValue: they are $null
     for a plain not-found on the AccessPackage, explicit-Catalog, and AssignmentPolicy paths, but are
-    populated for a catalog that could not be DERIVED from the access package, since that failure is
-    not truthfully described as "Catalog '<name>' not found" (the name is the access package's, not a
-    catalog's), and for an AMBIGUOUS access package or catalog display name, where the resolver's own
-    message naming the candidate ids is far more actionable than a not-found. They are populated too
+    populated for a catalog that could not be DERIVED from the access package -- the package read
+    succeeded but carried no catalog -- since that failure is not truthfully described as "Catalog
+    '<name>' not found" (the name is the access package's, not a catalog's), and for an AMBIGUOUS
+    access package or catalog display name, where the resolver's own message naming the candidate
+    ids is far more actionable than a not-found. They are populated too
     for an AMBIGUOUS assignment policy display name -- two or more policies of the package carry it,
     Microsoft Graph does not enforce unique policy names within a package -- with FailedErrorId
     'AmbiguousName' and a message naming every candidate id; the first of them is never taken, and
@@ -36,14 +37,16 @@ function Resolve-OERAccessReviewScopeTarget {
 
     FailedRecord is the one carrier shared with Resolve-OERReviewerScope and Resolve-OERTargetList for
     a lookup that FAILED rather than found nothing. It holds the caught ErrorRecord when an explicit
-    -Catalog name's Resolve-OERCatalogId throws anything other than an ambiguity, or when the
-    assignment policy listing throws -- a 403, an exhausted 429, a 5xx -- and is $null on every other
-    descriptor, success included, so a caller can test it without a property check. A refused read is
-    not evidence that no such catalog or policy exists, so FailedKind/FailedValue still name the
-    lookup, FailedErrorId, FailedMessage and FailedCategory stay $null, and the caller re-publishes
-    FailedRecord as itself instead of "<Kind> '<Value>' not found." The access package branch keeps
-    its own FailedErrorId/FailedMessage/FailedCategory triple, and CatalogDerivationFailed (the
-    package read behind a derived catalog) is already a failure id, so neither sets FailedRecord.
+    -Catalog name's Resolve-OERCatalogId throws anything other than an ambiguity, when the access
+    package read behind a DERIVED catalog throws, or when the assignment policy listing throws -- a
+    403, an exhausted 429, a 5xx -- and is $null on every other descriptor, success included, so a
+    caller can test it without a property check. A refused read is not evidence that no such catalog
+    or policy exists, so FailedKind/FailedValue still name the lookup (the derived-catalog read names
+    the access package), FailedErrorId, FailedMessage and FailedCategory stay $null, and the caller
+    re-publishes FailedRecord as itself instead of "<Kind> '<Value>' not found." The access package
+    branch keeps its own FailedErrorId/FailedMessage/FailedCategory triple and sets no FailedRecord.
+    CatalogDerivationFailed is kept for a package read that SUCCEEDED but carried no catalog; it is a
+    failure id already, so it sets no FailedRecord either.
 
     .PARAMETER AccessPackage
     The access package display name or id.
@@ -84,7 +87,8 @@ function Resolve-OERAccessReviewScopeTarget {
             FailedCategory = $Cat
             # Optional sixth field, the carrier shared with Resolve-OERReviewerScope and
             # Resolve-OERTargetList: the caught ErrorRecord of a lookup that THREW on the explicit
-            # -Catalog path or the assignment policy listing, for the caller to re-publish as itself.
+            # -Catalog path, the access package read behind a DERIVED catalog, or the assignment
+            # policy listing, for the caller to re-publish as itself.
             # $null on every other Fail, so a caller tests it without a property check.
             FailedRecord = $Rec
         }
@@ -138,7 +142,19 @@ function Resolve-OERAccessReviewScopeTarget {
     else {
         # The v1.0 accessPackage resource has no catalogId scalar; the catalog is a navigation
         # property, so expand it and read catalog.id (a $select of catalogId returns a 400).
-        $Pkg = try { Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?`$expand=catalog" -f $ApId) } catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        #
+        # A read that THROWS (a 403, an exhausted 429, a 5xx) has not shown that the package carries no
+        # catalog, so it is never folded into CatalogDerivationFailed below: that id says the read
+        # SUCCEEDED and carried none, and its message sends the operator to check permissions that
+        # may be fine. The caught record travels out in FailedRecord for the caller to re-publish as
+        # itself, the same carrier the explicit -Catalog path and the policy listing use (Ruling R7).
+        $Pkg = $null
+        try {
+            $Pkg = Invoke-OERGraphRequest -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages/{0}?`$expand=catalog" -f $ApId)
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            return (& $Fail 'Catalog' $AccessPackage $null $null $null $PSItem)
+        }
         $CatId = if ($Pkg.catalogId) { [string]$Pkg.catalogId } elseif ($Pkg.catalog) { [string]$Pkg.catalog.id } else { '' }
         # The catalog was DERIVED from the access package, not supplied by the caller. Reporting
         # "Catalog '<access package name>' not found." sends the operator hunting for a catalog by that

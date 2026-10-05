@@ -659,14 +659,21 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   escape through it. Four deliberate exceptions exist; a new unescaped site is a bug, not the house
   style. `Why: docs/development/rationale.md#odata-escaping`
 - **A resolver on the cohort's list publishes its failure as itself and an ambiguous name as
-  `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal,
-  PIM approver and Azure role definition lookups are the decided exception, still publishing a
-  failed read as `PrincipalNotFound`, `ApproverNotFound` or `RoleDefinitionNotFound` -- never "fix"
-  one of them into a changed published ErrorId.
+  `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
+  and Azure role definition lookups are the decided exception, still publishing a failed read as
+  `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
+  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
+  `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
+  an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
+  They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,
+  which no cmdlet or handler publishes.
+  `Why: docs/development/rationale.md#approver-lookup`
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
-  `$script:GuardCases` list with an ambiguous name and with a 403, so a new public call site of an
-  ambiguity-refusing `Resolve-OER*Id` helper joins that list. The 403 case narrows to the cmdlet's
-  own record: `Why: docs/development/rationale.md#bearer-scrub-tests`
+  `$script:GuardCases` list with an ambiguous name and with a 403 -- the approver lookups of
+  `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy` and `Set-OERRoleManagementPolicy`
+  included -- so a new public call site of an ambiguity-refusing `Resolve-OER*Id` helper, an
+  approver lookup among them, joins that list. The 403 case narrows to the cmdlet's own record:
+  `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **`Resolve-OERReviewerScopeQuery` is the single owner of the access review reviewer scope query
   grammar.** Never re-implement the `/users/` and `/groups/` regex pair inline; `./manager` is
   matched FIRST, always, and an `Unparsed` scope is NOT the same as an empty reviewers collection.

@@ -305,10 +305,11 @@ Describe 'Get-OERAccessReviewDefinition' {
             Should -Be 1
     }
 
-    It 'warns and returns the definition with no instances when the instances read fails' {
-        # Get-OERAccessReviewDefinition.ps1:144 -- the instances read DEGRADES rather than errors:
-        # it scrubs, emits a Write-Warning, and still returns the definition with an empty Instances
-        # collection. Still assert the mandatory Remove-OERErrorRecord scrub, since this catch calls it.
+    It 'warns and returns the definition with Instances = $null, never an empty collection, when the instances read fails' {
+        # INVERTED (decision A6). The instances read DEGRADES rather than errors: it scrubs, emits a
+        # Write-Warning, and still returns the definition. Its Instances used to be @() on that path,
+        # which read as "this definition has no instances" when the read had merely failed. It is now
+        # $null, and $null means UNREAD.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
             param($Uri)
             if ($Uri -like '*/instances') {
@@ -320,17 +321,96 @@ Describe 'Get-OERAccessReviewDefinition' {
             }
             return @{ id = 'd1'; displayName = 'Q3' }
         }
-        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
         $Warnings = @()
         $Result = Get-OERAccessReviewDefinition -Id 'd1' -IncludeInstances `
             -WarningVariable Warnings -WarningAction SilentlyContinue
+        # The positive half: the instances read was reached, once, and failed.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/d1/instances'
+        }
         $Result | Should -Not -BeNullOrEmpty
+        $Result.Id | Should -Be 'd1'
+        # The property EXISTS and is $null: a consumer can tell unread from none.
+        $Result.PSObject.Properties.Name | Should -Contain 'Instances'
+        $null -eq $Result.Instances | Should -BeTrue -Because 'an unread /instances is $null, and an empty collection would claim the definition has none'
+        # Pin the warning to the instances-read failure specifically, not just "some warning happened" --
+        # a future unrelated Write-Warning on this path would otherwise keep this It green while the real
+        # degradation signal is lost.
+        @($Warnings).Count | Should -Be 1
+        $Warnings -join ';' | Should -Match 'Could not read instances for access review definition d1: TooManyRequests: throttled\.'
+    }
+
+    It 'still returns the definition, writes no error and throws nothing, when the instances read fails under -ErrorAction Stop' {
+        # The case decision A6 protects: under a global Stop a WriteError from this catch would discard a
+        # definition that WAS read. A Warning has no such effect.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri)
+            if ($Uri -like '*/instances') {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('TooManyRequests: throttled.'),
+                    'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded,
+                    $null)
+            }
+            return @{ id = 'd1'; displayName = 'Q3' }
+        }
+        $Warnings = @()
+        $Err = $null
+        $Thrown = $null
+        $Result = $null
+        try {
+            $Result = Get-OERAccessReviewDefinition -Id 'd1' -IncludeInstances -ErrorAction Stop `
+                -WarningVariable Warnings -WarningAction SilentlyContinue -ErrorVariable Err
+        }
+        catch { $Thrown = $PSItem }
+        $Thrown | Should -BeNullOrEmpty -Because 'a failed instances read must not stop the definition from being returned under a global Stop'
+        $Result.Id | Should -Be 'd1'
+        $null -eq $Result.Instances | Should -BeTrue
+        # The positive half: the warning proves the failed-read catch was reached.
+        @($Warnings | Where-Object { ([string]$_) -match 'Could not read instances' }).Count | Should -Be 1
+        @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Get-OERAccessReviewDefinition' }).Count | Should -Be 0
+    }
+
+    It 'scrubs the failed instances read record before warning (bearer hygiene)' {
+        # The catch warns instead of re-publishing, so an $Error-count proof would stay green with the
+        # scrub deleted. The proof is the mocked call -- exactly one, for THIS record -- beside a
+        # positive assertion that the catch was reached (the warning carries the marker).
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri)
+            if ($Uri -like '*/instances') {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('TooManyRequests: instances scrub marker.'),
+                    'TooManyRequests',
+                    [System.Management.Automation.ErrorCategory]::LimitsExceeded,
+                    $null)
+            }
+            return @{ id = 'd1'; displayName = 'Q3' }
+        }
+        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+        $Warnings = @()
+        $null = Get-OERAccessReviewDefinition -Id 'd1' -IncludeInstances -WarningVariable Warnings -WarningAction SilentlyContinue
+        @($Warnings | Where-Object { ([string]$_) -match 'TooManyRequests: instances scrub marker\.' }).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'TooManyRequests: instances scrub marker.'
+        }
+    }
+
+    It 'attaches an EMPTY Instances collection, not $null, when the read succeeded and the definition has no instances' {
+        # The other half of the unread-versus-none split: $null is reserved for a failed read, so a
+        # definition that genuinely has no instances must still say so with an empty collection.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            param($Uri)
+            if ($Uri -like '*/instances') { return @{ value = @() } }
+            return @{ id = 'd1'; displayName = 'Q3' }
+        }
+        $Warnings = @()
+        $Result = Get-OERAccessReviewDefinition -Id 'd1' -IncludeInstances -WarningVariable Warnings -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/d1/instances'
+        }
+        $Result.PSObject.Properties.Name | Should -Contain 'Instances'
+        $null -eq $Result.Instances | Should -BeFalse -Because 'a successful read of no instances is an empty collection, and $null is reserved for unread'
         @($Result.Instances).Count | Should -Be 0
-        $Warnings.Count | Should -BeGreaterThan 0
-        # Pin the warning to the instances-read failure specifically (Get-OERAccessReviewDefinition.ps1:147),
-        # not just "some warning happened" -- a future unrelated Write-Warning on this path would otherwise
-        # keep this It green while the real degradation signal is lost.
-        $Warnings -join ';' | Should -Match 'Could not read instances'
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
+        @($Warnings).Count | Should -Be 0
     }
 }

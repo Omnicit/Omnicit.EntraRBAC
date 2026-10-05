@@ -89,9 +89,12 @@ function Sync-OERStructureGroup {
        Once the budget is spent the entry reports Failed with a ResourceNotFound error record and a
        replication-delay message naming a re-run. Any other failure (a 403, a throttle that
        outlasted the transport's own retries, a 5xx, the same code under another status) is reported
-       as itself and never waited on. A group that already existed never waits, a 404 included, and
-       keeps the Add-OERGroupEligibility call, whose returned status is not read. The eligibility row
-       stays Updated, as for every other child write: only the group row is Created.
+       as itself and never waited on. A group that already existed never waits, a 404 or a status
+       Failed included, and keeps the Add-OERGroupEligibility call: there a request Microsoft Graph
+       accepts but answers with status Failed is that cmdlet's EligibilityRequestFailed error, which
+       the entry reports as a Failed row carrying that error record, never as Updated -- nothing was
+       granted, and a re-run usually applies it. An applied eligibility's row stays Updated, as for
+       every other child write: only the group row is Created.
     4. Apply pimPolicy (e.g. ActivationMaxHours, AllowPermanentEligibility, and approval on activation
        via requireApproval/approvers) -- after the time-bound eligibility entries. Microsoft Graph
        lists a group's policies whether or not the group was ever used with PIM for Groups, and the
@@ -107,7 +110,9 @@ function Sync-OERStructureGroup {
        eligibility only when it declares eligibility. A declared approver (a UPN or a group display
        name) is resolved to an object id before the diff, for each access type in turn; an approver
        that does not resolve reports Failed for that access type ONLY -- the other access type
-       (member/owner) and every later step still run.
+       (member/owner) and every later step still run. The row carries ApproverNotFound for an
+       approver that matches nothing, AmbiguousApproverName (naming the candidate ids) for a group
+       display name several groups share, and the lookup's own error for a lookup that failed.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -149,8 +154,14 @@ function Sync-OERStructureGroup {
        Add-OERGroupEligibility publishes for the same condition -- and a replication-delay message
        naming a re-run. A refused probe (a 403 on the listing or on the read, for example) ends the
        wait at once and the cmdlet is called as for any group, and a 404 from the cmdlet itself after
-       the policy was read is reported as for any group. A group that already existed never probes
-       and never waits, and the status its request returns is not read.
+       the policy was read is reported as for any group. For that one call the handler sets the
+       module-scope flag $script:_OERGroupEligibilityFailedIsReplication (reset in a finally), which
+       tells the cmdlet that a Failed status is this handler's replication, so the cmdlet does not
+       report it as its EligibilityRequestFailed error: a record the cmdlet writes stays in the
+       caller's -ErrorVariable even when it is caught here, and a run that ends Updated would still
+       hand back errors. A group that already existed never probes and never waits, and there a
+       Failed status is the cmdlet's EligibilityRequestFailed error, reported as a Failed row as in
+       step 3.
 
     When -Prune is set, current members not present in the declared set are removed (with
     Write-Warning) after a ShouldProcess gate. Without -Prune those extra members are reported as
@@ -850,8 +861,8 @@ function Sync-OERStructureGroup {
                     # outlasted the transport's own retries, a 5xx, a ResourceNotFound that is not a
                     # 404 -- is reported as itself and never waited on. A group that already existed
                     # takes the cmdlet below and never waits, a 404 or a Failed status included: there
-                    # the status is not read, and the handler reports what Add-OERGroupEligibility
-                    # returned, as before.
+                    # a Failed status is Add-OERGroupEligibility's own EligibilityRequestFailed error,
+                    # which reaches the catch below like any other failure of the call.
                     $EligibilityApplied = $false
                     $Waits = 0
                     while ($true) {
@@ -895,7 +906,11 @@ function Sync-OERStructureGroup {
                 } else {
                     try {
                         # Discarded: the request object Add-OERGroupEligibility returns is not a result row,
-                        # and this handler's output IS Invoke-OERStructure's result list.
+                        # and this handler's output IS Invoke-OERStructure's result list. Its status is
+                        # not lost: a request Graph accepted but answered Failed is the cmdlet's
+                        # EligibilityRequestFailed error, which -ErrorAction Stop turns into a throw the
+                        # catch reports as Failed, so a write that granted nothing never sets
+                        # $EligibilityWrittenThisRun and never reports Updated.
                         $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -DurationDays $EChange.DurationDays -Action $EAction -Confirm:$false -ErrorAction Stop
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem
@@ -951,15 +966,29 @@ function Sync-OERStructureGroup {
 
                 # Declared approver names are resolved to object ids BEFORE the diff, so the diff
                 # compares ids with ids (a UPN or a group name never equals a live approver id).
+                # Three outcomes, three records, one Failed row each and no read or write of this
+                # access type's policy: an ambiguous name is AmbiguousApproverName (the resolver's text
+                # names the candidate ids), only an approver that matches nothing (ApproverUnresolved)
+                # is ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not
+                # evidence that the approver is missing, so it is published as itself.
                 try {
                     $Declared = Resolve-OERDeclaredApprover -Declared $Declared
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $ErrRec = [System.Management.Automation.ErrorRecord]::new(
-                        [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
-                        'ApproverNotFound',
-                        [System.Management.Automation.ErrorCategory]::ObjectNotFound,
-                        $Name)
+                    $ErrRec = $PSItem
+                    if (Test-OERAmbiguousNameError -Record $PSItem) {
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
+                            'AmbiguousApproverName',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument,
+                            $PSItem.TargetObject)
+                    } elseif (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                        $ErrRec = [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new("Could not resolve an approver declared in pimPolicy ($AccessType) of group '$Name': $($PSItem.Exception.Message)", $PSItem.Exception),
+                            'ApproverNotFound',
+                            [System.Management.Automation.ErrorCategory]::ObjectNotFound,
+                            $Name)
+                    }
                     $Caller.WriteError($ErrRec)
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' `
                         -Detail "pimPolicy ($AccessType) not applied: could not resolve an approver: $($PSItem.Exception.Message)" `
@@ -1163,7 +1192,11 @@ function Sync-OERStructureGroup {
                     # is read for its Status: Graph can accept a new group's request and fail it at once
                     # (measured live 2026-10-03, see step 3), so a Failed status takes the next wait from
                     # the same budget and starts over from the poll. Any other status is the applied
-                    # request. A group that already existed never polls and its status is not read.
+                    # request. For this call only, the cmdlet is told through
+                    # $script:_OERGroupEligibilityFailedIsReplication not to report a Failed status as
+                    # its EligibilityRequestFailed error (see the call below). A group that already
+                    # existed never polls, and there a Failed status is the cmdlet's error, reported by
+                    # the catch of its own call.
                     $PermanentApplied = $false
                     $PermanentNotReady = $false
                     $Waits = 0
@@ -1204,6 +1237,13 @@ function Sync-OERStructureGroup {
                         }
                         $PermanentRequest = $null
                         try {
+                            # For this one call, a Failed status is replication THIS handler owns, so the
+                            # cmdlet must not report it as its EligibilityRequestFailed error: a record the
+                            # cmdlet writes lands in the caller's -ErrorVariable even when it is caught
+                            # here (measured: the ActionPreferenceStopException and the record both stay),
+                            # and a run that ends Updated would still hand the caller errors. The flag is
+                            # set nowhere else and reset in the finally below, on every way out.
+                            $script:_OERGroupEligibilityFailedIsReplication = $true
                             # Kept, not discarded: its Status decides. It is still not a result row.
                             $PermanentRequest = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
                         } catch {
@@ -1211,6 +1251,8 @@ function Sync-OERStructureGroup {
                             $Caller.WriteError($PSItem)
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add permanent eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                             break
+                        } finally {
+                            $script:_OERGroupEligibilityFailedIsReplication = $false
                         }
                         # ConvertTo-OERGroupEligibilityRequest stamps Status from Graph's status; -eq is
                         # case-insensitive.
@@ -1245,7 +1287,9 @@ function Sync-OERStructureGroup {
                     if (-not $PermanentApplied) { continue }
                 } else {
                     try {
-                        # Discarded, as in step 3: the returned request object is not a result row.
+                        # Discarded, as in step 3: the returned request object is not a result row, and a
+                        # Failed status reaches the catch below as the cmdlet's EligibilityRequestFailed
+                        # error.
                         $null = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
                     } catch {
                         Remove-OERErrorRecord -Record $PSItem

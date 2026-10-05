@@ -12,6 +12,14 @@ BeforeDiscovery {
     # AccessReviewDefinitionResolveFailed with the cause in the message. The second Describe expects
     # that id there and expects the resolver's own id (Authorization_RequestDenied) everywhere else --
     # Remove-OERAccessReviewDefinition and Set-OERAccessReviewDefinition re-publish the record as is.
+    # The PIM approver lookups of Set-OERGroupPimPolicy, Set-OERDirectoryRoleManagementPolicy and
+    # Set-OERRoleManagementPolicy are swept here too (Sprint 8 step 3, BL-14): an ambiguous approver
+    # name is AmbiguousApproverName and a failed approver lookup is re-published as itself, so those
+    # cases carry no FailureId. Approvers are resolved BEFORE the target group or role.
+    # Filter = only on a case whose cmdlet resolves its TARGET through the same resolver as the value
+    # under test (Set-OERGroupPimPolicy's -ApproverGroup and -Group both go through Resolve-OERGroupId):
+    # the resolver's refusal then answers only the value the filter names, and Pre answers every other
+    # call, so the refusal can never be the target's.
     $script:GuardCases = @(
         @{
             Cmdlet = 'Add-OERAccessPackageResourceRole'; Resolver = 'Resolve-OERAccessPackageId'
@@ -377,6 +385,15 @@ BeforeDiscovery {
             }
         }
         @{
+            Cmdlet = 'Set-OERDirectoryRoleManagementPolicy'; Resolver = 'Resolve-OERGroupId'
+            ErrorId = 'AmbiguousApproverName'; Pre = @{}
+            Invoke = {
+                Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverGroup 'Dup' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
             Cmdlet = 'Set-OERGroup'; Resolver = 'Resolve-OERGroupId'
             ErrorId = 'AmbiguousGroupName'; Pre = @{}
             Invoke = {
@@ -391,6 +408,28 @@ BeforeDiscovery {
             Invoke = {
                 Set-OERGroupPimPolicy -Group 'Dup' -ActivationMaxHours 8 -Confirm:$false `
                     -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            Cmdlet = 'Set-OERGroupPimPolicy'; Resolver = 'Resolve-OERGroupId'
+            ErrorId = 'AmbiguousApproverName'; Pre = @{ 'Resolve-OERGroupId' = 'gid-1' }
+            Filter = { $DisplayName -eq 'Dup' }
+            Invoke = {
+                Set-OERGroupPimPolicy -Group 'role_sec_target' -ApproverGroup 'Dup' -Confirm:$false `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+                $Err
+            }
+        }
+        @{
+            # Invoke-OERArmRequest is in Pre only so that a regression which falls through to the
+            # policy read meets a mock instead of the real transport; with the guard in place the
+            # approvers refuse the call before it.
+            Cmdlet = 'Set-OERRoleManagementPolicy'; Resolver = 'Resolve-OERGroupId'
+            ErrorId = 'AmbiguousApproverName'; Pre = @{ 'Invoke-OERArmRequest' = '' }
+            Invoke = {
+                Set-OERRoleManagementPolicy -PolicyId '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1' `
+                    -ApproverGroup 'Dup' -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
                 $Err
             }
         }
@@ -423,7 +462,10 @@ Describe 'An ambiguous display name is refused at every swept call site' {
         foreach ($PreName in @($Pre.Keys)) {
             Mock -ModuleName $script:moduleName -CommandName $PreName -MockWith ([scriptblock]::Create("'$($Pre[$PreName])'"))
         }
-        Mock -ModuleName $script:moduleName -CommandName $Resolver -MockWith {
+        # A case's Filter narrows the refusal to the value under test (see the header above).
+        $ResolverMock = @{ ModuleName = $script:moduleName; CommandName = $Resolver }
+        if ($Filter) { $ResolverMock.ParameterFilter = $Filter }
+        Mock @ResolverMock -MockWith {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new(
                     "Display name 'Dup' matches 2 objects (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222)."),
@@ -464,7 +506,10 @@ Describe 'A failed resolver lookup is reported as itself at every swept call sit
         foreach ($PreName in @($Pre.Keys)) {
             Mock -ModuleName $script:moduleName -CommandName $PreName -MockWith ([scriptblock]::Create("'$($Pre[$PreName])'"))
         }
-        Mock -ModuleName $script:moduleName -CommandName $Resolver -MockWith {
+        # A case's Filter narrows the refusal to the value under test (see the header above).
+        $ResolverMock = @{ ModuleName = $script:moduleName; CommandName = $Resolver }
+        if ($Filter) { $ResolverMock.ParameterFilter = $Filter }
+        Mock @ResolverMock -MockWith {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
                 'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'Dup')

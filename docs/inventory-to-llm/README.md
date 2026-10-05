@@ -278,14 +278,36 @@ pruned, only for the `(role, assignmentType)` pairs the document declares.
 }
 ```
 
-`scope` accepts any `allowedTargetScope` value (e.g. `allMemberUsers`, `specificDirectoryUsers`,
-`notSpecified`). **`noSubjects` is not one of them** -- it is a legacy beta spelling that is absent
-from the v1.0 enum, so the engine substitutes `notSpecified` and warns on every apply; write
-`notSpecified` directly for administrator-assignment-only.
-`users` and `groups` are resolved by the engine (names or object ids). Always declare
-`requestorScope`: unlike the other policy fields it is not preserved on update -- if it is omitted and
-the policy is updated for any other reason, the scope defaults to `allMemberUsers`. The inventory always
-emits it, so round-tripped documents are safe.
+`scope` takes a Microsoft Graph v1.0 `allowedTargetScope` value, in the casing the inventory writes
+(`AllMemberUsers`) or the Graph casing (`allMemberUsers`). `AllMemberUsers`, `AllDirectoryUsers`,
+`AllExternalUsers`, `AllConfiguredConnectedOrganizationUsers`, `AllDirectoryServicePrincipals`,
+`AllDirectoryAgentIdentities`, `SpecificDirectoryUsers` and `NotSpecified` (administrator assignment
+only) are written as declared. **`NoSubjects` is not a v1.0 value** -- it is a legacy beta spelling,
+so the engine substitutes `NotSpecified` and warns on every apply; write `NotSpecified` directly.
+
+`users` and `groups` are resolved by the engine (names or object ids) and apply to
+`SpecificDirectoryUsers` only. They are the only targets the module models, and it cannot read a
+scope Microsoft Graph does not name, so three cases are refused rather than written. Each is a
+`Failed` row for that policy, decided before ShouldProcess (so the same under `-WhatIf`), with
+nothing written for it:
+
+- `SpecificDirectoryServicePrincipals`, whenever it is declared: its service principal targets are
+  not modelled, so the scope cannot be built (`InvalidPolicyInput`).
+- `SpecificConnectedOrganizationUsers`, declared on an update that changes the policy: its connected
+  organization targets are not modelled, so the write would drop them. A declared scope that matches
+  the live policy reports `Unchanged`, and a new policy is created with it, but with no connected
+  organization targets: the module cannot write them, so they must be added outside the module.
+- A live policy whose scope reads as `unknownFutureValue`, whatever the entry declares: Microsoft
+  Graph names the real scope only to a caller that sends `Prefer: include-unknown-enum-members`,
+  which this module never does. The inventory writes the value as it was read.
+
+An omitted `requestorScope` is preserved on update: the engine does not send it, and the live scope
+and its targets are carried forward as one unit. A new policy created without one gets
+`AllMemberUsers`. The inventory always emits `requestorScope`, so an exported
+`SpecificDirectoryServicePrincipals` policy fails until `requestorScope` is removed from its entry,
+and an exported `SpecificConnectedOrganizationUsers` policy fails as soon as another of its fields
+is changed while `requestorScope` stays in it. Removing `requestorScope` is how to update the other
+fields of either policy.
 
 ### Requestor settings (how they can request)
 
@@ -378,8 +400,9 @@ Disables the built-in assignment notification emails for this policy.
 
 ### Description default
 
-When `description` is omitted from an apply document, the engine uses the policy display name as the
-description. Set `"description": ""` explicitly to clear it.
+When `description` is omitted from the entry of a NEW policy, the engine uses the policy display name
+as the description; an existing policy keeps its live description. Set `"description": ""` explicitly
+to clear it.
 
 ### Overlay vs. preserve semantics
 
@@ -387,21 +410,30 @@ The policy is applied as a FULL object (PUT), but `Set-OERAccessPackageAssignmen
 read-modify-write: it reads the live policy first and overlays only what is supplied. The apply engine
 diffs and writes ONLY the fields you declare in the apply document, so fields you omit are PRESERVED
 from the live policy. Declaring a field EMPTY is not the same as omitting it: `"approvalStages": []`
-clears every live approval stage, just as `"description": ""` clears the description. The exceptions
-to "omit = preserved":
+clears every live approval stage, just as `"description": ""` clears the description. On CREATE there
+is no live value to keep, so every omitted field gets a default; two of those defaults are not the
+obvious empty one:
 
-- `description` -- defaults to the policy display name when omitted (it is not preserved). Set
-  `"description": ""` to clear it.
-- `requestorScope` -- always (re)applied; if omitted it defaults to `allMemberUsers` when the policy is
-  updated (see above). Declare it explicitly; the inventory always emits it.
+- `description` -- a new policy gets the policy display name. On update it is preserved.
+- `requestorScope` -- a new policy gets `AllMemberUsers`. On update it is preserved, its targets
+  included (see above).
+
+A declared `requestorScope` is written whole: its `users` and `groups` replace the live targets, so a
+target the module does not model (a connected organization, a service principal) cannot round-trip
+through it -- which is why `SpecificDirectoryServicePrincipals` is refused outright and
+`SpecificConnectedOrganizationUsers` is refused on an update that changes the policy, though still
+written on create (see above).
 
 These out-of-scope fields are always preserved (never written by this module):
 
 - `reviewSettings` -- policy-embedded access reviews.
 - `questions` -- custom requestor questions.
-- Fallback approvers (`fallbackPrimaryApprovers` / `fallbackEscalationApprovers`) are preserved
-  when their stage is otherwise unchanged. If a stage is rebuilt (because another field in it
-  changed), fallback approvers on that stage are not carried over -- this is a known limitation.
+
+Fallback approvers are only partly modelled. A stage's `fallbackUsers` / `fallbackGroups` are its
+`fallbackPrimaryApprovers` and are diffed and written like its other approvers.
+`fallbackEscalationApprovers` are not modelled: they are preserved while the entry does not declare
+`approvalStages`, but an update of a policy whose entry declares `approvalStages` rebuilds and sends
+every stage, and so clears the escalation fallbacks of every stage -- a known limitation.
 
 ## Unread collections
 

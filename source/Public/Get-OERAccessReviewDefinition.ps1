@@ -9,9 +9,12 @@ function Get-OERAccessReviewDefinition {
     display-name match (a wildcard-free name is looked up server-side, a wildcard is matched
     client-side), or -Filter for a server-side OData
     filter expression. With -IncludeInstances the definition's instances are attached as an Instances
-    property (tagged Omnicit.EntraRBAC.AccessReviewInstance). A named definition that does not exist
-    produces a non-terminating AccessReviewDefinitionNotFound error.
-    Supply -All to list every definition without a filter (paged).
+    property (tagged Omnicit.EntraRBAC.AccessReviewInstance). A definition that has no instances
+    carries an empty Instances collection; one whose instances could not be read carries
+    Instances = $null together with a Warning naming the cause, so $null means unread and never
+    "none". No error record is written for the failed read, and the definition is still returned.
+    A named definition that does not exist produces a non-terminating AccessReviewDefinitionNotFound
+    error. Supply -All to list every definition without a filter (paged).
 
     .PARAMETER Id
     The object id of a single access review definition to read.
@@ -57,6 +60,8 @@ function Get-OERAccessReviewDefinition {
 
     .PARAMETER IncludeInstances
     When set, attaches the definition's review instances as an Instances property on the returned object.
+    The property is an empty collection when the definition has no instances and $null when the
+    instances read failed (a Warning names the cause), so test for $null to tell unread from none.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -192,7 +197,11 @@ function Get-OERAccessReviewDefinition {
                 }
                 catch {
                     Remove-OERErrorRecord -Record $PSItem
-                    $Instances = @()
+                    # $null, NEVER @(): an empty collection says the definition has no instances, and a
+                    # read that failed has not shown that (decision A6). Same Warning as ever and no
+                    # WriteError -- the definition itself was read, and under a global
+                    # $ErrorActionPreference of Stop a WriteError here would discard it.
+                    $Instances = $null
                     Write-Warning "Could not read instances for access review definition $($Def.Id): $($PSItem.Exception.Message)"
                 }
                 $Def | Add-Member -NotePropertyName Instances -NotePropertyValue $Instances -Force

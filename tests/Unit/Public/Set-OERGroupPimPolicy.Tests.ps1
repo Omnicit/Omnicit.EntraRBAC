@@ -533,7 +533,8 @@ Describe 'Set-OERGroupPimPolicy' {
                 return @{}
             }
             # An id resolves to itself, letter case preserved (as the real resolver returns a GUID
-            # input untouched); a name resolves through the map; anything else is not found.
+            # input untouched); a name resolves through the map; anything else is not found, thrown as
+            # the record the real Resolve-OERPrincipal throws for a value that matches nothing.
             Mock -ModuleName $script:moduleName Resolve-OERPrincipal {
                 $Map = @{
                     'person1@example.com' = '11111111-1111-1111-1111-111111111111'
@@ -543,7 +544,11 @@ Describe 'Set-OERGroupPimPolicy' {
                 $Kind = if ($User) { 'User' } else { 'Group' }
                 $Name = if ($User) { $User } else { $Group }
                 $Id = if ($Name -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { $Name } else { $Map[$Name] }
-                if (-not $Id) { throw "$Kind '$Name' was not found." }
+                if (-not $Id) {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("$Kind '$Name' was not found."), 'PrincipalUnresolved',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Name)
+                }
                 [pscustomobject]@{ PrincipalId = $Id; PrincipalType = $Kind }
             }
         }
@@ -812,6 +817,95 @@ Describe 'Set-OERGroupPimPolicy' {
             $null = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -Confirm:$false
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $Method -ne 'PATCH' -and $Uri -eq $Expected
+            }
+        }
+    }
+
+    Context 'an approver lookup: missing, ambiguous and failed are three outcomes (Sprint 8 step 3, BL-14)' {
+        # The real Resolve-OERApproverInput and Resolve-OERPrincipal run here; only the lookups under
+        # them answer. Approvers are resolved before the target group, so the filtered mocks answer
+        # only an approver value, and the target 'gid-1' keeps the Describe's own mock -- which these
+        # tests also prove is never reached. Each test filters -ErrorVariable to the records this
+        # cmdlet wrote itself (FQID ending in ',Set-OERGroupPimPolicy'), since a record thrown inside a
+        # nested command is collected there as well.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'missing-approvers' } { $null }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'dup-approvers' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new(
+                        "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, " +
+                        '22222222-2222-2222-2222-222222222222). Re-run with the object id instead of the display name.'),
+                    'AmbiguousName', [System.Management.Automation.ErrorCategory]::InvalidArgument, 'dup-approvers')
+            }
+            Mock -ModuleName $script:moduleName Resolve-OERUserId -ParameterFilter { $UserPrincipalName -eq 'person9@example.com' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+        }
+
+        It 'reports an approver that matches nothing as ApproverNotFound, with the message, category and target it always had' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverGroup 'missing-approvers' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'ApproverNotFound,Set-OERGroupPimPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'ObjectNotFound'
+            $Own[0].TargetObject | Should -Be 'missing-approvers'
+            $Own[0].Exception.Message | Should -Be "Group 'missing-approvers' was not found."
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0 -ParameterFilter { $DisplayName -eq 'gid-1' }
+        }
+
+        It 'reports an ambiguous approver name as AmbiguousApproverName naming the candidates, never as ApproverNotFound' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverGroup 'dup-approvers' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'AmbiguousApproverName,Set-OERGroupPimPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be 'dup-approvers'
+            $Own[0].Exception.Message | Should -Match '11111111-1111-1111-1111-111111111111'
+            $Own[0].Exception.Message | Should -Match '22222222-2222-2222-2222-222222222222'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0 -ParameterFilter { $DisplayName -eq 'gid-1' }
+        }
+
+        It 'reports a failed approver lookup as itself, once, never as ApproverNotFound' {
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'Authorization_RequestDenied,Set-OERGroupPimPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $Own[0].Exception.Message | Should -Match 'Insufficient privileges'
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'ApproverNotFound*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0 -ParameterFilter { $DisplayName -eq 'gid-1' }
+        }
+
+        It 'scrubs a failed approver lookup before it publishes it as itself' {
+            Mock -ModuleName $script:moduleName Resolve-OERApproverInput {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            $Err = $null
+            Set-OERGroupPimPolicy -Group 'gid-1' -ApproverUser 'person9@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            # Reached: the catch published the record as itself.
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Set-OERGroupPimPolicy' }).Count | Should -Be 1
+            # A prefix match: $PSCmdlet.WriteError appends ',<cmdlet>' to this same record, in place,
+            # before the filter is evaluated.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
+                $Record.Exception.Message -like '*Insufficient privileges*'
             }
         }
     }

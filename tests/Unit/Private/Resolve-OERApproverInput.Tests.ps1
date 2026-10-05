@@ -2,8 +2,9 @@ BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
 
 Describe 'Resolve-OERApproverInput' {
     BeforeEach {
-        # An id resolves to itself (letter case preserved, as the real resolver returns a GUID input
-        # untouched); a name resolves through the map; anything else is not found.
+        # An id resolves to itself (letter case preserved, as the real resolver returns a GUID
+        # input untouched); a name resolves through the map; anything else is not found, thrown as
+        # the record the real Resolve-OERPrincipal throws for a value that matches nothing.
         Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
             $Map = @{
                 'person1@example.com' = 'bbbbbbbb-0000-0000-0000-000000000001'
@@ -13,7 +14,11 @@ Describe 'Resolve-OERApproverInput' {
             $Kind = if ($User) { 'User' } else { 'Group' }
             $Name = if ($User) { $User } else { $Group }
             $Id = if ($Name -match '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$') { $Name } else { $Map[$Name] }
-            if (-not $Id) { throw "$Kind '$Name' was not found." }
+            if (-not $Id) {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new("$Kind '$Name' was not found."), 'PrincipalUnresolved',
+                    [System.Management.Automation.ErrorCategory]::ObjectNotFound, $Name)
+            }
             [pscustomobject]@{ PrincipalId = $Id; PrincipalType = $Kind }
         }
     }
@@ -103,5 +108,65 @@ Describe 'Resolve-OERApproverInput' {
             try { Resolve-OERApproverInput -User 'nobody@example.com'; $null } catch { $PSItem }
         }
         $Caught.FullyQualifiedErrorId | Should -Not -BeLike 'ApproverNotFound*'
+    }
+}
+
+Describe 'Resolve-OERApproverInput: only a principal that matches nothing is ApproverUnresolved (Sprint 8 step 3, BL-14)' {
+    # The real Resolve-OERPrincipal runs here; only the lookups under it answer. An ambiguous name
+    # and a failed lookup are not a missing approver, so they leave this helper exactly as they were
+    # thrown, and the caller reports each as what it is.
+    It 'wraps the real resolver''s PrincipalUnresolved as ApproverUnresolved, keeping its message, the value as target and the cause' {
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            Mock Resolve-OERGroupId { $null }
+            try { Resolve-OERApproverInput -Group 'missing-approvers'; $null } catch { $PSItem }
+        }
+        $Caught.FullyQualifiedErrorId | Should -Be 'ApproverUnresolved'
+        $Caught.CategoryInfo.Category | Should -Be 'ObjectNotFound'
+        $Caught.TargetObject | Should -Be 'missing-approvers'
+        $Caught.Exception.Message | Should -Be "Group 'missing-approvers' was not found."
+        $Caught.Exception.InnerException.Message | Should -Be "Group 'missing-approvers' was not found."
+    }
+
+    It 'lets <Shape> through as it was thrown, never as ApproverUnresolved, and resolves nothing after it' -ForEach @(
+        @{ Shape = 'an ambiguous group name'; Id = 'AmbiguousName'; Category = 'InvalidArgument'; Text = "Group display name 'dup-approvers' matches 2 groups (11111111-1111-1111-1111-111111111111, 22222222-2222-2222-2222-222222222222)." }
+        @{ Shape = 'a refused (403) lookup'; Id = 'Authorization_RequestDenied'; Category = 'PermissionDenied'; Text = 'Authorization_RequestDenied: Insufficient privileges to complete the operation.' }
+    ) {
+        $Result = InModuleScope Omnicit.EntraRBAC -Parameters @{ Id = $Id; Category = $Category; Text = $Text } {
+            param($Id, $Category, $Text)
+            $script:BL14Thrown = [System.Exception]::new($Text)
+            $script:BL14Id = $Id
+            $script:BL14Category = $Category
+            Mock Resolve-OERGroupId -ParameterFilter { $DisplayName -eq 'dup-approvers' } {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    $script:BL14Thrown, $script:BL14Id, [System.Management.Automation.ErrorCategory]$script:BL14Category, 'dup-approvers')
+            }
+            Mock Resolve-OERGroupId { 'cccccccc-0000-0000-0000-000000000009' }
+            $Caught = try { Resolve-OERApproverInput -Group 'dup-approvers', 'later-approvers'; $null } catch { $PSItem }
+            [PSCustomObject]@{ Caught = $Caught; SameException = [object]::ReferenceEquals($Caught.Exception, $script:BL14Thrown) }
+        }
+        $Result.Caught.FullyQualifiedErrorId | Should -Be $Id
+        $Result.Caught.CategoryInfo.Category | Should -Be $Category
+        $Result.Caught.TargetObject | Should -Be 'dup-approvers'
+        $Result.SameException | Should -BeTrue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERGroupId -Times 0 -ParameterFilter { $DisplayName -eq 'later-approvers' }
+    }
+
+    It 'scrubs a failed lookup before it lets it through' {
+        $Result = InModuleScope Omnicit.EntraRBAC {
+            $script:BL14Thrown = [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.')
+            Mock Resolve-OERPrincipal {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    $script:BL14Thrown, 'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'person9@example.com')
+            }
+            Mock Remove-OERErrorRecord { }
+            $Caught = try { Resolve-OERApproverInput -User 'person9@example.com'; $null } catch { $PSItem }
+            [PSCustomObject]@{ Id = [string]$Caught.FullyQualifiedErrorId }
+        }
+        # Reached: the record left the helper as itself.
+        $Result.Id | Should -Be 'Authorization_RequestDenied'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record -and [string]$Record.FullyQualifiedErrorId -eq 'Authorization_RequestDenied' -and
+            $Record.Exception.Message -like '*Insufficient privileges*'
+        }
     }
 }

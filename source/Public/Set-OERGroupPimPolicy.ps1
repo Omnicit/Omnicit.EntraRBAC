@@ -45,10 +45,14 @@ function Set-OERGroupPimPolicy {
     side implies approval is required. -RequireApproval $true needs at least one approver, either
     supplied or already on the live rule; with none, a non-terminating ApproverRequired error is
     written and nothing is sent. Every approver value is resolved to an object id first (a user by
-    UPN or id, a group by display name or id); a value that does not resolve is a non-terminating
-    ApproverNotFound error and nothing is sent. Stage fields this cmdlet has no parameter for, such
-    as the approval timeout and whether approvers must justify, carry over from the live stage; a
-    policy with no stage yet gets a 1-day timeout with approver justification required. Any of the
+    UPN or id, a group by display name or id), before the group is looked up, and nothing is sent
+    unless every value resolves: a value that matches nothing is a non-terminating ApproverNotFound
+    error, a group display name that several groups share is a non-terminating AmbiguousApproverName
+    error whose message names the candidate ids, and a lookup that fails (insufficient permission,
+    throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
+    Stage fields this cmdlet has no parameter for, such as the approval timeout and whether
+    approvers must justify, carry over from the live stage; a policy with no stage yet gets a 1-day
+    timeout with approver justification required. Any of the
     three parameters makes the cmdlet read the live approval rule first; when that read fails, a
     non-terminating ApprovalRuleReadFailed error is written and NO rule is patched, including the
     other rules bound on the same call, since the carried-over stage and approvers would otherwise be
@@ -157,15 +161,18 @@ function Set-OERGroupPimPolicy {
     .PARAMETER ApproverUser
     The user approvers, each a user principal name or user object id, resolved to object ids before
     anything is sent. Replaces the user approvers on the live rule; the group approvers are kept.
-    Supplying it implies -RequireApproval $true. An empty list clears the user side. A value that does
-    not resolve refuses the whole call with ApproverNotFound. The same user named twice (by UPN and
-    by id, or in a different letter case) is sent once.
+    Supplying it implies -RequireApproval $true. An empty list clears the user side. A value that
+    matches no user refuses the whole call with ApproverNotFound; a lookup that fails refuses it too,
+    reported as that error itself. The same user named twice (by UPN and by id, or in a different
+    letter case) is sent once.
 
     .PARAMETER ApproverGroup
     The group approvers, each a group display name or group object id, resolved to object ids before
     anything is sent. Replaces the group approvers on the live rule; the user approvers are kept.
     Supplying it implies -RequireApproval $true. An empty list clears the group side. A value that
-    does not resolve refuses the whole call with ApproverNotFound.
+    matches no group refuses the whole call with ApproverNotFound, and a display name several groups
+    share refuses it with AmbiguousApproverName, naming the candidate ids (pass the object id
+    instead); a lookup that fails refuses it too, reported as that error itself.
 
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired to false on the eligibility rule).
@@ -292,13 +299,25 @@ function Set-OERGroupPimPolicy {
         # sent. Resolve-OERApproverInput owns the rules (a blank value is skipped, the same principal
         # named twice is kept once in first-seen order) and is shared with
         # Set-OERDirectoryRoleManagementPolicy; the refusal is reported here, under this cmdlet's id.
+        # Three outcomes, three reports: an ambiguous name is AmbiguousApproverName (the resolver's
+        # text names the candidate ids), only an approver that matches nothing (ApproverUnresolved) is
+        # ApproverNotFound, and anything else -- a 403, an exhausted 429, a 5xx -- is not evidence that
+        # the approver is missing, so it is published as itself.
         $ApproverUserBound = $PSBoundParameters.ContainsKey('ApproverUser')
         $ApproverGroupBound = $PSBoundParameters.ContainsKey('ApproverGroup')
         try {
             $ApproverInput = Resolve-OERApproverInput -User $ApproverUser -Group $ApproverGroup
         } catch {
             Remove-OERErrorRecord -Record $PSItem
-            Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+            if (Test-OERAmbiguousNameError -Record $PSItem) {
+                Write-CmdletError -Message ([System.Exception]::new("Could not resolve approver '$($PSItem.TargetObject)': $($PSItem.Exception.Message)")) -ErrorId 'AmbiguousApproverName' -Category InvalidArgument -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+                return
+            }
+            if (([string]$PSItem.FullyQualifiedErrorId).StartsWith('ApproverUnresolved', [System.StringComparison]::Ordinal)) {
+                Write-CmdletError -Message ([System.Exception]::new($PSItem.Exception.Message)) -ErrorId 'ApproverNotFound' -Category ObjectNotFound -TargetObject $PSItem.TargetObject -Cmdlet $PSCmdlet
+                return
+            }
+            $PSCmdlet.WriteError($PSItem)
             return
         }
         $ResolvedUser = $ApproverInput.User

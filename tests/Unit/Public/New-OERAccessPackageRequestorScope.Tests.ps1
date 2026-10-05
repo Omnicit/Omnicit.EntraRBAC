@@ -29,6 +29,9 @@ Describe 'New-OERAccessPackageRequestorScope' {
     It 'maps each scope value to its Graph token' {
         (New-OERAccessPackageRequestorScope -Scope AllDirectoryUsers).AllowedTargetScope | Should -Be 'allDirectoryUsers'
         (New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers).AllowedTargetScope | Should -Be 'specificConnectedOrganizationUsers'
+        (New-OERAccessPackageRequestorScope -Scope AllExternalUsers).AllowedTargetScope | Should -BeExactly 'allExternalUsers'
+        (New-OERAccessPackageRequestorScope -Scope AllDirectoryServicePrincipals).AllowedTargetScope | Should -BeExactly 'allDirectoryServicePrincipals'
+        (New-OERAccessPackageRequestorScope -Scope AllDirectoryAgentIdentities).AllowedTargetScope | Should -BeExactly 'allDirectoryAgentIdentities'
     }
 
     Context '-Scope NoSubjects is mapped to notSpecified with a warning (issue #86, 2026-09-11 live finding)' {
@@ -56,9 +59,12 @@ Describe 'New-OERAccessPackageRequestorScope' {
             $Expected = @{
                 AllMemberUsers                          = 'allMemberUsers'
                 AllDirectoryUsers                       = 'allDirectoryUsers'
+                AllExternalUsers                        = 'allExternalUsers'
                 SpecificDirectoryUsers                  = 'specificDirectoryUsers'
                 SpecificConnectedOrganizationUsers      = 'specificConnectedOrganizationUsers'
                 AllConfiguredConnectedOrganizationUsers = 'allConfiguredConnectedOrganizationUsers'
+                AllDirectoryServicePrincipals           = 'allDirectoryServicePrincipals'
+                AllDirectoryAgentIdentities             = 'allDirectoryAgentIdentities'
                 NotSpecified                            = 'notSpecified'
             }
             foreach ($Name in $Expected.Keys) {
@@ -83,6 +89,75 @@ Describe 'New-OERAccessPackageRequestorScope' {
 
     It 'accepts -Scope AllConfiguredConnectedOrganizationUsers' {
         (New-OERAccessPackageRequestorScope -Scope AllConfiguredConnectedOrganizationUsers).AllowedTargetScope | Should -Be 'allConfiguredConnectedOrganizationUsers'
+    }
+
+    It 'accepts -Scope <Scope> and builds <Graph> with no targets and no auth' -ForEach @(
+        @{ Scope = 'AllExternalUsers'; Graph = 'allExternalUsers' }
+        @{ Scope = 'AllDirectoryServicePrincipals'; Graph = 'allDirectoryServicePrincipals' }
+        @{ Scope = 'AllDirectoryAgentIdentities'; Graph = 'allDirectoryAgentIdentities' }
+    ) {
+        $S = New-OERAccessPackageRequestorScope -Scope $Scope -ErrorAction Stop
+        $S.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RequestorScope'
+        $S.AllowedTargetScope | Should -BeExactly $Graph
+        @($S.SpecificAllowedTargets).Count | Should -Be 0
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+    }
+
+    It 'binds every Microsoft Graph v1.0 allowedTargetScope value except unknownFutureValue' {
+        # Learn, accessPackageAssignmentPolicy v1.0: allowedTargetScope. unknownFutureValue is the
+        # evolvable-enum sentinel, never a scope an author can choose, so it is the one value left out.
+        $V1Values = @(
+            'notSpecified', 'specificDirectoryUsers', 'specificConnectedOrganizationUsers',
+            'specificDirectoryServicePrincipals', 'allMemberUsers', 'allDirectoryUsers',
+            'allDirectoryServicePrincipals', 'allConfiguredConnectedOrganizationUsers', 'allExternalUsers',
+            'allDirectoryAgentIdentities'
+        )
+        $ValidSet = @((Get-Command New-OERAccessPackageRequestorScope).Parameters['Scope'].Attributes |
+                Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] } |
+                ForEach-Object { $_.ValidValues })
+        foreach ($Value in $V1Values) {
+            @($ValidSet | Where-Object { $_ -ieq $Value }).Count | Should -Be 1 -Because "-Scope must bind the v1.0 value '$Value'"
+        }
+        @($ValidSet | Where-Object { $_ -ieq 'unknownFutureValue' }).Count | Should -Be 0
+    }
+
+    Context '-Scope SpecificDirectoryServicePrincipals binds but is refused' {
+        # The scope is only meaningful with specificAllowedTargets naming service principals, which the
+        # module does not model, so building it would send the scope with no targets at all.
+        It 'writes one non-terminating InvalidPolicyInput error naming the scope, and emits no object' {
+            $Err = $null
+            $Caught = $null
+            $Out = $null
+            try {
+                $Out = New-OERAccessPackageRequestorScope -Scope SpecificDirectoryServicePrincipals -ErrorAction SilentlyContinue -ErrorVariable Err
+            } catch { $Caught = $PSItem }
+            $Caught | Should -BeNullOrEmpty
+            $Out | Should -BeNullOrEmpty
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'InvalidPolicyInput,New-OERAccessPackageRequestorScope'
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Err[0].TargetObject | Should -BeExactly 'SpecificDirectoryServicePrincipals'
+            $Err[0].Exception.Message | Should -BeExactly ("Requestor scope 'SpecificDirectoryServicePrincipals' needs specificAllowedTargets " +
+                'naming service principals, which this module does not model, so the scope cannot be built and nothing was sent.')
+        }
+
+        It 'refuses before resolving any -User or -Group, so no lookup and no authentication run' {
+            $Err = $null
+            $Out = New-OERAccessPackageRequestorScope -Scope SpecificDirectoryServicePrincipals -User 'person1@example.com' -Group 'Sales Team' `
+                -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+            $Out | Should -BeNullOrEmpty
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyInput,New-OERAccessPackageRequestorScope' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERUserId -Times 0
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+        }
+
+        It 'binds the lowercase Graph token too, and refuses it the same way' {
+            $Err = $null
+            $Out = New-OERAccessPackageRequestorScope -Scope 'specificDirectoryServicePrincipals' -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Out | Should -BeNullOrEmpty
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidPolicyInput,New-OERAccessPackageRequestorScope' }).Count | Should -Be 1
+        }
     }
 
     It 'resolves a group name target for SpecificDirectoryUsers' {
