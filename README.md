@@ -171,8 +171,8 @@ cmdlet. `Disconnect-OER` closes whichever session the process holds, even one an
 If another `Connect-MgGraph` -- yours, or another tool's -- replaces the module's session in the
 same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with
 `GraphSessionChanged` instead of sending them under that session, and its Azure Resource Manager
-calls with `SignInRefused`, and an error can be reported more than once for one cmdlet. The module
-never switches the session back by itself. Run `Connect-OER` with the same
+calls with `SignInRefused`. An error can be reported more than once for one cmdlet. The module never
+switches the session back by itself. Run `Connect-OER` with the same
 sign-in the session used -- for an app-only session, its certificate or client secret, since a bare
 `Connect-OER` signs in interactively -- to connect the module again, which takes the session back,
 or use a new PowerShell process. If the session is closed with `Disconnect-MgGraph` instead of

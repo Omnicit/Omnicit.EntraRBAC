@@ -227,7 +227,8 @@ function Initialize-OERAuth {
     # step-up or the token-rejected retry of Invoke-OERGraphRequest, the 401 retry of
     # Invoke-OERArmRequest -- that is the transport's nested function (Invoke-GraphSingle,
     # Invoke-ArmCallWithRefresh): a refusal there refuses only that retry, and the command's next
-    # request is a new transport call (Ruling R5).
+    # request is a new transport call (step 4b round 1, Ruling R5; docs/development/rationale.md,
+    # auth-state).
     #
     # The table ($script:_OERSignInLatch, a ConditionalWeakTable) holds its keys weakly and never keeps
     # a finished command alive. Every value in it is the boolean $true: it holds no token and no tenant

@@ -578,16 +578,20 @@ each with its own exemption or non-vacuity mechanism:
 (CLAUDE.md ## Code Style); no apply-document-walking file may read a document node's
 `PSObject.Properties.Name` directly outside a named, reasoned allowlist. The violation is flagged on
 the READ itself rather than on the `-contains`-family operator that might later consume it, so an
-intermediate variable cannot hide the same defect. Its scope control asserts the fifteen scanned
-files BY NAME rather than by count -- the eight `Sync-OERStructure*` handlers (AccessPackage,
-AccessReview, AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group, RoleAssignment and
-RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`, `Get-OEROmittedPruneCollection.ps1`,
-`Resolve-OERDeclaredApprover.ps1` and the four `Resolve-OER*Change` helpers that take a `-Declared`
-node -- because a bare count says only that fifteen became fourteen, never which file left the scan.
-Two earlier rounds of that gate each claimed to cover every document consumer while missing some, so
-the named list is the finding, not the tidy-up. Sprint 6 step 2 added `Resolve-OERDeclaredApprover.ps1`
-(a document consumer, not a `Sync-OERStructure*` handler); Sprint 6 step 3 added
-`Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler).
+intermediate variable cannot hide the same defect. Its scope control asserts the eighteen scanned
+files BY NAME rather than by count -- the nine `Sync-OERStructure*` handlers (AccessPackage,
+AccessReview, AdministrativeUnit, Catalog, DirectoryRoleAssignment, DirectoryRoleManagementPolicy,
+Group, RoleAssignment and RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`,
+`Get-OEROmittedPruneCollection.ps1`, `Resolve-OERDeclaredApprover.ps1`,
+`Resolve-OERStructureRoleAssignmentScope.ps1` and the five `Resolve-OER*Change` helpers that take a
+`-Declared` node -- because a bare count says only that eighteen became seventeen, never which file
+left the scan. Two earlier rounds of that gate each claimed to cover every document consumer while
+missing some, so the named list is the finding, not the tidy-up. Sprint 6 step 2 added
+`Resolve-OERDeclaredApprover.ps1` (a document consumer, not a `Sync-OERStructure*` handler); Sprint 6
+step 3 added `Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler); Sprint 6 step
+4 added `Resolve-OERDirectoryRoleAssignmentChange.ps1` (a fifth `Resolve-OER*Change` helper) and
+`Sync-OERStructureDirectoryRoleAssignment.ps1` (a ninth handler); Sprint 8 step 1 added
+`Resolve-OERStructureRoleAssignmentScope.ps1`, the `roleAssignments` scope pre-pass.
 
 **9. Az context hygiene** (fix, stopping `Disconnect-OER` signing out the operator's own Az
 session). CLAUDE.md ## Dependencies states that no Az module is a dependency of this module and no
@@ -598,18 +602,18 @@ helper -- anything else fails the gate, naming the file and line. Non-vacuity: m
 files, more than 2700 `CommandAst` nodes, and at least one recognised `-Az`-shaped call still found,
 so a matcher that stopped matching cannot pass by finding nothing to complain about.
 
-**10. Transport gate hygiene** (Sprint 8 step 4b, A18 and A19). The two gates that stand in front of
-every request -- the Graph SDK session gate and the sign-in latch gate, both described under
-[#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
-this gate machine-checks that claim from the source. Four ownership rules, read from the command
+**10. Transport gate hygiene** (Sprint 8 step 4b, A18 and A19). The gates that stand in front of
+every request -- the sign-in latch gate in both transports, and the Graph SDK session gate in the
+Graph transport, both described under [#auth-state](#auth-state) -- are only as good as the claim
+that no request can go around them, and this gate machine-checks that claim from the source. Four ownership rules, read from the command
 names the shared walk collected per file: `Get-MgContext` is called only in
 `Get-OERGraphSessionFingerprint`, `Lock-OERSignIn` and `Unlock-OERSignIn` only in
 `Initialize-OERAuth`, `Invoke-MgGraphRequest` only in the Graph wrapper and `Invoke-WebRequest` only
 in the ARM wrapper -- each with a positive count for its owner, so a rule cannot hold over nothing.
 And one structural rule, read from the two wrappers' own ASTs: every send sits in the BODY of a try
-that holds exactly its one send (one `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt` in each
-of the three Graph statements, in `Invoke-GraphSingle`; one `Invoke-WebRequest` in `Invoke-ArmCall`),
-and that try is preceded, in the very block that holds it, by its session gate (Graph only) and its
+that holds exactly one call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
+`Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
+`Invoke-ArmCall`), and that try is preceded, in the very block that holds it, by its session gate (Graph only) and its
 latch gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between
 a gate and any request, and the ARM bearer token materialized only after the latch gate. A gate in an
 enclosing block does not count. The statement counts are exact, not floors: three Graph transport
@@ -1289,7 +1293,9 @@ NOT use the approach from Omnicit.PIM.
    below).
 5. **ACRS step-up** -- see [#graph-wrapper](#graph-wrapper) item 2.
 6. **Sign-in latch** -- every entry latches the command that called it, and only a success releases
-   it; both transports send nothing for a latched command (`SignInRefused`). See
+   it; both transports send nothing for a latched command, refusing each of its requests with
+   `SignInRefused`, except that the Graph wrapper's session gate, which comes first, still reports a
+   changed session as `GraphSessionChanged`. See
    [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing)
    below.
 
@@ -1865,9 +1871,11 @@ therefore asks `Get-OERGraphSessionState` before every request it sends: at the 
 the claims-challenge step-up and of the token-rejected retry, since each of those sends a request
 too. Each gate is a `throw` followed by a `return`, and the `return` is load-bearing: under
 `SilentlyContinue` or `Ignore` it is what keeps the request from going out (fact 2). At a prompt
-the operator therefore sees `GraphSessionChanged` more than once for one cmdlet: once at its entry
-and once for each Graph call it then attempts. That is why the user-facing texts say the Graph CALLS
-are refused, never that the cmdlet stops.
+the operator therefore sees more than one error for one cmdlet: `GraphSessionChanged` at its entry,
+and then an error for each Graph call it attempts -- `GraphSessionChanged` from the transport,
+carried in the message where the cmdlet re-publishes a failed lookup under its own id
+(`PrincipalNotFound`, for example) or the apply engine reports it as a `Failed` row. That is why the
+user-facing texts say the Graph CALLS are refused, never that the cmdlet stops.
 
 A paged read that a refusal interrupts ends. The paging `catch` re-throws, and under fact 3 that
 resumes after the whole `try` statement, so the `catch` sets `$PageFailed` and the loop checks it
@@ -2026,14 +2034,14 @@ outside the attempt's `try`, so a changed session is still reported as `GraphSes
 `Invoke-OERArmRequest` it stands once, in `Invoke-ArmCall`, which every request passes through (the
 first, each throttled retry, the 401 retry and every page), before the bearer token is materialized
 and before `Invoke-WebRequest`. Each gate is a `throw` followed by a `return`, for fact 2. The ARM
-wrapper has no session gate (Ruling R2): an ARM call of a command whose entry was not refused still
-goes out with the module's own token, as described under
+wrapper has no session gate (step 4b round 1, Ruling R2): an ARM call of a command whose entry was
+not refused still goes out with the module's own token, as described under
 [The Graph SDK session](#the-graph-sdk-session).
 
-**Why the key is the command, not a module boolean** (Ruling R1). MEASURED by the controller on
-2026-10-05 in plain PowerShell 7, with no module code: a latch that any later successful sign-in
-releases does not close F1. Almost every public cmdlet calls `Initialize-OERAuth` in its `begin`
-block, and the apply handlers call public cmdlets (`New-OERGroup`, `Set-OERGroup`,
+**Why the key is the command, not a module boolean** (step 4b round 1, Ruling R1). MEASURED by the
+controller on 2026-10-05 in plain PowerShell 7, with no module code: a latch that any later
+successful sign-in releases does not close F1. Almost every public cmdlet calls `Initialize-OERAuth`
+in its `begin` block, and the apply handlers call public cmdlets (`New-OERGroup`, `Set-OERGroup`,
 `Get-OERRoleAssignment`, ...) that call it again without `-TenantId`, inherit session A and hit the
 cache: inside a refused `Invoke-OERStructure -TenantId B`, the first nested cmdlet would release a
 boolean and every later write would go to A. A pipeline does the same: in
@@ -2050,31 +2058,36 @@ depth of 60 frames -- the price each request pays once the table exists.
 command after it: `Connect-OER`, or any new command whose own sign-in succeeds, sends again, and
 there is nothing to clear. `Disconnect-OER` does not touch the table and has no need to.
 
-**What the operator sees.** Outside any `try`, a cmdlet whose sign-in was refused carries on and
-reports one `SignInRefused` for each request it then attempts -- `GraphSessionChanged` instead for a
-Graph request while the session stays changed -- and sends nothing. Inside a `try` the refusal at
-its entry propagates and ends it. The user-facing texts therefore say that such a command sends
-nothing, never that it stops.
+**What the operator sees.** Outside any `try`, a cmdlet whose sign-in was refused carries on, sends
+nothing, and reports an error for each request it then attempts: `SignInRefused` from the transport
+(`GraphSessionChanged` instead for a Graph request while the session stays changed), carried in the
+message where the cmdlet re-publishes a failed lookup under its own id -- `PrincipalNotFound` from
+`Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` or `Get-OERRoleAssignment` when
+their principal lookup is the refused request, for example -- or where the apply engine reports it
+as a `Failed` row. Inside a `try` the refusal at its entry propagates and ends it. The user-facing
+texts therefore say that such a command sends nothing, never that it stops.
 
-**`ArmTokenAcquisitionFailed`** (Ruling R4) is the one refusal that is not terminating: it writes its
-error and returns early, after the Graph half has connected or come from the cache. It leaves the
-latch set like every other early return, so that command's Microsoft Graph calls are refused too,
-although its Graph session is in order. The commands it reaches are the ones that sign in with
-`-IncludeARM` and also call Graph: `Get-OERInventory -IncludeARM`, `Export-OERInventory` with ARM
-sections, and `Invoke-OERStructure` with ARM sections. The rule is that every early abort leaves the
-latch set, and this path is no exception; the cost is a whole command refused where only its Azure
-half failed.
+**`ArmTokenAcquisitionFailed`** (step 4b round 1, Ruling R4) is the one refusal that is not
+terminating: it writes its error and returns early, after the Graph half has connected or come from
+the cache. It leaves the latch set like every other early return, so that command's Microsoft Graph
+calls are refused too, although its Graph session is in order. It reaches every command that signs
+in with `-IncludeARM` and also calls Graph -- for example `Get-OERInventory -IncludeARM`,
+`Export-OERInventory` and `Invoke-OERStructure` with ARM sections, and the `-IncludeARM` role
+assignment cmdlets that resolve a principal through Graph. The rule is that every early abort leaves
+the latch set, and this path is no exception; the cost is a whole command refused where only its
+Azure half failed.
 
 **Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
 `Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
 
-- A refresh inside a transport (Ruling R5). The claims-challenge step-up and the token-rejected retry
-  of `Invoke-OERGraphRequest` call `Initialize-OERAuth` from its nested `Invoke-GraphSingle`, and the
-  401 retry of `Invoke-OERArmRequest` from its nested `Invoke-ArmCallWithRefresh`. A sign-in refused
-  there latches that nested function, so `SignInRefused`'s target names an internal function, only
-  that one retry is refused, and the command's next request is a new transport call, which the latch
-  does not refuse. The session is the same tenant's, and the session gate covers a changed one. The
-  message's "this command" then means that internal function, which only the target shows.
+- A refresh inside a transport (step 4b round 1, Ruling R5). The claims-challenge step-up and the
+  token-rejected retry of `Invoke-OERGraphRequest` call `Initialize-OERAuth` from its nested
+  `Invoke-GraphSingle`, and the 401 retry of `Invoke-OERArmRequest` from its nested
+  `Invoke-ArmCallWithRefresh`. A sign-in refused there latches that nested function, so
+  `SignInRefused`'s target names an internal function, only that one retry is refused, and the
+  command's next request is a new transport call, which the latch does not refuse. The session is
+  the same tenant's, and the session gate covers a changed one. The message's "this command" then
+  means that internal function, which only the target shows.
 - Three private helpers call `Initialize-OERAuth` themselves: `Resolve-OERInventoryScopeTree`,
   `Resolve-OERReviewerScope` and `Resolve-OERTargetList`, each forwarding the `-TenantId` its caller
   passed it. A refusal there latches the helper, and refuses only the requests made inside it. A

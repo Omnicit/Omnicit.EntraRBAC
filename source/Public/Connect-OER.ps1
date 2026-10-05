@@ -47,7 +47,7 @@ function Connect-OER {
     If another Connect-MgGraph -- your own, or another tool's -- replaces the module's session in
     the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
     GraphSessionChanged error instead of sending them under that session, and its Azure Resource
-    Manager calls with a SignInRefused error, and an error can be reported more than once for one
+    Manager calls with a SignInRefused error. An error can be reported more than once for one
     cmdlet. The module never switches the session back by itself.
     Run Connect-OER with the same sign-in the session used -- for an app-only session, its
     certificate or client secret, since a bare Connect-OER signs in interactively -- to connect the

@@ -9,8 +9,10 @@ function Lock-OERSignIn {
     that called Initialize-OERAuth -- the first frame of the call stack, after this function's own frame
     and Initialize-OERAuth's, that carries an invocation -- records it in the module's sign-in latch, and
     returns it. Initialize-OERAuth hands that invocation to Unlock-OERSignIn when the sign-in succeeds;
-    every refusal, terminating error and early return leaves it latched, and Get-OERSignInRefusal then
-    finds it on the call stack of every request that command makes.
+    every refusal, terminating error and early return leaves it latched. Both transports then refuse
+    every request that command makes: Get-OERSignInRefusal finds it on the call stack and the request
+    is refused with SignInRefused -- except that the Graph wrapper's session gate, which comes first,
+    still reports a changed session as GraphSessionChanged.
 
     The latch is keyed on the calling command's invocation rather than held as one module-wide value,
     since a nested command or a pipeline neighbour signs in on its own: its success must release only

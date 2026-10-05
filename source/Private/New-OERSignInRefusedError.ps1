@@ -9,8 +9,10 @@ function New-OERSignInRefusedError {
     finds latched on the call stack -- so nothing is sent for that command under the session or the
     token an earlier sign-in left. Invoke-OERGraphRequest checks its session gate first, so a Graph
     request made while the Graph SDK session is changed is refused as GraphSessionChanged instead. The
-    target is the latched command's name: the cmdlet for a sign-in refused at its entry, and the
-    transport's nested function (Invoke-GraphSingle, Invoke-ArmCallWithRefresh) for one refused during
+    target is the latched command's name, which is the immediate caller of Initialize-OERAuth: the
+    cmdlet, for a sign-in refused at its entry; a private helper that signs in itself
+    (Resolve-OERInventoryScopeTree, Resolve-OERReviewerScope, Resolve-OERTargetList); or the
+    transport's nested function (Invoke-GraphSingle, Invoke-ArmCallWithRefresh), for one refused during
     that transport's own refresh. The message names no tenant, no account and no token: the sign-in
     latch holds none of them.
 

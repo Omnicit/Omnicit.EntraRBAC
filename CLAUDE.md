@@ -530,13 +530,14 @@ called only there. Every refusal, terminating error and early return leaves the 
 Graph half connected. Both transports ask `Get-OERSignInRefusal` before every request and refuse it
 while any frame on the call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns
 the id and the message) -- the Graph wrapper after its session gate, so a changed session still reads
-`GraphSessionChanged`, and the cmdlet's ARM calls after that refusal read `SignInRefused`. The latch
-is keyed weakly on the calling command's INVOCATION, never a module boolean: a nested cmdlet's
-sign-in, or a pipeline neighbour's, releases only its own entry. A finished command is on no call
-stack, so the next command, or `Connect-OER`, sends again. An ARM call of a command whose entry was
-not refused still goes out with the module's own token: ARM has no session gate. Never write that
-the cmdlet stops -- it carries on and sends nothing -- and never add a second `Lock-OERSignIn` or
-`Unlock-OERSignIn` call site. `Why: docs/development/rationale.md#auth-state`
+`GraphSessionChanged`, and after a `GraphSessionChanged` refusal at the cmdlet's entry its ARM calls
+read `SignInRefused`. The latch is keyed weakly on the calling command's INVOCATION, never a module
+boolean: a nested cmdlet's sign-in, or a pipeline neighbour's, releases only its own entry. A
+finished command is on no call stack, so the next command, or `Connect-OER`, sends again. An ARM call
+of a command whose entry was not refused still goes out with the module's own token: ARM has no
+session gate. Never write that the cmdlet stops -- it carries on and sends nothing -- and never call
+`Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`.
+`Why: docs/development/rationale.md#auth-state`
 
 | Parameter set | Key parameters | Use case |
 |---|---|---|
@@ -991,8 +992,9 @@ bug.
   and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
   `Lock-OERSignIn`/`Unlock-OERSignIn` only in `Initialize-OERAuth`, `Invoke-MgGraphRequest` only in
   the Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper, and every send a wrapper makes
-  in the body of a try that holds exactly its one send (one `Invoke-MgGraphRequest` and one
-  `Invoke-GraphAttempt` for Graph, one `Invoke-WebRequest` for ARM), that try preceded, in the very
+  in the body of a try that holds exactly one call path (in the Graph transport one
+  `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try
+  preceded, in the very
   block that holds it, by its session gate (Graph only) and its latch gate, each a throw followed by
   a return, with no `Initialize-OERAuth` or `Start-Sleep` between them and any request, and the
   transport statements counted exactly (three Graph, one ARM) so a new send path cannot escape the
