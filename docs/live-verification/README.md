@@ -48,9 +48,11 @@ Placeholders are allocated under two different rules, and confusing them is how 
 - **Inside a live-verification checklist**, `NN` restarts at `01` per file, as the rule above says.
   The same `NN` therefore denotes a DIFFERENT object in a different checklist, and that is fine:
   each checklist is read on its own.
-- **Everywhere else** -- `source/`, `tests/`, `docs/examples/`, the issue templates -- a placeholder
-  is allocated GLOBALLY and means one slot across the whole repository, because the same fixture is
-  read from several files at once.
+- **Everywhere else** -- `source/`, `tests/`, `docs/examples/`, `docs/development/`, the issue
+  templates -- a placeholder is allocated GLOBALLY and means one slot across the whole repository,
+  because the same fixture is read from several files at once. The issue templates follow the rule
+  but are not machine-checked: the gate scans `source/`, `tests/`, `docs/examples/` and
+  `docs/development/`.
 
 The register below is the second rule's allocation. **Its only purpose is to stop two different
 objects from being given the same placeholder**, which is the defect this programme has hit more
@@ -225,6 +227,8 @@ user principal name URL-encoded into a request path is found, and `\.` as `.`, s
 as a regular expression in a test is found too. A bare `onmicrosoft.com` with no label in front of
 it names no tenant and passes. Replace a real label with `contoso`: the allowlist does not grow to
 make the gate green, and an entry that no other file uses any more fails it until it is removed.
+Known gap: unlike the object-id rule, the tenant-domain rule has no pass across line breaks, so a
+domain wrapped by console output over two lines is not caught; redact as you write.
 
 **The placeholder register above is read, not just cited.** The gate parses it and fails when it
 disagrees with itself, on the defects listed in the register's own section, and when a placeholder
@@ -232,8 +236,9 @@ used in `source/`, `tests/`, `docs/examples/` or `docs/development/` -- an all-z
 `personN@example.com` address -- does not fall in a row marked taken. A reserved or FREE slot counts
 as unregistered. It reads the three characters after `...` as hexadecimal, which is how `...0aa` and
 `...abc` take their place in the order; it reads a status cell as FREE when it says FREE, as taken
-when it starts with "taken", and as reserved otherwise; and it reports a row it cannot read rather
-than skipping it.
+when it starts with "taken", and as reserved otherwise. A row it reads only partly is reported. A
+row whose first cell holds no well-formed backticked `...` or `person` token is taken for a header
+row and grants nothing, and a table left without its FREE row is reported.
 
 **A stand-in in angle brackets is written as code.** GitHub reads `<id>`, `<oer-live-cc>` or any
 other `<word>` outside code as an HTML tag and renders nothing, so the redaction disappears from the

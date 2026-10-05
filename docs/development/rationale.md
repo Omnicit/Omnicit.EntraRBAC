@@ -286,7 +286,9 @@ ends with a root `AfterAll` that runs `Assert-OERTransportTripwire` in a `try` a
 every name that no longer resolves to its replacement from the module's scope. A throw in a root
 `AfterAll` fails the container -- `Result=Failed`, `FailedContainers=1`, measured on Pester 5.7.1
 and 6.2.0 -- and Sampler's `Pester_Tests_Stop_On_Fail` gates on `Result -eq 'Passed'`, so
-`./build.ps1 -Tasks test` fails with it.
+`./build.ps1 -Tasks test` fails with it. The install happens in the root `BeforeAll`, so Pester's
+discovery phase (`BeforeDiscovery`, `Describe` bodies and `-ForEach` data) runs without the
+tripwire; nothing calls module code at discovery time today (checked 2026-10-05).
 
 The answering runspace in `OERConfirmHost.ps1` has a global scope of its own, so the parent's
 replacements are invisible there. `Invoke-OERWithConfirmAnswer` installs the same replacements in
@@ -1601,8 +1603,9 @@ is why it is proposed here and not built in this branch.
 ### A client secret reaches AzAuth as a string
 
 `-ClientSecret` is a `[securestring]` on `Connect-OER` and on `Initialize-OERAuth`, and it stays one:
-the module never accepts or stores a plain string (CLAUDE.md, Authentication Architecture and
-SECURITY rule 5). There is one place the plain text exists, and it is the hand-over to AzAuth.
+the module never accepts a plain string and never keeps one in `$script:_OERAuthState`; the splats
+hold it until the `finally` (CLAUDE.md, Authentication Architecture and SECURITY rule 5). There is
+one place the plain text exists, and it is the hand-over to AzAuth.
 
 AzAuth 2.10.0 declares `Get-AzToken -ClientSecret` as `String` (its help). For a client secret
 sign-in `Initialize-OERAuth` therefore converts the secret with
@@ -1621,11 +1624,12 @@ Logging" policy) records bound parameter values. That is the mechanism
 the string bound to `-ClientSecret` is therefore written to the log in plain text. INFERRED from
 that mechanism: no capture of an event for this parameter is recorded here.
 
-**This module cannot change it.** The parameter that receives the plain text belongs to AzAuth and
-is a string, so the value it is handed has to be one, and there is no equivalent of the
-`Get-OERTokenObjectId` shape to move to. Nothing the module does afterwards withdraws a log entry
-either. `Remove-OERErrorRecord` clears the `Authorization` header of a request message and nothing
-else -- never a request body, and never a parameter binding -- and the `finally` block in
+**While the module acquires tokens through AzAuth's `Get-AzToken`, it cannot change it.** The
+parameter that receives the plain text belongs to AzAuth and is a string, so the value it is handed
+has to be one, and there is no equivalent of the `Get-OERTokenObjectId` shape to move to. Nothing
+the module does afterwards withdraws a log entry either. `Remove-OERErrorRecord` clears the
+`Authorization` header of a request message and removes the record from `$global:Error`; it reaches
+neither a request body, nor a parameter binding, nor a log. The `finally` block in
 `Initialize-OERAuth` that sets the splats' `ClientSecret` to `$null` only drops the module's own
 references to the string, once the token calls are done.
 

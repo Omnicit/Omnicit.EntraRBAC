@@ -879,9 +879,9 @@ bug.
 ## Testing Conventions
 
 - **Tests are written in Pester 5 syntax** under `tests/Unit/{Private,Public}/`. The build resolves
-  the newest Pester, which was 6.2.0 when measured on 2026-10-05, and CI runs that. One
-  `*.Tests.ps1` per source file. The QA gate (`tests/QA/module.tests.ps1`) requires a unit test file
-  for every exported function.
+  the newest Pester, and CI resolves it afresh on every run, so no version is a standing fact here;
+  6.2.0 was the newest when measured on 2026-10-05. One `*.Tests.ps1` per source file. The QA gate
+  (`tests/QA/module.tests.ps1`) requires a unit test file for every exported function.
 - **Import by module name, not by path**, in every `BeforeAll` -- importing by path breaks the
   Sampler coverage measurement, which targets the built module:
   ```powershell
@@ -899,8 +899,12 @@ bug.
   ```
 - **Always mock `Initialize-OERAuth`** -- every public cmdlet that touches Graph or Azure calls it at
   entry, so without a mock the test attempts real authentication.
-- **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`** -- the call stack goes through the
-  wrapper, so mocking the raw SDK call has no effect.
+- **Mock `Invoke-OERGraphRequest`, not `Invoke-MgGraphRequest`** -- mocking the wrapper keeps the
+  test at the module boundary and away from the wrapper's own retry, scrub and conversion logic. A
+  `Mock -ModuleName Omnicit.EntraRBAC Invoke-MgGraphRequest` does win from the module scope, so it
+  works; mock the raw SDK call only where the test is about the wrapper itself, as
+  `Invoke-OERGraphRequest.Tests.ps1` is, or drives the real wrapper on purpose to get the record it
+  builds, as parts of `Get-OERGroup.Tests.ps1` do.
 - **Every unit test file that imports the module installs the transport tripwire.** In its root
   `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
   and calls `Install-OERTransportTripwire`; it ends with a root
@@ -963,9 +967,9 @@ non-negotiable:
    may run a live-verification checklist against the operator's designated test tenant only as the
    dedicated app identity whose only credential is a non-exportable certificate, only while the
    operator has enabled that identity for the run, and never with any other sign-in.
-2. **Every unit test mocks `Initialize-OERAuth` and the module's transport wrappers at the module
-   boundary, and the transport tripwire records and refuses any call that still reaches
-   `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` or
+2. **Every unit test that reaches authentication or one of the module's transport wrappers mocks it
+   at the module boundary, and the transport tripwire records and refuses the rest: any call that
+   still reaches `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` or
    `Invoke-WebRequest`.** Nothing in CI or tests authenticates for real.
 3. **Destructive cmdlets must support `-Confirm` and `-WhatIf`** via
    `[CmdletBinding(SupportsShouldProcess)]`.
