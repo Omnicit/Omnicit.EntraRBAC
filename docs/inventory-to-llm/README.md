@@ -286,9 +286,10 @@ only) are written as declared. **`NoSubjects` is not a v1.0 value** -- it is a l
 so the engine substitutes `NotSpecified` and warns on every apply; write `NotSpecified` directly.
 
 `users` and `groups` are resolved by the engine (names or object ids) and apply to
-`SpecificDirectoryUsers` only. They are the only targets the module models, so three cases are
-refused rather than written. Each is a `Failed` row for that policy, decided before ShouldProcess (so
-the same under `-WhatIf`), with nothing written for it:
+`SpecificDirectoryUsers` only. They are the only targets the module models, and it cannot read a
+scope Microsoft Graph does not name, so three cases are refused rather than written. Each is a
+`Failed` row for that policy, decided before ShouldProcess (so the same under `-WhatIf`), with
+nothing written for it:
 
 - `SpecificDirectoryServicePrincipals`, whenever it is declared: its service principal targets are
   not modelled, so the scope cannot be built (`InvalidPolicyInput`).

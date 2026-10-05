@@ -392,9 +392,10 @@ schema.json. Any valid name works; these are common least-privilege choices:
   or service principal targets: for a policy the inventory shows as
   SpecificConnectedOrganizationUsers or SpecificDirectoryServicePrincipals, omit requestorScope so
   the apply keeps the live scope and its targets (the apply refuses SpecificDirectoryServicePrincipals
-  whenever it is declared, and an update that declares SpecificConnectedOrganizationUsers). A policy
-  the inventory shows as unknownFutureValue is refused by the apply whatever you declare; leave it
-  out of the document.
+  whenever it is declared, and an update that changes the policy while declaring
+  SpecificConnectedOrganizationUsers; a declared SpecificConnectedOrganizationUsers that matches the
+  live policy is Unchanged). A policy the inventory shows as unknownFutureValue is refused by the
+  apply whatever you declare; leave it out of the document.
 - requestorSettings.managerLevel: integer 1-4 (1 = direct manager, 2 = manager's manager, etc.).
   Use allowManagerRequest=true with a managerLevel to enable on-behalf requests by managers.
 - approverInfoVisibility (assignmentPolicies[].approvalStages[]): Default (tenant policy),
