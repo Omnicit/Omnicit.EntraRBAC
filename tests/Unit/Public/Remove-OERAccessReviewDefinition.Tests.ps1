@@ -356,6 +356,10 @@ Describe 'Remove-OERAccessReviewDefinition access package assignments scope warn
     It 'emits the could-not-check warning under -WhatIf as well, and DELETEs nothing' {
         # The warning sits AHEAD of ShouldProcess like the other two (see the live measurement in the
         # cmdlet), so the operator planning a delete with -WhatIf learns the check was not made.
+        # This is the test that holds the ORDER: with the warning moved behind the ShouldProcess gate
+        # (checked in a copy of source/) ShouldProcess answers $false here, the warning is never
+        # written, and the count below reads 0 instead of 1 -- every other test of the warning
+        # confirms the delete and stays green.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new('Forbidden: read denied.'), 'Forbidden',

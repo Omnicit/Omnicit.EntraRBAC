@@ -3013,9 +3013,11 @@ and `Set-OERRoleManagementPolicy`, and the approver step of the three apply hand
 - anything else is published as itself, once: `$PSCmdlet.WriteError($PSItem)` in a cmdlet, and
   `$Caller.WriteError($PSItem)` plus a Failed row carrying that record in a handler.
 
-Every path still returns before anything is read or written for that policy. No published id is
-removed or renamed: `ApproverNotFound` stays, for exactly what it always meant. The only change a
-caller can see is the id and category of a failure that was never a missing approver.
+Every path still returns before anything is written for that policy (two handlers read the live
+policy first). No published id is removed or renamed: `ApproverNotFound` stays, for exactly what it
+always meant. What changes is how a failure that was never a missing approver is reported: its id and
+category, a prefix on the ambiguous message, the approver value as the target of an ambiguous record
+(in a handler too), and, for a failed lookup, the failed record's own target.
 
 **How the three are told apart.** `Resolve-OERPrincipal` used to signal "not found" by throwing a bare
 string, which a catch cannot tell apart from a failure. It now throws an ErrorRecord with the internal
@@ -3031,7 +3033,8 @@ blank-value rule differ from `Resolve-OERApproverInput`'s, so the not-found reco
 collected into the calling cmdlet's `-ErrorVariable` even when the cmdlet catches it (measured, see
 [#bearer-scrub-tests](#bearer-scrub-tests)). An `ApproverNotFound` thrown by a resolver would sit next
 to the one the cmdlet writes, and a caller counting `ApproverNotFound` records would see it twice. So
-`PrincipalUnresolved` and `ApproverUnresolved` share no prefix with a published id. They do appear in
+`PrincipalUnresolved` and `ApproverUnresolved` are named so that no published id is a prefix of them,
+and a `-like 'ApproverNotFound*'` filter never matches them. They do appear in
 a caller's `-ErrorVariable` beside the published record, where a record whose id was the bare message
 text sat before, so a test that counts what a cmdlet published filters on the published id, or on
 the cmdlet's own record.

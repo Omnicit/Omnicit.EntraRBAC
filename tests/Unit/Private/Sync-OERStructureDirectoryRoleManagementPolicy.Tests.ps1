@@ -384,6 +384,8 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: a declared approver, m
             $null = @(Invoke-SyncDrmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
             # Reached: the handler published the record as itself.
             @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Invoke-SyncDrmpViaCaller' }).Count | Should -Be 1
+            # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+            # before the filter is evaluated.
             Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
                 $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
                 $Record.Exception.Message -like '*Insufficient privileges*'

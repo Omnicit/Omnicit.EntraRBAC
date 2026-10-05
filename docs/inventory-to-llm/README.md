@@ -294,7 +294,8 @@ the same under `-WhatIf`), with nothing written for it:
   not modelled, so the scope cannot be built (`InvalidPolicyInput`).
 - `SpecificConnectedOrganizationUsers`, declared on an update that changes the policy: its connected
   organization targets are not modelled, so the write would drop them. A declared scope that matches
-  the live policy reports `Unchanged`, and a new policy is created with it.
+  the live policy reports `Unchanged`, and a new policy is created with it, but with no connected
+  organization targets: the module cannot write them, so they are added outside the module.
 - A live policy whose scope reads as `unknownFutureValue`, whatever the entry declares: Microsoft
   Graph names the real scope only to a caller that sends `Prefer: include-unknown-enum-members`,
   which this module never does. The inventory writes the value as it was read.
@@ -408,8 +409,9 @@ The policy is applied as a FULL object (PUT), but `Set-OERAccessPackageAssignmen
 read-modify-write: it reads the live policy first and overlays only what is supplied. The apply engine
 diffs and writes ONLY the fields you declare in the apply document, so fields you omit are PRESERVED
 from the live policy. Declaring a field EMPTY is not the same as omitting it: `"approvalStages": []`
-clears every live approval stage, just as `"description": ""` clears the description. Two omitted
-fields get a default, and only on CREATE, where there is no live value to keep:
+clears every live approval stage, just as `"description": ""` clears the description. On CREATE there
+is no live value to keep, so every omitted field gets a default; two of those defaults are not the
+obvious empty one:
 
 - `description` -- a new policy gets the policy display name. On update it is preserved.
 - `requestorScope` -- a new policy gets `AllMemberUsers`. On update it is preserved, its targets
@@ -417,7 +419,9 @@ fields get a default, and only on CREATE, where there is no live value to keep:
 
 A declared `requestorScope` is written whole: its `users` and `groups` replace the live targets, so a
 target the module does not model (a connected organization, a service principal) cannot round-trip
-through it -- which is why those scopes are refused rather than written (see above).
+through it -- which is why `SpecificDirectoryServicePrincipals` is refused outright and
+`SpecificConnectedOrganizationUsers` is refused on an update that changes the policy, though still
+written on create (see above).
 
 These out-of-scope fields are always preserved (never written by this module):
 

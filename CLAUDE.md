@@ -662,11 +662,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Ambiguous*`, never as `*NotFound` -- a COHORT check holds that, not a helper.** The principal
   and Azure role definition lookups are the decided exception, still publishing a failed read as
   `PrincipalNotFound` or `RoleDefinitionNotFound` -- never "fix" one of them into a changed
-  published ErrorId. The PIM approver lookups follow the rule since Sprint 8 (decision A5): an
-  ambiguous approver name is `AmbiguousApproverName`, a failed lookup is published as itself, and
-  `ApproverNotFound` means only an approver that matches nothing, in the three policy cmdlets and
-  the three apply handlers alike. They tell the three apart by the internal ids
-  `PrincipalUnresolved` and `ApproverUnresolved`, which no cmdlet or handler publishes.
+  published ErrorId. The PIM approver lookups follow the rule: an ambiguous approver name is
+  `AmbiguousApproverName`, a failed lookup is published as itself, and `ApproverNotFound` means only
+  an approver that matches nothing, in the three policy cmdlets and the three apply handlers alike.
+  They tell the three apart by the internal ids `PrincipalUnresolved` and `ApproverUnresolved`,
+  which no cmdlet or handler publishes.
   `Why: docs/development/rationale.md#approver-lookup`
   `tests/Unit/Public/AmbiguousName.Guard.Tests.ps1` runs every call site on its hand-kept
   `$script:GuardCases` list with an ambiguous name and with a 403 -- the approver lookups of

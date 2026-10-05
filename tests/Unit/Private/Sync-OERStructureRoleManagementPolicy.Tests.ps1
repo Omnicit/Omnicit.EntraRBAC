@@ -363,7 +363,13 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                 Mock Get-OERRoleManagementPolicy { [PSCustomObject]@{ AllowPermanentEligibility = $false; ActivationMaxHours = 8; RequireApproval = $false; Approvers = @(); Scope = '/subscriptions/sub-1'; RoleName = 'Owner' } }
                 Mock Set-OERRoleManagementPolicy {}
                 Mock Initialize-OERAuth {}
-                Mock Resolve-OERPrincipal { throw "User 'nobody@example.com' was not found." }
+                # The record the real Resolve-OERPrincipal throws for a value that matches nothing (never
+                # reached here: requireApproval is false, so no approver is resolved at all).
+                Mock Resolve-OERPrincipal {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("User 'nobody@example.com' was not found."), 'PrincipalUnresolved',
+                        [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'nobody@example.com')
+                }
                 $Item = [PSCustomObject]@{
                     scope = 'subscription:Prod'; role = 'Owner'
                     requireApproval = $false
@@ -503,6 +509,8 @@ Describe 'Sync-OERStructureRoleManagementPolicy' {
                 $null = @(Invoke-SyncRmpViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
                 # Reached: the handler published the record as itself.
                 @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Invoke-SyncRmpViaCaller' }).Count | Should -Be 1
+                # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+                # before the filter is evaluated.
                 Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
                     $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
                     $Record.Exception.Message -like '*Insufficient privileges*'

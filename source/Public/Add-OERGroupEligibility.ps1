@@ -285,6 +285,10 @@ function Add-OERGroupEligibility {
         }
         $Body = New-OERGroupEligibilityBody @BodyParams
 
+        # The one place the advice for a policy this invocation left open is written: the two
+        # messages below (PolicyOpenedButGrantFailed and EligibilityRequestFailed) both give it.
+        $PolicyStillOpenAdvice = "The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry."
+
         if ($Proceed) {
             try {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri (Get-OERPimGroupsGraphPath -Path 'identityGovernance/privilegedAccess/group/eligibilityScheduleRequests') -Body $Body
@@ -295,7 +299,7 @@ function Add-OERGroupEligibility {
                     # The grant failed AFTER this invocation weakened the governing policy. There is
                     # no public inverse for the surgical single-rule open, so name the policy that is
                     # left open instead of attempting a rollback this module cannot perform correctly.
-                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry.")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
+                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. $PolicyStillOpenAdvice")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
                 }
                 return
             }
@@ -319,7 +323,7 @@ function Add-OERGroupEligibility {
                 if ($PolicyOpened) {
                     # The same advice PolicyOpenedButGrantFailed gives: this invocation weakened the
                     # policy, nothing was granted, and there is no public inverse to roll it back.
-                    $FailedMessage += " PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility before the request was sent. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry."
+                    $FailedMessage += " PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility before the request was sent. $PolicyStillOpenAdvice"
                 }
                 Write-CmdletError -Message ([System.Exception]::new($FailedMessage)) `
                     -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $GroupId -Cmdlet $PSCmdlet

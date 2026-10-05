@@ -5077,7 +5077,12 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
             $Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'InvalidPolicyInput,*'
             $Failed[0].Error.CategoryInfo.Category | Should -Be 'InvalidArgument'
             $Failed[0].Error.TargetObject | Should -Be 'SpecificDirectoryServicePrincipals'
-            @($Run.Published | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidPolicyInput,*' }).Count | Should -BeGreaterThan 0
+            # Exactly two records are published (measured, the same in all four cases): the builder's
+            # own non-terminating InvalidPolicyInput record, written under the handler's -ErrorAction
+            # Stop and caught, and the handler's re-publication of that error through the caller (its
+            # id carries the caller's command name, not the builder's).
+            @($Run.Published | Where-Object { $_.FullyQualifiedErrorId -like 'InvalidPolicyInput,*' }).Count | Should -Be 2
+            @($Run.Published | ForEach-Object { $_.FullyQualifiedErrorId }) | Should -Be @('InvalidPolicyInput,New-OERAccessPackageRequestorScope', 'InvalidPolicyInput,Invoke-SyncApViaCaller')
             # Refused before the diff and ShouldProcess: no Unchanged, Skipped, Updated or Created row for it.
             @($Run.Rows | Where-Object { $_.Detail -like "*assignmentPolicy 'Agents'*" -and $_.Action -ne 'Failed' }).Count | Should -Be 0
             Should -Invoke -ModuleName $script:moduleName Set-OERAccessPackageAssignmentPolicy -Times 0

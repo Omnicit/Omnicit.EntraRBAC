@@ -16,10 +16,11 @@ function ConvertTo-OERAssignmentPolicy {
     user/group ids; connected organization and service principal targets are not projected, and an
     allowedTargetScope with no friendly form -- unknownFutureValue, or a value newer than this
     module -- is passed through unchanged), the requestor settings (self-service and on-behalf
-    toggles plus manager level), the approval toggles, the full per-stage approver sets (manager, users, groups, internal/external
-    sponsors, escalation approvers, escalation days, approver-justification flag and approver-information
-    visibility), the expiration (days, hours, or a fixed date-time), and the notification toggle. All
-    GUID lists are lowercased and sorted so a downstream set comparison is order- and case-insensitive.
+    toggles plus manager level), the approval toggles, the full per-stage approver sets (manager,
+    users, groups, internal/external sponsors, escalation approvers, escalation days,
+    approver-justification flag and approver-information visibility), the expiration (days, hours, or
+    a fixed date-time), and the notification toggle. All GUID lists are lowercased and sorted so a
+    downstream set comparison is order- and case-insensitive.
 
     DurationInDays is parsed from an afterDuration expiration's ISO 8601 duration when it is a whole-day
     multiple, otherwise DurationInHours is set. The access package id is read from the expanded

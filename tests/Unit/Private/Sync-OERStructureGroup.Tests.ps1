@@ -2805,6 +2805,8 @@ Describe 'Sync-OERStructureGroup' {
                 $null = @(Invoke-SyncGroupViaCaller -Item (New-BL14Item -Side 'users' -Value 'person9@example.com') -ErrorAction SilentlyContinue -ErrorVariable Err)
                 # Reached: the handler published the record as itself.
                 @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'Authorization_RequestDenied,Invoke-SyncGroupViaCaller' }).Count | Should -Be 1
+                # A prefix match: $Caller.WriteError appends ',<command>' to this same record, in place,
+                # before the filter is evaluated.
                 Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
                     $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
                     $Record.Exception.Message -like '*Insufficient privileges*'
@@ -4707,8 +4709,9 @@ Describe 'Sync-OERStructureGroup' {
                 # and the cmdlet's own record -- and the handler's re-publication comes last. So a record
                 # the cmdlet writes for a Failed status could not stay out of a new group's run that ends
                 # Updated unless the handler tells the cmdlet the status is its own (Ruling R1). The
-                # records before these three (15 when measured) are the transport mock's throw crossing
-                # Pester's mock dispatch; their number follows the Pester version, so it is not pinned.
+                # records before these three (15 when measured) are, INFERRED and not measured, the
+                # transport mock's throw crossing Pester's mock dispatch; the count was measured, its
+                # cause was not, and it may follow the Pester version, so it is not pinned.
                 $Records = @($Err)
                 $Records[-1].FullyQualifiedErrorId | Should -BeExactly 'Authorization_RequestDenied,Invoke-SyncGroupViaCaller'
                 $Records[-2].FullyQualifiedErrorId | Should -BeExactly 'Authorization_RequestDenied,Add-OERGroupEligibility'
