@@ -123,6 +123,36 @@ BeforeAll {
     )
 
     # =====================================================================================
+    # TENANT DOMAINS -- four labels are allowed, and the list does not grow to make this gate green.
+    #
+    # Every tenant has an initial domain: a LABEL in front of .onmicrosoft.com, .onmicrosoft.us in
+    # the US Government clouds, or .onmschina.cn under 21Vianet. The label names exactly one
+    # tenant, so it identifies a customer as surely as the tenant id does, and it arrives in exactly
+    # the places this gate watches: sign-in output, user principal names, Graph request paths. None
+    # of the other rules here reads it. It is no GUID, and the email rule sees it only behind a
+    # literal '@' -- not as a bare domain, not URL-encoded in a request path, not escaped in a
+    # regular expression.
+    #
+    # So every line is NORMALIZED before it is matched: '%40' becomes '@' (a user principal name
+    # in a URL-encoded path) and '\.' becomes '.' (a domain written as a regular expression in a
+    # test). Those are the two forms the tests in this repository actually use, and without the
+    # normalization both would slip through. A bare mention of the suffix, with no label in front
+    # of it, names no tenant and never matches.
+    #
+    # Every entry below is a fictional or deliberately non-existent tenant. A real label is never
+    # added here to make this gate green: the fix is to replace it with one of these. The It named
+    # 'Should hold no stale entry in the tenant-domain allowlist' fails on an entry that has left
+    # the tree, the same way the public-constant register does, so the list shrinks when a use
+    # goes away instead of keeping a permission nobody reads.
+    # =====================================================================================
+    $script:DocHygieneTenantLabelAllowlist = @(
+        'contoso'                            # the documentation tenant, everywhere
+        'fabrikam'                           # the second documentation tenant, a switching example and a guest UPN fixture
+        'other'                              # a deliberately different tenant name in an auth test
+        'oer-sovereign-verify-doesnotexist'  # a deliberately non-existent tenant in a sovereign-cloud checklist
+    )
+
+    # =====================================================================================
     # ENUMERATE TRACKED FILES WITH `git ls-files`, NOT THE FILESYSTEM.
     #
     # Raw console output and unredacted working copies live beside the checklists as UNTRACKED
@@ -455,6 +485,95 @@ BeforeAll {
             CodeSpanCount = $CodeSpanCount
         }
     }
+
+    function Get-DocHygieneTenantDomainLabel {
+        <#
+            .SYNOPSIS
+                Returns the label of every tenant domain in Line, after normalization.
+
+            .DESCRIPTION
+                Before matching, '%40' is read as '@' and a backslash-escaped dot as a dot, so a
+                user principal name in a URL-encoded path and a domain written as a regular
+                expression are read the way a tenant would read them. The label is the run of
+                letters, digits and hyphens in front of one of the three suffixes, the commercial
+                and US Government onmicrosoft ones and the 21Vianet onmschina one. A bare suffix
+                with no label in front of it names no tenant and yields nothing.
+
+                The pattern cannot match across a line break, so Line may also be a whole file
+                joined with line feeds: a joined text with no label has none in any of its lines.
+        #>
+        [OutputType([string])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyString()]
+            [string]$Line
+        )
+
+        $Pattern = [regex]'(?i)(?<![A-Za-z0-9-])([A-Za-z0-9-]+)\.(?:onmicrosoft\.(?:com|us)|onmschina\.cn)(?![A-Za-z0-9-])'
+        $Normalized = $Line.Replace('%40', '@').Replace('\.', '.')
+
+        foreach ($Match in $Pattern.Matches($Normalized)) {
+            $Match.Groups[1].Value
+        }
+    }
+
+    function Get-DocHygieneTenantDomainUse {
+        <#
+            .SYNOPSIS
+                Returns a Location ('path:line') and a Label for every tenant domain in File.
+
+            .DESCRIPTION
+                Each file is first read as ONE string, and only a file holding at least one tenant
+                domain is read again line by line. That first pass is exact, not a heuristic -- see
+                Get-DocHygieneTenantDomainLabel -- and it spares a per-line call on the many
+                thousands of lines in scope that carry no domain at all.
+
+                The Label is returned so a caller can test it against the allowlist. A caller that
+                reports a hit renders the Location only, never the Label: the label IS the
+                tenant's name.
+        #>
+        [OutputType([PSCustomObject])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [AllowEmptyCollection()]
+            [object[]]$File
+        )
+
+        foreach ($Entry in $File) {
+            if (-not @(Get-DocHygieneTenantDomainLabel -Line ([string]::Join("`n", [string[]]$Entry.Lines))).Count) {
+                continue
+            }
+
+            for ($Index = 0; $Index -lt $Entry.Lines.Count; $Index++) {
+                foreach ($Label in @(Get-DocHygieneTenantDomainLabel -Line $Entry.Lines[$Index])) {
+                    [PSCustomObject]@{
+                        Location = '{0}:{1}' -f $Entry.RelativePath, ($Index + 1)
+                        Label    = $Label
+                    }
+                }
+            }
+        }
+    }
+
+    function Test-DocHygieneTenantLabelAllowed {
+        <#
+            .SYNOPSIS
+                True when Label is one of the fictional tenants on the allowlist, ignoring case.
+        #>
+        [OutputType([bool])]
+        param (
+            [Parameter(Mandatory = $true)]
+            [string]$Label
+        )
+
+        foreach ($Allowed in $script:DocHygieneTenantLabelAllowlist) {
+            if ([string]::Equals($Label, $Allowed, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $true
+            }
+        }
+
+        return $false
+    }
 }
 
 Describe 'Documentation hygiene' -Tags 'DocHygiene' {
@@ -675,6 +794,94 @@ Describe 'Documentation hygiene' -Tags 'DocHygiene' {
 
         @($Hits).Count |
             Should -Be 0 -Because ('every email address in a tracked file under docs/, specs/, source/ or tests/ must be personN@example.com, or an address on contoso.com (see docs/live-verification/README.md). Redact these locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
+    }
+
+    It 'Should carry no tenant domain outside the fixed allowlist in any tracked file in scope' {
+        if ($script:DocHygieneSkipReason) {
+            Set-ItResult -Skipped -Because $script:DocHygieneSkipReason
+            return
+        }
+
+        $script:DocHygieneFiles.Count |
+            Should -BeGreaterThan 0 -Because 'this gate must measure at least one tracked file; zero files means the enumeration failed and the check ran on nothing'
+
+        # Like the email rule, this one does not split by scope: a tenant's initial domain names the
+        # same customer in a checklist, in help text and in a test fixture.
+        @($script:DocHygieneFiles | Where-Object { $_.IsCode }).Count |
+            Should -BeGreaterThan 0 -Because 'the code trees must be measured by this check too; zero means the scope stopped reaching source/ and tests/'
+
+        # Known answer. A pattern edited into one that never matches, a normalization step dropped,
+        # or an allowlist test that lets everything through all leave this check green on every
+        # file, so a fixed sample proves it still finds what it is for. Lines 3, 4, 5 and 7 are the
+        # hits: a plain address, a URL-encoded one, the regular-expression form and the 21Vianet
+        # suffix. Line 2 is allowed only once its '%40' is read as '@', and line 6 is the bare
+        # suffix with no label in front of it.
+        #
+        # Every sample is built by CONCATENATION. This file is in scope too, and a sample written
+        # out whole would put a tenant domain on one of its own lines.
+        $Suffix = '.onmicrosoft' + '.com'
+        $Sample = @(
+            ('user@contoso' + $Suffix)
+            ('person1_example.com%23EXT%23%40fabrikam' + $Suffix)
+            ('admin@leak' + $Suffix)
+            ('x%40leak' + $Suffix)
+            ('leak' + '\.onmicrosoft' + '\.com')
+            ('its ' + 'onmicrosoft' + '.com name')
+            ('tenant.' + 'onmschina' + '.cn')
+            ('contoso.onmicrosoft' + '.us')
+        )
+
+        $SampleHits = @(
+            Get-DocHygieneTenantDomainUse -File @([PSCustomObject]@{ RelativePath = 'sample'; Lines = $Sample }) |
+                Where-Object { -not (Test-DocHygieneTenantLabelAllowed -Label $_.Label) } |
+                ForEach-Object { $_.Location }
+        )
+
+        ($SampleHits -join ', ') |
+            Should -Be 'sample:3, sample:4, sample:5, sample:7' -Because 'the known-answer sample must yield exactly its four tenant domains outside the allowlist; anything else means the scan stopped finding a form, stopped normalizing one, or stopped consulting the allowlist'
+
+        $Hits = @(
+            Get-DocHygieneTenantDomainUse -File $script:DocHygieneFiles |
+                Where-Object { -not (Test-DocHygieneTenantLabelAllowed -Label $_.Label) } |
+                ForEach-Object { $_.Location }
+        )
+
+        # Locations only, like every other rule here: the label IS the tenant's name.
+        @($Hits).Count |
+            Should -Be 0 -Because ('no tracked file under docs/, specs/, source/ or tests/ may carry a tenant domain (.onmicrosoft.com, .onmicrosoft.us or .onmschina.cn) whose label is outside the fixed allowlist of fictional tenants. Replace the label with contoso; do not add it to the allowlist. Locations, values deliberately not shown: {0}' -f ($Hits -join ', '))
+    }
+
+    It 'Should hold no stale entry in the tenant-domain allowlist' {
+        if ($script:DocHygieneSkipReason) {
+            Set-ItResult -Skipped -Because $script:DocHygieneSkipReason
+            return
+        }
+
+        $script:DocHygieneFiles.Count |
+            Should -BeGreaterThan 0 -Because 'this gate must measure at least one tracked file; zero files means the enumeration failed and the check ran on nothing'
+
+        # The same reasoning as the public-constant register: an allowlisted label that no file uses
+        # any more is a standing permission nobody reads, and the next label that wants one gets
+        # written next to it rather than questioned. An unused entry is a FAILURE.
+        #
+        # THIS FILE IS EXCLUDED FROM THE EVIDENCE for the same reason too. The allowlist is
+        # declared here, and a comment or a sample written out whole in this file would make an
+        # entry vouch for itself. Only a use somewhere else in the tree keeps an entry alive.
+        $SelfPath = 'tests/QA/dochygiene.tests.ps1'
+
+        @($script:DocHygieneFiles | Where-Object { $_.RelativePath -eq $SelfPath }).Count |
+            Should -Be 1 -Because 'the exclusion below names this gate file by path; if the name stops matching, the exclusion silently does nothing and an allowlist entry could vouch for itself'
+
+        $Evidence = @($script:DocHygieneFiles | Where-Object { $_.RelativePath -ne $SelfPath })
+        $Seen = @(Get-DocHygieneTenantDomainUse -File $Evidence | ForEach-Object { $_.Label })
+
+        # -notcontains compares without regard to case, as the allowlist test itself does.
+        $Unused = @($script:DocHygieneTenantLabelAllowlist | Where-Object { $Seen -notcontains $_ })
+
+        # Naming an unused entry is safe here: it is one of the fictional labels this file already
+        # declares, not a value found in the tree.
+        $Unused | Should -BeNullOrEmpty -Because (
+            'every label on the tenant-domain allowlist must still be used by a tracked file in scope other than this one; remove the entry rather than leaving a standing permission nobody reads. Unused: {0}' -f ($Unused -join '; '))
     }
 
     It 'Should carry no credential in any tracked file in scope' {
