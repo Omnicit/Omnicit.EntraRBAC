@@ -34,8 +34,9 @@ function Sync-OERStructureAdministrativeUnit {
     3. Reconcile declared scopedRoles (add missing by RoleName+PrincipalId, or by role id+PrincipalId
        when the declared role is a GUID -- see the role id paragraph below; emit Extra or prune
        undeclared with -Prune, removing by ScopedRoleMembershipId, or report them Skipped while a
-       declared scoped role's principal cannot be resolved -- see "Withheld prune" below). Scoped roles are unaffected by dynamic membership --
-       only member management is disabled on a dynamic unit -- so this step always runs.
+       declared scoped role's principal cannot be resolved -- see "Withheld prune" below). Scoped roles
+       are unaffected by dynamic membership -- only member management is disabled on a dynamic unit --
+       so this step always runs.
 
     An explicit JSON null on any document property counts as NOT DECLARED (the live value is left
     untouched), the same rule the offline validator and the other apply diffs apply: "dynamic": null must
@@ -90,7 +91,7 @@ function Sync-OERStructureAdministrativeUnit {
     again nor removed when the live membership carries its object id, or the other way round. A GUID or
     a live RoleId the map does not name matches on the id alone. The map is read for this only when the
     document declares a role by GUID and the unit has a live scoped role whose name was read; when that
-    read fails, the item is Failed and no scoped role is added or removed.
+    read fails, the item is Failed before any change is made (see below).
 
     A failed read of the live unit -- its properties, members or scoped roles -- reports Failed with
     the underlying ErrorRecord and reconciles nothing further for that item, so a Created row is
@@ -98,10 +99,12 @@ function Sync-OERStructureAdministrativeUnit {
     normally. The scoped roles read includes the directory role list that names each live role (a
     declared role is matched by name): when the unit has scoped roles and that list cannot be read, the
     item is Failed too and no scoped role is added or removed, with or without -Prune. The second read
-    of that list, to match a role declared by role id (see above), follows the same rule for scoped
-    roles; it comes after the member step, which has run by then. The one exception is the member
-    re-read after a membership-type conversion, which deliberately falls back to the pre-change member
-    list with a warning rather than abandoning an item whose PATCH already succeeded.
+    of that list, to match a role declared by role id (see above), is part of reading the live unit
+    and follows the same rule: it is made straight after the read of the live unit, so when it fails
+    the item is Failed, with an AdministrativeUnitScopedRoleReadFailed error, before any property,
+    member or scoped role change. The one exception is the member re-read after a membership-type
+    conversion, which deliberately falls back to the pre-change member list with a warning rather than
+    abandoning an item whose PATCH already succeeded.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the unit itself does not exist and
@@ -225,6 +228,11 @@ function Sync-OERStructureAdministrativeUnit {
             return
         }
 
+        # The directory role name map step 3 matches a GUID-declared role through (decision A16). Only
+        # an existing unit can read it, together with the live unit below; a unit this run creates has
+        # no live scoped role, so its map stays $null and a GUID matches on the id alone.
+        $RoleNameMap = $null
+
         # -- Create or update the AU object -------------------------------------------------
         if (-not $Auid) {
             # AU does not exist -- create it.
@@ -340,6 +348,38 @@ function Sync-OERStructureAdministrativeUnit {
             }
             $CurrentMembers    = if ($Cur.Members)     { @($Cur.Members)     } else { @() }
             $CurrentScopedRoles = if ($Cur.ScopedRoles) { @($Cur.ScopedRoles) } else { @() }
+
+            # Decision A16: a role declared by GUID is matched through the directory role name map too
+            # (Test-SameScopedRole, step 3). The map is read once per unit, and only when it CAN change a
+            # match: the document declares at least one scoped role by GUID, and the unit holds at least
+            # one live scoped role whose name the reader gave (an unnamed one is not in the map, so it
+            # matches on its id alone). Those two conditions are necessary, not sufficient: the map may
+            # still change no match. The read is part of reading the live unit, so it is made here,
+            # before any property, member or scopedRole change. A map that cannot be read is not an
+            # empty map: the item is Failed before any change, exactly like a failed read of the live
+            # unit above, under the error id Get-OERAdministrativeUnit publishes for an unread scoped
+            # role collection.
+            $DeclaresGuidRole = (Test-DeclHas -Node $Item -Name 'scopedRoles') -and
+                (@(@($Item.scopedRoles) | Where-Object { $null -ne $_ -and (Test-OERGuid -Value ([string]$_.role)) }).Count -gt 0)
+            $HasNamedLiveRole = @($CurrentScopedRoles | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.RoleName) }).Count -gt 0
+            if ($DeclaresGuidRole -and $HasNamedLiveRole) {
+                try {
+                    $RoleNameMap = Get-OERDirectoryRoleNameMap -ThrowOnFailure
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    $MapReadError = [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new("Could not read scoped roles for administrative unit ${Auid}: $($PSItem.Exception.Message). No property, member or scopedRole change was made.", $PSItem.Exception),
+                        'AdministrativeUnitScopedRoleReadFailed',
+                        [System.Management.Automation.ErrorCategory]::ReadError,
+                        $Auid
+                    )
+                    $Caller.WriteError($MapReadError)
+                    ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Failed' `
+                        -Detail "failed to read the directory roles that match a scopedRole declared by role id: $($PSItem.Exception.Message); no property, member or scopedRole change was made" `
+                        -ErrorRecord $MapReadError
+                    return
+                }
+            }
 
             $CurIsDynamic = ([string]$Cur.MembershipType -eq 'Dynamic')
             $CurIsHidden  = ([string]$Cur.Visibility -eq 'HiddenMembership')
@@ -582,29 +622,9 @@ function Sync-OERStructureAdministrativeUnit {
             })
         $ClaimedUnnamedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
-        # Decision A16: a role declared by GUID is matched through the directory role name map too
-        # (Test-SameScopedRole). The map is read once per unit, and only when it can change a match: the
-        # document declares at least one scoped role by GUID, and the unit holds at least one live scoped
-        # role whose name the reader gave (an unnamed one is not in the map, so it matches on its id
-        # alone). A map that cannot be read is not an empty map: the item is Failed and no scoped role is
-        # added or removed, the rule the read of the live unit above follows.
-        $RoleNameMap = $null
-        $DeclaresGuidRole = (Test-DeclHas -Node $Item -Name 'scopedRoles') -and
-            (@(@($Item.scopedRoles) | Where-Object { $null -ne $_ -and (Test-OERGuid -Value ([string]$_.role)) }).Count -gt 0)
-        $HasNamedLiveRole = @($CurrentScopedRoles | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_.RoleName) }).Count -gt 0
-        if ($DeclaresGuidRole -and $HasNamedLiveRole) {
-            try {
-                $RoleNameMap = Get-OERDirectoryRoleNameMap -ThrowOnFailure
-            } catch {
-                Remove-OERErrorRecord -Record $PSItem
-                $Caller.WriteError($PSItem)
-                ConvertTo-OERStructureResult -Section 'administrativeUnits' -Item $Name -Action 'Failed' `
-                    -Detail "failed to read the directory roles that match a scopedRole declared by role id: $($PSItem.Exception.Message); no scopedRole was added or removed" `
-                    -ErrorRecord $PSItem
-                return
-            }
-        }
-
+        # $RoleNameMap, the directory role name map a GUID-declared role is matched through (decision
+        # A16), was read with the live unit above, before any change; it is $null when it could not
+        # change a match, and a GUID then matches on the id alone.
         if (Test-DeclHas -Node $Item -Name 'scopedRoles') {
             foreach ($SrEntry in @($Item.scopedRoles)) {
                 $SrRole = $SrEntry.role
