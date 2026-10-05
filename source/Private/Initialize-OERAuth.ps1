@@ -65,7 +65,9 @@ function Initialize-OERAuth {
     SignInRefused, except that the Graph wrapper's session gate, which comes first, still reports a
     changed session as GraphSessionChanged. The latch is keyed on that command's invocation, so a
     command it calls, or a pipeline neighbour, that signs in successfully does not release it. It
-    holds no token and no tenant value.
+    stores only the boolean $true; its keys are the commands' own invocation objects, held weakly
+    (the table keeps no command alive) and used only for their identity, and the decision never
+    reads a key.
 
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
@@ -228,11 +230,14 @@ function Initialize-OERAuth {
     # Invoke-OERArmRequest -- that is the transport's nested function (Invoke-GraphSingle,
     # Invoke-ArmCallWithRefresh): a refusal there refuses only that retry, and the command's next
     # request is a new transport call (step 4b round 1, Ruling R5; docs/development/rationale.md,
-    # auth-state).
+    # auth-state). Everywhere else this function is called directly in the command's own function,
+    # never from a nested function or a script block, which would latch a frame that ends at once;
+    # gate 10 of tests/QA/sourcehygiene.tests.ps1 holds every call site to that.
     #
-    # The table ($script:_OERSignInLatch, a ConditionalWeakTable) holds its keys weakly and never keeps
-    # a finished command alive. Every value in it is the boolean $true: it holds no token and no tenant
-    # value, and this function adds no other module variable for it.
+    # The table ($script:_OERSignInLatch, a ConditionalWeakTable) stores only the boolean $true. Its
+    # keys are the commands' own invocation objects -- each carries its command's bound parameters, a
+    # tenant among them -- held weakly, so the table keeps no command alive, and used only for their
+    # identity: the decision never reads a key. This function adds no other module variable for it.
     $SignInCaller = Lock-OERSignIn
 
     # Public first-party client 'Microsoft Graph Command Line Tools'. It is preauthorized for

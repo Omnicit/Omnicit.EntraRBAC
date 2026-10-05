@@ -3787,8 +3787,11 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
         }
     }
 
-    Context 'holds no token and no tenant' {
-        It 'stores only the boolean $true, and adds no module variable but _OERSignInLatch' {
+    Context 'what the latch table stores' {
+        # The keys are the commands' own invocation objects, which carry their bound parameters (a
+        # tenant among them); what this checks is that every value is $true, every key is an
+        # InvocationInfo, and no other module variable is added -- not that a key holds nothing.
+        It 'stores the boolean $true as every value, keys every entry on an InvocationInfo, and adds no module variable but _OERSignInLatch' {
             Mock -ModuleName $script:moduleName Get-AzToken {
                 [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '22222222-2222-2222-2222-222222222222' }
             }

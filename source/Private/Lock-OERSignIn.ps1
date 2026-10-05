@@ -17,8 +17,10 @@ function Lock-OERSignIn {
     The latch is keyed on the calling command's invocation rather than held as one module-wide value,
     since a nested command or a pipeline neighbour signs in on its own: its success must release only
     its own entry, never the refused command's. The table ($script:_OERSignInLatch, created here on
-    first use) is a ConditionalWeakTable, so it holds its keys weakly and never keeps a finished
-    command alive, and every value in it is the boolean $true. It holds no token and no tenant value.
+    first use) is a ConditionalWeakTable and stores only the boolean $true. Its keys are the commands'
+    own invocation objects, held weakly, so the table keeps no command alive, and used only for their
+    identity: the decision is a lookup by reference and never reads a key, although each one carries
+    its command's bound parameters, a tenant among them.
 
     .EXAMPLE
     $SignInCaller = Lock-OERSignIn
@@ -32,7 +34,9 @@ function Lock-OERSignIn {
     # Frame 0 is this function and frame 1 is Initialize-OERAuth; the caller is the next frame that
     # carries an invocation. A frame's invocation is the very object $MyInvocation holds in that
     # command (begin, process and end alike), which is what Get-OERSignInRefusal looks up.
-    $Stack = @(Get-PSCallStack)
+    # Module-qualified, so a function named Get-PSCallStack defined in the session cannot turn the
+    # latch off.
+    $Stack = @(Microsoft.PowerShell.Utility\Get-PSCallStack)
     $Caller = $null
     for ($Index = 2; $Index -lt $Stack.Count; $Index++) {
         if ($null -ne $Stack[$Index].InvocationInfo) {

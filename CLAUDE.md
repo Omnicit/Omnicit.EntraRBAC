@@ -536,7 +536,10 @@ boolean: a nested cmdlet's sign-in, or a pipeline neighbour's, releases only its
 finished command is on no call stack, so the next command, or `Connect-OER`, sends again. An ARM call
 of a command whose entry was not refused still goes out with the module's own token: ARM has no
 session gate. Never write that the cmdlet stops -- it carries on and sends nothing -- and never call
-`Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`.
+`Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`. Call `Initialize-OERAuth`
+directly in the command's own block, never from a nested function, `& { }` or any other scriptblock:
+the latch is keyed on the frame that calls it, and such a frame ends at once (the transports' own
+refreshes, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the one exception).
 `Why: docs/development/rationale.md#auth-state`
 
 | Parameter set | Key parameters | Use case |
@@ -996,9 +999,12 @@ bug.
   `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try
   preceded, in the very
   block that holds it, by its session gate (Graph only) and its latch gate, each a throw followed by
-  a return, with no `Initialize-OERAuth` or `Start-Sleep` between them and any request, and the
+  a return, with no `Initialize-OERAuth` or `Start-Sleep` between them and any request, the ARM
+  bearer token (`.ArmToken` or `['ArmToken']`) materialized only after the latch gate, and the
   transport statements counted exactly (three Graph, one ARM) so a new send path cannot escape the
-  scan.
+  scan; and every `Initialize-OERAuth` call standing directly in its file's own function (in the two
+  wrappers, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`) and never in a nested function
+  or a scriptblock inside it, since the sign-in latch is keyed on the frame that calls it.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
@@ -1100,7 +1106,10 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
      node, joins the named file list in `tests/QA/sourcehygiene.tests.ps1` gate 8 -- the glob that
      gate scans alone does not make a drop visible; the file must be named.
 4. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
-   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM.
+   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM. Call it
+   directly in the command's own block, never from a nested function, `& { }` or any other
+   scriptblock -- the sign-in latch is keyed on the frame that calls it, and gate 10 of
+   `tests/QA/sourcehygiene.tests.ps1` fails a call that stands anywhere else.
 5. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
    directly.
 6. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`

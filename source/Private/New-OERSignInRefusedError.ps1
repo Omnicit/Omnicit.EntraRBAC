@@ -13,8 +13,8 @@ function New-OERSignInRefusedError {
     cmdlet, for a sign-in refused at its entry; a private helper that signs in itself
     (Resolve-OERInventoryScopeTree, Resolve-OERReviewerScope, Resolve-OERTargetList); or the
     transport's nested function (Invoke-GraphSingle, Invoke-ArmCallWithRefresh), for one refused during
-    that transport's own refresh. The message names no tenant, no account and no token: the sign-in
-    latch holds none of them.
+    that transport's own refresh. The message names no tenant, no account and no token: it is fixed
+    text, and the command's name is the only value the record carries.
 
     .PARAMETER Command
     The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it ('a script

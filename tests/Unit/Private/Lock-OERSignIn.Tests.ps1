@@ -67,6 +67,32 @@ Describe 'Lock-OERSignIn' {
         $R | Should -BeExactly ([System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]).FullName
     }
 
+    It 'latches the caller while a function named Get-PSCallStack that returns nothing is defined' {
+        # Lock-OERSignIn calls Microsoft.PowerShell.Utility\Get-PSCallStack. An unqualified call would
+        # resolve to this global function, which outranks the cmdlet for module code, and find no
+        # caller to latch.
+        function global:Get-PSCallStack { }
+        try {
+            $R = InModuleScope Omnicit.EntraRBAC {
+                function Initialize-StandIn { $null = Lock-OERSignIn }
+                function Invoke-SignInCaller {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-StandIn
+                    $Value = $null
+                    $script:_OERSignInLatch.TryGetValue($MyInvocation, [ref]$Value)
+                }
+                Invoke-SignInCaller
+            }
+        } finally {
+            # Unqualified on purpose: a scope-qualified function: path removes nothing (see
+            # OERTransportTripwire.ps1), and from here the nearest definition is the global one.
+            Remove-Item -Path 'function:Get-PSCallStack' -ErrorAction SilentlyContinue
+        }
+        Get-Command -Name Get-PSCallStack -CommandType Function -ErrorAction Ignore | Should -BeNullOrEmpty
+        $R | Should -BeTrue
+    }
+
     It 'keeps the table and the latch of an outer command when a nested command latches its own' {
         # The nested and pipeline cases A19 rests on: a second sign-in must never replace the table,
         # or every command latched before it would be released.

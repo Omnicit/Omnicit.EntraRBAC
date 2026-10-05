@@ -19,6 +19,40 @@ Describe 'Get-OERSignInRefusal' {
         }
         $R.Count | Should -Be 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 0
+
+        # Not vacuous: the function calls Microsoft.PowerShell.Utility\Get-PSCallStack, and the same
+        # mock does see that module-qualified call once a table exists. Without this the zero above
+        # would also pass if the mock could not intercept the call at all.
+        $null = InModuleScope Omnicit.EntraRBAC {
+            $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+            @(Get-OERSignInRefusal)
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 1 -Exactly
+    }
+
+    It 'still finds the held frame while a function named Get-PSCallStack that returns nothing is defined' {
+        # Both latch helpers call Microsoft.PowerShell.Utility\Get-PSCallStack. An unqualified call would
+        # resolve to this global function, which outranks the cmdlet for module code: the latch would
+        # then hold nothing, or this function would walk an empty stack and find nothing.
+        function global:Get-PSCallStack { }
+        try {
+            $R = InModuleScope Omnicit.EntraRBAC {
+                function Initialize-StandIn { $null = Lock-OERSignIn }
+                function Invoke-RefusedCommand {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-StandIn
+                    Get-OERSignInRefusal
+                }
+                Invoke-RefusedCommand
+            }
+        } finally {
+            # Unqualified on purpose: a scope-qualified function: path removes nothing (see
+            # OERTransportTripwire.ps1), and from here the nearest definition is the global one.
+            Remove-Item -Path 'function:Get-PSCallStack' -ErrorAction SilentlyContinue
+        }
+        Get-Command -Name Get-PSCallStack -CommandType Function -ErrorAction Ignore | Should -BeNullOrEmpty
+        $R | Should -BeExactly 'Invoke-RefusedCommand'
     }
 
     It 'returns the name of the refused command when that command is the caller' {

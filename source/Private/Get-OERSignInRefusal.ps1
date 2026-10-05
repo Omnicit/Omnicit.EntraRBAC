@@ -37,7 +37,9 @@ function Get-OERSignInRefusal {
         return
     }
     $Held = $null
-    foreach ($Frame in Get-PSCallStack) {
+    # Module-qualified, so a function named Get-PSCallStack defined in the session cannot turn the
+    # latch off.
+    foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
         $Inv = $Frame.InvocationInfo
         if ($null -eq $Inv) {
             continue

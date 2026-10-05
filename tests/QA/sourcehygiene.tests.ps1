@@ -189,6 +189,9 @@ BeforeAll {
         $CommandNames = [System.Collections.Generic.List[string]]::new()
         $StringValues = [System.Collections.Generic.List[string]]::new()
         $Catches = [System.Collections.Generic.List[object]]::new()
+        # The Initialize-OERAuth call nodes themselves, kept for the Transport gate hygiene Describe's
+        # sign-in call-site rule (Pass 9), which needs each call's place in the tree, not only its name.
+        $SignInCalls = [System.Collections.Generic.List[object]]::new()
         $CallsTransport = $false
         $IsDurationEncoder = (($File.RelativePath -replace '/', '\') -eq $script:durationFormatEncoderPath)
 
@@ -199,6 +202,9 @@ BeforeAll {
                     $CommandNames.Add($CommandName)
                     if (-not $CallsTransport -and $script:transportCommands -contains $CommandName) {
                         $CallsTransport = $true
+                    }
+                    if (($CommandName -replace '^.*\\', '') -eq 'Initialize-OERAuth') {
+                        $SignInCalls.Add($Node)
                     }
                 }
             }
@@ -240,6 +246,8 @@ BeforeAll {
                 Catches        = $Catches
                 CallsTransport = $CallsTransport
                 Edges          = $null
+                Definition     = $Definition
+                SignInCalls    = $SignInCalls
             })
     }
 
@@ -1362,12 +1370,34 @@ BeforeAll {
         reddens the gate, so a new send path is a deliberate edit of the expected number; one that
         is ungated reddens the gate on its own.
 
+        THE ARM BEARER MARKERS. Invoke-ArmCall materializes the cached token with
+        `$Plain = ...ArmToken...Password`. Every `$Plain =` assignment (bar the `$Plain = $null`
+        that clears it), every `.ArmToken` member read and every `['ArmToken']` or `["ArmToken"]`
+        index read in that function is a marker, and each must start after the latch gate ends.
+
+        WHERE A SIGN-IN IS CALLED (final review of round 1, F1). Lock-OERSignIn latches the frame
+        that called Initialize-OERAuth -- the command's own frame only while the call stands in the
+        command's own function. Measured: a `& { }` script block carries an invocation of its own,
+        so a call moved into one, or into a nested function, latches a frame that ends at once and
+        leaves the command free to send after a refused sign-in, with every unit test still green
+        (they mock Initialize-OERAuth). So every Initialize-OERAuth call under source/ must have
+        the file's own top-level function as its nearest enclosing function -- in the Graph
+        wrapper Invoke-GraphSingle, and in the ARM wrapper Invoke-ArmCallWithRefresh, the two
+        transport refreshes -- and no script block expression may stand between the call and that
+        function. A foreach, if or try statement block is part of the function; a `{ ... }` passed
+        to &, ., ForEach-Object, Where-Object, Invoke-Command or anything else is not. That is
+        stricter than the engine (a ForEach-Object script block inside a function was measured to
+        carry the function's own invocation) on purpose: one structural rule, no list of which
+        script blocks happen to be safe. Comments and help text are not code and the AST never
+        sees them, so Initialize-OERAuth.ps1's own .EXAMPLE lines are not call sites.
+
         KNOWN LIMITS, stated rather than implied. The gate proves the SHAPE of a gate, not that its
         condition can be true: that is the unit suites' job. A command name built at run time
         (a call through a variable) is invisible to GetCommandName(), the same limit the Az context
         gate records. The ownership scan resolves a module-qualified name and the three
         Invoke-WebRequest aliases and nothing else; Invoke-RestMethod is not scanned, since the
-        module calls it nowhere.
+        module calls it nowhere. A bearer read spelled any other way (`.Item('ArmToken')`, a key
+        held in a variable) is not a marker.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -1630,6 +1660,102 @@ BeforeAll {
         return $Report
     }
 
+    # The places the ARM wrapper's function materializes the bearer token: the `$Plain = ...` assignment
+    # (not the `$Plain = $null` in the finally block, which is the clearing), every `.ArmToken` member
+    # read and every `['ArmToken']` / `["ArmToken"]` index read. The assignment and both read forms are
+    # markers, so neither renaming the variable nor indexing the state instead of dotting into it can
+    # slip a materialization in ahead of the gate.
+    function Find-OERArmBearerMarker {
+        param($Function)
+
+        $Function.FindAll({
+                $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $args[0].Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $args[0].Left.VariablePath.UserPath -eq 'Plain' -and
+                $args[0].Right.Extent.Text.Trim() -ne '$null'
+            }, $true)
+        $Function.FindAll({
+                $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                -not $args[0].Static -and
+                $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $args[0].Member.Value -eq 'ArmToken'
+            }, $true)
+        $Function.FindAll({
+                $args[0] -is [System.Management.Automation.Language.IndexExpressionAst] -and
+                $args[0].Index -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                $args[0].Index.Value -eq 'ArmToken'
+            }, $true)
+    }
+
+    # Every bearer marker of a gate report's owner function that starts before the end of the latch
+    # gate of one of its statements: a gate placed after the materialization comes too late.
+    function Get-OERArmBearerViolation {
+        param($Report, [string]$FileLabel)
+
+        if ($null -eq $Report.Owner) { return }
+        foreach ($Marker in @(Find-OERArmBearerMarker -Function $Report.Owner)) {
+            foreach ($ArmStatement in $Report.Statements) {
+                if ($null -eq $ArmStatement.LatchGate) { continue }
+                if ($Marker.Extent.StartOffset -lt $ArmStatement.LatchGate.Extent.EndOffset) {
+                    '{0}:{1} -- the bearer token is materialized ahead of the latch gate: {2}' -f
+                    $FileLabel, $Marker.Extent.StartLineNumber, $Marker.Extent.Text.Trim()
+                }
+            }
+        }
+    }
+
+    # Where each Initialize-OERAuth call stands (see WHERE A SIGN-IN IS CALLED in the Pass 9 comment).
+    # The nearest enclosing function of every call must be the file's own top-level function -- or,
+    # in the two wrapper files, the nested function named here -- with no script block expression
+    # between the call and it. Returns how many calls were judged, the name of each call's nearest
+    # enclosing function, and one line per call that breaks the rule.
+    $script:signInCallSiteFunction = @{
+        'source\Private\Invoke-OERGraphRequest.ps1' = 'Invoke-GraphSingle'
+        'source\Private\Invoke-OERArmRequest.ps1'   = 'Invoke-ArmCallWithRefresh'
+    }
+    function Get-OERSignInCallSiteReport {
+        param($Calls, $TopFunction, [string]$RelativePath)
+
+        $Report = [PSCustomObject]@{
+            Sites      = 0
+            Enclosing  = [System.Collections.Generic.List[string]]::new()
+            Violations = [System.Collections.Generic.List[string]]::new()
+        }
+        $Expected = $script:signInCallSiteFunction[$RelativePath]
+        foreach ($Call in @($Calls)) {
+            $Report.Sites++
+            $Reason = $null
+            $Function = $null
+            for ($Node = $Call.Parent; $null -ne $Node; $Node = $Node.Parent) {
+                if ($Node -is [System.Management.Automation.Language.ScriptBlockExpressionAst]) {
+                    $Reason = 'stands inside a script block ({ ... }), which runs in a frame of its own'
+                    break
+                }
+                if ($Node -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                    $Function = $Node
+                    break
+                }
+            }
+            if ($Function) { $Report.Enclosing.Add($Function.Name) }
+            if (-not $Reason) {
+                if ($null -eq $Function) {
+                    $Reason = 'stands in no function at all'
+                } elseif ($Expected) {
+                    if ($Function.Name -ne $Expected) {
+                        $Reason = 'stands in the function {0}, not in {1}' -f $Function.Name, $Expected
+                    }
+                } elseif (-not [System.Object]::ReferenceEquals($Function, $TopFunction)) {
+                    $Reason = 'stands in the nested function {0}, not in the file''s own function' -f $Function.Name
+                }
+            }
+            if ($Reason) {
+                $Report.Violations.Add(('{0}:{1} -- Initialize-OERAuth {2}: {3}' -f
+                        $RelativePath, $Call.Extent.StartLineNumber, $Reason, $Call.Extent.Text.Trim()))
+            }
+        }
+        return $Report
+    }
+
     # --- The two wrapper files, parsed from the text already read into $script:hygieneFiles. ---
     $script:transportGateParseFailures = @()
     $TransportAsts = @{}
@@ -1669,32 +1795,9 @@ BeforeAll {
             -FileLabel $script:transportGateArmPath -OwnerFunction 'Invoke-ArmCall' `
             -CallsPerStatement @{ 'Invoke-WebRequest' = 1 } -ExemptFunction '' -RequireSessionGate $false
 
-        # The bearer token is materialized by `$Plain = ...ArmToken...Password`; both the assignment
-        # and the ArmToken read are markers, so renaming the variable cannot slip a materialization
-        # in ahead of the gate. The `$Plain = $null` in the finally block is the clearing, not a marker.
         if ($null -ne $script:transportArmReport.Owner) {
-            $BearerMarkers = @($script:transportArmReport.Owner.FindAll({
-                        $args[0] -is [System.Management.Automation.Language.AssignmentStatementAst] -and
-                        $args[0].Left -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                        $args[0].Left.VariablePath.UserPath -eq 'Plain' -and
-                        $args[0].Right.Extent.Text.Trim() -ne '$null'
-                    }, $true))
-            $BearerMarkers += @($script:transportArmReport.Owner.FindAll({
-                        $args[0] -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                        -not $args[0].Static -and
-                        $args[0].Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
-                        $args[0].Member.Value -eq 'ArmToken'
-                    }, $true))
-            $script:transportArmBearerMarkers = $BearerMarkers.Count
-            foreach ($Marker in $BearerMarkers) {
-                foreach ($ArmStatement in $script:transportArmReport.Statements) {
-                    if ($null -eq $ArmStatement.LatchGate) { continue }
-                    if ($Marker.Extent.StartOffset -lt $ArmStatement.LatchGate.Extent.EndOffset) {
-                        $script:transportArmBearerViolations += '{0}:{1} -- the bearer token is materialized ahead of the latch gate: {2}' -f
-                            $script:transportGateArmPath, $Marker.Extent.StartLineNumber, $Marker.Extent.Text.Trim()
-                    }
-                }
-            }
+            $script:transportArmBearerMarkers = @(Find-OERArmBearerMarker -Function $script:transportArmReport.Owner).Count
+            $script:transportArmBearerViolations = @(Get-OERArmBearerViolation -Report $script:transportArmReport -FileLabel $script:transportGateArmPath)
         }
     }
 
@@ -1727,9 +1830,9 @@ BeforeAll {
     # A guard that has only ever been shown green is a guard-shaped-but-inert test, so every case
     # here is a miniature of a real regression and carries the verdict it must reach.
     function New-OERGateFixtureText {
-        param([string[]]$Lines, [string]$Session, [string]$Latch, [string]$Between = '')
+        param([string[]]$Lines, [string]$Session, [string]$Latch, [string]$Between = '', [string]$Early = '')
 
-        return (($Lines -join "`n").Replace('SESSION', $Session).Replace('LATCH', $Latch).Replace('BETWEEN', $Between))
+        return (($Lines -join "`n").Replace('SESSION', $Session).Replace('LATCH', $Latch).Replace('BETWEEN', $Between).Replace('EARLY', $Early))
     }
 
     $FixtureSession = 'if ((Get-OERGraphSessionState) -eq ''Changed'') { throw (New-OERGraphSessionChangedError); return }'
@@ -1856,6 +1959,19 @@ BeforeAll {
         '}'
     )
 
+    # The ARM shape with a bearer read on each side of the latch gate: EARLY ahead of it, BETWEEN after
+    # it, and the clearing in the finally block, which is not a marker.
+    $FixtureArmBearer = @(
+        'function Invoke-Fixture {'
+        '    EARLY'
+        '    LATCH'
+        '    BETWEEN'
+        '    try { Invoke-WebRequest @InvokeParams } catch { throw } finally { $Plain = $null }'
+        '}'
+    )
+    $FixturePlainByMember = '$Plain = [System.Net.NetworkCredential]::new('''', $script:_OERAuthState.ArmToken).Password'
+    $FixturePlainByIndex = '$Plain = [System.Net.NetworkCredential]::new('''', $script:_OERAuthState[''ArmToken'']).Password'
+
     $FixtureLatchNoReturn = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw (New-OERSignInRefusedError -Command $R) }'
     $FixtureLatchOtherThrow = '$R = Get-OERSignInRefusal; if ($null -ne $R) { throw ''refused''; return }'
     $FixtureLatchNoRead = '$R = Get-OERSignInRefusal; if ($true) { throw (New-OERSignInRefusedError -Command $R); return }'
@@ -1917,6 +2033,15 @@ BeforeAll {
             Text = (New-OERGateFixtureText -Lines $FixtureTwoCommands -Session $FixtureSession -Latch $FixtureLatch) }
         [PSCustomObject]@{ Name = 'a sign-in between the two calls of one statement'; Statements = 1; Violations = 1; Session = $true; Counts = $CountsBoth
             Text = (New-OERGateFixtureText -Lines $FixtureTwoCommands -Session $FixtureSession -Latch $FixtureLatch -Between 'Initialize-OERAuth @AuthParams;') }
+        # Bearer = the number of ARM bearer markers that must be found ahead of the latch gate.
+        [PSCustomObject]@{ Name = 'the bearer token read by index after the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 0
+            Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Between $FixturePlainByIndex) }
+        [PSCustomObject]@{ Name = 'the bearer token read by single-quoted index ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+            Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState[''ArmToken'']') }
+        [PSCustomObject]@{ Name = 'the bearer token read by double-quoted index ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+            Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState["ArmToken"]') }
+        [PSCustomObject]@{ Name = 'the bearer token read by member ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+            Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState.ArmToken') }
     )
 
     $script:transportGateKnownAnswerCount = 0
@@ -1939,6 +2064,90 @@ BeforeAll {
             $CaseReport.Violations.Count -ne $Case.Violations) {
             $script:transportGateKnownAnswerFailures += '{0} -- expected {1} transport statement(s) and {2} violation(s), got {3} and {4}' -f
                 $Case.Name, $Case.Statements, $Case.Violations, $CaseReport.Statements.Count, $CaseReport.Violations.Count
+        }
+        if ($null -ne $Case.Bearer) {
+            $CaseBearer = @(Get-OERArmBearerViolation -Report $CaseReport -FileLabel $Case.Name).Count
+            if ($CaseBearer -ne $Case.Bearer) {
+                $script:transportGateKnownAnswerFailures += '{0} -- expected {1} bearer marker(s) ahead of the latch gate, got {2}' -f
+                    $Case.Name, $Case.Bearer, $CaseBearer
+            }
+        }
+    }
+
+    # --- Where every Initialize-OERAuth call stands: the call nodes Pass 1 kept per file. ---
+    # The public-file count comes from the command names Pass 1 collected, the sites from the call
+    # nodes it kept: fewer sites than files means the site scan lost calls the name scan still sees.
+    $script:signInCallSites = 0
+    $script:signInCallPublicSites = 0
+    $script:signInCallPublicFiles = 0
+    $script:signInCallFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $script:signInCallTransportSites = @{}
+    $script:signInCallViolations = [System.Collections.Generic.List[string]]::new()
+    foreach ($TransportPath in @($script:signInCallSiteFunction.Keys)) { $script:signInCallTransportSites[$TransportPath] = 0 }
+    foreach ($Unit in $script:sourceUnits) {
+        $IsPublic = $Unit.RelativePath -match '^source\\Public\\'
+        if ($IsPublic) {
+            foreach ($Name in $Unit.CommandNames) {
+                if ((Resolve-OERTransportCommandName -Name $Name) -eq 'Initialize-OERAuth') { $script:signInCallPublicFiles++; break }
+            }
+        }
+        if (@($Unit.SignInCalls).Count -eq 0) { continue }
+
+        $CallReport = Get-OERSignInCallSiteReport -Calls $Unit.SignInCalls -TopFunction $Unit.Definition -RelativePath $Unit.RelativePath
+        $script:signInCallSites += $CallReport.Sites
+        if ($IsPublic) { $script:signInCallPublicSites += $CallReport.Sites }
+        $null = $script:signInCallFiles.Add($Unit.RelativePath)
+        foreach ($Violation in $CallReport.Violations) { $script:signInCallViolations.Add($Violation) }
+        if ($script:signInCallTransportSites.ContainsKey($Unit.RelativePath)) {
+            $script:signInCallTransportSites[$Unit.RelativePath] = @($CallReport.Enclosing |
+                    Where-Object { $_ -eq $script:signInCallSiteFunction[$Unit.RelativePath] }).Count
+        }
+    }
+
+    # --- Known answers for the call-site rule, each a miniature with the verdict it must reach. ---
+    $SignInCallCases = @(
+        [PSCustomObject]@{ Name = 'a direct call in the begin block of a public cmdlet'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 0
+            Text = 'function Get-OERFixture { [CmdletBinding()] param() begin { Initialize-OERAuth @AuthParams } process { } }' }
+        [PSCustomObject]@{ Name = 'a call in foreach, if and try statement blocks of the command''s own function'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 0
+            Text = 'function Get-OERFixture { begin { foreach ($T in $Tenants) { if ($T) { try { Initialize-OERAuth -TenantId $T } catch { throw } } } } }' }
+        [PSCustomObject]@{ Name = 'a call inside & { }'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 1
+            Text = 'function Get-OERFixture { begin { & { Initialize-OERAuth @AuthParams } } }' }
+        [PSCustomObject]@{ Name = 'a call inside a dot-sourced script block'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 1
+            Text = 'function Get-OERFixture { begin { . { Initialize-OERAuth @AuthParams } } }' }
+        [PSCustomObject]@{ Name = 'a call inside a nested function of a public cmdlet'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 1
+            Text = 'function Get-OERFixture { begin { function Invoke-SignIn { Initialize-OERAuth @AuthParams }; Invoke-SignIn } }' }
+        [PSCustomObject]@{ Name = 'a call inside a ForEach-Object script block'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 1
+            Text = 'function Get-OERFixture { begin { $Tenants | ForEach-Object { Initialize-OERAuth -TenantId $PSItem } } }' }
+        [PSCustomObject]@{ Name = 'a call in no function at all'; Path = 'source\Public\Get-OERFixture.ps1'; Sites = 1; Violations = 1
+            Text = 'Initialize-OERAuth @AuthParams' }
+        [PSCustomObject]@{ Name = 'the Graph transport refreshes in Invoke-GraphSingle'; Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Sites = 2; Violations = 0
+            Text = 'function Invoke-OERGraphRequest { function Invoke-GraphSingle { if ($Claims) { Initialize-OERAuth @ClaimsParams }; if ($Rejected) { Initialize-OERAuth @RefreshParams } }; Invoke-GraphSingle }' }
+        [PSCustomObject]@{ Name = 'the ARM transport refresh in Invoke-ArmCallWithRefresh'; Path = 'source\Private\Invoke-OERArmRequest.ps1'; Sites = 1; Violations = 0
+            Text = 'function Invoke-OERArmRequest { function Invoke-ArmCallWithRefresh { Initialize-OERAuth @RefreshParams }; Invoke-ArmCallWithRefresh }' }
+        [PSCustomObject]@{ Name = 'a Graph transport refresh moved out of Invoke-GraphSingle into another nested function'; Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Sites = 1; Violations = 1
+            Text = 'function Invoke-OERGraphRequest { function Invoke-GraphRefresh { Initialize-OERAuth @RefreshParams }; function Invoke-GraphSingle { Invoke-GraphRefresh }; Invoke-GraphSingle }' }
+        [PSCustomObject]@{ Name = 'a call in the Graph wrapper''s own top-level function'; Path = 'source\Private\Invoke-OERGraphRequest.ps1'; Sites = 1; Violations = 1
+            Text = 'function Invoke-OERGraphRequest { Initialize-OERAuth @AuthParams }' }
+    )
+
+    $script:signInCallKnownAnswerCount = 0
+    $script:signInCallKnownAnswerFailures = @()
+    foreach ($Case in $SignInCallCases) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        if ($CaseErrors.Count -gt 0) {
+            $script:signInCallKnownAnswerFailures += '{0} -- the fixture does not parse: {1}' -f $Case.Name, $CaseErrors[0].Message
+            continue
+        }
+        $CaseTop = $CaseAst.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false) |
+            Select-Object -First 1
+        $CaseReport = Get-OERSignInCallSiteReport -Calls @(Find-OERCallNamed -Ast $CaseAst -Name 'Initialize-OERAuth') `
+            -TopFunction $CaseTop -RelativePath $Case.Path
+        $script:signInCallKnownAnswerCount++
+        if ($CaseReport.Sites -ne $Case.Sites -or $CaseReport.Violations.Count -ne $Case.Violations) {
+            $script:signInCallKnownAnswerFailures += '{0} -- expected {1} call site(s) and {2} violation(s), got {3} and {4}' -f
+                $Case.Name, $Case.Sites, $Case.Violations, $CaseReport.Sites, $CaseReport.Violations.Count
         }
     }
 }
@@ -2553,8 +2762,8 @@ Describe 'Transport gate hygiene' -Tags 'SourceHygiene' {
             reach. The mutation proofs show the gate can fail on the real wrappers; these show it
             keeps failing for the same reasons, and in this run, on every machine.
         #>
-        $script:transportGateKnownAnswerCount | Should -Be 25 -Because (
-            'the known-answer table holds twenty-five cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:transportGateKnownAnswerCount | Should -Be 29 -Because (
+            'the known-answer table holds twenty-nine cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
         $script:transportGateKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
 The transport gate checker no longer reaches the verdict a known-answer case requires. Each line
 names the case and the count it expected. The checker is what the other assertions in this Describe
@@ -2637,7 +2846,47 @@ Graph SDK session. Add the missing gate or remove the extra send; do not exempt 
         $script:transportArmBearerViolations -join "`n" | Should -BeNullOrEmpty -Because @'
 The bearer token is materialized from the cached SecureString only at the request boundary, and only
 AFTER the latch gate: a gate placed after the materialization has already put the plaintext token of a
-refused command in memory. Keep the gate ahead of the $Plain assignment.
+refused command in memory. Keep the gate ahead of the $Plain assignment and of every ArmToken read,
+whether it dots into the auth state (.ArmToken) or indexes it (['ArmToken']).
+'@
+    }
+
+    It 'calls Initialize-OERAuth in the calling command''s own function, never in a nested function or a script block' {
+        <#
+            Lock-OERSignIn latches the frame that called Initialize-OERAuth. A call moved into a nested
+            function or a script block latches a frame that ends at once, and the command it belonged
+            to sends again after a refused sign-in -- with every unit test green, since they mock
+            Initialize-OERAuth. Non-vacuity first: the public files that call Initialize-OERAuth are
+            read from the command names the shared walk collected, and the sites judged here must
+            cover them; the two transport refreshes must each be found in their nested function.
+        #>
+        $script:signInCallPublicFiles | Should -BeGreaterThan 80 -Because (
+            '86 public files called Initialize-OERAuth when this rule was written; below 80 the command-name scan has lost files, not shrunk')
+        $script:signInCallPublicSites | Should -BeGreaterOrEqual $script:signInCallPublicFiles -Because (
+            'every public file that calls Initialize-OERAuth holds at least one call site; fewer sites than files means the call-site scan lost calls the command-name scan still sees')
+        $script:signInCallFiles.Contains('source\Public\Invoke-OERStructure.ps1') | Should -BeTrue -Because (
+            'Invoke-OERStructure, where a refused sign-in was found applying one tenant''s document to another, must be among the call sites this rule judged')
+        $script:signInCallTransportSites['source\Private\Invoke-OERGraphRequest.ps1'] | Should -BeGreaterThan 0 -Because (
+            'the Graph wrapper calls Initialize-OERAuth in Invoke-GraphSingle for its claims step-up and its token-rejected retry; none found there leaves its exception holding over nothing')
+        $script:signInCallTransportSites['source\Private\Invoke-OERArmRequest.ps1'] | Should -BeGreaterThan 0 -Because (
+            'the ARM wrapper calls Initialize-OERAuth in Invoke-ArmCallWithRefresh for its 401 retry; none found there leaves its exception holding over nothing')
+
+        $script:signInCallKnownAnswerCount | Should -Be 11 -Because (
+            'the call-site known-answer table holds eleven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:signInCallKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
+The sign-in call-site checker no longer reaches the verdict a known-answer case requires. Each line
+names the case and the counts it expected. Fix the checker rather than the case; a case is changed
+only when the rule it models changed.
+'@
+
+        $script:signInCallViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+Initialize-OERAuth latches the frame that calls it (Lock-OERSignIn), so it must be called directly in
+the command's own function -- in its begin, process or end block, inside a foreach, if or try there if
+need be -- and never from a nested function, a & { } or . { } script block, a ForEach-Object or
+Where-Object script block, Invoke-Command or any other script block: each of those latches a frame of
+its own that ends at once, and the command then sends its requests after a refused sign-in. The two
+transport refreshes are the exceptions, by design: Invoke-GraphSingle in the Graph wrapper and
+Invoke-ArmCallWithRefresh in the ARM wrapper (CLAUDE.md ## Authentication Architecture).
 '@
     }
 }

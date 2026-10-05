@@ -484,8 +484,9 @@ state. They all run off one shared `BeforeAll` that enumerates and parses the tr
 first six gates; the seventh, eighth and ninth each run their own additional parse pass, kept
 deliberately separate from that shared walk so a mistake in new detection logic cannot perturb the
 other gates' proven reachability closure or catch-clause scan. The tenth reads the command names
-that shared walk already collected for its ownership checks, and parses the two wrapper files again,
-from the text that walk read, for its structural check.
+that shared walk already collected for its ownership checks and the `Initialize-OERAuth` call nodes
+it keeps for its call-site check, and parses the two wrapper files again, from the text that walk
+read, for its structural check.
 
 **1. Encoding.** Every authored `.ps1`/`.psd1`/`.psm1`/`.ps1xml` under `source/` and `tests/` must
 be ASCII-only and carry no UTF-8 BOM. It is a byte-level check because PSScriptAnalyzer cannot do
@@ -615,17 +616,34 @@ that holds exactly one call path (in each of the three Graph statements, in `Inv
 `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
 `Invoke-ArmCall`), and that try is preceded, in the very block that holds it, by its session gate (Graph only) and its
 latch gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between
-a gate and any request, and the ARM bearer token materialized only after the latch gate. A gate in an
+a gate and any request, and the ARM bearer token materialized only after the latch gate -- every
+`$Plain =` assignment, `.ArmToken` read and `['ArmToken']` or `["ArmToken"]` index read in
+`Invoke-ArmCall` starts after it. A gate in an
 enclosing block does not count. The statement counts are exact, not floors: three Graph transport
 statements, one ARM statement, exactly one direct `Invoke-MgGraphRequest` inside
 `Invoke-GraphAttempt`, and two bearer markers, so a new send path is a deliberate edit of those
-numbers and never a statement the scan silently cannot place. A known-answer table of twenty-five
+numbers and never a statement the scan silently cannot place. A known-answer table of twenty-nine
 miniature regressions runs the checker itself in every run, each with the verdict it must reach. ARM
 has no session gate by design (its token is not a Graph SDK session), so none is required there.
+And one call-site rule, read from the `Initialize-OERAuth` call nodes the shared walk keeps per file
+(final review of round 1, F1): the latch is set on the frame that calls `Initialize-OERAuth`, so the
+nearest enclosing function of every call under `source/` must be the file's own top-level function
+-- in the Graph wrapper `Invoke-GraphSingle` and in the ARM wrapper `Invoke-ArmCallWithRefresh`, the
+two transport refreshes -- with no script block expression between the call and it. A `foreach`,
+`if` or `try` block is part of the function; a `{ ... }` handed to `&`, `.`, `ForEach-Object`,
+`Invoke-Command` or anything else is not, which is stricter than the engine on purpose (a
+`ForEach-Object` block inside a function was measured to carry the function's own invocation). Its
+non-vacuity: at least as many public call sites as public files whose command names include
+`Initialize-OERAuth` (86 files and 92 call sites in all when it was written, with a floor of 80
+files), `Invoke-OERStructure` among them by name, and each transport's nested function found holding
+a call. Its own known-answer table of eleven miniatures covers a direct call, statement blocks, `&`,
+`.`, a nested function, `ForEach-Object`, a call in no function, both transport exceptions, a
+refresh moved to another nested function and a call in a wrapper's top-level function.
 Its stated limits: it proves the SHAPE of a gate, not that its condition can be true, which is the
 unit suites' job; a command name built at run time is invisible to it, as to the Az context gate;
-and the ownership scan resolves a module-qualified name and the three `Invoke-WebRequest` aliases
-and nothing else -- `Invoke-RestMethod`, which the module calls nowhere, is not scanned.
+the ownership scan resolves a module-qualified name and the three `Invoke-WebRequest` aliases
+and nothing else -- `Invoke-RestMethod`, which the module calls nowhere, is not scanned; and a bearer
+read spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -2016,10 +2034,22 @@ invocation of the command that called it in `$script:_OERSignInLatch` and return
 succeeded: at the cached return, and as the last statement of a new connection that went the whole
 way -- after the ARM step, inside the big `try` and never in its `finally`, which also runs on every
 terminating error. Every refusal, terminating error and early return leaves the entry in place. The
-table is a `ConditionalWeakTable`, created on first use, so it holds its keys weakly and never keeps
-a finished command alive; every value in it is the boolean `$true`, and it holds no token and no
-tenant value. Gate 10 of [#static-source-gates](#static-source-gates) keeps both calls in
-`Initialize-OERAuth`.
+table is a `ConditionalWeakTable`, created on first use, and it stores only the boolean `$true`. Its
+keys are the commands' own invocation objects, held weakly, so the table keeps no command alive, and
+used only for their identity: the decision is a lookup by reference and never reads a key. The keys
+are not empty -- the table can be enumerated, and each invocation carries its command's bound
+parameters, `-TenantId` among them and, on `Connect-OER`, the `SecureString` secret and the
+certificate as well -- but nothing reads them through the latch. Gate 10 of
+[#static-source-gates](#static-source-gates) keeps both calls in `Initialize-OERAuth`.
+
+**The latched frame is the immediate caller's.** `Lock-OERSignIn` latches the frame of the command
+that called `Initialize-OERAuth` directly, which is the command's own frame only while the call
+stands in the command's own function. MEASURED: a `& { }` script block carries an invocation of its
+own, so a call moved into one, or into a nested function, latches a frame that ends at once, and the
+command sends again after a refused sign-in -- with every unit test still green, since they mock
+`Initialize-OERAuth`. So `Initialize-OERAuth` is called directly in the command's own function, and
+gate 10 holds every call site under `source/` to that; the transports' own refreshes, in
+`Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the stated exception (Ruling R5).
 
 **The gates.** `Get-OERSignInRefusal` walks `Get-PSCallStack`, innermost frame first, and returns the
 name of the first frame whose invocation the table holds -- nothing when none is, and nothing at
@@ -2056,7 +2086,11 @@ depth of 60 frames -- the price each request pays once the table exists.
 
 **Opening again.** A command that finishes is on no call stack, so the latch does not refuse the
 command after it: `Connect-OER`, or any new command whose own sign-in succeeds, sends again, and
-there is nothing to clear. `Disconnect-OER` does not touch the table and has no need to.
+there is nothing to clear. `Disconnect-OER` does not touch the table and has no need to. Until it
+finishes, a refused command also refuses a command downstream of it in the same pipeline while that
+command handles its output, since the refused frame is on the call stack then (measured): in
+`Invoke-OERStructure -TenantId B ... | ForEach-Object { Get-OERGroup ... }`, the `Get-OERGroup`
+requests are refused too -- conservative, and intended.
 
 **What the operator sees.** Outside any `try`, a cmdlet whose sign-in was refused carries on, sends
 nothing, and reports an error for each request it then attempts: `SignInRefused` from the transport
