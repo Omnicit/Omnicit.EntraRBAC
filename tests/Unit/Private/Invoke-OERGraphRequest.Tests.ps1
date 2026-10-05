@@ -2,6 +2,12 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Invoke-OERGraphRequest' {
@@ -1307,7 +1313,6 @@ Describe 'Invoke-OERGraphRequest -ExpectedErrorCode' {
         # the best a swallowed error can do is 2 records per failure; with it, 0.
         InModuleScope $script:moduleName {
             try {
-                $Seen = [System.Collections.Generic.List[bool]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -1315,6 +1320,7 @@ Describe 'Invoke-OERGraphRequest -ExpectedErrorCode' {
                     $Seen.Add([bool]$SkipHttpErrorCheck)
                     return @{ value = @('ok') }
                 }
+                $Seen = [System.Collections.Generic.List[bool]]::new()
 
                 $null = Invoke-OERGraphRequest -Uri 'v1.0/groups'
                 $null = Invoke-OERGraphRequest -Uri 'beta/x' -ExpectedErrorCode 'ResourceTypeNotSupported'
@@ -1378,8 +1384,6 @@ Describe 'Invoke-OERGraphRequest -ExpectedErrorCode' {
         # thrown records would hand the caller a throttle body as though it were a result.
         InModuleScope $script:moduleName {
             try {
-                Mock Start-Sleep { }
-                $Calls = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -1397,6 +1401,8 @@ Describe 'Invoke-OERGraphRequest -ExpectedErrorCode' {
                     Set-Variable -Name $StatusCodeVariable -Value 200 -Scope 1
                     return @{ value = @('recovered') }
                 }
+                Mock Start-Sleep { }
+                $Calls = [System.Collections.Generic.List[int]]::new()
 
                 $Result = Invoke-OERGraphRequest -Uri 'beta/x' -ExpectedErrorCode 'ResourceTypeNotSupported'
                 $Result.value | Should -Be 'recovered'
@@ -1621,7 +1627,6 @@ Describe 'Invoke-OERGraphRequest -All refuses to answer a partly-read enumeratio
     It 'raises instead of discarding the pages already aggregated' {
         InModuleScope $script:moduleName {
             try {
-                $Pages = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -1635,6 +1640,7 @@ Describe 'Invoke-OERGraphRequest -All refuses to answer a partly-read enumeratio
                     return ('{"error":{"code":"ResourceTypeNotSupported","message":"nope"}}' |
                             ConvertFrom-Json -AsHashtable)
                 }
+                $Pages = [System.Collections.Generic.List[int]]::new()
 
                 $Thrown = $null
                 $Result = $null
@@ -1662,7 +1668,6 @@ Describe 'Invoke-OERGraphRequest -All refuses to answer a partly-read enumeratio
         # whole parameter exists for.
         InModuleScope $script:moduleName {
             try {
-                $Pages = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -1672,6 +1677,7 @@ Describe 'Invoke-OERGraphRequest -All refuses to answer a partly-read enumeratio
                     return ('{"error":{"code":"ResourceTypeNotSupported","message":"nope"}}' |
                             ConvertFrom-Json -AsHashtable)
                 }
+                $Pages = [System.Collections.Generic.List[int]]::new()
 
                 $Err = $null
                 $Result = Invoke-OERGraphRequest -Uri 'beta/x' -All -ExpectedErrorCode 'ResourceTypeNotSupported' `
@@ -2004,7 +2010,6 @@ Describe 'Invoke-OERGraphRequest -All attaches partial-read facts to a failure p
         # those out-parameters.
         InModuleScope $script:moduleName {
             try {
-                $Pages = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -2018,6 +2023,7 @@ Describe 'Invoke-OERGraphRequest -All attaches partial-read facts to a failure p
                     return ('{"error":{"code":"ResourceTypeNotSupported","message":"nope"}}' |
                             ConvertFrom-Json -AsHashtable)
                 }
+                $Pages = [System.Collections.Generic.List[int]]::new()
 
                 $Thrown = $null
                 try { Invoke-OERGraphRequest -Uri 'beta/x' -All -ExpectedErrorCode 'ResourceTypeNotSupported' }

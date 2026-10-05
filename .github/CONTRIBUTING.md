@@ -51,15 +51,29 @@ If that fails with `Requested value 'V2' was not found` (a PSResourceGet compati
 
 ## Tests
 
-- **Pester v5**, one `*.Tests.ps1` file per source file under `tests/Unit/{Private,Public}/`. The
-  QA gate requires a unit test file for every exported function.
-- **Import the module by name, not by path**, in every `BeforeAll`:
+- **Tests are written in Pester 5 syntax**, one `*.Tests.ps1` file per source file under
+  `tests/Unit/{Private,Public}/`. The build resolves the newest Pester. The QA gate requires a unit
+  test file for every exported function.
+- **Import the module by name, not by path**, and install the transport tripwire, in the root
+  `BeforeAll`, then check and remove it in the root `AfterAll`:
   ```powershell
-  BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+  BeforeAll {
+      Import-Module Omnicit.EntraRBAC -Force
+      . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+      Install-OERTransportTripwire
+  }
+
+  AfterAll {
+      try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+  }
   ```
-  Importing by path breaks the Sampler coverage measurement, which targets the built module.
-- **Mock `Initialize-OERAuth` and `Invoke-OERGraphRequest`** at the module boundary in every test
-  that touches auth, Graph, or Azure. Nothing in CI or in tests authenticates for real.
+  Importing by path breaks the Sampler coverage measurement, which targets the built module. The
+  tripwire fails the file when a test still reaches the real transport, and
+  `tests/QA/testhygiene.tests.ps1` fails a unit test file that imports the module without it.
+- **Mock at the module boundary**, with `Mock -ModuleName Omnicit.EntraRBAC`: `Initialize-OERAuth`
+  in every test that touches auth, Graph, or Azure, and the module's own transport wrapper
+  (`Invoke-OERGraphRequest`, or `Invoke-OERArmRequest` for Azure) rather than the call beneath it.
+  Nothing in CI or in tests authenticates for real.
 
 ## Everything else
 

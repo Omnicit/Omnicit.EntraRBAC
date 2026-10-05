@@ -2,11 +2,17 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
     # Three Split-Path hops from tests\Unit\Public: tests\Unit\Public -> tests\Unit -> tests ->
     # repo root. A two-hop version resolves to tests\ and was corrected once already on this
     # branch (Task 1) -- do not repeat that mistake.
     $RepoRoot = $PSScriptRoot | Split-Path | Split-Path | Split-Path
     $script:sourceRoot = Join-Path -Path $RepoRoot -ChildPath 'source'
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'Get-OERInventory' {
@@ -846,6 +852,9 @@ Describe 'Get-OERInventory' {
                 }
             }
             Mock -ModuleName Omnicit.EntraRBAC Get-OERAccessPackage { }
+            # A group resource's current name is looked up by originId through the Graph wrapper.
+            # Unmocked, that lookup reached the real transport (found by the transport tripwire).
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
 
             $Resource = @((Get-OERInventory -Include Catalogs).Catalogs[0].resources)[0]
             $Resource.type | Should -Be 'Group'
@@ -6123,7 +6132,6 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                 # wrapper hands it back as a marker: nothing is raised, nothing is reported unread, and
                 # the export is not InventoryPartial on account of such a group. Three groups: the
                 # first is eligible (in use without asking), the other two answer 400 everywhere.
-                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -6174,6 +6182,7 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                     }
                     return @{ value = @() }
                 }
+                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
 
                 $Err = $null
                 $Warned = $null
@@ -6206,7 +6215,6 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                 # wrapper: the listing declares only a 404 ResourceNotFound and a 400
                 # ResourceTypeNotSupported as answers, so a 403 must throw out of the helper and be
                 # accounted for, never read as "not in use".
-                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
                 function Invoke-MgGraphRequest {
                     [CmdletBinding()]
                     param([string]$Method, [string]$Uri, $Body, [switch]$SkipHttpErrorCheck,
@@ -6258,6 +6266,7 @@ Describe 'Get-OERInventory PIM policy, driven end to end with only the transport
                     }
                     return @{ value = @() }
                 }
+                $script:PolicyLookups = [System.Collections.Generic.List[int]]::new()
 
                 $Err = $null
                 $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err

@@ -35,6 +35,11 @@ function Connect-OER {
     to move to another tenant in the same PowerShell session: AzAuth keeps its credential for the
     whole process, and Disconnect-OER clears only this module's session, not that credential.
 
+    Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
+    calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
+    OER cmdlet. Disconnect-OER closes that session. Run Disconnect-OER before your own
+    Connect-MgGraph in the same process, or use a new PowerShell process.
+
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
     -TenantAlias.
@@ -72,6 +77,11 @@ function Connect-OER {
 
     .PARAMETER ClientSecret
     A SecureString containing the application client secret used for app-registration sign-in.
+    The module converts it to plain text to hand it to AzAuth's Get-AzToken, whose -ClientSecret
+    parameter is a string, once for each token it requests (the Graph token, and the ARM token with
+    -IncludeARM). On a machine where PowerShell module logging covers AzAuth, that value is recorded
+    in plain text in the module logging event (Event 4103). Prefer -Certificate, -CertificatePath or
+    -ManagedIdentity.
 
     .PARAMETER Certificate
     An in-memory X509Certificate2 used for certificate-based app-registration sign-in.

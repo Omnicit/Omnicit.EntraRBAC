@@ -8,51 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope: every
-spelling of one subscription or management group scope is one scope, compared case-insensitively;
+spelling of one subscription or management group scope is one scope, ignoring case;
 earlier, two entries for one scope could remove each other's assignments on every `-Prune` run. A
-role given by its GUID matches the live assignment at a resource group, where `-Prune` removed and
+role given by GUID matches the live assignment at a resource group, where `-Prune` removed and
 re-created it every run, and at a management group. An unresolvable scope withholds the section's
-prune, and a repeat entry (same scope, principal and role) is `Failed` and not written. A failed
-read of a scope's assignments is `Failed` and runs no prune there (earlier versions planned to
-create assignments that exist). A `roleAssignments` or `roleManagementPolicies` scope with a
-trailing `/` (other than `/`) or `//` is refused before anything is written.
+prune, a second entry for the same scope, principal and role is `Failed` and not written, and a
+failed read of a scope's assignments is `Failed` and runs no prune there. A `roleAssignments` or
+`roleManagementPolicies` scope with a trailing `/` (other than `/`) or `//` is refused before
+anything is written.
 
 `Test-OERStructure` reports, and `Invoke-OERStructure` refuses, a document that declares the same
 group, administrative unit, catalog, access package within one catalog, access review, role
-assignment or role policy twice, ignoring letter case, or an empty or blank access package binding
-resource or role, catalog resource name, or the role or principal of an administrative unit scoped
-role.
+assignment or role policy twice, ignoring case, or an empty or blank access package binding resource
+or role, catalog resource name, or the role or principal of an administrative unit scoped role.
 
 `Get-OERInventory` and `Export-OERInventory` leave out objects that share a name, naming them in
 `InventoryPartial`, which also reports an unreadable group, administrative unit or access review
 list or (for `Export-OERInventory`) group roster; role assignment principals that share a name are
-written by object id. An access package binding whose resource name cannot be read is written by
+written by object id. An access package binding with an unreadable resource name is written by
 object id; with no id, the package's `resourceRoles` is `null`, reported as partial.
-`Export-OERInventory`'s bundle `README.md` lists everything it could not read.
+`Export-OERInventory`'s `README.md` lists what could not be read.
 
-`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role that the
-directory role list does not name: for a role declared by name that no live role of the principal
-matches, the role is not added, the unnamed role is not removed, and the entry is `Skipped`. A role
-declared by its template id or object id also matches the live scoped role carrying the other id
-form, when the directory role list names both the same, so it is neither added again nor removed.
+`Invoke-OERStructure` no longer adds and then removes an administrative unit scoped role the
+directory role list does not name: a role declared by name that no live role of the principal
+matches is not added, the unnamed role is not removed, and the entry is `Skipped`. A role declared
+by template id or object id also matches the live scoped role carrying the other id form (when
+the list names both the same), so it is neither re-added nor removed.
 
-`Add-OERGroupEligibility` writes `EligibilityRequestFailed` when Graph accepts an eligibility
-request but answers `Failed`, and `Invoke-OERStructure` reports that request `Failed`, never
-`Updated`, for an existing group. `New-OERAccessPackageRequestorScope` accepts `AllExternalUsers`,
+`Add-OERGroupEligibility` writes `EligibilityRequestFailed` when Graph accepts the
+request but answers `Failed`, and `Invoke-OERStructure` reports it `Failed`, never `Updated`, for an
+existing group. `New-OERAccessPackageRequestorScope` accepts `AllExternalUsers`,
 `AllDirectoryServicePrincipals` and `AllDirectoryAgentIdentities`, so an exported policy with one is
 `Unchanged`; `SpecificDirectoryServicePrincipals` is refused (`InvalidPolicyInput`), and a policy
 Graph returns as `unknownFutureValue`, or an update that would drop connected organization targets,
-is `Failed` and nothing is written.
+is `Failed` and writes nothing.
 
-In the three PIM policy cmdlets and `Invoke-OERStructure`, an ambiguous approver name is
-`AmbiguousApproverName`, a failed lookup is reported as itself, and only a missing approver is
-`ApproverNotFound`.
+In `Set-OERGroupPimPolicy`, `Set-OERDirectoryRoleManagementPolicy`, `Set-OERRoleManagementPolicy`
+and `Invoke-OERStructure`, an ambiguous approver name is `AmbiguousApproverName`, a failed lookup is
+reported as itself, and only a missing approver is `ApproverNotFound`.
 
 `New-OERAccessReviewDefinition` and `Invoke-OERStructure` report a failed read of the access package
-made to derive its catalog as itself (`CatalogDerivationFailed` stays for a package with no
-catalog). `Remove-OERAccessReviewDefinition` warns, before asking for confirmation, when it could
-not read the definition to check for a Lifecycle access review; a confirmed delete still happens.
-`Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances` `$null` for unread instances.
+they derive the catalog from as itself (`CatalogDerivationFailed` stays for a package with no
+catalog).
+`Remove-OERAccessReviewDefinition` warns before asking for confirmation if it cannot read the
+definition to check for a Lifecycle access review; a confirmed delete still happens.
+`Get-OERAccessReviewDefinition -IncludeInstances` gives `Instances` `$null` when unread.
+
+`Connect-OER`'s help says a client secret reaches AzAuth as plain text for each token and recommends
+a certificate or managed identity; `Connect-OER`, `Disconnect-OER` and `about_Omnicit.EntraRBAC` say
+`Disconnect-OER` ends the Graph SDK session `Connect-OER` starts.
 
 ## [1.1.1] - 2026-10-04
 

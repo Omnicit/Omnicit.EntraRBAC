@@ -2,6 +2,8 @@ BeforeAll {
     $script:moduleName = 'Omnicit.EntraRBAC'
     Get-Module $script:moduleName | Remove-Module -Force -ErrorAction SilentlyContinue
     Import-Module $script:moduleName -Force -ErrorAction Stop
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
 
     # One policy object in the shape ConvertTo-OERRoleManagementPolicy emits (the type both
     # Get-OERRoleManagementPolicy and Get-OERDirectoryRoleManagementPolicy return). -Override
@@ -37,6 +39,10 @@ BeforeAll {
         $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RoleManagementPolicy')
         $Out
     }
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
 Describe 'ConvertTo-OERInventoryRoleManagementPolicy' {

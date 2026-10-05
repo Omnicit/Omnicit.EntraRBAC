@@ -1,4 +1,12 @@
-BeforeAll { Import-Module Omnicit.EntraRBAC -Force }
+BeforeAll {
+    Import-Module Omnicit.EntraRBAC -Force
+    . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
+    Install-OERTransportTripwire
+}
+
+AfterAll {
+    try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
+}
 
 Describe 'Resolve-OERDirectoryRoleInput' {
     It 'returns the resolved id with no ErrorId when Resolve-OERDirectoryRoleDefinitionId finds a match' {
@@ -51,6 +59,9 @@ Describe 'Resolve-OERDirectoryRoleInput' {
     }
 
     It 'never throws for a match, a miss, an ambiguity or a read failure' {
+        # The match case. Unmocked, the real resolver read Graph through the real transport (found by
+        # the transport tripwire) and never exercised a match at all.
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { '11111111-1111-1111-1111-111111111111' }
         InModuleScope Omnicit.EntraRBAC {
             { Resolve-OERDirectoryRoleInput -Role 'Reports Reader' } | Should -Not -Throw
         }

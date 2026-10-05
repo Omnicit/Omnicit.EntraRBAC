@@ -52,7 +52,8 @@ boundary regardless of whether the scrub ran. Use `Mock Remove-OERErrorRecord { 
 (`'<Code>,<CmdletName>'`), never the bare code. PowerShell auto-records the mock's thrown
 `ErrorRecord` into `-ErrorVariable` at roughly a dozen call boundaries before the cmdlet's own
 `catch` runs, so a bare-code `-Match` assertion passes even with the cmdlet's
-`$PSCmdlet.WriteError()` call deleted.
+`$PSCmdlet.WriteError()` call deleted. The mechanism behind that deposit is written down once, with
+its measured counts, in [#writeerror-deposit](#writeerror-deposit).
 
 Related test shapes that look like guards but are not, found by audit PR9 (#34) and PR #63:
 `-ErrorVariable` declared inside a `{ } | Should -Not -Throw` scriptblock never populates the outer
@@ -264,6 +265,212 @@ Swept at the time this was written: zero `-like`/`-notlike`/`Should -BeLike` sit
 literal pattern in any tracked `.ps1`, `.psm1` or `.psd1`, source and tests alike. The form never
 reached a committed file -- it lived only in the throwaway harness -- so there is nothing to fix,
 only something to recognise.
+
+### The transport tripwire
+
+Until Sprint 8 step 4 nothing stood between an unmocked module call and the real transport: there
+was no global mock and no check, only the convention of mocking at the module boundary. Mocking
+`Initialize-OERAuth` is not enough on its own. With no auth state, `Invoke-OERArmRequest` falls back
+to `https://management.azure.com` and sends a real, unauthenticated `Invoke-WebRequest` -- measured
+on 2026-10-05 by deleting one `Invoke-OERArmRequest` mock in a copy of
+`Get-OERResourceGroup.Tests.ps1`: with `Initialize-OERAuth` still mocked, the call reached
+`Invoke-WebRequest` from `Invoke-OERArmRequest.ps1`.
+
+**What.** `tests/Unit/TestHelpers/OERTransportTripwire.ps1` defines a GLOBAL replacement for each of
+the five commands through which module code reaches a tenant or the network: `Get-AzToken`,
+`Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` and `Invoke-WebRequest`. Each one
+records the call and throws. Every unit test file that imports the module dot-sources the helper and
+calls `Install-OERTransportTripwire` in its root `BeforeAll`, directly after `Import-Module`, and
+ends with a root `AfterAll` that runs `Assert-OERTransportTripwire` in a `try` and
+`Uninstall-OERTransportTripwire` in its `finally`. The assert throws listing every recorded hit and
+every name that no longer resolves to its replacement from the module's scope. A throw in a root
+`AfterAll` fails the container -- `Result=Failed`, `FailedContainers=1`, measured on Pester 5.7.1
+and 6.2.0 -- and Sampler's `Pester_Tests_Stop_On_Fail` gates on `Result -eq 'Passed'`, so
+`./build.ps1 -Tasks test` fails with it. The install happens in the root `BeforeAll`, so Pester's
+discovery phase (`BeforeDiscovery`, `Describe` bodies and `-ForEach` data) runs without the
+tripwire; nothing calls module code at discovery time today (checked 2026-10-05).
+
+The answering runspace in `OERConfirmHost.ps1` has a global scope of its own, so the parent's
+replacements are invisible there. `Invoke-OERWithConfirmAnswer` installs the same replacements in
+it from the parent's definitions, shares the parent's hit list, records a hit for any name that no
+longer resolves there after the scenario, fails the run when that check itself raised an error
+there (a scenario that left the runspace's definitions or hit list unreadable would otherwise let
+the check record nothing and report success), and refuses to run at all without an installed
+tripwire.
+
+`tests/QA/testhygiene.tests.ps1` holds the wiring by presence, statically and importing nothing: a
+root `BeforeAll` that calls `Install-OERTransportTripwire` after the first `Import-Module`, and a
+root `AfterAll` whose `try` calls the assert and whose `finally` calls the uninstall, with no
+`catch`, which would swallow the assert's throw. Its only exemptions are the two AST-only
+alias-order cohort suites, which import nothing; the gate fails if either starts importing, calls a
+`Verb-OER*` command or runs `Get-Command -Module`. The QA gate files themselves are outside the
+tripwire -- they call help, the analyzer and pure maps only.
+
+**Why it resolves.** `source/` never module-qualifies these five calls, and a function outranks a
+cmdlet in command resolution, so module code resolves the global replacement. A Pester
+`Mock -ModuleName` is an alias in the module's script scope and outranks both, so every existing
+mock keeps working and records no hit. A test-scope `Mock` without `-ModuleName` is not seen by
+module code, so that call hits the tripwire. All measured on Pester 5.7.1 and 6.2.0 alike, and the
+known-answer suite `OERTransportTripwire.Tests.ps1` pins resolution, mock precedence and a re-import
+of the module per name.
+
+**Why record AND throw.** A throw alone is not enough: the module's own catch blocks turn it into a
+`WriteError` or a Failed row that a test may never look at. Measured: a copy of
+`Get-OERGroup.Tests.ps1` with one `Invoke-OERGraphRequest` mock deleted passed all 48 of its tests
+while the transport was reached once, and only the `AfterAll` check failed the file. The record
+holds parameter NAMES only, never a value, since a value may be a secret, a token or a URI; the
+known-answer suite pins that a call whose `-Uri` carries a sentinel records `Parameters = 'Uri'` and
+no sentinel.
+
+**Why built from the cmdlet's metadata, with no `dynamicparam`.** Pester builds a mock's parameter
+block from the command it resolves, which is now the replacement, so the replacement must carry
+exactly the cmdlet's parameters. Each is generated with `ProxyCommand.GetCmdletBindingAttribute`
+and `ProxyCommand.GetParamBlock` from the real cmdlet. Measured on 2026-10-05 (AzAuth 2.10.0,
+Microsoft.Graph.Authentication 2.41.0, Microsoft.PowerShell.Utility 7.0.0.0): none of the five
+implements `IDynamicParameters`, and the generated functions have the same parameter names (35, 30,
+13, 30 and 54) and the same number of parameter sets (11, 6, 1, 1 and 4) as the cmdlets. A Pester
+mock of a proxy with a `dynamicparam` block fails (see the probe traps above), so the generator
+refuses a cmdlet that starts declaring dynamic parameters.
+
+**Per file, not in `source/` and not in the build (A13).** A check in `source/` would publish a test
+switch to the Gallery, and a build step would not cover a single `Invoke-Pester` run.
+
+**Pester 5.7.1 and 6.2.0 differ on a filter that matches nothing.** A call that no
+`-ParameterFilter` of a mock matches, with no default mock beside them: 5.7.1 calls the original --
+now the tripwire, one hit; 6.2.0 throws "No mock for command 'Invoke-WebRequest' matched the call:
+none of the parameter filters matched, and there is no default mock to fall back to." without
+calling it, and records no hit. On 6.x that throw is raised inside module code, a module `catch` can
+swallow it like any other failure, and the test can stay green with its happy path silently
+replaced by its failure path. The tripwire cannot see that, since no transport is reached. Measured
+in the final review of Sprint 8 step 4: a test that mocks `Invoke-OERGraphRequest` with a
+`-ParameterFilter` only, then calls `Get-OERAdministrativeUnit` with `-Filter` and
+`-ErrorAction SilentlyContinue`, passed on Pester 6.2.0 with no hit, while the module's catch
+swallowed 13 "No mock for command" records; on 5.7.1 the same file failed its container on one hit,
+`Invoke-MgGraphRequest` from `Invoke-OERGraphRequest.ps1`. The real transport was reached on
+neither version. This is the inert shape that remains, recorded here and not gated: the remedy is a
+default mock beside every filtered mock, so a call the filters stop matching falls back to it
+instead of throwing.
+
+**The traps, measured on PowerShell 7.6 with a throwaway module.**
+
+- An unqualified `Remove-Item 'function:X'` inside `InModuleScope`, with no local `X` left, walks up
+  and removes the GLOBAL replacement. The `AfterAll` then reports `X no longer resolves`.
+- A scope qualifier in a `Remove-Item` path on the `function:` drive removes nothing and raises no
+  error, with or without `-Force`: `function:script:X`, `function:local:X` and `function:global:X`
+  alike. `Uninstall-OERTransportTripwire` therefore removes by an unqualified path, and only while
+  the nearest definition is a replacement, then verifies from its own scope and from the module's.
+- A function defined unqualified inside `InModuleScope` disappears when that block returns; one
+  defined as `function script:X` persists in the module.
+- Seven sites -- five in `Invoke-OERGraphRequest.Tests.ps1`, two in `Get-OERInventory.Tests.ps1` --
+  ran a statement before the local stub's definition inside the `try` whose `finally` removes the
+  stub, so a throw at that statement would have deleted the global replacement. The definition is
+  now the first statement in each `try`.
+- A ReadOnly replacement was measured and not adopted. It blocks the trap (`FunctionNotRemovable`)
+  and Pester still mocks it, but it was set aside because
+  `Remove-Item -Path function:global:X -Force` left it in place. That form leaves a plain function
+  in place too (the qualifier above), and an unqualified `Remove-Item -Force` does remove a ReadOnly
+  global function (measured). Plain functions plus the `AfterAll` resolution check stand: a removed
+  replacement fails the file either way.
+
+**What it found.** The first runs with the tripwire (Pester 6.2.0, 2026-10-05) found two tests that
+reached the real `Invoke-MgGraphRequest` through the unmocked Graph wrapper and stayed green, since
+module code swallowed the failure. `Get-OERInventory.Tests.ps1`, "does not emit url for a group
+resource": the group resource's current-name lookup by `originId` was unmocked.
+`Resolve-OERDirectoryRoleInput.Tests.ps1`, "never throws for a match, a miss, an ambiguity or a read
+failure": its match case had no resolver mock, so it read Graph and exercised a read failure instead
+of a match. Each now has the missing mock, and the whole unit suite then passed 5,482 tests with no
+hit.
+
+## writeerror-deposit
+
+Sprint 8 step 4 (BL-27). Comments in several `source/` files each describe part of this mechanism,
+at the site that pays for it. It is written down here once, with the numbers those comments
+measured, so a reader does not have to assemble it from them.
+
+**The mechanism.** `$PSCmdlet.WriteError()` deposits the record it writes into every
+`-ErrorVariable` and `$Error` collector already listening on the call stack, the instant it runs --
+before, and independently of, whatever `-ErrorAction` does next. Three facts:
+
+- A `catch` further up can stop the resulting exception from becoming a hard stop. It can never
+  retract a deposit from an `-ErrorVariable`, which the engine fills as the record is raised, before
+  any `catch` runs. Only `$global:Error` has a way back, and only through `Remove-OERErrorRecord`,
+  which removes the matching entry by exception reference (see [#bearer-scrub](#bearer-scrub)). A
+  read that SUCCEEDED, or an apply step that ends `Updated`, can therefore still leave error
+  records in the operator's own `-ErrorVariable` and `$Error`.
+- An array subexpression `@( )` around the call runs it as its own nested pipeline, and the record
+  is deposited again on the way out.
+- Piping the call onward before the `@( )` closes leaks nothing to the caller, although a local
+  `-ErrorVariable` still receives the record. This one is a measurement, not a consequence of the
+  other two.
+
+**What was measured, and where.** Each number comes from the comment at its site, which is found by
+the quoted text and not by line number.
+
+- One written record, in the access review read of `Get-OERInventory` ("The pipe into Where-Object
+  is load-bearing"): `@(call -ErrorAction Stop)` inside a try/catch leaks 3 records to the caller;
+  `$Var = call -ErrorAction SilentlyContinue -ErrorVariable Local` leaks 1;
+  `@(call -ErrorAction SilentlyContinue -ErrorVariable Local)` leaks 1; only piping the call onward
+  before the `@( )` closes leaks 0.
+- The existence probe of `Sync-OERStructureAccessReview` ("-ErrorAction SilentlyContinue with a
+  LOCAL -ErrorVariable"): the old shape, `-ErrorAction Stop` with an `@( )` around the call,
+  reported a successful `Created` while leaving `AccessReviewDefinitionNotFound` records in the
+  operator's own `$Error` and `-ErrorVariable` -- two per create on a live run, and eighteen on a
+  genuine throttle failure. The `@( )` was the other half of that doubling, so dropping either one
+  alone only halves the leak.
+- The access package and policy name lookup of `Get-OERInventory` ("Measured offline against the
+  real wrapper"): 20 records for an access review whose package and policy had been deleted, read
+  through `Get-OERAccessPackage` and `Get-OERAccessPackageAssignmentPolicy`, against 0 through a
+  transport read with the not-found codes declared. The same comment puts the two readers at about
+  ten records per lookup, identical for a deleted package and for a 403.
+
+**The remedies, and where each is used.**
+
+1. *Capture, then inspect.* `-ErrorAction SilentlyContinue` with a LOCAL `-ErrorVariable`, and the
+   call piped onward: the pipe is the only measured shape that leaks 0 to the caller, so the call is
+   never a bare call inside `@( )` and never a bare assignment, which leak 1 each.
+   `SilentlyContinue` means "captured", not "ignored": the records are inspected afterwards, so a
+   failed read is still a failed read. Both sites pipe onward. The existence probe of
+   `Sync-OERStructureAccessReview` reads `... -ErrorVariable ProbeErrors | Where-Object { ... }`
+   and wraps only the filtered variable in `@( )`. The access review read of `Get-OERInventory`
+   reads `@(call ... | Where-Object { ... })`, and its comment says the pipe is load-bearing and
+   the filter is not to be simplified away. The group and administrative-unit reads of
+   `Get-OERInventory` share the capture but not the pipe, as the probe's comment says: each is a
+   bare call inside `@( )`, the shape measured above to leak 1. The local collection also holds
+   records raised inside nested calls even when an inner catch swallowed them, so only a record the
+   cmdlet itself published counts. The probe's comment measured a throttled attempt that was
+   retried and then succeeded with zero matches: it left three `TooManyRequests` records and one
+   bare, message-less exception beside the genuine not-found record. A published record carries the
+   calling cmdlet's name as a comma-separated segment of its `FullyQualifiedErrorId`.
+2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
+   the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
+   caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
+   raised, before any `catch` runs. Used by `Get-OERPimGroupPolicyId` (`ResourceTypeNotSupported`,
+   and `ResourceNotFound` under `-NotFoundAsUnlisted`), by `Get-OERListedGroupPimPolicy`
+   (`ResourceNotFound`), and by the name lookup of `Get-OERInventory`
+   (`Get-AccessReviewReferenceName`). `Sync-OERStructureGroup` waits on a group created in the same
+   run through the two PIM helpers, since a read through `Get-OERGroupPimPolicy` with
+   `-ErrorAction Stop` deposited its `PimPolicyNotFound` records in the caller's `-ErrorVariable`
+   on every attempt, and a run that ended `Updated` still handed the caller a list of errors. A
+   403, an exhausted 429, a 5xx and a code that was not declared still raise, and still leave their
+   own records; the name lookup's comment accepts that for a real failure, which the partial names.
+3. *Publish the failure as itself, once.* Where the failure IS the outcome, the record is meant to
+   reach the caller. In `Sync-OERStructureGroup` step 4 (pimPolicy), the `catch` around
+   `Set-OERGroupPimPolicy -ErrorAction Stop` scrubs the caught record with `Remove-OERErrorRecord`,
+   writes it again through the engine's own cmdlet with `$Caller.WriteError($PSItem)`, and adds a
+   Failed result row carrying that same record. "Once" means once as a record the engine writes:
+   the child's own `WriteError` has already deposited its record into the caller's
+   `-ErrorVariable` before the `catch` runs; the `catch` does not retract that deposit, and the
+   republish adds its own copy beside it (inferred from the mechanism above, not measured).
+   `Remove-OERErrorRecord`, called first, scrubs the bearer token from the shared request object
+   and drops the matching `$global:Error` entry. The handler's other `catch` blocks around child
+   writes have the same shape. See [#approver-lookup](#approver-lookup) for the same rule stated
+   for the approver lookups.
+
+None of the three retracts a deposit that an inner call has already made into the caller's
+`-ErrorVariable`: the first confines the deposit to a local collection, the second avoids making
+it, and the third publishes one on purpose. A test that asserts on a `-ErrorVariable` therefore
+narrows to the record the cmdlet published, as [#bearer-scrub-tests](#bearer-scrub-tests)
+describes.
 
 ## static-source-gates
 
@@ -1421,6 +1628,114 @@ is why it is proposed here and not built in this branch.
    `Invoke-AzTokenCall` already documents this measured shape and states plainly that whether the
    operator is shown a second device code on the ARM call "has not yet been observed live" --
    consistent with what this spike measured, not a contradiction of it.
+
+### A client secret reaches AzAuth as a string
+
+`-ClientSecret` is a `[securestring]` on `Connect-OER` and on `Initialize-OERAuth`, and it stays one:
+the module never accepts a plain string and never keeps one in `$script:_OERAuthState`; the splats
+hold it until the `finally` (CLAUDE.md, Authentication Architecture and SECURITY rule 5). There is
+one place the plain text exists, and it is the hand-over to AzAuth.
+
+AzAuth 2.10.0 declares `Get-AzToken -ClientSecret` as `String` (its help). For a client secret
+sign-in `Initialize-OERAuth` therefore converts the secret with
+`[System.Net.NetworkCredential]::new('', $ClientSecret).Password` -- a .NET call, not a parameter
+binding -- and puts the result in the `Get-AzToken` splat. The Graph splat and, with `-IncludeARM`,
+the ARM splat are each a shallow clone of that one splat, and both acquisitions go through
+`Invoke-AzTokenCall`'s non-device-code branch (`return Get-AzToken @TokenParameter`). So the secret
+is bound to a `String` parameter once for each token requested: once for the Graph token, and a
+second time for the ARM token when `-IncludeARM` makes the call acquire both. The device-code
+branch of that helper never carries a secret.
+
+PowerShell module logging (Event 4103, `LogPipelineExecutionDetails` or the "Turn on Module
+Logging" policy) records bound parameter values. That is the mechanism
+[#directory-role-assignments](#directory-role-assignments) records for a token, and the reason
+`Get-OERTokenObjectId` takes a `[securestring]`. On a machine where module logging covers AzAuth,
+the string bound to `-ClientSecret` is therefore written to the log in plain text. INFERRED from
+that mechanism: no capture of an event for this parameter is recorded here.
+
+**While the module acquires tokens through AzAuth's `Get-AzToken`, it cannot change it.** The
+parameter that receives the plain text belongs to AzAuth and is a string, so the value it is handed
+has to be one, and there is no equivalent of the `Get-OERTokenObjectId` shape to move to. Nothing
+the module does afterwards withdraws a log entry either. `Remove-OERErrorRecord` clears the
+`Authorization` header of a request message and removes the record from `$global:Error`; it reaches
+neither a request body, nor a parameter binding, nor a log. The `finally` block in
+`Initialize-OERAuth` that sets the splats' `ClientSecret` to `$null` only drops the module's own
+references to the string, once the token calls are done.
+
+**What to do.** Prefer a certificate (`-Certificate` or `-CertificatePath`) or a managed identity
+(`-ManagedIdentity`): neither hands AzAuth a secret string. Where a secret is unavoidable, keep
+module logging from covering AzAuth on that machine, and treat the log of a machine where it does
+as holding the secret. The same warning is in `Connect-OER`'s `-ClientSecret` help and beside the
+client secret line in the README's Quick Start.
+
+### The Graph SDK session
+
+`Initialize-OERAuth` hands the Graph token it acquired to the Microsoft Graph PowerShell SDK:
+`Connect-MgGraph -AccessToken` with `-NoWelcome` and `-ErrorAction Stop`, plus `-Environment` outside
+`Global`, and **no `-ContextScope`**, so the SDK's own default applies. Every sign-in the module makes
+goes through that one call -- `Connect-OER` and the first-use sign-in of any other cmdlet alike -- so
+an OER session always comes with an SDK session in the same process. `Connect-MgGraph` runs only on
+a call where `$GraphCached` is false -- the first sign-in, a different tenant, identity or cloud,
+`-ForceRefresh`, a claims challenge, or a Graph token within five minutes of expiry -- so the SDK
+session is started per sign-in or token refresh and not once per cmdlet; a call whose Graph session
+is still valid never reaches it. `Disconnect-OER` is the matching end: inside its `ShouldProcess`
+it clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`.
+
+The message is the same in four places, each in its own medium's voice: `Connect-OER`'s and
+`Disconnect-OER`'s `.DESCRIPTION`, the README's `### Disconnect`, and the about topic's
+`GRAPH SDK SESSION` section, which sits outside `SWITCHING TENANTS` so that the README binding of
+that section stays untouched. `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the
+current process (it calls `Connect-MgGraph` with the module's token), and `Disconnect-OER` closes it.
+Run `Disconnect-OER` before your own `Connect-MgGraph` in the same process, or use a new process.
+
+**How well it is known that `Disconnect-OER` alone is enough.**
+
+- MEASURED, for a certificate sign-in: check T.8 in
+  `docs/live-verification/feat-pim-group-approval-checklist.md` ran `Disconnect-OER`, then
+  `Connect-MgGraph` with a certificate thumbprint and `-ContextScope Process`, and passed on
+  2026-09-28 as the dedicated certificate identity: both identity lines `True`, then the two
+  read-back counts, `0` and `0`.
+- REPORTED, not saved, for a delegated interactive sign-in: check T.4 in
+  `docs/live-verification/fix-withhold-prune-on-unresolved-entries-checklist.md` ran `Disconnect-OER`
+  and then `Connect-MgGraph` with delegated scopes and `-ContextScope Process`. Its result reads
+  "Output was not preserved; the operator reports every step completed as expected", dated
+  2026-09-24. There is no captured output to point at.
+
+**No crash is recorded in the tracked checklists or in this file, and the help claims none.** That is
+the extent of the search: it covers the tracked files under `docs/live-verification/` and this
+file, and it does not rule out a failure that was seen and not written down. The caution is the
+explanation `feat-pim-group-approval-checklist.md` gives for the order of its steps: `Connect-OER`
+leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
+otherwise try to read as an MSAL cache. It is the explanation `c2a5c70` wrote, not a measurement: no
+output of a run that skipped the disconnect is saved. In the history `main` carries, the text first
+appears in `c2a5c70` (#10), in that checklist, and the same wording later appears in three more:
+`feat-directory-role-management-policies-checklist.md` (`55acea9`),
+`feat-directory-role-assignments-checklist.md` (`6b952e6`) and
+`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`). The last of those calls the
+order "step 3's lesson" and gives no account of what happened. The caution is NOT in the T.4
+checklist: `fix-withhold-prune-on-unresolved-entries-checklist.md` has no such text, and its
+`Disconnect-OER` line comes from `c33aca4` (2026-09-24, #9), which gives no reason for it. Both
+checks above disconnected first, so neither one ran the opposite order. The guidance is therefore
+given as a precaution and never as a described failure, and the measured-versus-reported wording
+stays in this record rather than in user-facing help.
+
+**Why the guidance is still worth giving.** The SDK session is process-wide and belongs to
+Microsoft.Graph.Authentication, not to this module, while `$script:_OERAuthState` is the module's own
+cache. They are two separate records, and `Disconnect-OER` is what ends both together. INFERRED, and
+never run: the hazard is the two disagreeing. Three facts in the code carry it.
+`Invoke-OERGraphRequest` passes no token of its own and calls `Invoke-MgGraphRequest @Parameters`,
+so every Graph call goes out under whichever session the SDK holds at that moment; nothing under
+`source/` calls `Get-MgContext`, so the module never checks which session that is; and
+`Initialize-OERAuth` returns on a cache hit before `Connect-MgGraph`. The premise that is ASSUMED, and
+not verified here, is SDK behaviour: that an operator's own `Connect-MgGraph` replaces the session
+`Connect-OER` set up. Given that, an operator's `Connect-MgGraph` made while the module's cache is
+still valid is followed by OER cmdlets that return from the cache without reconnecting, and their
+Graph calls go out under the operator's session instead of the one the module believes it holds. The
+hazard is bounded: a forced refresh (`-ForceRefresh`, which the token-rejected retry passes), a
+claims challenge, or the Graph token entering its five-minute window each leave `$GraphCached`
+false, so `Initialize-OERAuth` runs again and reconnects, and the module's session takes the
+operator's place. It is a reasoned hazard, not an observed one, and it is the reason to disconnect
+first rather than a tidy habit.
 
 ## profile-path
 

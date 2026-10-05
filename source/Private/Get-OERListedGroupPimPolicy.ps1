@@ -12,9 +12,9 @@ function Get-OERListedGroupPimPolicy {
     2026-09-28, replicas that do not agree yet), and for such a group that is replication, not a failed
     read. ResourceNotFound is therefore declared to the transport, so a 404 comes back as $null and
     leaves no record in the caller's -ErrorVariable; the caller starts over from the listing. The same
-    code with any status other than 404 is thrown, and so is every other failure (403, 429, 500), for
-    the caller to handle as a refusal. Get-OERGroupPimPolicy keeps its own read, in which a 404 is an
-    error.
+    code with any status other than 404 is thrown, and so is every other failure (a 403, an
+    exhausted 429, a 5xx), for the caller to handle as a refusal. Get-OERGroupPimPolicy keeps its
+    own read, in which a 404 is an error.
 
     .PARAMETER GroupId
     The object id of the group the policy governs, stamped onto the output.

@@ -116,7 +116,8 @@ Connect-OER -TenantId 'contoso.onmicrosoft.com'
 # Device code (headless / SSH)
 Connect-OER -TenantId 'contoso.onmicrosoft.com' -DeviceCode
 
-# Client secret (SecureString -- never plain text)
+# Client secret -- a SecureString on the way in, but AzAuth receives it as plain text for each
+# token, so prefer a certificate or a managed identity (see the Connect-OER help)
 $Secret = Read-Host 'Client secret' -AsSecureString
 Connect-OER -TenantId 'contoso.onmicrosoft.com' -ClientId '<appId>' -ClientSecret $Secret
 
@@ -161,6 +162,11 @@ Disconnect-OER
 Clears this module's cached tokens and session state and disconnects Microsoft Graph. An Az
 PowerShell session you started yourself is left connected -- run `Disconnect-AzAccount` yourself if
 you want to end that one too.
+
+`Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
+`Connect-MgGraph` with the module's token, and so does the automatic sign-in of any other OER
+cmdlet. `Disconnect-OER` closes that session. Run `Disconnect-OER` before your own `Connect-MgGraph`
+in the same process, or use a new PowerShell process.
 
 ### Switching tenants
 
