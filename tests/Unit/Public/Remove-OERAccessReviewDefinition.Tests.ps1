@@ -286,7 +286,11 @@ Describe 'Remove-OERAccessReviewDefinition access package assignments scope warn
         }
     }
 
-    It 'invents no warning and blocks nothing when the pre-delete read fails' {
+    It 'warns that the Lifecycle check could not be made, naming the cause, when the pre-delete read fails, and still DELETEs' {
+        # INVERTED (decision A6). This It used to pin SILENCE for a failed pre-delete read, which let an
+        # operator read "no Lifecycle warning" as "no Lifecycle risk" when the check was never made. The
+        # read failure is now a Warning that names the cause and says the check could not be made. It
+        # invents no scope fact, writes no error, and blocks nothing.
         Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new('Forbidden: read denied.'), 'Forbidden',
@@ -298,15 +302,116 @@ Describe 'Remove-OERAccessReviewDefinition access package assignments scope warn
         $Err = $null
         Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -WarningVariable Warnings `
             -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
-        $Joined = ($Warnings | ForEach-Object { [string]$_ }) -join ' '
-        $Joined | Should -Not -Match 'Lifecycle access review'
-        $Joined | Should -Not -Match 'indistinguishable by scope alone'
-        $Joined | Should -Match 'irreversible' -Because 'the pre-existing irreversibility warning is untouched by a failed diagnostic read'
-        # The read failure is swallowed, not surfaced as this cmdlet's own error...
+        # The positive half: the read was reached, once, and failed, so the assertions below are about
+        # THAT failure and not about a cmdlet that never read anything.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            ($Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/d1') -and (-not $Method -or $Method -eq 'GET')
+        }
+        $Texts = @($Warnings | ForEach-Object { [string]$_ })
+        $Texts.Count | Should -Be 2 -Because 'the irreversibility warning and the could-not-check warning, and nothing else'
+        $Texts[0] | Should -Match 'irreversible' -Because 'the pre-existing irreversibility warning is untouched by a failed diagnostic read and still comes first'
+        $Texts[1] | Should -Match "Could not read access review definition 'd1'"
+        $Texts[1] | Should -Match 'Forbidden: read denied\.' -Because 'the warning names the cause, the read error''s own message'
+        $Texts[1] | Should -Match "the check for an assignment policy's Lifecycle access review could not be made" -Because 'the live checklist matches this exact phrase'
+        # No scope fact is invented from a read that returned nothing.
+        ($Texts -join ' ') | Should -Not -Match 'indistinguishable by scope alone'
+        ($Texts -join ' ') | Should -Not -Match "targets an access package's assignments"
+        # The read failure is a Warning, never this cmdlet's own error...
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OERAccessReviewDefinition' }).Count | Should -Be 0
         # ...and the delete still happens.
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
             $Method -eq 'DELETE'
+        }
+    }
+
+    It 'still DELETEs, with no error and no throw, when the pre-delete read fails under -ErrorAction Stop' {
+        # The case decision A6 protects. Under a global Stop a WriteError from the failed-read catch
+        # would terminate the cmdlet BEFORE ShouldProcess, so the delete the operator asked for would
+        # silently not happen. A Warning has no such effect. Nothing may throw, and the DELETE must go
+        # out exactly once.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Forbidden: read denied.'), 'Forbidden',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { } -ParameterFilter { $Method -eq 'DELETE' }
+
+        $Warnings = @()
+        $Thrown = $null
+        try {
+            Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -ErrorAction Stop `
+                -WarningVariable Warnings -WarningAction SilentlyContinue
+        }
+        catch { $Thrown = $PSItem }
+
+        $Thrown | Should -BeNullOrEmpty -Because 'a failed diagnostic read must not stop the delete under a global Stop'
+        # The positive half: the warning proves the failed-read catch was reached.
+        @($Warnings | Where-Object { ([string]$_) -match "the check for an assignment policy's Lifecycle access review could not be made" }).Count |
+            Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -eq 'DELETE' -and $Uri -eq 'v1.0/identityGovernance/accessReviews/definitions/d1'
+        }
+    }
+
+    It 'emits the could-not-check warning under -WhatIf as well, and DELETEs nothing' {
+        # The warning sits AHEAD of ShouldProcess like the other two (see the live measurement in the
+        # cmdlet), so the operator planning a delete with -WhatIf learns the check was not made.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Forbidden: read denied.'), 'Forbidden',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { } -ParameterFilter { $Method -eq 'DELETE' }
+
+        $Warnings = @()
+        Remove-OERAccessReviewDefinition -Id 'd1' -WhatIf -WarningVariable Warnings -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            -not $Method -or $Method -eq 'GET'
+        }
+        @($Warnings | Where-Object { ([string]$_) -match "the check for an assignment policy's Lifecycle access review could not be made" }).Count |
+            Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter {
+            $Method -eq 'DELETE'
+        }
+    }
+
+    It 'does not warn that a check could not be made when the pre-delete read succeeds' {
+        # The counterpart that stops the new warning being unconditional: a read that returned is a
+        # check that WAS made, whatever scope it found.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            @{ id = 'd1'; scope = @{ query = '/groups/g-1/transitiveMembers' } }
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { } -ParameterFilter { $Method -eq 'DELETE' }
+
+        $Warnings = @()
+        Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            -not $Method -or $Method -eq 'GET'
+        }
+        $Texts = @($Warnings | ForEach-Object { [string]$_ })
+        $Texts.Count | Should -Be 1
+        $Texts[0] | Should -Match 'irreversible'
+        ($Texts -join ' ') | Should -Not -Match 'could not be made'
+    }
+
+    It 'scrubs the failed pre-delete definition read record before warning (bearer hygiene)' {
+        # The catch no longer swallows to $null: it keeps the message and warns, so an $Error-count proof
+        # would stay green with the scrub deleted. The proof is the mocked call -- exactly one, for THIS
+        # record -- beside a positive assertion that the catch was reached (the warning carries the
+        # marker).
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Forbidden: pre-delete read scrub marker.'), 'Forbidden',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied, $null)
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { } -ParameterFilter { $Method -eq 'DELETE' }
+        Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+
+        $Warnings = @()
+        Remove-OERAccessReviewDefinition -Id 'd1' -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+        @($Warnings | Where-Object { ([string]$_) -match 'Forbidden: pre-delete read scrub marker\.' }).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq 'Forbidden: pre-delete read scrub marker.'
         }
     }
 

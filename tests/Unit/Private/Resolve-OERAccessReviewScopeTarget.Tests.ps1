@@ -314,8 +314,12 @@ Describe 'Resolve-OERAccessReviewScopeTarget -- a failed catalog or policy read 
         }
     }
 
-    It 'keeps CatalogDerivationFailed, with no FailedRecord, when the derived-catalog read of the package throws' {
-        # A failure id already, so it is deliberately left as it was (Ruling S3 / task brief).
+    It 'carries the throw of the derived-catalog read of the package in FailedRecord, never as CatalogDerivationFailed' {
+        # INVERTED (decision A6, Ruling R7). This It used to pin CatalogDerivationFailed with no
+        # FailedRecord for a package read that THREW, which told the operator the package "was found but
+        # its catalog could not be read" when the read had merely been refused (a 403, an exhausted 429,
+        # a 5xx). A thrown read is a failure of that read, so it travels in FailedRecord like the
+        # explicit -Catalog path and the policy listing do, and the caller re-publishes it as itself.
         InModuleScope 'Omnicit.EntraRBAC' {
             Mock Remove-OERErrorRecord { }
             Mock Resolve-OERAccessPackageId { 'ap-1' }
@@ -325,9 +329,60 @@ Describe 'Resolve-OERAccessReviewScopeTarget -- a failed catalog or policy read 
                     'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
             }
             $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            # Positive proof first: the package read was reached, once, and the policy listing never was,
+            # so the descriptor below is the answer to THAT read and not to an earlier or later step.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' -and $Uri -like '*$expand=catalog*' }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Uri -like '*assignmentPolicies*' }
+            $R.FailedRecord                       | Should -Not -BeNullOrEmpty
+            $R.FailedRecord.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $R.FailedRecord.CategoryInfo.Category | Should -Be 'PermissionDenied'
+            $R.FailedRecord.Exception.Message     | Should -Match 'Insufficient privileges'
+            $R.FailedKind                         | Should -Be 'Catalog'
+            $R.FailedValue                        | Should -Be 'AP-Sales'
+            $R.FailedErrorId                      | Should -BeNullOrEmpty
+            $R.FailedMessage                      | Should -BeNullOrEmpty
+            $R.FailedCategory                     | Should -BeNullOrEmpty
+            $R.AccessPackageId                    | Should -BeNullOrEmpty
+            $R.CatalogId                          | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'keeps CatalogDerivationFailed, with no FailedRecord, when the package read succeeded but carried no catalog' {
+        # The other half of the split: a read that SUCCEEDED and held no catalog is not a thrown failure
+        # and has no record to carry, so it keeps its own failure id and message.
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest { @{ id = 'ap-1' } }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' }
             $R.FailedKind    | Should -Be 'Catalog'
+            $R.FailedValue   | Should -Be 'AP-Sales'
             $R.FailedErrorId | Should -Be 'CatalogDerivationFailed'
+            $R.FailedMessage | Should -Match 'derive the catalog'
             $R.FailedRecord  | Should -BeNullOrEmpty
+            # No catch ran, so nothing was scrubbed.
+            Should -Invoke Remove-OERErrorRecord -Times 0 -Exactly
+        }
+    }
+
+    It 'scrubs the failed derived-catalog package read record before carrying it out (bearer hygiene)' {
+        # The catch hands the record on instead of discarding it, so an $Error-count proof stays green with
+        # the scrub deleted. Guard the call itself (rationale.md, #bearer-scrub-tests); the FailedRecord
+        # assertion beside it is the positive proof that this catch was reached.
+        InModuleScope 'Omnicit.EntraRBAC' {
+            Mock Remove-OERErrorRecord { }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Authorization_RequestDenied: package read scrub marker.'),
+                    'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+            }
+            $R = Resolve-OERAccessReviewScopeTarget -AccessPackage 'AP-Sales' -AssignmentPolicy 'Standard'
+            $R.FailedRecord.Exception.Message | Should -Be 'Authorization_RequestDenied: package read scrub marker.'
+            Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Authorization_RequestDenied: package read scrub marker.'
+            }
         }
     }
 
@@ -422,6 +477,40 @@ Describe 'New-OERAccessReviewDefinition -- a failed scope resolve is not a not-f
         $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
         $Published[0].FullyQualifiedErrorId | Should -Not -Match 'AccessPackageNotFound'
         $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+    }
+
+    It 'publishes a failed derived-catalog package read as itself, never as CatalogDerivationFailed, and POSTs nothing' {
+        # Decision A6 / Ruling R7. The REAL Resolve-OERAccessReviewScopeTarget runs here and only the
+        # transport is mocked, so this proves the whole chain: the package read throws, the helper
+        # carries the record in FailedRecord, and New-OERAccessReviewDefinition re-publishes it.
+        Mock -ModuleName 'Omnicit.EntraRBAC' Resolve-OERAccessPackageId { 'ap-1' }
+        Mock -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest {
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to complete the operation.'),
+                'Authorization_RequestDenied',
+                [System.Management.Automation.ErrorCategory]::PermissionDenied,
+                'ap-1')
+        }
+        $Err = $null
+        New-OERAccessReviewDefinition -DisplayName 'Q3' -DescriptionForAdmins 'x' -DescriptionForReviewers 'x' `
+            -AccessPackage 'AP-Sales' -AssignmentPolicy '11111111-1111-1111-1111-111111111111' `
+            -Recurrence OneTime -StartDate (Get-Date) -SelfReview -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+
+        # Narrowed to the record this cmdlet published, as in the It above.
+        $Published = @(@($Err) | Where-Object {
+                $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and
+                $_.InvocationInfo.MyCommand.Name -eq 'New-OERAccessReviewDefinition'
+            })
+        # The positive half: the package read was reached, once, so the no-POST assertion below is not a
+        # cmdlet that stopped at an earlier step.
+        Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' }
+        $Published.Count | Should -Be 1
+        $Published[0].FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+        $Published[0].FullyQualifiedErrorId | Should -Not -Match 'CatalogDerivationFailed'
+        $Published[0].CategoryInfo.Category | Should -Be 'PermissionDenied'
+        $Published[0].Exception.Message | Should -Be 'Authorization_RequestDenied: Insufficient privileges to complete the operation.'
         Should -Invoke -ModuleName 'Omnicit.EntraRBAC' Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
     }
 }

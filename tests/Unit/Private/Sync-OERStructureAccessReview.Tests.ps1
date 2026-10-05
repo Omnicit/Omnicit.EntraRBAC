@@ -3264,3 +3264,104 @@ Describe 'Sync-OERStructureAccessReview refuses an ambiguous definition name' {
         }
     }
 }
+
+# Decision A6 / Ruling R7. Resolve-OERAccessReviewScopeTarget used to fold a THROWN read of the access
+# package behind a derived catalog into CatalogDerivationFailed, so the engine's Failed row said the
+# package "was found but its catalog could not be read" for what was a 403 or an exhausted 429. The
+# helper now carries the caught record in FailedRecord, New-OERAccessReviewDefinition re-publishes it as
+# itself, and the engine's create catch attaches that record to the Failed row. Neither the helper nor the
+# cmdlet is mocked below: only the transport and the access package id resolver are, so the whole chain
+# from the throwing read to the row is under test.
+Describe 'Sync-OERStructureAccessReview publishes a failed derived-catalog read as itself' {
+
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    It 'reports the package read failure on the Failed row as the record it is, never as CatalogDerivationFailed' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*accessPackages/ap-1*') {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('Authorization_RequestDenied: package read marker.'),
+                        'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::PermissionDenied, 'ap-1')
+                }
+                throw "Unexpected Graph request: $Uri"
+            }
+
+            $Published = $null
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue `
+                    -ErrorVariable Published -Item ([PSCustomObject]@{
+                    displayName      = 'Q3 AP review'
+                    accessPackage    = 'AP-Sales'
+                    assignmentPolicy = '44444444-4444-4444-4444-444444444444'
+                    reviewers        = @('self')
+                    recurrence       = 'Quarterly'
+                }))
+
+            # Positive proof first: the entry was created through the REAL cmdlet and helper, the package
+            # read was reached once, and nothing was POSTed -- so the row below is the answer to that read.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' }
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Failed'
+            $r[0].Section | Should -Be 'accessReviews'
+            $r[0].Item | Should -Be 'Q3 AP review'
+            $r[0].Detail | Should -BeLike '*Authorization_RequestDenied: package read marker.*'
+            $r[0].Detail | Should -Not -BeLike '*CatalogDerivationFailed*'
+            $r[0].Detail | Should -Not -BeLike '*Could not derive the catalog*'
+            $r[0].Error | Should -Not -BeNullOrEmpty
+            $r[0].Error.FullyQualifiedErrorId | Should -Match '^Authorization_RequestDenied'
+            $r[0].Error.FullyQualifiedErrorId | Should -Not -Match 'CatalogDerivationFailed'
+            $r[0].Error.CategoryInfo.Category | Should -Be 'PermissionDenied'
+
+            # The caller's own stream carries the same refusal, and no CatalogDerivationFailed record.
+            $Records = @($Published | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            @($Records | Where-Object { $_.FullyQualifiedErrorId -match '^Authorization_RequestDenied' }).Count |
+                Should -BeGreaterThan 0
+            @($Records | Where-Object { $_.FullyQualifiedErrorId -match 'CatalogDerivationFailed' }).Count |
+                Should -Be 0
+        }
+    }
+
+    It 'still reports CatalogDerivationFailed on the Failed row when the package read succeeded but carried no catalog' {
+        InModuleScope $script:moduleName {
+            function Invoke-SyncArViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [switch]$Prune, [string]$TenantAlias)
+                Sync-OERStructureAccessReview -Item $Item -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias
+            }
+            Mock Get-OERAccessReviewDefinition { @() }
+            Mock Resolve-OERAccessPackageId { 'ap-1' }
+            Mock Initialize-OERAuth {}
+            Mock Invoke-OERGraphRequest {
+                param($Uri)
+                if ($Uri -like '*accessPackages/ap-1*') { return @{ id = 'ap-1' } }
+                throw "Unexpected Graph request: $Uri"
+            }
+
+            $r = @(Invoke-SyncArViaCaller -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -Item ([PSCustomObject]@{
+                    displayName      = 'Q3 AP review'
+                    accessPackage    = 'AP-Sales'
+                    assignmentPolicy = '44444444-4444-4444-4444-444444444444'
+                    reviewers        = @('self')
+                    recurrence       = 'Quarterly'
+                }))
+
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*accessPackages/ap-1*' }
+            $r.Count | Should -Be 1
+            $r[0].Action | Should -Be 'Failed'
+            $r[0].Detail | Should -BeLike '*Could not derive the catalog from access package ''AP-Sales''*'
+            $r[0].Error.FullyQualifiedErrorId | Should -Match '^CatalogDerivationFailed'
+        }
+    }
+}

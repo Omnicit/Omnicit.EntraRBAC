@@ -17,10 +17,14 @@ function Remove-OERAccessReviewDefinition {
     warning is conditional: if the definition is the policy's Lifecycle access review, deleting it
     leaves that policy un-updatable, since the policy carries reviewSettings forward on every update
     and Graph refuses the write while it references a definition that no longer exists. That is an
-    additional Warning only -- the delete still proceeds, and if the read fails no warning is invented
-    and nothing is blocked.
+    additional Warning only -- the delete still proceeds. If the read fails, the Lifecycle check
+    cannot be made, and the cmdlet says so instead of staying silent: a second Warning names the
+    cause (the read error's message) and says that the check for an assignment policy's Lifecycle
+    access review could not be made. That Warning is the whole of it. The delete is not blocked and
+    no error record is written, since under a global $ErrorActionPreference of Stop an error here
+    would stop a delete that this check exists only to inform.
 
-    Both warnings, and the read that feeds the second one, are emitted BEFORE the confirmation prompt,
+    The warnings, and the read that feeds the second one, are emitted BEFORE the confirmation prompt,
     so they also appear under -WhatIf and under -Confirm:$false. When the scope matches, the fact is
     folded into the ShouldProcess action text as well, so the "What if:" line and the Confirm prompt
     itself name it.
@@ -85,7 +89,8 @@ function Remove-OERAccessReviewDefinition {
             return
         }
 
-        # MEASURED LIVE: both warnings below, and the diagnostic read that feeds the second one, sit
+        # MEASURED LIVE: the warnings below (the irreversibility warning and the Lifecycle ones, the
+        # could-not-check variant included), and the diagnostic read that feeds the Lifecycle ones, sit
         # AHEAD of ShouldProcess on purpose. Emitted after it, they printed only once the operator had
         # already answered the ConfirmImpact = High prompt, and never at all under -WhatIf -- a guard
         # the operator sees only after committing to the delete is not a guard. The live run destroyed
@@ -122,9 +127,13 @@ function Remove-OERAccessReviewDefinition {
         # false NEGATIVE (silently deleting a real Lifecycle review) costs far more than a slightly
         # broad but truthful warning.
         #
-        # A failed read must not block the delete and must not invent a warning: the pre-existing
-        # behaviour is that this cmdlet deletes what it was asked to delete, and this read is only
-        # here to add context. Swallow to $null and carry on.
+        # A failed read must not block the delete, and it must not be SILENT either (decision A6): an
+        # operator who gets no Lifecycle warning reads that as "no Lifecycle risk", when the truth is
+        # that the check was never made. So the catch keeps the cause and the code after it warns
+        # that the check could not be made. It is a Warning and not a WriteError on purpose: the
+        # pre-existing behaviour is that this cmdlet deletes what it was asked to delete, and under a
+        # global $ErrorActionPreference of Stop a WriteError here would stop that delete. The warning
+        # invents no scope fact -- it states only that the check was not made, and why.
         #
         # DELIBERATE: this GET now runs under -WhatIf too, because it sits ahead of ShouldProcess. That
         # is the point -- the warning it feeds is what -WhatIf exists to show, and a -WhatIf run that
@@ -132,12 +141,27 @@ function Remove-OERAccessReviewDefinition {
         # It is a READ, so -WhatIf still changes nothing in the tenant. Do not "fix" it back behind
         # ShouldProcess.
         $ShouldProcessAction = 'Delete access review definition'
-        $ScopeQuery = try {
+        $ScopeQuery = $null
+        $ReadFailure = $null
+        try {
             $Definition = Invoke-OERGraphRequest `
                 -Uri ("v1.0/identityGovernance/accessReviews/definitions/{0}" -f $DefinitionId)
-            [string]$Definition.scope.query
+            $ScopeQuery = [string]$Definition.scope.query
         }
-        catch { Remove-OERErrorRecord -Record $PSItem; $null }
+        catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $ReadFailure = $PSItem.Exception.Message
+        }
+        if ($null -ne $ReadFailure) {
+            # The phrase "the check for an assignment policy's Lifecycle access review could not be
+            # made" is matched by the live checklist -- keep it verbatim when rewording the rest.
+            Write-Warning ("Could not read access review definition '$DefinitionId' before deleting it " +
+                "($ReadFailure), so the check for an assignment policy's Lifecycle access review could " +
+                "not be made. Whether this definition is an assignment policy's own Lifecycle access " +
+                "review is therefore unknown; if it is, deleting it leaves that policy un-updatable " +
+                "until the review is re-created or 'Require access reviews' is turned off. The delete " +
+                'is not blocked.')
+        }
         if ($ScopeQuery -match 'entitlementManagement/assignments') {
             # Fold the scope fact into the action text as well, so the one line an operator cannot miss
             # -- the "What if:" line, or the Confirm prompt itself -- carries it. The Warning below is
