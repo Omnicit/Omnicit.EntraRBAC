@@ -24,7 +24,9 @@ This creates `C:\Temp\oer-inventory-<tenant>-<timestamp>\` containing:
 - `schema.json` -- a formal JSON Schema (draft-07) for the apply document, so a proposal can be
   validated without the module (e.g. `Test-Json -Json (Get-Content proposal.json -Raw) -Schema (Get-Content schema.json -Raw)`).
 - `rbac-architect-prompt.md` -- the predefined prompt.
-- `README.md` -- a short next-steps guide.
+- `README.md` -- explains the bundle, lists under "What this export could not read" everything the
+  export could not read (or says that nothing was left unread), and holds the next steps. The list
+  is written into this file only, never into `inventory.json` or any other JSON file.
 
 By default the Entra sections -- including the Microsoft Entra directory role sections,
 `DirectoryRoleManagementPolicies` and `DirectoryRoleAssignments` -- plus tenant-wide
@@ -38,8 +40,10 @@ landscape is in `groupsRoster.json`. Use `-AllGroupsDetailed` to keep every grou
 ## 2. Ask an LLM
 
 Open `rbac-architect-prompt.md`. Leave the `USER PREFERENCES (optional)` block untouched for
-best-practice defaults, or set your naming standard and depth. Give the prompt plus the JSON files
-to any capable LLM. It returns three proposals: Foundational, Recommended, Advanced -- each a
+best-practice defaults, or set your naming standard and depth. Give the prompt, the bundle's
+`README.md` and the JSON files to any capable LLM: the README's "What this export could not read"
+section is where the bundle says which collections, objects and Azure scopes are unknown rather
+than empty. It returns three proposals: Foundational, Recommended, Advanced -- each a
 complete `Invoke-OERStructure` document.
 
 ## 3. Validate and apply
@@ -412,6 +416,13 @@ administrative unit list or the access review list) is reported by a warning and
 read is named `groupsRoster` in the bundle's `IncompleteReads` and written as an empty array in
 `groupsRoster.json`. An empty section reported that way is not evidence the tenant has none, so no
 deletion is proposed from it.
+
+The bundle's `README.md` lists every such report, and every Azure scope the export could not read
+(for `roleAssignments.json` and `roleManagementPolicies.json`, or for `azurePimEligibility.json`),
+under "What this export could not read" -- one bullet per entry, each written as a code span so an
+entry such as `<all Azure scopes: scope enumeration failed>` is shown as it is. When nothing was
+left unread, that section says so. The list is in the README alone: `inventory.json` and the other
+JSON files never carry it, so the apply document keeps exactly the shape the schema describes.
 
 ## Notes
 
