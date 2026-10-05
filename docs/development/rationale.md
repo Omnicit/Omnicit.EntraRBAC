@@ -52,7 +52,8 @@ boundary regardless of whether the scrub ran. Use `Mock Remove-OERErrorRecord { 
 (`'<Code>,<CmdletName>'`), never the bare code. PowerShell auto-records the mock's thrown
 `ErrorRecord` into `-ErrorVariable` at roughly a dozen call boundaries before the cmdlet's own
 `catch` runs, so a bare-code `-Match` assertion passes even with the cmdlet's
-`$PSCmdlet.WriteError()` call deleted.
+`$PSCmdlet.WriteError()` call deleted. The mechanism behind that deposit is written down once, with
+its measured counts, in [#writeerror-deposit](#writeerror-deposit).
 
 Related test shapes that look like guards but are not, found by audit PR9 (#34) and PR #63:
 `-ErrorVariable` declared inside a `{ } | Should -Not -Throw` scriptblock never populates the outer
@@ -364,6 +365,81 @@ resource": the group resource's current-name lookup by `originId` was unmocked.
 failure": its match case had no resolver mock, so it read Graph and exercised a read failure instead
 of a match. Each now has the missing mock, and the whole unit suite then passed 5,482 tests with no
 hit.
+
+## writeerror-deposit
+
+Sprint 8 step 4 (BL-27). Comments in several `source/` files each describe part of this mechanism,
+at the site that pays for it. It is written down here once, with the numbers those comments
+measured, so a reader does not have to assemble it from them.
+
+**The mechanism.** `$PSCmdlet.WriteError()` deposits the record it writes into every
+`-ErrorVariable` and `$Error` collector already listening on the call stack, the instant it runs --
+before, and independently of, whatever `-ErrorAction` does next. Three facts follow:
+
+- A `catch` further up can stop the resulting exception from becoming a hard stop. It can never
+  retract a deposit already made. A read that SUCCEEDED, or an apply step that ends `Updated`, can
+  therefore still leave error records in the operator's own `-ErrorVariable` and `$Error`.
+- An array subexpression `@( )` around the call runs it as its own nested pipeline, and the record
+  is deposited again on the way out.
+- Piping the call onward before the `@( )` closes leaks nothing.
+
+**What was measured, and where.** Each number comes from the comment at its site, which is found by
+the quoted text and not by line number.
+
+- One written record, in the access review read of `Get-OERInventory` ("The pipe into Where-Object
+  is load-bearing"): `@(call -ErrorAction Stop)` inside a try/catch leaks 3 records to the caller;
+  `$Var = call -ErrorAction SilentlyContinue -ErrorVariable Local` leaks 1;
+  `@(call -ErrorAction SilentlyContinue -ErrorVariable Local)` leaks 1; only piping the call onward
+  before the `@( )` closes leaks 0.
+- The existence probe of `Sync-OERStructureAccessReview` ("-ErrorAction SilentlyContinue with a
+  LOCAL -ErrorVariable"): the old shape, `-ErrorAction Stop` with an `@( )` around the call,
+  reported a successful `Created` while leaving `AccessReviewDefinitionNotFound` records in the
+  operator's own `$Error` and `-ErrorVariable` -- two per create on a live run, and eighteen on a
+  genuine throttle failure. The `@( )` was the other half of that doubling, so dropping either one
+  alone only halves the leak.
+- The access package and policy name lookup of `Get-OERInventory` ("Measured offline against the
+  real wrapper"): 20 records for an access review whose package and policy had been deleted, read
+  through `Get-OERAccessPackage` and `Get-OERAccessPackageAssignmentPolicy`, against 0 through a
+  transport read with the not-found codes declared. The same comment puts the two readers at about
+  ten records per lookup, identical for a deleted package and for a 403.
+
+**The remedies, and where each is used.**
+
+1. *Capture, then inspect.* `-ErrorAction SilentlyContinue` with a LOCAL `-ErrorVariable`, and no
+   `@( )` around the call, or a pipe onward before the `@( )` closes. `SilentlyContinue` means
+   "captured", not "ignored": the records are inspected afterwards, so a failed read is still a
+   failed read. Used by the existence probe of `Sync-OERStructureAccessReview` and the access review
+   read of `Get-OERInventory`; the probe's comment names the group and administrative-unit reads in
+   `Get-OERInventory` as the same idiom. The local collection also holds records raised inside
+   nested calls even when an inner catch swallowed them, so only a record the cmdlet itself
+   published counts. The probe's comment measured a throttled attempt that was retried and then
+   succeeded with zero matches: it left three `TooManyRequests` records and one bare, message-less
+   exception beside the genuine not-found record. A published record carries the calling cmdlet's
+   name as a comma-separated segment of its `FullyQualifiedErrorId`.
+2. *Declare the expected codes at the request.* `Invoke-OERGraphRequest -ExpectedErrorCode` makes
+   the wrapper answer with a marker instead of raising, so nothing is deposited anywhere. A throw
+   caught afterwards cannot do that, since the engine fills `-ErrorVariable` as the record is
+   raised, before any `catch` runs. Used by `Get-OERPimGroupPolicyId` (`ResourceTypeNotSupported`,
+   and `ResourceNotFound` under `-NotFoundAsUnlisted`), by `Get-OERListedGroupPimPolicy`
+   (`ResourceNotFound`), and by the name lookup of `Get-OERInventory`
+   (`Get-AccessReviewReferenceName`). `Sync-OERStructureGroup` waits on a group created in the same
+   run through the two PIM helpers, since a read through `Get-OERGroupPimPolicy` with
+   `-ErrorAction Stop` deposited its `PimPolicyNotFound` records in the caller's `-ErrorVariable`
+   on every attempt, and a run that ended `Updated` still handed the caller a list of errors. A
+   403, an exhausted 429, a 5xx and a code that was not declared still raise, and still leave their
+   own records; the name lookup's comment accepts that for a real failure, which the partial names.
+3. *Publish the failure as itself, once.* Where the failure IS the outcome, the record is meant to
+   reach the caller. In `Sync-OERStructureGroup` step 4 (pimPolicy), the `catch` around
+   `Set-OERGroupPimPolicy -ErrorAction Stop` scrubs the caught record with `Remove-OERErrorRecord`,
+   writes it again through the engine's own cmdlet with `$Caller.WriteError($PSItem)`, and adds a
+   Failed result row carrying that same record. The handler's other `catch` blocks around child
+   writes have the same shape. See [#approver-lookup](#approver-lookup) for the same rule stated
+   for the approver lookups.
+
+None of the three retracts a deposit an inner call has already made: the first two avoid making
+it, and the third publishes one on purpose. A test that asserts on a `-ErrorVariable` therefore
+narrows to the record the cmdlet published, as [#bearer-scrub-tests](#bearer-scrub-tests)
+describes.
 
 ## static-source-gates
 

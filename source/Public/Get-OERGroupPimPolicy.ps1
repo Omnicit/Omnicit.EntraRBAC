@@ -94,9 +94,9 @@ function Get-OERGroupPimPolicy {
         # A FAILED LOOKUP IS NOT AN ABSENT POLICY (issue #76). Get-OERPimGroupPolicyId returns $null
         # only where it LEARNED there is no policy assignment: an empty assignments collection, or
         # the 400 ResourceTypeNotSupported it declares to the transport as an expected answer. Every
-        # OTHER outcome -- 403, 429, 500, a dead transport, and a 404 here, where no wait asks for one --
-        # still throws, and that is a different fact: "I was not allowed to look" or "I could not
-        # look", never "there is nothing there".
+        # OTHER outcome -- a 403, an exhausted 429, a 5xx, a dead transport, and a 404 here, where
+        # no wait asks for one -- still throws, and that is a different fact: "I was not allowed to
+        # look" or "I could not look", never "there is nothing there".
         #
         # Collapsing the two into one PimPolicyNotFound is what let a live 403 on the policy-id
         # lookup for 96 groups reach the operator as ZERO error records and an inventory silently

@@ -194,10 +194,11 @@ would close a code span the line already has; quotes alone do not escape it. An 
 (`<https://...>`) or deliberate inline HTML (`<br>`) is refused the same way, since the check is
 exactly the reference algorithm -- write a bare URL instead, or put the markup in backticks. Fenced
 blocks and code spans are skipped with the algorithm documented in
-`ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`:
-deliberately the maintainer's `Test-MdAngleBrackets.py` algorithm rather than CommonMark's, so the
-two agree hit for hit -- never "correct" it towards CommonMark, and never change one without the
-other.
+`ConvertTo-DocHygieneMarkdownProse`'s own `.DESCRIPTION`, in `tests/QA/dochygiene.tests.ps1`. That
+algorithm is the maintainer's `Test-MdAngleBrackets.py`, a script kept outside this repository (the
+gate's own comment says so), and deliberately not CommonMark's: never "correct" it towards
+CommonMark, and carry a change made to it here to the external checker too, so the two keep agreeing
+hit for hit.
 
 **`docsync.tests.ps1` holds `README.md` and the about topic against each other.** Each already had
 its own "names every exported cmdlet" check, but both matched the whole FILE, so a cmdlet mentioned

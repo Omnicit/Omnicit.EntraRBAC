@@ -56,8 +56,9 @@ function Get-OERPimGroupPolicyId {
     # function reports as $null. Declaring it at the REQUEST is what keeps it out of the caller's
     # -ErrorVariable, which the engine fills as the record is raised: a caller that caught the throw
     # and turned it back into the same $null would do so only AFTER the engine had recorded it, and
-    # no catch could ever reach those records. Every other failure (403, 429, 500) still throws, and
-    # each caller's catch scrubs the record first and then does what that caller's own rule says:
+    # no catch could ever reach those records. Every other failure -- a 403, an exhausted 429, a
+    # 5xx, and a 404 unless -NotFoundAsUnlisted declared it -- still throws, and each caller's catch
+    # scrubs the record first and then does what that caller's own rule says:
     # Get-OERGroupPermanentEligibilityState rethrows it, Get-OERGroupPimPolicy and
     # Set-OERGroupPimPolicy report PimPolicyReadFailed, and Get-OERInventory and
     # Sync-OERStructureGroup read the policy directly. None of them takes it for "no policy is
