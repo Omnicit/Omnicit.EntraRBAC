@@ -20,9 +20,14 @@ app-only; nothing here signs in as a person.
 **These checks sign in twice in one process, on purpose.** Every block's FIRST sign-in goes through
 `Connect-OerLive`, which runs `Disconnect-OER` and `Disconnect-MgGraph` first. The SECOND sign-in --
 `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm`, or `Connect-OER` again -- is NOT
-preceded by a disconnect: replacing the Graph SDK session under a module that is still connected is
-exactly what this branch is about. Every `Connect-MgGraph` here carries `-ContextScope Process`, so no
-SDK token cache is written to disk, and every sign-in is followed by its identity lines as True/False.
+preceded by `Disconnect-OER`: replacing the Graph SDK session under a module that is still connected
+is exactly what this branch is about. Measured in 1.1: a certificate `Connect-MgGraph` straight after
+`Connect-OER` fails, since MSAL cannot read the SDK's process token cache, which then holds the
+module's raw access token, and it leaves no Graph SDK session at all; each block therefore runs
+`Disconnect-MgGraph` and then `Connect-MgGraph`, which ends the SDK session but leaves the module's
+own state -- the shape this branch refuses. Every `Connect-MgGraph` here carries `-ContextScope
+Process`, so no SDK token cache is written to disk, and every sign-in is followed by its identity
+lines as True/False.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s84b/`, which
 is git-ignored. Every block prints through the library's redactor, so its lines are already redacted
@@ -96,7 +101,7 @@ on this branch the module's read is refused before any Graph request leaves (sec
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -126,13 +131,22 @@ changes; `The worktree's build carries A: True; B: True; C: True; D: True`.
 clone; any `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-05 14:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 2a86120, never switched; the worktree on fix/refuse-a-changed-graph-sdk-session at 82b5017 with 0 tracked changes; the worktree's build carries A (the fingerprint helper), B (GraphSessionChanged), C (Connect-OER's reclaim) and D (the ARM-token drop).
+
+[oer-s84b] The module loads from a worktree that is not the main clone: True
+[oer-s84b] Main clone: branch main; HEAD 2a86120
+[oer-s84b] Worktree: branch fix/refuse-a-changed-graph-sdk-session; HEAD 82b5017 docs: add the live-verification checklist for a changed Graph SDK session; tracked changes: 0
+[oer-s84b] The worktree's build carries A: True; B: True; C: True; D: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -151,11 +165,27 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-05 14:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the module session (app-only certificate session with the identity's app id, app name oer-live-cc, the test tenant, the service principal named oer-live-cc and the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the test subscription belongs to the test tenant and is Enabled); identity check passed; the module is the worktree's build (1.1.2).
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] The module is the worktree's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, a Graph SDK session
 
-- [ ] **0.2** The no-permission identity signs in to a Graph SDK session of its own.
+- [x] **0.2** The no-permission identity signs in to a Graph SDK session of its own.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -171,13 +201,24 @@ Disconnect-OerLive
 session is `oer-live-cc-noperm`: `True`, the test tenant `True`, `identity check passed: True`.
 **Failure looks like:** any `False` -- STOP; sections 1 and 2 need this identity.
 
-Result:
+Result: 2026-10-05 14:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The no-permission identity signs in to a Graph SDK session of its own: app-only with its app id, app name oer-live-cc-noperm, the test tenant, all True; identity check passed.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Microsoft Graph sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s84b] Microsoft Graph sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s84b] Microsoft Graph sign-in as oer-live-cc-noperm: identity check passed: True
+```
 
 ### 1. The measurement and the premise
 
 ### 1.1. What Get-MgContext holds: the module's session, then another app's certificate session
 
-- [ ] **1.1** `Get-MgContext` after `Connect-OER` as `oer-live-cc`, and after `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm` in the same process, described property by property without a value; the module's fingerprint tells the two apart.
+- [x] **1.1** `Get-MgContext` after `Connect-OER` as `oer-live-cc`, and after `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm` in the same process, described property by property without a value; the module's fingerprint tells the two apart.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -208,8 +249,8 @@ $Swap = 'direct'
 try {
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
 } catch {
-    Write-OerLiveStep "Connect-MgGraph straight after Connect-OER failed: $($PSItem.Exception.GetType().Name) -- $(ConvertTo-OerLiveRedacted -Text $PSItem.Exception.Message)"
-    Clear-OerLiveErrorRecord -Record $PSItem
+    # The message is not printed: MSAL quotes the start of the cache it could not read.
+    Write-OerLiveStep "Connect-MgGraph straight after Connect-OER failed: $($PSItem.Exception.GetType().Name); MSAL could not read the SDK's process token cache: $([string]$PSItem.Exception.Message -match 'MSAL deserialization failed'); a Graph SDK session is left: $([bool](Get-MgContext))"
     $Swap = 'after Disconnect-MgGraph'
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
@@ -239,11 +280,42 @@ for the noperm app id, the test tenant `True`, `AppName is oer-live-cc-noperm: T
 sessions apart: STOP (the spec's own stop for this measurement); `ClientSecret populated: True` or a
 token in the fingerprint -- STOP; any identity `False` -- STOP.
 
-Result:
+Result: 2026-10-05 14:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. After Connect-OER as oer-live-cc, Get-MgContext is an AuthContext with AuthType and TokenCredentialType UserProvidedAccessToken, ContextScope Process, Environment Global; ClientId the identity's app id, TenantId the test tenant and AppName oer-live-cc all True; Account not populated (app-only), 16 scopes (the token's roles); CertificateThumbprint, ClientSecret, Certificate and ManagedIdentityId not populated. Two reads return the same object; the module's recorded fingerprint equals the current one and holds no token; state Own. MEASURED: Connect-MgGraph with a certificate and -ContextScope Process straight after Connect-OER FAILS (AuthenticationFailedException: MSAL cannot read the SDK's process token cache, which holds the module's raw access token) and leaves NO Graph SDK session; the block then swapped after Disconnect-MgGraph. The noperm session: AuthType AppOnly, TokenCredentialType ClientCertificate, ContextScope Process, Environment Global; its app id, the test tenant and AppName oer-live-cc-noperm all True; CertificateThumbprint populated; Scopes reads 1 (the noperm app holds no application permission, so its token carries no roles claim and the absent list counts as one element); another object than the module's. The fingerprints differ (AuthType, TokenCredentialType, ClientId, AppName and Scopes differ; TenantId, Environment and Account are equal), and the state is Changed.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] After Connect-OER as oer-live-cc: type Microsoft.Graph.PowerShell.Authentication.AuthContext
+[oer-s84b] After Connect-OER as oer-live-cc: AuthType UserProvidedAccessToken; TokenCredentialType UserProvidedAccessToken; ContextScope Process; Environment Global
+[oer-s84b] After Connect-OER as oer-live-cc: ClientId is the expected app id: True; TenantId is the test tenant: True; AppName is oer-live-cc: True
+[oer-s84b] After Connect-OER as oer-live-cc: Account populated: False; Scopes: 16 entries; CertificateThumbprint populated: False; ClientSecret populated: False; Certificate populated: False; ManagedIdentityId populated: False
+[oer-s84b] Two Get-MgContext calls return the same object: True
+[oer-s84b] The module's recorded fingerprint equals the one Get-MgContext gives now: True; it holds no token: True
+[oer-s84b] Get-OERGraphSessionState: Own
+[oer-s84b] Connect-MgGraph straight after Connect-OER failed: AuthenticationFailedException; MSAL could not read the SDK's process token cache: True; a Graph SDK session is left: False
+[oer-s84b] Swap made: after Disconnect-MgGraph
+[oer-s84b] After Connect-MgGraph as oer-live-cc-noperm: type Microsoft.Graph.PowerShell.Authentication.AuthContext
+[oer-s84b] After Connect-MgGraph as oer-live-cc-noperm: AuthType AppOnly; TokenCredentialType ClientCertificate; ContextScope Process; Environment Global
+[oer-s84b] After Connect-MgGraph as oer-live-cc-noperm: ClientId is the expected app id: True; TenantId is the test tenant: True; AppName is oer-live-cc-noperm: True
+[oer-s84b] After Connect-MgGraph as oer-live-cc-noperm: Account populated: False; Scopes: 1 entries; CertificateThumbprint populated: True; ClientSecret populated: False; Certificate populated: False; ManagedIdentityId populated: False
+[oer-s84b] The noperm session is another object than the module's: True
+[oer-s84b] The fingerprints differ: True
+[oer-s84b] Get-OERGraphSessionState: Changed
+```
 
 ### 1.2. How often Get-MgContext is read, and that no Graph call is added, per cmdlet
 
-- [ ] **1.2** One `Get-OERGroup` read on the module's own session: `Get-MgContext` reads and Graph requests counted by a forwarding fence.
+- [x] **1.2** One `Get-OERGroup` read on the module's own session: `Get-MgContext` reads and Graph requests counted by a forwarding fence.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -273,11 +345,28 @@ before its one Graph request).
 **Failure looks like:** more than 1 Graph request -- the check added a call; a `GraphSessionChanged` on
 the module's own session -- the fingerprint is not stable across reads.
 
-Result:
+Result: 2026-10-05 14:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. One Get-OERGroup read by name on the module's own session: no output object, GroupNotFound only; the fence counted 1 Graph request (the one request main makes for a read by name: no Graph call is added) and 2 Get-MgContext reads (one at the cmdlet's entry, one at the gate before its one request).
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] Get-OERGroup on the module's own session: output objects 0; errors: GroupNotFound
+[oer-s84b] Graph requests: 1; Get-MgContext reads: 2
+```
 
 ### 1.3. The premise: the latest Connect-MgGraph in the process carries the Graph calls
 
-- [ ] **1.3** After `Connect-OER` as `oer-live-cc` and `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm`, a raw `Invoke-MgGraphRequest` GET of one group answers 403: the latest connection carries the call.
+- [x] **1.3** After `Connect-OER` as `oer-live-cc` and `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm`, a raw `Invoke-MgGraphRequest` GET of one group answers 403: the latest connection carries the call.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -293,7 +382,8 @@ try {
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: direct'
 } catch {
-    Clear-OerLiveErrorRecord -Record $PSItem
+    # The message is not printed: MSAL quotes the start of the cache it could not read.
+    Write-OerLiveStep "Connect-MgGraph straight after Connect-OER failed: $($PSItem.Exception.GetType().Name); MSAL could not read the SDK's process token cache: $([string]$PSItem.Exception.Message -match 'MSAL deserialization failed'); a Graph SDK session is left: $([bool](Get-MgContext))"
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: after Disconnect-MgGraph'
@@ -317,7 +407,28 @@ made from here until its token's five-minute window went to that session.
 **Failure looks like:** `HTTP 200` after the swap -- the SDK did not switch, and the premise of this
 branch is wrong: STOP; a 401/403 for `oer-live-cc` before the swap -- STOP.
 
-Result:
+Result: 2026-10-05 14:37 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS (the premise holds, so the defect exists). As oer-live-cc, before the swap, a raw Invoke-MgGraphRequest GET of one group answered HTTP 200. The certificate Connect-MgGraph straight after Connect-OER failed again on MSAL's reading of the SDK's process token cache and left no session, so the swap was made after Disconnect-MgGraph; the noperm identity lines True; the module still held its session state. The same raw read then answered HTTP 403 Authorization_RequestDenied: the call went out under the LATEST Connect-MgGraph, not the session Connect-OER set up. On main every Graph call the module made from there on went to that session.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] The same read as oer-live-cc, before the swap: HTTP 200
+[oer-s84b] Connect-MgGraph straight after Connect-OER failed: AuthenticationFailedException; MSAL could not read the SDK's process token cache: True; a Graph SDK session is left: False
+[oer-s84b] Swap made: after Disconnect-MgGraph
+[oer-s84b] Identity: the session's app id is oer-live-cc-noperm's: True; app name oer-live-cc-noperm: True; the test tenant: True
+[oer-s84b] The module still holds its session state: True
+[oer-s84b] The same read after the swap: HTTP 403 Authorization_RequestDenied
+```
 
 ### 2. The fix on this branch
 
@@ -327,7 +438,7 @@ check turns on what the process already holds.
 
 ### 2.1. The module's own session: the read answers
 
-- [ ] **2.1** On the module's own session, `Get-OERGroup` of `oer-s84b-does-not-exist` answers `GroupNotFound` with one Graph request.
+- [x] **2.1** On the module's own session, `Get-OERGroup` of `oer-s84b-does-not-exist` answers `GroupNotFound` with one Graph request.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -369,18 +480,36 @@ Invoke-S84bRead -Label '2.1 the module''s own session'
 **Failure looks like:** `GraphSessionChanged` on the module's own session -- the fingerprint is not
 stable; a 401/403 -- STOP.
 
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. On the module's own session (Connect-OerLive -Arm, then the fence), Get-OERGroup of oer-s84b-does-not-exist: no output object, GroupNotFound, 1 Graph request, session state Own.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] 2.1 the module's own session: output objects 0; errors: GroupNotFound; Graph requests: 1; session state: Own
+[oer-s84b] 2.1 the module's own session: GroupNotFound,Get-OERGroup; category ObjectNotFound; target is the module's tenant: False -- No group found for 'oer-s84b-does-not-exist'.
+```
 
 ### 2.2. After another Connect-MgGraph: refused, and no Graph request leaves
 
-- [ ] **2.2** After `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm`, the same read gives `GraphSessionChanged` and the fence counts 0 Graph requests, also under `-ErrorAction SilentlyContinue`.
+- [x] **2.2** After `Connect-MgGraph -ContextScope Process` as `oer-live-cc-noperm`, the same read gives `GraphSessionChanged` and the fence counts 0 Graph requests, also under `-ErrorAction SilentlyContinue`.
 
 ```powershell
 try {
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: direct'
 } catch {
-    Clear-OerLiveErrorRecord -Record $PSItem
+    # The message is not printed: MSAL quotes the start of the cache it could not read.
+    Write-OerLiveStep "Connect-MgGraph straight after Connect-OER failed: $($PSItem.Exception.GetType().Name); MSAL could not read the SDK's process token cache: $([string]$PSItem.Exception.Message -match 'MSAL deserialization failed'); a Graph SDK session is left: $([bool](Get-MgContext))"
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: after Disconnect-MgGraph'
@@ -400,11 +529,23 @@ target the module's tenant `True`, and a message that names `Connect-OER` and no
 **Failure looks like:** `Graph requests: 1` -- the read left under the other session, which is the
 defect this branch closes; `GroupNotFound` or `Authorization_RequestDenied` -- the same.
 
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The certificate Connect-MgGraph straight after Connect-OER failed on MSAL's reading of the SDK's process token cache and left no session, so the swap was made after Disconnect-MgGraph; the noperm identity lines True. The same read, a plain call outside any try: no output object, GraphSessionChanged twice (the cmdlet's entry, then the wrapper's gate, reported by the cmdlet as itself), 0 Graph requests, state Changed; category AuthenticationError, target the module's tenant True; the message names only the module's tenant (the line prints its first 400 characters; the rest, which names Connect-OER and the same sign-in, is pinned by New-OERGraphSessionChangedError.Tests.ps1). Under -ErrorAction SilentlyContinue: no output object, only GraphSessionChanged records in the -ErrorVariable (ten, the nested copies of the same two refusals), 0 Graph requests, state Changed. On main the read went out under the noperm session (1.3).
+
+[oer-s84b] Connect-MgGraph straight after Connect-OER failed: AuthenticationFailedException; MSAL could not read the SDK's process token cache: True; a Graph SDK session is left: False
+[oer-s84b] Swap made: after Disconnect-MgGraph
+[oer-s84b] Identity: the session's app id is oer-live-cc-noperm's: True; app name oer-live-cc-noperm: True; the test tenant: True
+[oer-s84b] 2.2 after another Connect-MgGraph: output objects 0; errors: GraphSessionChanged, GraphSessionChanged; Graph requests: 0; session state: Changed
+[oer-s84b] 2.2 after another Connect-MgGraph: GraphSessionChanged,Initialize-OERAuth; category AuthenticationError; target is the module's tenant: True -- The Microsoft Graph PowerShell SDK session in this PowerShell process has changed since Omnicit.EntraRBAC connected it for tenant '00000000-0000-0000-0000-000000000004': another Connect-MgGraph has replaced it. Omnicit.EntraRBAC does not send its Microsoft Graph calls under a session it did not connect, and it does not switch the session back by itself, since that would move the other session's ca ...
+[oer-s84b] 2.2 the same, -ErrorAction SilentlyContinue: output objects 0; errors: GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged, GraphSessionChanged; Graph requests: 0; session state: Changed
+[oer-s84b] 2.2 the same, -ErrorAction SilentlyContinue: GraphSessionChanged,Initialize-OERAuth; category AuthenticationError; target is the module's tenant: True -- The Microsoft Graph PowerShell SDK session in this PowerShell process has changed since Omnicit.EntraRBAC connected it for tenant '00000000-0000-0000-0000-000000000004': another Connect-MgGraph has replaced it. Omnicit.EntraRBAC does not send its Microsoft Graph calls under a session it did not connect, and it does not switch the session back by itself, since that would move the other session's ca ...
+```
 
 ### 2.3. Connect-OER takes the session back
 
-- [ ] **2.3** `Connect-OER` again takes the session back, and the read answers `GroupNotFound` with one Graph request.
+- [x] **2.3** `Connect-OER` again takes the session back, and the read answers `GroupNotFound` with one Graph request.
 
 ```powershell
 $Cert = Get-Item -LiteralPath ('Cert:\CurrentUser\My\{0}' -f $Cfg.CertificateThumbprint) -ErrorAction Stop
@@ -423,11 +564,19 @@ session state: Own`.
 **Failure looks like:** `GraphSessionChanged` -- `Connect-OER` did not take the session back; a
 401/403 for `oer-live-cc` -- STOP.
 
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Connect-OER with the certificate, over the changed session, took the session back: every identity line True (the session's app id and app name are oer-live-cc's, the test tenant, and the module's state names the certificate app and the test tenant); the read: GroupNotFound, 1 Graph request, state Own.
+
+[oer-s84b] Identity: the session's app id is oer-live-cc's: True; app name oer-live-cc: True; the test tenant: True; the module's state names the certificate app and the test tenant: True
+[oer-s84b] 2.3 after Connect-OER: output objects 0; errors: GroupNotFound; Graph requests: 1; session state: Own
+[oer-s84b] 2.3 after Connect-OER: GroupNotFound,Get-OERGroup; category ObjectNotFound; target is the module's tenant: False -- No group found for 'oer-s84b-does-not-exist'.
+```
 
 ### 2.4. After Disconnect-MgGraph: no session, and an app-only session cannot connect again by itself
 
-- [ ] **2.4** After `Disconnect-MgGraph`, the read gives `AppOnlySessionCredentialUnavailable` and no request can leave, since no session exists; after `Connect-OER` it answers again.
+- [x] **2.4** After `Disconnect-MgGraph`, the read gives `AppOnlySessionCredentialUnavailable` and no request can leave, since no session exists; after `Connect-OER` it answers again.
 
 ```powershell
 Disconnect-MgGraph -ErrorAction Stop | Out-Null
@@ -453,18 +602,31 @@ Nothing can go out under another session, since there is none. After `Connect-OE
 identity session would connect again by itself here (class B, test A2).
 **Failure looks like:** `GraphSessionChanged` -- no session was taken for another one; a read that
 answers (`GroupNotFound`) before `Connect-OER` -- a request went out with no session of the module's.
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. After Disconnect-MgGraph, Get-MgContext returns nothing; the read: no output object, state Absent, first AppOnlySessionCredentialUnavailable (AuthenticationError, the module's tenant) whose message says the Graph SDK session was closed outside the module, then the SDK's own local refusal of the one call the cmdlet still made (GraphError: Authentication needed. Please call Connect-MgGraph.), which the fence counted as 1; no session existed, so nothing could go out under another one. After Connect-OER with the certificate: identity True, GroupNotFound, 1 Graph request, state Own.
+
+[oer-s84b] Get-MgContext after Disconnect-MgGraph returns nothing: True
+[oer-s84b] 2.4 after Disconnect-MgGraph: output objects 0; errors: AppOnlySessionCredentialUnavailable, GraphError; Graph requests: 1; session state: Absent
+[oer-s84b] 2.4 after Disconnect-MgGraph: AppOnlySessionCredentialUnavailable,Initialize-OERAuth; category AuthenticationError; target is the module's tenant: True -- The cached session for tenant '00000000-0000-0000-0000-000000000004' is app-only (ClientCertificate), its Microsoft Graph PowerShell SDK session was closed outside the module (by Disconnect-MgGraph, for example), and a new access token is required, but the module does not cache client secrets or certificates and cannot acquire one. Re-run Connect-OER with the client secret or certificate to establ ...
+[oer-s84b] 2.4 after Disconnect-MgGraph: GraphError,Get-OERGroup; category OperationStopped; target is the module's tenant: False -- GraphError: Authentication needed. Please call Connect-MgGraph.
+[oer-s84b] Identity: the session's app id is oer-live-cc's: True
+[oer-s84b] 2.4 after Connect-OER: output objects 0; errors: GroupNotFound; Graph requests: 1; session state: Own
+[oer-s84b] 2.4 after Connect-OER: GroupNotFound,Get-OERGroup; category ObjectNotFound; target is the module's tenant: False -- No group found for 'oer-s84b-does-not-exist'.
+```
 
 ### 2.5. Another tenant named under a changed session: no Azure data, and no ARM token left to send
 
-- [ ] **2.5** After another `Connect-MgGraph`, `Get-OERSubscription -TenantId` naming a tenant that is not the module's gets `GraphSessionChanged`, returns no subscription, and leaves the module no ARM token to send under the other tenant's name.
+- [x] **2.5** After another `Connect-MgGraph`, `Get-OERSubscription -TenantId` naming a tenant that is not the module's gets `GraphSessionChanged`, returns no subscription, and leaves the module no ARM token to send under the other tenant's name.
 
 ```powershell
 try {
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: direct'
 } catch {
-    Clear-OerLiveErrorRecord -Record $PSItem
+    # The message is not printed: MSAL quotes the start of the cache it could not read.
+    Write-OerLiveStep "Connect-MgGraph straight after Connect-OER failed: $($PSItem.Exception.GetType().Name); MSAL could not read the SDK's process token cache: $([string]$PSItem.Exception.Message -match 'MSAL deserialization failed'); a Graph SDK session is left: $([bool](Get-MgContext))"
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Connect-MgGraph -ClientId $Cfg.NoPermAppId -TenantId $Cfg.TenantId -CertificateThumbprint $Cfg.CertificateThumbprint -ContextScope Process -NoWelcome -ErrorAction Stop
     Write-OerLiveStep 'Swap made: after Disconnect-MgGraph'
@@ -492,12 +654,21 @@ final review).
 **Failure looks like:** `subscriptions returned 1` or more -- an Azure call went out with the module's
 own ARM token under another tenant's name; `after: True` -- the token was not dropped.
 
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The swap again (after Disconnect-MgGraph, as MSAL could not read the process cache), the noperm identity True. Get-OERSubscription -TenantId naming a non-existent tenant (the placeholder ...099): 0 subscriptions; errors GraphSessionChanged, then AppOnlyTokenRefreshUnsatisfiable (the Azure call that carried on had no token, Azure Resource Manager refused it, and an app-only session does not re-acquire); 0 Graph requests; the module held an ARM token before True, after False; its state still names the test tenant True. Before the final fix of this branch the same call returned the test tenant's subscriptions under the other tenant's name (measured offline in the final review).
+
+[oer-s84b] Connect-MgGraph straight after Connect-OER failed: AuthenticationFailedException; MSAL could not read the SDK's process token cache: True; a Graph SDK session is left: False
+[oer-s84b] Swap made: after Disconnect-MgGraph
+[oer-s84b] Identity: the session's app id is oer-live-cc-noperm's: True
+[oer-s84b] 2.5 another tenant named: subscriptions returned 0; errors: GraphSessionChanged, AppOnlyTokenRefreshUnsatisfiable; Graph requests: 0; the module held an ARM token before: True; after: False; its state still names the test tenant: True
+```
 ## Teardown
 
 ### T.1. No session is left, nothing carries the prefix, and the main clone is untouched
 
-- [ ] **T.1** `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
+- [x] **T.1** `Disconnect-OER` and `Disconnect-MgGraph` leave no session; the sweep finds nothing with the prefix `oer-s84b-`; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -523,4 +694,22 @@ main clone on `main` at the HEAD S.1 recorded. After the results are copied into
 **Failure looks like:** a prefixed object -- nothing here creates one, so it is not this run's: STOP
 and report it; a session left -- run `Disconnect-OER` and `Disconnect-MgGraph` again.
 
-Result:
+Result: 2026-10-05 14:38 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. No object starting with oer-s84b- exists in any of the six collections (this step creates none); after Disconnect-OerLive no Graph SDK session is left and the module holds no session; the main clone is on main at 2a86120, the HEAD S.1 recorded, never switched. The redaction map is cleared and raw\s84b\ deleted after this write-up.
+
+[oer-s84b] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg4b\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s84b] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s84b] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s84b-' is left.
+[oer-s84b] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False
+[oer-s84b] Main clone: branch main; HEAD 2a86120
+```

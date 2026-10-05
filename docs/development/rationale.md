@@ -1924,14 +1924,26 @@ instead of relying on that order. What the record held about that order stays tr
 
 Both checks disconnected first, so neither one ran the opposite order. The caution the live
 checklists give for that order -- that `Connect-OER` leaves its raw access token in the Graph SDK's
-process cache, which a later `Connect-MgGraph` would otherwise try to read as an MSAL cache -- is the
-explanation `c2a5c70` wrote, not a measurement: no output of a run that skipped the disconnect is
-saved, and no crash is recorded in the tracked checklists or in this file. In the history `main`
-carries, the text first appears in `c2a5c70` (#10), in `feat-pim-group-approval-checklist.md`, and
-the same wording later appears in `feat-directory-role-management-policies-checklist.md`
-(`55acea9`), `feat-directory-role-assignments-checklist.md` (`6b952e6`) and
-`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`). It is about the SDK's own
-cache, which the check does not touch, so it stays as unverified as it was.
+process cache, which a later `Connect-MgGraph` would otherwise try to read as an MSAL cache -- was
+the explanation `c2a5c70` wrote. In the history `main` carries, the text first appears in `c2a5c70`
+(#10), in `feat-pim-group-approval-checklist.md`, and the same wording later appears in
+`feat-directory-role-management-policies-checklist.md` (`55acea9`),
+`feat-directory-role-assignments-checklist.md` (`6b952e6`) and
+`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`).
+
+MEASURED on 2026-10-05, in checks 1.1, 1.3, 2.2 and 2.5 of
+`docs/live-verification/fix-refuse-a-changed-graph-sdk-session-checklist.md`, as the dedicated
+certificate identity: a `Connect-MgGraph` with a certificate thumbprint and `-ContextScope Process`,
+made straight after `Connect-OER` in the same process, fails with `AuthenticationFailedException`
+(MSAL cannot deserialize the SDK's process token cache, which holds the module's raw access token)
+and leaves no Graph SDK session at all. The module's next call then finds the session Absent, not
+Changed: a delegated or managed identity session connects again by itself, and an app-only one
+reports `AppOnlySessionCredentialUnavailable`. The same `Connect-MgGraph` made after
+`Disconnect-MgGraph` succeeds and replaces the session, and the module refuses that one with
+`GraphSessionChanged` (checks 2.2 and 2.5). INFERRED from the SDK source and not measured: a
+`Connect-MgGraph -AccessToken`, or a delegated sign-in with the default `-ContextScope CurrentUser`,
+does not read that process cache, and replaces the session as the `Disconnect-MgGraph`-first order
+does.
 
 ## profile-path
 
