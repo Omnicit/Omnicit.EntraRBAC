@@ -832,6 +832,24 @@ function Invoke-OERGraphRequest {
                 throw (New-OERGraphSessionChangedError)
                 return
             }
+            # SEC (A19): never a Graph call for a command whose sign-in was refused. Initialize-OERAuth
+            # latches the command that called it at entry and releases it only when the sign-in
+            # succeeds. Its refusal does not stop that command, which carries on past it when no try is
+            # active up the call stack (the measurement above) and would send under the session an
+            # earlier sign-in left -- another tenant's, when the command named -TenantId. Every public
+            # cmdlet the command calls signs in again from that session's cache and releases only its
+            # own latch, so Get-OERSignInRefusal looks for a latched command anywhere on the call
+            # stack. Checked after the session gate, so a changed session is still reported as
+            # GraphSessionChanged, and outside the try below for the same reason as that gate.
+            #
+            # The return is load-bearing for the same reason as the session gate's: under -ErrorAction
+            # SilentlyContinue or Ignore, with no try up the call stack, this function would carry on
+            # past its own throw to the request.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
             $Attempt = $null
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
@@ -948,6 +966,13 @@ function Invoke-OERGraphRequest {
                 throw (New-OERGraphSessionChangedError)
                 return
             }
+            # SEC (A19): the latch gate too; see the one at the top of the loop. A step-up whose sign-in
+            # is refused latches its caller, this function, so the retry below is refused.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
 
             # -- Retry once with the upgraded token --
             # Routed through Invoke-GraphAttempt like the first attempt: under -SkipHttpErrorCheck a
@@ -1021,6 +1046,13 @@ function Invoke-OERGraphRequest {
             # SEC (A18): the retry below sends a request too; see the gate at the top of the loop.
             if ((Get-OERGraphSessionState) -eq 'Changed') {
                 throw (New-OERGraphSessionChangedError)
+                return
+            }
+            # SEC (A19): the latch gate too; see the one at the top of the loop. A refresh whose sign-in
+            # is refused latches its caller, this function, so the retry below is refused.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
                 return
             }
             # Same reason as the claims retry above: a soft failure must not read as a success.

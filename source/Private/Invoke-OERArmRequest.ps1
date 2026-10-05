@@ -92,6 +92,27 @@ function Invoke-OERArmRequest {
         # carry principal ids and role definition ids.
         Write-Verbose "[Invoke-OERArmRequest] $CallMethod $CallPath"
 
+        # SEC (A19): never an ARM request for a command whose sign-in was refused. Initialize-OERAuth
+        # latches the command that called it at entry and releases it only when the sign-in succeeds.
+        # Its refusal does not stop that command: measured 2026-10-05, a caller carries on past a
+        # nested function's terminating error unless a try or trap is active up the call stack, and no
+        # public cmdlet wraps its Initialize-OERAuth call -- so the command would send the ARM token an
+        # earlier sign-in left, for another tenant when it named -TenantId. Every public cmdlet the
+        # command calls signs in again from the cache and releases only its own latch, so
+        # Get-OERSignInRefusal looks for a latched command anywhere on the call stack.
+        #
+        # Here, once, before the bearer token is materialized and before Invoke-WebRequest: every
+        # request of this wrapper passes through this function -- the first, each throttled retry, the
+        # 401 retry (a refresh whose sign-in is refused latches its caller, Invoke-ArmCallWithRefresh)
+        # and every page. The return is load-bearing, not tidiness: measured 2026-10-05, under
+        # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on
+        # past its OWN throw to its next statement -- which here would build the bearer and send it.
+        $SignInRefusal = Get-OERSignInRefusal
+        if ($null -ne $SignInRefusal) {
+            throw (New-OERSignInRefusedError -Command $SignInRefusal)
+            return
+        }
+
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
         $InvokeParams = @{

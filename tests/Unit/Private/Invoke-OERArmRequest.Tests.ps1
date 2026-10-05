@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -946,5 +947,303 @@ Describe 'Invoke-OERArmRequest throttling' {
             # 1 (429) + 1 (401) + 1 (retry after refresh) = 3. Bounded.
             Should -Invoke Invoke-WebRequest -Times 3 -Exactly
         }
+    }
+}
+
+Describe 'Invoke-OERArmRequest sign-in latch gate (A19)' {
+    # A command whose sign-in was refused carries on past the refusal when no try is active up the
+    # call stack, and would send the ARM token an earlier sign-in left. Initialize-OERAuth latches the
+    # command that called it, and the wrapper refuses every request made while a latched command is on
+    # the call stack. These tests latch a command the way Initialize-OERAuth does, through a stand-in
+    # function that calls Lock-OERSignIn.
+    BeforeAll {
+        # Latches the innermost frame of the named command on the current call stack, as
+        # Lock-OERSignIn latches the command that called Initialize-OERAuth. The 401 refresh calls
+        # Initialize-OERAuth from Invoke-ArmCallWithRefresh, so a refused refresh latches that frame
+        # (Ruling R5). A Pester mock body runs several frames further in than that caller, so a mock of
+        # Initialize-OERAuth cannot call Lock-OERSignIn itself.
+        function script:Lock-NamedFrame {
+            param([Parameter(Mandatory)][string]$Name)
+            $Frame = @(Get-PSCallStack | Where-Object { $null -ne $_.InvocationInfo -and $_.InvocationInfo.MyCommand.Name -eq $Name })[0]
+            if ($null -eq $Frame) { throw "Lock-NamedFrame: no frame of '$Name' is on the call stack." }
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($Invocation)
+                if ($null -eq $script:_OERSignInLatch) {
+                    $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                }
+                $script:_OERSignInLatch.AddOrUpdate($Invocation, $true)
+            } $Frame.InvocationInfo
+        }
+    }
+
+    BeforeEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = '44444444-4444-4444-4444-444444444444'
+                ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+    }
+
+    It 'A1: refuses a request made for a latched command with SignInRefused, sending nothing' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'A2: refuses a request a latched command makes through a nested command whose own sign-in succeeded' {
+        # The apply handlers' shape (Ruling R1): Get-OERRoleAssignment signs in again from the cache
+        # and releases its OWN latch only.
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { Lock-OERSignIn }
+            function Invoke-NestedCommand {
+                [CmdletBinding()]
+                param()
+                $Own = Initialize-StandIn
+                Unlock-OERSignIn -Invocation $Own
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                $null = Initialize-StandIn
+                Invoke-NestedCommand
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+    }
+
+    It 'A3: sends the request when the latch table was never created' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"id":"sent"}' } }
+
+        $Result = InModuleScope Omnicit.EntraRBAC {
+            Remove-Variable -Scope Script -Name _OERSignInLatch -ErrorAction Ignore
+            Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+        }
+
+        $Result.id | Should -Be 'sent'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'A4: sends the request when the table holds only a command that is not on the call stack' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"id":"sent"}' } }
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+            }
+            function Invoke-LaterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            }
+            # Held here, so the weak table cannot drop the entry before the call below.
+            $Other = Invoke-RefusedCommand
+            $Value = $null
+            $Held = $script:_OERSignInLatch.TryGetValue($Other, [ref]$Value)
+            @{ Held = $Held; Result = (Invoke-LaterCommand) }
+        }
+
+        # Not vacuous: the table holds the other command while the later one sends.
+        $R.Held | Should -BeTrue
+        $R.Result.id | Should -Be 'sent'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'A5: refuses the 401 retry when the refresh leaves the wrapper latched' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 401; Content = '{}' } }
+        # The refresh's sign-in is refused: Initialize-OERAuth latches its caller, and that caller
+        # carries on past the refusal when no try is active up the call stack.
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { Lock-NamedFrame -Name 'Invoke-ArmCallWithRefresh' }
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            $Caught = $null
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-ArmCallWithRefresh'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh -and $IncludeARM }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'A6: reads no ARM token from the state for a refused request, before the bearer would be built' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+
+        $R = InModuleScope Omnicit.EntraRBAC {
+            # The ARM token is read through a counting property, so the test sees whether the bearer
+            # was materialized for a request that is never sent.
+            $State = [pscustomobject]@{
+                AuthMethod     = 'Interactive'
+                TenantId       = '44444444-4444-4444-4444-444444444444'
+                ArmResourceUrl = 'https://management.azure.com/'
+                TokenReads     = 0
+            }
+            $State | Add-Member -MemberType ScriptProperty -Name ArmToken -Value {
+                $this.TokenReads = $this.TokenReads + 1
+                ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+            }
+            $script:_OERAuthState = $State
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            function Invoke-OpenCommand {
+                [CmdletBinding()]
+                param()
+                $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            }
+            $Caught = Invoke-RefusedCommand
+            $ReadsRefused = $State.TokenReads
+            Invoke-OpenCommand
+            @{ Caught = $Caught; ReadsRefused = $ReadsRefused; ReadsOpen = $State.TokenReads - $ReadsRefused }
+        }
+
+        $R.Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $R.ReadsRefused | Should -Be 0
+        # Not vacuous: the same state's token is read once for a request that is sent.
+        $R.ReadsOpen | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'A7: refuses before any ARM request, outside any try, when a latched command runs the wrapper under -ErrorAction SilentlyContinue' {
+        # The hit list is shared by the whole file, so each runspace test counts its own delta.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    AuthMethod     = 'Interactive'
+                    TenantId       = '44444444-4444-4444-4444-444444444444'
+                    ArmToken       = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                }
+            }
+            # Under SilentlyContinue, with no try up the call stack, a function carries on past its own
+            # throw: only the gate's return keeps the request from going out. No stub answers it, so a
+            # request that went out would reach the tripwire.
+            $Result = & (Get-Module Omnicit.EntraRBAC) {
+                function Initialize-StandIn { $null = Lock-OERSignIn }
+                function Invoke-RefusedCommand {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-StandIn
+                    Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+                }
+                Invoke-RefusedCommand
+            }
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'RESULT IS NULL: True'
+        # The gate was reached: SilentlyContinue keeps the refusal off the error stream, not out of $Error.
+        @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0] | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no ARM request may leave for a command whose sign-in was refused'
+    }
+
+    It 'A8: refuses the 401 retry, outside any try, when the refresh''s own sign-in fails, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            # An interactive state: a 401 takes the forced refresh through the real Initialize-OERAuth,
+            # which latches its caller -- the wrapper's Invoke-ArmCallWithRefresh -- before the token call.
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'; GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force
+                    ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                    ArmTokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            }
+            $global:OERLatchArmCalls = 0
+            $global:OERLatchTokenCalls = 0
+            # MODULE-scope stubs, so neither call reaches the tripwire's global function; both are
+            # removed again below, before the runspace check reads the module scope. Every request is
+            # answered 401, and the token call fails, so the refresh's sign-in is refused. Hang guards:
+            # exit past five calls.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-WebRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    $global:OERLatchArmCalls++
+                    if ($global:OERLatchArmCalls -gt 5) { exit }
+                    [pscustomobject]@{ StatusCode = 401; Content = '{}'; Headers = @{} }
+                }
+                function script:Get-AzToken {
+                    $global:OERLatchTokenCalls++
+                    if ($global:OERLatchTokenCalls -gt 5) { exit }
+                    throw [System.Exception]::new('AADSTS50076: interaction required.')
+                }
+            }
+            $Result = & (Get-Module Omnicit.EntraRBAC) { Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue }
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Invoke-WebRequest
+                Remove-Item -Path function:Get-AzToken
+            }
+            $Restored = foreach ($Name in 'Invoke-WebRequest', 'Get-AzToken') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'ARM CALLS: {0}' -f $global:OERLatchArmCalls
+            'TOKEN CALLS: {0}' -f $global:OERLatchTokenCalls
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'TOKEN CALLS: 1'
+        # One request, the rejected one: the retry after the refused refresh never goes out.
+        $R.Output | Should -Contain 'ARM CALLS: 1'
+        $Ids = @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0]
+        $Ids | Should -Match 'GraphTokenAcquisitionFailed'
+        $Ids | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no request may leave over a refused refresh'
     }
 }

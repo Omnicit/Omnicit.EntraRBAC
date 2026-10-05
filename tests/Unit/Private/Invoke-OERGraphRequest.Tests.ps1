@@ -2641,3 +2641,604 @@ Describe 'Initialize-OERAuth refusal leaves no ARM token for another tenant (A18
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no token call and no request may leave over the refusal'
     }
 }
+
+Describe 'Invoke-OERGraphRequest sign-in latch gate (A19)' {
+    # A command whose sign-in was refused carries on past the refusal when no try is active up the
+    # call stack. Initialize-OERAuth therefore latches the command that called it and releases it only
+    # when the sign-in succeeds, and the wrapper refuses every request made while a latched command is
+    # on the call stack. These tests latch a command the way Initialize-OERAuth does, through a
+    # stand-in function that calls Lock-OERSignIn: the frame it latches is the command that called the
+    # stand-in.
+    BeforeAll {
+        $script:LatchOwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        $script:LatchForeignContext = [pscustomobject]@{
+            AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+            ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+        }
+
+        # A state Initialize-OERAuth would have built, carrying the fingerprint of the module's own
+        # session. Interactive, so a 401 or a claims challenge reaches Initialize-OERAuth.
+        function script:Set-TrackedLatchState {
+            InModuleScope $script:moduleName -Parameters @{ C = $script:LatchOwnContext } {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId                = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod              = 'Interactive'
+                    ClientId                = ''
+                    Environment             = 'Global'
+                    GraphTokenExpiry        = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                }
+            }
+        }
+
+        # Latches the innermost frame of the named command on the current call stack, as
+        # Lock-OERSignIn latches the command that called Initialize-OERAuth. A refresh whose sign-in is
+        # refused inside the wrapper latches the wrapper's nested Invoke-GraphSingle, the immediate
+        # caller of Initialize-OERAuth there (Ruling R5). A Pester mock body runs several frames further
+        # in than that caller, so a mock of Initialize-OERAuth cannot call Lock-OERSignIn itself.
+        function script:Lock-NamedFrame {
+            param([Parameter(Mandatory)][string]$Name)
+            $Frame = @(Get-PSCallStack | Where-Object { $null -ne $_.InvocationInfo -and $_.InvocationInfo.MyCommand.Name -eq $Name })[0]
+            if ($null -eq $Frame) { throw "Lock-NamedFrame: no frame of '$Name' is on the call stack." }
+            & (Get-Module $script:moduleName) {
+                param($Invocation)
+                if ($null -eq $script:_OERSignInLatch) {
+                    $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                }
+                $script:_OERSignInLatch.AddOrUpdate($Invocation, $true)
+            } $Frame.InvocationInfo
+        }
+    }
+
+    BeforeEach {
+        $script:LatchCurrent = $script:LatchOwnContext
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:LatchCurrent }
+    }
+
+    AfterEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    It 'L1: refuses a call made for a latched command with SignInRefused, sending nothing' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'L2: refuses a call a latched command makes through a nested command whose own sign-in succeeded' {
+        # Invoke-OERStructure's shape (Ruling R1): its own sign-in is refused, then a public cmdlet a
+        # handler calls signs in from the cache and releases its OWN latch only.
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Initialize-StandIn { Lock-OERSignIn }
+            function Invoke-NestedCommand {
+                [CmdletBinding()]
+                param()
+                $Own = Initialize-StandIn
+                Unlock-OERSignIn -Invocation $Own
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                $null = Initialize-StandIn
+                Invoke-NestedCommand
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'L3: sends the call when the latch table was never created' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @('sent') } }
+
+        $Result = InModuleScope $script:moduleName {
+            Remove-Variable -Scope Script -Name _OERSignInLatch -ErrorAction Ignore
+            Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups'
+        }
+
+        @($Result.value) | Should -Be @('sent')
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L4: sends the call when the table holds only a command that is not on the call stack' {
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @('sent') } }
+
+        $R = InModuleScope $script:moduleName {
+            function Initialize-StandIn { Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+            }
+            function Invoke-LaterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups'
+            }
+            # Held here, so the weak table cannot drop the entry before the call below.
+            $Other = Invoke-RefusedCommand
+            $Value = $null
+            $Held = $script:_OERSignInLatch.TryGetValue($Other, [ref]$Value)
+            @{ Held = $Held; Result = (Invoke-LaterCommand) }
+        }
+
+        # Not vacuous: the table holds the other command while the later one sends.
+        $R.Held | Should -BeTrue
+        @($R.Result.value) | Should -Be @('sent')
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L5: refuses the token-rejected retry when the refresh leaves the wrapper latched' {
+        Set-TrackedLatchState
+        $script:LatchAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:LatchAttempt++
+            if ($script:LatchAttempt -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        # The refresh's sign-in is refused: Initialize-OERAuth latches its caller, and that caller
+        # carries on past the refusal when no try is active up the call stack.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { Lock-NamedFrame -Name 'Invoke-GraphSingle' }
+
+        $Caught = InModuleScope $script:moduleName {
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-GraphSingle'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L6: refuses the claims-challenge retry when the step-up leaves the wrapper latched' {
+        Set-TrackedLatchState
+        $script:LatchAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:LatchAttempt++
+            if ($script:LatchAttempt -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { Lock-NamedFrame -Name 'Invoke-GraphSingle' }
+
+        $Caught = InModuleScope $script:moduleName {
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-GraphSingle'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L7: reports a changed session as GraphSessionChanged when the command is latched as well' {
+        Set-TrackedLatchState
+        $script:LatchCurrent = $script:LatchForeignContext
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
+
+        $Caught = InModuleScope $script:moduleName {
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-RefusedCommand
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 0
+    }
+
+    It 'L7b: reports a session changed during the refresh as GraphSessionChanged when the refresh also latched the wrapper' {
+        Set-TrackedLatchState
+        $script:LatchAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:LatchAttempt++
+            if ($script:LatchAttempt -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+            @{ value = @('after-refresh') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            $script:LatchCurrent = $script:LatchForeignContext
+            Lock-NamedFrame -Name 'Invoke-GraphSingle'
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L7c: reports a session changed during the step-up as GraphSessionChanged when the step-up also latched the wrapper' {
+        Set-TrackedLatchState
+        $script:LatchAttempt = 0
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest {
+            $script:LatchAttempt++
+            if ($script:LatchAttempt -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+            @{ value = @('after-stepup') }
+        }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            $script:LatchCurrent = $script:LatchForeignContext
+            Lock-NamedFrame -Name 'Invoke-GraphSingle'
+        }
+
+        $Caught = InModuleScope $script:moduleName {
+            $Caught = $null
+            try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' } catch { $Caught = $PSItem }
+            $Caught
+        }
+
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'GraphSessionChanged*'
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ClaimsChallenge }
+        Should -Invoke -ModuleName $script:moduleName Invoke-MgGraphRequest -Times 1 -Exactly
+    }
+
+    It 'L8: refuses before any Graph call, outside any try, when a latched command runs the wrapper under -ErrorAction SilentlyContinue' {
+        # The hit list is shared by the whole file, so each runspace test counts its own delta.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            # Under SilentlyContinue, with no try up the call stack, a function carries on past its own
+            # throw: only the gate's return keeps the request from going out. No stub answers it, so a
+            # request that went out would reach the tripwire.
+            $Result = & (Get-Module Omnicit.EntraRBAC) {
+                function Initialize-StandIn { $null = Lock-OERSignIn }
+                function Invoke-RefusedCommand {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-StandIn
+                    Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue
+                }
+                Invoke-RefusedCommand
+            }
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'RESULT IS NULL: True'
+        # The gate was reached: SilentlyContinue keeps the refusal off the error stream, not out of $Error.
+        @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0] | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph request may leave for a command whose sign-in was refused'
+    }
+
+    It 'L9: refuses the token-rejected retry, outside any try, when the refresh''s own sign-in fails, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            # An interactive state: a 401 takes the forced refresh through the real Initialize-OERAuth,
+            # which latches its caller -- the wrapper's own Invoke-GraphSingle -- before the token call.
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'; GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                }
+            }
+            $global:OERLatchGraphCalls = 0
+            $global:OERLatchTokenCalls = 0
+            # MODULE-scope stubs, so neither call reaches the tripwire's global function; both are
+            # removed again below, before the runspace check reads the module scope. The first request
+            # is rejected as an expired token, and a retry would be answered. The token call fails, so
+            # the refresh's sign-in is refused. Hang guards: exit past five calls.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    $global:OERLatchGraphCalls++
+                    if ($global:OERLatchGraphCalls -gt 5) { exit }
+                    if ($global:OERLatchGraphCalls -eq 1) { throw [System.Exception]::new('InvalidAuthenticationToken: token is expired') }
+                    @{ value = @('after-refresh') }
+                }
+                function script:Get-AzToken {
+                    $global:OERLatchTokenCalls++
+                    if ($global:OERLatchTokenCalls -gt 5) { exit }
+                    throw [System.Exception]::new('AADSTS50076: interaction required.')
+                }
+            }
+            $Result = & (Get-Module Omnicit.EntraRBAC) { Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue }
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Invoke-MgGraphRequest
+                Remove-Item -Path function:Get-AzToken
+            }
+            $Restored = foreach ($Name in 'Invoke-MgGraphRequest', 'Get-AzToken') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'GRAPH CALLS: {0}' -f $global:OERLatchGraphCalls
+            'TOKEN CALLS: {0}' -f $global:OERLatchTokenCalls
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'TOKEN CALLS: 1'
+        # One request, the rejected one: the retry after the refused refresh never goes out.
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT IS NULL: True'
+        $Ids = @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0]
+        $Ids | Should -Match 'GraphTokenAcquisitionFailed'
+        $Ids | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no request may leave over a refused refresh'
+    }
+
+    It 'L10: refuses the claims-challenge retry, outside any try, when the step-up''s own sign-in fails, under -ErrorAction SilentlyContinue' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'; GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                }
+            }
+            $global:OERLatchGraphCalls = 0
+            $global:OERLatchTokenCalls = 0
+            # As in L9, but the first request answers a claims challenge, so the step-up runs the real
+            # Initialize-OERAuth with -ClaimsChallenge. Hang guards: exit past five calls.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    $global:OERLatchGraphCalls++
+                    if ($global:OERLatchGraphCalls -gt 5) { exit }
+                    if ($global:OERLatchGraphCalls -eq 1) { throw [System.Exception]::new('WWW-Authenticate: Bearer claims="eyJhY2Nlc3MiOnt9fQ"') }
+                    @{ value = @('after-stepup') }
+                }
+                function script:Get-AzToken {
+                    $global:OERLatchTokenCalls++
+                    if ($global:OERLatchTokenCalls -gt 5) { exit }
+                    throw [System.Exception]::new('AADSTS50076: interaction required.')
+                }
+            }
+            $Result = & (Get-Module Omnicit.EntraRBAC) { Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups' -ErrorAction SilentlyContinue }
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Invoke-MgGraphRequest
+                Remove-Item -Path function:Get-AzToken
+            }
+            $Restored = foreach ($Name in 'Invoke-MgGraphRequest', 'Get-AzToken') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            'RESULT IS NULL: {0}' -f ($null -eq $Result)
+            'GRAPH CALLS: {0}' -f $global:OERLatchGraphCalls
+            'TOKEN CALLS: {0}' -f $global:OERLatchTokenCalls
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'TOKEN CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'RESULT IS NULL: True'
+        $Ids = @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0]
+        $Ids | Should -Match 'GraphTokenAcquisitionFailed'
+        $Ids | Should -Match 'SignInRefused'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no request may leave over a refused step-up'
+    }
+}
+
+Describe 'A command whose sign-in was refused sends nothing through either transport (A19, F1)' {
+    # Step 4b's finding F1: a terminating error from Initialize-OERAuth ends only Initialize-OERAuth.
+    # Outside any try, the command that called it carries on, and its calls -- and those of every
+    # public cmdlet it calls, which sign in again from the cache -- went out under the session the
+    # previous sign-in left. For Invoke-OERStructure -TenantId that is one tenant's document planned,
+    # or applied, against another tenant.
+    It 'H1: Invoke-OERStructure naming another tenant, outside any try, sends no Graph and no ARM request when that sign-in fails' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            # Tenant A's interactive session, with a cached ARM token for tenant A: every public cmdlet
+            # that signs in without -TenantId finds it in the cache.
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                    ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-tenant-A' -AsPlainText -Force
+                    ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                    ArmTokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            } $Own
+            # The process still holds the module's own session, so the A18 session gate passes: only
+            # the sign-in latch can refuse these calls. A global function outranks the cmdlet for the
+            # module's unqualified call, as the tripwire's do.
+            function global:Get-MgContext {
+                [pscustomobject]@{
+                    AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                    ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                    Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+                }
+            }
+            $global:OERLatchTokenCalls = 0
+            # A MODULE-scope stub: the sign-in for the other tenant fails at its token call, so
+            # Initialize-OERAuth raises GraphTokenAcquisitionFailed. Removed again below, before the
+            # runspace check reads the module scope. Hang guard: exit past five calls.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Get-AzToken {
+                    $global:OERLatchTokenCalls++
+                    if ($global:OERLatchTokenCalls -gt 5) { exit }
+                    throw [System.Exception]::new('AADSTS50076: interaction required.')
+                }
+            }
+            # One group, read by the handler itself through Graph, and one role assignment, read by a
+            # nested Get-OERRoleAssignment through ARM after its own sign-in hits tenant A's cache. The
+            # scope, the role and the principal are ids, so nothing else is resolved first.
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-a19-probe-{0}.json' -f [guid]::NewGuid().ToString('N'))
+            Set-Content -Path $Doc -Encoding utf8 -Value (
+                '{ "version": "1.0", "groups": [ { "displayName": "oer-a19-probe-group" } ], ' +
+                '"roleAssignments": [ { "scope": "/subscriptions/88888888-8888-8888-8888-888888888888", ' +
+                '"role": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "principal": "99999999-9999-9999-9999-999999999999" } ] }')
+            # A plain call, as at a prompt: no try anywhere up the stack.
+            $Rows = @(Invoke-OERStructure -TenantId '77777777-7777-7777-7777-777777777777' -Path $Doc -WhatIf)
+            Remove-Item -Path $Doc
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Get-AzToken }
+            $Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Get-AzToken -CommandType Function -ErrorAction Ignore }
+            'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+            'TOKEN CALLS: {0}' -f $global:OERLatchTokenCalls
+            foreach ($Row in $Rows) { 'ROW: {0} | {1} | {2}' -f $Row.Section, $Row.Action, $Row.Detail }
+            'ERROR IDS: {0}' -f ((@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | ')
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # One token call, the refused sign-in's: the nested cmdlet's sign-in came from tenant A's cache.
+        $R.Output | Should -Contain 'TOKEN CALLS: 1'
+        $Text = $R.Errors -join "`n"
+        $Text | Should -Match 'Failed to acquire a Microsoft Graph token'
+        $Text | Should -Match 'sign-in for this command was refused'
+        $Ids = @($R.Output | Where-Object { "$_" -like 'ERROR IDS: *' })[0]
+        $Ids | Should -Match 'GraphTokenAcquisitionFailed'
+        $Ids | Should -Match 'SignInRefused'
+        $Rows = @($R.Output | Where-Object { "$_" -like 'ROW: *' })
+        # Both sections answered, and neither was planned: a refused read is not an absent object.
+        @($Rows | Where-Object { $_ -like 'ROW: groups | *' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_ -like 'ROW: roleAssignments | *' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_ -match '^ROW: [^|]+ \| (Created|Updated|Removed) \|' }) | Should -BeNullOrEmpty
+        @($Rows | Where-Object { $_ -match 'would create' }) | Should -BeNullOrEmpty
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'no Graph or ARM request, and no Microsoft Graph connection, may leave for a command whose sign-in failed'
+    }
+
+    It 'H2: a plain command after the refused one, on the same state, sends its request' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                    ClientId = ''; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                    ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-tenant-A' -AsPlainText -Force
+                    ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                    ArmTokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            } $Own
+            function global:Get-MgContext {
+                [pscustomobject]@{
+                    AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                    ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                    Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+                }
+            }
+            $global:OERLatchTokenCalls = 0
+            $global:OERLatchGraphCalls = 0
+            # Module-scope stubs, removed again below. Hang guards: exit past five calls.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Get-AzToken {
+                    $global:OERLatchTokenCalls++
+                    if ($global:OERLatchTokenCalls -gt 5) { exit }
+                    throw [System.Exception]::new('AADSTS50076: interaction required.')
+                }
+            }
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-a19-probe-{0}.json' -f [guid]::NewGuid().ToString('N'))
+            Set-Content -Path $Doc -Encoding utf8 -Value (
+                '{ "version": "1.0", "groups": [ { "displayName": "oer-a19-probe-group" } ], ' +
+                '"roleAssignments": [ { "scope": "/subscriptions/88888888-8888-8888-8888-888888888888", ' +
+                '"role": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "principal": "99999999-9999-9999-9999-999999999999" } ] }')
+            # The refused command first, exactly as in H1.
+            $Refused = @(Invoke-OERStructure -TenantId '77777777-7777-7777-7777-777777777777' -Path $Doc -WhatIf)
+            Remove-Item -Path $Doc
+            $RefusedIds = (@($Error) | ForEach-Object { [string]$_.FullyQualifiedErrorId }) -join ' | '
+            # Then a request that is answered: an empty list of groups.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    $global:OERLatchGraphCalls++
+                    if ($global:OERLatchGraphCalls -gt 5) { exit }
+                    @{ value = @() }
+                }
+            }
+            $TableExists = & (Get-Module Omnicit.EntraRBAC) { $null -ne $script:_OERSignInLatch }
+            # A new command, with no -TenantId: it signs in from tenant A's cache and is not latched.
+            $Groups = @(Get-OERGroup -All)
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Invoke-MgGraphRequest
+                Remove-Item -Path function:Get-AzToken
+            }
+            $Restored = foreach ($Name in 'Invoke-MgGraphRequest', 'Get-AzToken') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            'REFUSED ROWS: {0}' -f $Refused.Count
+            'REFUSED IDS: {0}' -f $RefusedIds
+            'LATCH TABLE EXISTS: {0}' -f $TableExists
+            'GROUPS: {0}' -f $Groups.Count
+            'TOKEN CALLS: {0}' -f $global:OERLatchTokenCalls
+            'GRAPH CALLS: {0}' -f $global:OERLatchGraphCalls
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        # Not vacuous: the first command was refused, and the latch table exists when the second runs.
+        @($R.Output | Where-Object { "$_" -like 'REFUSED IDS: *' })[0] | Should -Match 'SignInRefused'
+        $R.Output | Should -Contain 'LATCH TABLE EXISTS: True'
+        # The second command signed in from the cache (still one token call) and sent its request.
+        $R.Output | Should -Contain 'TOKEN CALLS: 1'
+        $R.Output | Should -Contain 'GRAPH CALLS: 1'
+        $R.Output | Should -Contain 'GROUPS: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'the refused command sends nothing, and the second command is answered by the stub'
+    }
+}
