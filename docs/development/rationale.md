@@ -1645,10 +1645,12 @@ client secret line in the README's Quick Start.
 `Connect-MgGraph -AccessToken` with `-NoWelcome` and `-ErrorAction Stop`, plus `-Environment` outside
 `Global`, and **no `-ContextScope`**, so the SDK's own default applies. Every sign-in the module makes
 goes through that one call -- `Connect-OER` and the first-use sign-in of any other cmdlet alike -- so
-an OER session always comes with an SDK session in the same process. A call that finds a cached
-session returns before `Connect-MgGraph`, so the SDK session is started once per sign-in and not once
-per cmdlet. `Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears
-`$script:_OERAuthState` and calls `Disconnect-MgGraph`.
+an OER session always comes with an SDK session in the same process. `Connect-MgGraph` runs only on
+a call where `$GraphCached` is false -- the first sign-in, a different tenant, identity or cloud,
+`-ForceRefresh`, a claims challenge, or a Graph token within five minutes of expiry -- so the SDK
+session is started per sign-in or token refresh and not once per cmdlet; a call that finds a valid
+cached session returns before it. `Disconnect-OER` is the matching end: inside its `ShouldProcess`
+it clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`.
 
 The message is the same in four places, each in its own medium's voice: `Connect-OER`'s and
 `Disconnect-OER`'s `.DESCRIPTION`, the README's `### Disconnect`, and the about topic's
@@ -1670,23 +1672,41 @@ Run `Disconnect-OER` before your own `Connect-MgGraph` in the same process, or u
   "Output was not preserved; the operator reports every step completed as expected", dated
   2026-09-24. There is no captured output to point at.
 
-**No crash is recorded anywhere, and the help claims none.** The caution in those two checklists
-comes from commit `c2a5c70`, which wrote it as the reason for the order of the steps: `Connect-OER`
+**No crash is recorded in the tracked checklists or in this file, and the help claims none.** That is
+the extent of the search: it covers the tracked files under `docs/live-verification/` and this
+file, and it does not rule out a failure that was seen and not written down. The caution is the
+explanation `feat-pim-group-approval-checklist.md` gives for the order of its steps: `Connect-OER`
 leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
-otherwise try to read as an MSAL cache. Both checks disconnected first, so neither one ran the
-opposite order, and no other record shows it going wrong. The guidance is therefore given as a
-precaution and never as a described failure, and the measured-versus-reported wording stays in
-this record rather than in user-facing help.
+otherwise try to read as an MSAL cache. It is that commit's explanation and not a measurement: no
+output of a run that skipped the disconnect is saved. In the history `main` carries, the text first
+appears in `c2a5c70` (#10), in that checklist, and the same wording later appears in three more:
+`feat-directory-role-management-policies-checklist.md` (`55acea9`),
+`feat-directory-role-assignments-checklist.md` (`6b952e6`) and
+`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`). The last of those calls the
+order "step 3's lesson" and gives no account of what happened. The caution is NOT in the T.4
+checklist: `fix-withhold-prune-on-unresolved-entries-checklist.md` has no such text, and its
+`Disconnect-OER` line comes from `c33aca4` (2026-09-24, #9), which gives no reason for it. Both
+checks above disconnected first, so neither one ran the opposite order. The guidance is therefore
+given as a precaution and never as a described failure, and the measured-versus-reported wording
+stays in this record rather than in user-facing help.
 
 **Why the guidance is still worth giving.** The SDK session is process-wide and belongs to
-Microsoft.Graph.Authentication, not to this module. `$script:_OERAuthState` is the module's own
-record of it, which is a different thing: the SDK session is not part of that variable, so it can
-outlive the module's state, and the one call that ends both together is `Disconnect-OER`. INFERRED
-from the two code facts above and never run: an operator's own `Connect-MgGraph`, made while the
-module's cache is still warm, replaces the SDK session; the next OER cmdlet then returns from its
-cache without reconnecting, and its Graph calls go out under the operator's session instead of the
-one the module believes it holds. That is a reasoned hazard, not an observed one, and it is the
-reason to disconnect first rather than a tidy habit.
+Microsoft.Graph.Authentication, not to this module, while `$script:_OERAuthState` is the module's own
+cache. They are two separate records, and `Disconnect-OER` is what ends both together. INFERRED, and
+never run: the hazard is the two disagreeing. Three facts in the code carry it.
+`Invoke-OERGraphRequest` passes no token of its own and calls `Invoke-MgGraphRequest @Parameters`,
+so every Graph call goes out under whichever session the SDK holds at that moment; nothing under
+`source/` calls `Get-MgContext`, so the module never checks which session that is; and
+`Initialize-OERAuth` returns on a cache hit before `Connect-MgGraph`. The premise that is ASSUMED, and
+not verified here, is SDK behaviour: that an operator's own `Connect-MgGraph` replaces the session
+`Connect-OER` set up. Given that, an operator's `Connect-MgGraph` made while the module's cache is
+still valid is followed by OER cmdlets that return from the cache without reconnecting, and their
+Graph calls go out under the operator's session instead of the one the module believes it holds. The
+hazard is bounded: a forced refresh (`-ForceRefresh`, which the token-rejected retry passes), a
+claims challenge, or the Graph token entering its five-minute window each leave `$GraphCached`
+false, so `Initialize-OERAuth` runs again and reconnects, and the module's session takes the
+operator's place. It is a reasoned hazard, not an observed one, and it is the reason to disconnect
+first rather than a tidy habit.
 
 ## profile-path
 
