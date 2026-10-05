@@ -67,6 +67,23 @@ before it merges.
 - **D. The texts** ("correct the texts on unread sections, unnamed roles and empty names", "tighten the texts on the unnamed-role guard, empty names and partial reports"): the help,
   the bundle README, the LLM prompt and `docs/inventory-to-llm/README.md`.
 
+Round 1 (decisions A16 and A17, and two findings of the first run) added three more. Section R, at
+the end of this file, runs again what they change of 1.1 and 2.1.
+
+- **E. A scoped role declared by GUID also matches through the directory role name map** (BL-41,
+  decision A16). The handler matched a GUID only on the membership's `RoleId`. The name map keys an
+  activated role by its object id and by its role template id, so a role declared by one of the two
+  ids is now the live scoped role that carries the other when the map gives both the same name; a
+  role declared by its template id is no longer added again and, under `-Prune`, removed every other
+  run if Graph stores the object id. A GUID the map does not name matches on the id alone, as before.
+- **F. The bundle names what it could not read** (BL-42, decision A17). `IncompleteReads`,
+  `SkippedScopes` and `SkippedEligibilityScopes` lived only on the returned object and in the error.
+  The bundle's `README.md` now lists them under `## What this export could not read`, or says that
+  nothing was left unread; `inventory.json` is unchanged, and the LLM prompt says where the list is.
+- **G. Two small corrections.** A scoped role whose `RoleName` is only blanks is written by its role
+  id, like a missing name (F4), and the opening of both partial messages also covers objects left
+  out because two or more live objects share a name (F5).
+
 A live tenant is needed for what mocks cannot show: what a real export does when every read is
 refused (section 1, measured against the baseline below), that the success path is unchanged against
 real Graph answers and the unchanged export applied with `-Prune` plans no removal of the test
@@ -97,6 +114,16 @@ not read the group roster`, four in all; no `InventoryPartial` named `groups`, `
   `tests/Unit/Private/Get-OERStructureSchemaJson.Tests.ps1`, and offline here in 3.1.
 - **No write path of the apply engine is exercised against the tenant.** A only withholds; the
   convergence check of this branch is 2.2, the unchanged export applied with `-Prune -WhatIf`.
+- **E (a scoped role declared by GUID) cannot be run here.** Only a high-risk directory role can be
+  scoped to an administrative unit, and the sprint's live checks use low-risk roles only, so no scoped
+  role is assigned in the test tenant. Which id Graph stores for a membership created with a role
+  template id is therefore not measured either; the fix does not depend on it. Class B: mocked,
+  mutation-proven unit tests in `tests/Unit/Private/Sync-OERStructureAdministrativeUnit.Tests.ps1`
+  (Context `a scoped role declared by GUID matches through the directory role name map (decision
+  A16)`) run the REAL `Get-OERAdministrativeUnit`, `Get-OERDirectoryRoleNameMap`,
+  `Add-OERAdministrativeUnitScopedRole` and `Remove-OERAdministrativeUnitScopedRole` against a
+  simulated transport, for both premises (Graph stores the object id, Graph stores the template id),
+  two runs in a row under `-Prune`.
 
 ## Setup, once
 
@@ -881,3 +908,189 @@ Verdict: PASS. Minutes after T.2 the sweep finds no oer-s82- object in any of th
 [oer-s82] Done.
 [oer-s82] Main clone: branch main; HEAD 2a86120; exit code: 0
 ```
+
+## R. Round 1: the bundle names what it could not read
+
+Round 1 runs again what E, F and G change of 1.1 and 2.1, against the round's build. **It writes
+nothing to the tenant and needs no test object:** no prerequisite script runs, no teardown either,
+and both exports run behind the read-only fence of the Setup above. E is class B (see "What this file
+does not check"). The bundles go to `raw\s82\`, which is deleted when the results below are written up.
+
+### R.0. The module loads from the round's build in the round's own worktree
+
+- [ ] **R.0** The session's `Repo` is the round's worktree, whose build carries E, F and G, and the main clone is on `main`, never switched.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s82-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s82'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainPath = [System.IO.Path]::GetFullPath(($List[0] -replace '^worktree ', '')).TrimEnd('\', '/')
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "The module loads from a worktree that is not the main clone: $([System.IO.Path]::GetFullPath($Cfg.Repo).TrimEnd('\', '/') -ne $MainPath)"
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
+$Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$E = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch 'failed to read the directory roles that match a scopedRole declared by role id' -Quiet)
+$F = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch '## What this export could not read' -Quiet)
+$G = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch 'or were left out because two or more live objects share a name' -Quiet)
+Write-OerLiveStep "The worktree's build carries E: $E; F: $F; G: $G"
+```
+
+**Expect:** `The module loads from a worktree that is not the main clone: True`; the main clone on
+`main` (its HEAD recorded, and read again in R.3); the worktree at the round's head with 0 tracked
+changes; `The worktree's build carries E: True; F: True; G: True`.
+**Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main
+clone; any `False` on the last line -- build the worktree first, never while the gate runs.
+
+Result:
+
+### R.1. 1.1 again: the bundle itself names the three sections and the roster as unread
+
+- [ ] **R.1** The no-permission export of 1.1 writes a `README.md` whose `What this export could not read` lists `groups, administrativeUnits, accessReviews` and `groupsRoster`; `inventory.json` carries no part of the list; the prompt says where it is; both partial messages open with G's wording.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s82-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s82'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm -NoPerm
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:S82Seen = [System.Collections.Generic.List[string]]::new()
+    $script:S82Refused = [System.Collections.Generic.List[string]]::new()
+    if (-not $script:S82Transport) { $script:S82Transport = ${function:Invoke-OERGraphRequest} }
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $Path = ($Uri -replace '^https://[^/]+/', '') -replace '\?.*$', ''
+        $script:S82Seen.Add("$($Method.ToUpperInvariant()) $Path")
+        if ($Method -ne 'GET' -and $Path -notmatch '^v1\.0/directoryObjects/(getByIds|[^/]+/getMemberGroups)$') {
+            $script:S82Refused.Add("$($Method.ToUpperInvariant()) $Path")
+            throw "S82 read-only fence: refused $($Method.ToUpperInvariant()) $Path"
+        }
+        & $script:S82Transport @PSBoundParameters
+    }
+}
+$Out = Join-Path $Raw 'export-r.1'
+$null = New-Item -ItemType Directory -Force -Path $Out
+$Bundle = Export-OERInventory -OutputPath $Out -Include Groups, AdministrativeUnits, AccessReviews -ErrorAction SilentlyContinue -ErrorVariable ExpErr -WarningAction SilentlyContinue -WarningVariable ExpWarn
+$Fence = & (Get-Module Omnicit.EntraRBAC) { [PSCustomObject]@{ Seen = $script:S82Seen.Count; NotGet = @($script:S82Seen | Where-Object { $_ -notlike 'GET *' }).Count; Refused = @($script:S82Refused) } }
+Write-OerLiveStep "Fence: requests $($Fence.Seen), not a GET $($Fence.NotGet), refused $($Fence.Refused.Count)"
+Write-OerLiveStep "Warnings: $(@($ExpWarn).Count)"
+Write-OerLiveStep "IncompleteReads: $(@($Bundle.IncompleteReads).Count) [$(@($Bundle.IncompleteReads) -join '; ')]"
+$Partial = @($ExpErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+Write-OerLiveStep "InventoryPartial errors: $($Partial.Count)"
+foreach ($P in $Partial) { Write-OerLiveStep "Opening ($($P.FullyQualifiedErrorId)): $(($P.Exception.Message -split '(?<=\.) ', 2)[0])" }
+$Readme = Get-Content -LiteralPath (Join-Path $Bundle.BundlePath 'README.md') -Raw
+$Head = '## What this export could not read'
+$Section = (($Readme -split ('(?m)^' + [regex]::Escape($Head) + '\r?$'), 2)[1] -split '(?m)^## ', 2)[0]
+Write-OerLiveStep "README.md has the section: $($Readme -match ('(?m)^' + [regex]::Escape($Head) + '\r?$')); before '## Files': $($Readme.IndexOf($Head) -ge 0 -and $Readme.IndexOf($Head) -lt $Readme.IndexOf('## Files'))"
+Write-OerLiveStep "The section says PARTIAL: $(($Section -replace '\s+', ' ') -match 'This bundle is PARTIAL')"
+$Entries = @($Section -split '\r?\n' | Where-Object { $_ -like '- *' })
+Write-OerLiveStep "Entries in the section: $($Entries.Count)"
+foreach ($L in $Entries) { Write-OerLiveStep "Entry: $L" }
+$InvRaw = Get-Content -LiteralPath (Join-Path $Bundle.BundlePath 'inventory.json') -Raw
+$Doc = $InvRaw | ConvertFrom-Json
+Write-OerLiveStep "inventory.json keys: $(@($Doc.PSObject.Properties.Name) -join ', ')"
+Write-OerLiveStep "inventory.json carries the list: $($InvRaw.Contains($Head.TrimStart('# ')) -or $InvRaw.Contains('IncompleteReads') -or $InvRaw.Contains('groupsRoster'))"
+$Prompt = Get-Content -LiteralPath (Join-Path $Bundle.BundlePath 'rbac-architect-prompt.md') -Raw
+Write-OerLiveStep "The prompt says where the list is: $($Prompt.Contains('README.md') -and $Prompt.Contains('What this export could not read'))"
+Disconnect-OerLive
+```
+
+**Expect:** the fence refused `0`; `IncompleteReads: 2 [groups, administrativeUnits, accessReviews;
+groupsRoster]` and `InventoryPartial errors: 2`, as in 1.1. **New:** both openings name objects
+`left out because two or more live objects share a name` (G); `README.md has the section: True;
+before '## Files': True`; `The section says PARTIAL: True`; `Entries in the section: 2`, exactly
+``- Entra ID: `groups, administrativeUnits, accessReviews` `` and ``- Entra ID: `groupsRoster` ``;
+`inventory.json keys` the version and the nine sections, as before; `inventory.json carries the
+list: False`; `The prompt says where the list is: True`.
+**Failure looks like:** no section, or an entry missing -- the bundle still does not say what it
+could not read (the defect of F); `inventory.json carries the list: True` -- the list leaked into the
+document that is validated and applied; `refused` above 0.
+
+Result:
+
+### R.2. 2.1 again: the bundle says that everything was read
+
+- [ ] **R.2** The same export as `oer-live-cc` is complete, and its `README.md` says so in `What this export could not read`.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s82-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s82'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:S82Seen = [System.Collections.Generic.List[string]]::new()
+    $script:S82Refused = [System.Collections.Generic.List[string]]::new()
+    if (-not $script:S82Transport) { $script:S82Transport = ${function:Invoke-OERGraphRequest} }
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $Path = ($Uri -replace '^https://[^/]+/', '') -replace '\?.*$', ''
+        $script:S82Seen.Add("$($Method.ToUpperInvariant()) $Path")
+        if ($Method -ne 'GET' -and $Path -notmatch '^v1\.0/directoryObjects/(getByIds|[^/]+/getMemberGroups)$') {
+            $script:S82Refused.Add("$($Method.ToUpperInvariant()) $Path")
+            throw "S82 read-only fence: refused $($Method.ToUpperInvariant()) $Path"
+        }
+        & $script:S82Transport @PSBoundParameters
+    }
+}
+$Out = Join-Path $Raw 'export-r.2'
+$null = New-Item -ItemType Directory -Force -Path $Out
+$Bundle = Export-OERInventory -OutputPath $Out -Include Groups, AdministrativeUnits, AccessReviews -ErrorAction SilentlyContinue -ErrorVariable ExpErr -WarningAction SilentlyContinue -WarningVariable ExpWarn
+$Fence = & (Get-Module Omnicit.EntraRBAC) { [PSCustomObject]@{ Seen = $script:S82Seen.Count; NotGet = @($script:S82Seen | Where-Object { $_ -notlike 'GET *' }).Count; Refused = @($script:S82Refused) } }
+Write-OerLiveStep "Fence: requests $($Fence.Seen), not a GET $($Fence.NotGet), refused $($Fence.Refused.Count)"
+Write-OerLiveStep ("Summary: groups {0}, administrative units {1}, access reviews {2}, roster {3}" -f $Bundle.Groups, $Bundle.AdministrativeUnits, $Bundle.AccessReviews, $Bundle.RosterCount)
+foreach ($W in @($ExpWarn)) { Write-OerLiveStep "Warning: $W" }
+Write-OerLiveStep "IncompleteReads: $(@($Bundle.IncompleteReads).Count); SkippedScopes: $(@($Bundle.SkippedScopes).Count); SkippedEligibilityScopes: $(@($Bundle.SkippedEligibilityScopes).Count)"
+Write-OerLiveStep "InventoryPartial errors: $(@($ExpErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count)"
+$Readme = Get-Content -LiteralPath (Join-Path $Bundle.BundlePath 'README.md') -Raw
+$Head = '## What this export could not read'
+$Section = (($Readme -split ('(?m)^' + [regex]::Escape($Head) + '\r?$'), 2)[1] -split '(?m)^## ', 2)[0]
+Write-OerLiveStep "README.md has the section: $($Readme -match ('(?m)^' + [regex]::Escape($Head) + '\r?$')); entries: $(@($Section -split '\r?\n' | Where-Object { $_ -like '- *' }).Count)"
+Write-OerLiveStep "The section: $(($Section -replace '\s+', ' ').Trim())"
+$V = Test-OERStructure -Path (Join-Path $Bundle.BundlePath 'inventory.json') -WarningAction SilentlyContinue
+Write-OerLiveStep "inventory.json validates: $($V.Valid); Errors: $(@($V.Errors | Where-Object Severity -eq 'Error').Count)"
+Disconnect-OerLive
+```
+
+**Expect:** the fence refused `0`; `IncompleteReads: 0; SkippedScopes: 0; SkippedEligibilityScopes:
+0` and `InventoryPartial errors: 0`, as in 2.1; the warnings, if any, about access reviews that are
+not access-package-scoped (skipped, not unread). **New:** `README.md has the section: True; entries:
+0`, and the section reads `Nothing. Export-OERInventory read everything it was asked to read ...`;
+`inventory.json validates: True`.
+**Failure looks like:** the section missing, or an entry in it -- the bundle would claim, or fail to
+claim, a read it did; `refused` above 0.
+
+Result:
+
+### R.3. Read back, and clean up
+
+- [ ] **R.3** The main clone is still on `main` at the HEAD R.0 recorded, and the redaction map and `raw\s82\` are deleted after the write-up.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s82-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s82'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+Write-OerLiveStep "raw\s82 holds: $(@(Get-ChildItem -LiteralPath $Raw -ErrorAction SilentlyContinue).Name -join ', ')"
+```
+
+**Expect:** the main clone on `main` at the HEAD R.0 recorded; `raw\s82` holds the two export
+folders of R.1 and R.2. After the results are copied into this file: `Clear-OerLiveRedactionMap`,
+and `raw\s82\` deleted.
+**Failure looks like:** the main clone on another branch or HEAD -- record it in the report.
+
+Result:
