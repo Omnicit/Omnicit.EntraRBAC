@@ -8,7 +8,9 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 
 **This file writes to a real tenant, and to nothing outside the prefix `oer-s83-`.** The
 prerequisite script creates one catalog, `oer-s83-catalog` (published, visible to external users),
-one hidden access package in it, `oer-s83-ap`, and one assignment policy on the package,
+one hidden access package in it, `oer-s83-ap`, one security group with no member,
+`oer-s83-approvers`, the policies' approver (Graph refuses a policy for any user without an
+approval), and one assignment policy on the package,
 `oer-s83-ext`, whose `allowedTargetScope` is `allExternalUsers`, with a raw Graph POST (the module
 could not build that scope before this branch). Check 1.3 has the module create a second policy on
 the same package, `oer-s83-ext2`. Nothing else is written: section 2 runs every command with
@@ -99,8 +101,8 @@ scope is `allExternalUsers` and that such a policy round-trips through an export
   each block also runs on its own in a fresh window.
 - The **dedicated certificate identity** `oer-live-cc` enabled for the run, and its no-permission
   twin `oer-live-cc-noperm`. `oer-live-cc` creates and deletes a catalog, an access package and its
-  policies with the permission it already holds (`EntitlementManagement.ReadWrite.All`); this file
-  adds none.
+  policies, and a group, with the permissions it already holds (`EntitlementManagement.ReadWrite.All`,
+  `Group.ReadWrite.All`); this file adds none.
 - The **built module of this branch** in the step's own worktree, built there with
   `./build.ps1 -Tasks build`, and the environment variable `OER_LIVE_REPO` naming that worktree. Each
   block's fifth line sets the session's `Repo` to it, so the module loads from the worktree's build;
@@ -108,7 +110,7 @@ scope is `allExternalUsers` and that such a policy round-trips through an export
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -138,13 +140,22 @@ changes; `The worktree's build carries A: True; B: True; C: True; D: True`.
 clone, and the run would load whatever the main clone last built; any `False` on the last line --
 build the worktree first (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-05 06:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 2a86120, never switched; the worktree on fix/failed-request-and-lookup-reported-as-themselves at 2eeb653 with 0 tracked changes; the worktree's build carries A, B, C and D.
+
+[oer-s83] The module loads from a worktree that is not the main clone: True
+[oer-s83] Main clone: branch main; HEAD 2a86120
+[oer-s83] Worktree: branch fix/failed-request-and-lookup-reported-as-themselves; HEAD 2eeb653 docs: add the live-verification checklist for failed requests and lookups; tracked changes: 0
+[oer-s83] The worktree's build carries A: True; B: True; C: True; D: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -166,11 +177,27 @@ tenant and is Enabled), `identity check passed: True`, and `The module is the wo
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-05 06:19 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the module session (app-only certificate session with the identity's app id, app name oer-live-cc, test tenant, the service principal named oer-live-cc and the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the test subscription belongs to the test tenant and is Enabled); identity check passed; the module is the worktree's build (1.1.2).
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] The module is the worktree's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, the module session
 
-- [ ] **0.2** The no-permission identity signs in to a module session.
+- [x] **0.2** The no-permission identity signs in to a module session.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -189,11 +216,24 @@ session is `oer-live-cc-noperm`: `True`, the test tenant `True`, the ARM token f
 `True`, `identity check passed: True`, and `The module is the worktree's build: True`.
 **Failure looks like:** any `False` -- STOP; section 2 needs this session.
 
-Result:
+Result: 2026-10-05 06:19 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The no-permission identity signs in to a module session: app-only with its app id, app name oer-live-cc-noperm, the test tenant, the ARM token from the certificate, all True; identity check passed; the module is the worktree's build.
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s83] The module is the worktree's build: True
+```
 
 ### 0.3. The prerequisite script's plan
 
-- [ ] **0.3** `-WhatIf` plans only `oer-s83-` objects in the tenant.
+- [x] **0.3** `-WhatIf` plans only `oer-s83-` objects in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -211,18 +251,50 @@ Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.
 
 **Expect:** the identity check passes; the sweep reads all six collections and finds no `oer-s83-`
 object; the plan names the transcript and the baseline under `raw\s83\` and, in the tenant, the
-catalog `oer-s83-catalog`, the access package `oer-s83-ap` and the policy `oer-s83-ext` -- three
-tenant targets, every one starting with `oer-s83-`; `WhatIf: nothing was created, removed or
+catalog `oer-s83-catalog`, the access package `oer-s83-ap`, the group `oer-s83-approvers` and the
+policy `oer-s83-ext` -- four tenant targets, every one starting with `oer-s83-`; `WhatIf: nothing was created, removed or
 written`; exit code `0`.
 **Failure looks like:** a tenant target without the prefix -- STOP; a refusal line -- read it, the
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
+Result: 2026-10-05 06:22 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, on the second plan. Run 1: identity check passed, the sweep read all six collections and found no oer-s83- object, 3 tenant targets (oer-s83-catalog, oer-s83-ap, oer-s83-ext), every one with the prefix, nothing written, exit code 0. 0.4 run 1 then showed that Graph refuses an 'any user' policy without an approval, so the prerequisite script gained a fourth object, the empty approver group oer-s83-approvers; run 2 planned the two objects still missing (oer-s83-approvers, oer-s83-ext), both with the prefix, and found the catalog and package of 0.4 run 1; nothing written; exit code 0.
+
+Run 1 (before 0.4 run 1):
 Result:
+
+Run 2 (after the approver group was added, before 0.4 run 2):
+What if: Performing the operation "Start the redacted transcript" on target "raw\s83\prereq-20261005-062148Z.log".
+[oer-s83] Mode: CREATE or complete. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-approvers (no member, the approver); oer-s83-ext (allExternalUsers, approved by oer-s83-approvers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Residue: raw\residue.json holds no rows.
+[oer-s83] Found: oer-s83-catalog exists: True; oer-s83-ap exists: True; oer-s83-approvers exists: False.
+[oer-s83] The baseline exists (catalogs 5, access packages 6 when it was written).
+[oer-s83] Catalog oer-s83-catalog exists.
+[oer-s83] Access package oer-s83-ap exists.
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member), the approver of the policies" on target "oer-s83-approvers".
+What if: Performing the operation "Create an assignment policy for all external users (Graph v1.0 POST entitlementManagement/assignmentPolicies: allowedTargetScope allExternalUsers, self-request, one approval stage by oer-s83-approvers, no expiration)" on target "oer-s83-ext".
+[oer-s83] Summary: oer-s83-catalog present; oer-s83-ap present; oer-s83-approvers absent; oer-s83-ext absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s83] WhatIf: nothing was created, removed or written.
+[oer-s83] Done.
+[oer-s83] What-if targets: 3; in the tenant: 2; every tenant target starts with oer-s83-: True; exit code: 0
+```
 
 ### 0.4. The prerequisite script, for real
 
-- [ ] **0.4** The test objects exist: the catalog, the hidden access package and its policy for all external users.
+- [x] **0.4** The test objects exist: the catalog, the hidden access package, the approver group and the policy for all external users.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -237,21 +309,84 @@ Write-OerLiveStep "Exit code: $Code"
 ```
 
 **Expect:** the baseline written and read back before the first write; `Created catalog
-oer-s83-catalog`, `Created access package oer-s83-ap`, `Created policy oer-s83-ext`, each readable;
+oer-s83-catalog`, `Created access package oer-s83-ap`, `Created group oer-s83-approvers`, `Created policy oer-s83-ext`, each readable;
 a line `oer-s83-ext reads allowedTargetScope '...' (raw v1.0 read, no Prefer header)` that RECORDS
-what a raw read returns (the measurement 1.1 compares against); the summary with all three
+what a raw read returns (the measurement 1.1 compares against); the summary with all four
 `present`; exit code `0`. A `likely replication delay` line on a fresh object is expected.
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.4 again (the script
 completes an earlier run) or tear down; never sign in another way. A refused POST of the policy --
 record Graph's code and message; it is a finding about what Graph accepts, not about the module.
 
-Result:
+Result: 2026-10-05 06:22 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the second run. Run 1 wrote the baseline (catalogs 5, access packages 6), created oer-s83-catalog (201) and oer-s83-ap (201), then stopped: the policy POST answered 400 AnyUserPolicyValidationError, 'An access package policy with Any User option must have an approval configured' -- a fact about what Graph accepts, fixed in the prerequisite script (an empty security group oer-s83-approvers as the policy's approver), not a module defect. Run 2 completed: oer-s83-approvers created (201, resolvable after 4 reads, 14.4 s), oer-s83-ext created (201); the create answer and a raw v1.0 read without the Prefer header both give allowedTargetScope 'allExternalUsers' -- NOT unknownFutureValue; all four objects present; exit code 0.
+
+Run 1:
+[oer-s83] Transcript (redacted): raw\s83\prereq-20261005-061954Z.log; OerLive 1.0.2.
+[oer-s83] Mode: CREATE or complete. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-ext (allExternalUsers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s83] Residue: raw\residue.json holds no rows.
+[oer-s83] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s83-' is left.
+[oer-s83] Found: oer-s83-catalog exists: False; oer-s83-ap exists: False.
+[oer-s83] No baseline yet: it is written now, before the first write to the tenant (catalogs 5, access packages 6).
+[oer-s83] Wrote the baseline raw\s83\baseline-s83.json and read it back.
+[oer-s83] Created catalog oer-s83-catalog: 201.
+[oer-s83] oer-s83-catalog is readable by its id: converged after 1 read(s), 0.2 s.
+[oer-s83] Created access package oer-s83-ap: 201 after 1 attempt(s).
+[oer-s83] oer-s83-ap is readable by its id: converged after 1 read(s), 0.2 s.
+[oer-s83] Stopped after this run had written to the tenant (see the lines above): Creating policy oer-s83-ext failed: POST v1.0/identityGovernance/entitlementManagement/assignmentPolicies answered 400 AnyUserPolicyValidationError -- An access package policy with Any User option must have an approval configured.
+[oer-s83] Stopped at: at Assert-OerLiveOk, VAULT\OerLive\OerLive.psm1: line 673 <- at Invoke-S83Setup, VAULT\Initialize-OerS83Prereq.ps1: line 273 <- at <ScriptBlock>, VAULT\Initialize-OerS83Prereq.ps1: line 331
+[oer-s83] Setup changes nothing outside the prefix, so nothing is restored here; the test objects are removed by -Teardown.
+[oer-s83] Exit code: 1
+
+Run 2:
+[oer-s83] Transcript (redacted): raw\s83\prereq-20261005-062204Z.log; OerLive 1.0.2.
+[oer-s83] Mode: CREATE or complete. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-approvers (no member, the approver); oer-s83-ext (allExternalUsers, approved by oer-s83-approvers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s83] Residue: raw\residue.json holds no rows.
+[oer-s83] Found: oer-s83-catalog exists: True; oer-s83-ap exists: True; oer-s83-approvers exists: False.
+[oer-s83] The baseline exists (catalogs 5, access packages 6 when it was written).
+[oer-s83] Catalog oer-s83-catalog exists.
+[oer-s83] Access package oer-s83-ap exists.
+[oer-s83] Created group oer-s83-approvers: 201.
+[oer-s83] oer-s83-approvers resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s83] oer-s83-approvers resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s83] oer-s83-approvers resolves by its display name: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s83] oer-s83-approvers resolves by its display name: converged after 4 read(s), 14.4 s.
+[oer-s83] Created policy oer-s83-ext: 201 after 1 attempt(s); the create answer's allowedTargetScope 'allExternalUsers'.
+[oer-s83] oer-s83-ext is listed on oer-s83-ap: converged after 1 read(s), 0.2 s.
+[oer-s83] oer-s83-ext reads allowedTargetScope 'allExternalUsers' (raw v1.0 read, no Prefer header).
+[oer-s83] Summary: oer-s83-catalog present; oer-s83-ap present; oer-s83-approvers present; oer-s83-ext present; written to the tenant: True.
+[oer-s83] Done.
+[oer-s83] Exit code: 0
+```
 
 ### 1. The export and the apply, as oer-live-cc
 
 ### 1.1. The export gives the policy with its scope
 
-- [ ] **1.1** `Export-OERInventory` writes `oer-s83-ext` with the scope Graph returned, and the value is recorded.
+- [x] **1.1** `Export-OERInventory` writes `oer-s83-ext` with the scope Graph returned, and the value is recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -270,7 +405,7 @@ $Cat = @($Doc.catalogs | Where-Object { $_.displayName -ceq 'oer-s83-catalog' })
 $Ap = @($Doc.accessPackages | Where-Object { $_.displayName -ceq 'oer-s83-ap' })
 Write-OerLiveStep "inventory.json: catalogs named oer-s83-catalog $($Cat.Count) (externallyVisible $(@($Cat | ForEach-Object { $_.externallyVisible }) -join ',')); access packages named oer-s83-ap $($Ap.Count) (hidden $(@($Ap | ForEach-Object { $_.hidden }) -join ','))"
 foreach ($Pol in @($Ap | ForEach-Object { $_.assignmentPolicies })) {
-    Write-OerLiveStep "policy '$($Pol.displayName)': requestorScope.scope '$($Pol.requestorScope.scope)'; users $(@($Pol.requestorScope.users).Count); groups $(@($Pol.requestorScope.groups).Count)"
+    Write-OerLiveStep "policy '$($Pol.displayName)': requestorScope.scope '$($Pol.requestorScope.scope)'; users $(@($Pol.requestorScope.users | Where-Object { $null -ne $_ }).Count); groups $(@($Pol.requestorScope.groups | Where-Object { $null -ne $_ }).Count)"
 }
 $Live = @(Get-OERAccessPackageAssignmentPolicy -AccessPackage $Ap[0].displayName -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -ceq 'oer-s83-ext' })
 Write-OerLiveStep "Get-OERAccessPackageAssignmentPolicy: oer-s83-ext AllowedTargetScope '$(@($Live | ForEach-Object { $_.AllowedTargetScope }) -join ',')'; RequestorScope.scope '$(@($Live | ForEach-Object { $_.RequestorScope.scope }) -join ',')'"
@@ -285,11 +420,30 @@ answers `unknownFutureValue` (the module sends no `Prefer: include-unknown-enum-
 written here, and 1.2 then expects `Failed` for this policy (decision A7).
 **Failure looks like:** the policy missing from the export, or a scope other than the two above.
 
-Result:
+Result: 2026-10-05 06:23 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. No warning, no error, no IncompleteReads entry; one oer-s83-catalog (externallyVisible True) and one oer-s83-ap (hidden True); the export writes oer-s83-ext with requestorScope.scope 'AllExternalUsers' and no users or groups, and Get-OERAccessPackageAssignmentPolicy reads allowedTargetScope 'allExternalUsers' / 'AllExternalUsers'. Recorded as read: Graph v1.0 answers allExternalUsers without the Prefer header, NOT unknownFutureValue. (A first run of this block printed 'users 1; groups 1': the block counted an absent key as one, @($null).Count; the block now counts non-null entries, and the bundle's JSON for the scope is {scope: AllExternalUsers} with no users or groups key.)
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Warnings: 0; IncompleteReads: 0
+[oer-s83] inventory.json: catalogs named oer-s83-catalog 1 (externallyVisible True); access packages named oer-s83-ap 1 (hidden True)
+[oer-s83] policy 'oer-s83-ext': requestorScope.scope 'AllExternalUsers'; users 0; groups 0
+[oer-s83] Get-OERAccessPackageAssignmentPolicy: oer-s83-ext AllowedTargetScope 'allExternalUsers'; RequestorScope.scope 'AllExternalUsers'
+```
 
 ### 1.2. The unchanged export applied: Unchanged with -WhatIf, and for real (G8)
 
-- [ ] **1.2** The export's `oer-s83-catalog` and `oer-s83-ap` entries, applied unchanged, give `Unchanged` for `oer-s83-ext` and no write, first with `-WhatIf`, then for real.
+- [x] **1.2** The export's `oer-s83-catalog` and `oer-s83-ap` entries, applied unchanged, give `Unchanged` for `oer-s83-ext` and no write, first with `-WhatIf`, then for real.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -300,6 +454,7 @@ if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
 $Bundle = Get-ChildItem -LiteralPath (Join-Path $Raw 'export-1.1') -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 $Doc = Get-Content -LiteralPath (Join-Path $Bundle.FullName 'inventory.json') -Raw | ConvertFrom-Json
 $Mini = [ordered]@{
+    version        = $Doc.version
     catalogs       = @($Doc.catalogs | Where-Object { $_.displayName -ceq 'oer-s83-catalog' })
     accessPackages = @($Doc.accessPackages | Where-Object { $_.displayName -ceq 'oer-s83-ap' })
 }
@@ -311,7 +466,7 @@ foreach ($Run in 'WhatIf', 'Real') {
     $Rows = if ($Run -eq 'WhatIf') {
         @(Invoke-OERStructure -Json $Json -WhatIf -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
     } else {
-        @(Invoke-OERStructure -Json $Json -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
+        @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
     }
     Write-OerLiveStep "$Run rows: $(($Rows | Group-Object Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')"
     foreach ($R in $Rows) { Write-OerLiveStep "$Run row: [$($R.Section)] $($R.Item) $($R.Action) -- $($R.Detail)" }
@@ -329,11 +484,74 @@ before the diff, with `-WhatIf` too, since the builder refused the scope. If 1.1
 **Failure looks like:** a `Failed` row for `oer-s83-ext` that names the builder or a parameter value,
 or any `Updated` or `Created` row (the export did not round-trip).
 
-Result:
+Result: 2026-10-05 06:29 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Run 1 was refused by the validator (StructureValidationFailed, the document lacked the export's version key -- a defect of this checklist, fixed). Run 2: the document holds one catalog, one access package and one policy; with -WhatIf and for real alike, 3 rows, all Unchanged (catalog properties match; access package properties match; assignmentPolicy 'oer-s83-ext' matches); no Created, Updated, Removed or Failed row and no error. Run 3 repeated it after the real run gained -Confirm:$false (Invoke-OERStructure has ConfirmImpact High; see 1.3), with the same 3 Unchanged rows. Before this branch the policy was Failed before the diff, with -WhatIf too, since the builder refused the scope. The export round-trips.
+
+Run 1:
+[oer-s83] Document: catalogs 1, access packages 1, policies 1
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] WhatIf rows: 
+[oer-s83] WhatIf error: StructureValidationFailed,Invoke-OERStructure -- Structure document failed validation: version: Required key "version" is missing or empty.
+[oer-s83] Real rows: 
+[oer-s83] Real error: StructureValidationFailed,Invoke-OERStructure -- Structure document failed validation: version: Required key "version" is missing or empty.
+
+Run 2:
+[oer-s83] Document: catalogs 1, access packages 1, policies 1
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] WhatIf rows: Unchanged 3
+[oer-s83] WhatIf row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] Real rows: Unchanged 3
+[oer-s83] Real row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] Real row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] Real row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+
+Run 3 (the real run with -Confirm:$false):
+[oer-s83] Document: catalogs 1, access packages 1, policies 1
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] WhatIf rows: Unchanged 3
+[oer-s83] WhatIf row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] Real rows: Unchanged 3
+[oer-s83] Real row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] Real row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] Real row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+```
 
 ### 1.3. A second policy for all external users: Created, then only Unchanged (G8)
 
-- [ ] **1.3** The same document plus a policy `oer-s83-ext2` with `requestorScope.scope` `AllExternalUsers` gives `Created` for it, and a run after that only `Unchanged`.
+- [x] **1.3** The same document plus a policy `oer-s83-ext2` with `requestorScope.scope` `AllExternalUsers` gives `Created` for it, and a run after that only `Unchanged`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -347,7 +565,8 @@ $Ext2 = [PSCustomObject][ordered]@{
     description       = 'Omnicit.EntraRBAC live verification (oer-s83-): a second policy for all external users.'
     requestorScope    = [PSCustomObject]@{ scope = 'AllExternalUsers' }
     requestorSettings = [PSCustomObject]@{ allowSelfRequest = $true }
-    requireApproval   = $false
+    requireApproval   = $true
+    approvalStages    = @([PSCustomObject]@{ durationDays = 14; groups = @('oer-s83-approvers') })
 }
 $Ap = @($Mini.accessPackages)[0]
 $Ap.assignmentPolicies = @(@($Ap.assignmentPolicies) | Where-Object { $_.displayName -cne 'oer-s83-ext2' }) + $Ext2
@@ -368,7 +587,7 @@ foreach ($Run in 'WhatIf', 'Create', 'Again') {
     $Rows = if ($Run -eq 'WhatIf') {
         @(Invoke-OERStructure -Json $Json -WhatIf -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
     } else {
-        @(Invoke-OERStructure -Json $Json -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
+        @(Invoke-OERStructure -Json $Json -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable RunErr -WarningAction SilentlyContinue)
     }
     Write-OerLiveStep "$Run rows: $(($Rows | Group-Object Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')"
     foreach ($R in $Rows) { Write-OerLiveStep "$Run row: [$($R.Section)] $($R.Item) $($R.Action) -- $($R.Detail)" }
@@ -388,13 +607,76 @@ Prefer header, which this step does not add).
 **Failure looks like:** a `Failed` row on `Create` (the builder refused the value), a second
 `Created` on `Again`, or any `Updated` on `Again` (the policy did not converge).
 
-Result:
+Result: 2026-10-05 06:29 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on the second run. Run 1: -WhatIf planned 'would create assignmentPolicy oer-s83-ext2' and nothing else; the real run then failed the access package item as 'handler error' (NullReferenceException in ShouldProcess): Invoke-OERStructure has ConfirmImpact High and asked for confirmation in this non-interactive process; nothing was created (the wait never listed oer-s83-ext2) -- a defect of this checklist, fixed (the real runs pass -Confirm:$false). Run 2: -WhatIf plans the create; Create gives Created for oer-s83-ext2 and Unchanged for the rest; the wait lists it at once; Again gives only Unchanged, 4 rows, oer-s83-ext2 included (G8); no error; both live policies read allowedTargetScope 'allExternalUsers'. The module builds and writes AllExternalUsers, which it refused before this branch.
+
+Run 1 (the real runs without -Confirm:$false; the nine 'not yet' wait lines are left out):
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create assignmentPolicy 'oer-s83-ext2'" on target "oer-s83-ap".
+[oer-s83] WhatIf rows: Skipped 1, Unchanged 3
+[oer-s83] WhatIf row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Skipped -- would create assignmentPolicy 'oer-s83-ext2'
+[oer-s83] Create rows: Failed 1, Unchanged 1
+[oer-s83] Create row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] Create row: [accessPackages] oer-s83-ap Failed -- handler error: Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] Create error: NullReferenceException -- Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] Create error: NullReferenceException -- Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] Create error: NullReferenceException -- Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] Create error: NullReferenceException,Sync-OERStructureAccessPackage -- Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] Create error: NullReferenceException,Invoke-OERStructure -- Exception calling "ShouldProcess" with "2" argument(s): "Object reference not set to an instance of an object."
+[oer-s83] oer-s83-ext2 is listed on oer-s83-ap: NOT converged after 10 read(s), 181.4 s (budget 180 s).
+Exception: OerLive: oer-s83-ext2 is listed on oer-s83-ap -- not converged within budget (180 s, 10 reads).
+
+Run 2:
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+What if: Performing the operation "Create assignmentPolicy 'oer-s83-ext2'" on target "oer-s83-ap".
+[oer-s83] WhatIf rows: Skipped 1, Unchanged 3
+[oer-s83] WhatIf row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] WhatIf row: [accessPackages] oer-s83-ap Skipped -- would create assignmentPolicy 'oer-s83-ext2'
+[oer-s83] Create rows: Created 1, Unchanged 3
+[oer-s83] Create row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] Create row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] Create row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] Create row: [accessPackages] oer-s83-ap Created -- created assignmentPolicy 'oer-s83-ext2'
+[oer-s83] oer-s83-ext2 is listed on oer-s83-ap: converged after 1 read(s), 0.1 s.
+[oer-s83] Again rows: Unchanged 4
+[oer-s83] Again row: [catalogs] oer-s83-catalog Unchanged -- catalog properties match
+[oer-s83] Again row: [accessPackages] oer-s83-ap Unchanged -- access package properties match
+[oer-s83] Again row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext' matches
+[oer-s83] Again row: [accessPackages] oer-s83-ap Unchanged -- assignmentPolicy 'oer-s83-ext2' matches
+[oer-s83] Live policy 'oer-s83-ext2': AllowedTargetScope 'allExternalUsers'
+[oer-s83] Live policy 'oer-s83-ext': AllowedTargetScope 'allExternalUsers'
+```
 
 ### 2. The lookups, as oer-live-cc-noperm
 
 ### 2.1. Set-OERGroupPimPolicy: a refused approver lookup is not ApproverNotFound
 
-- [ ] **2.1** `Set-OERGroupPimPolicy -ApproverUser ... -WhatIf` against a made-up group id reports the refused approver lookup as itself, never as `ApproverNotFound`; the error id and the HTTP status are recorded.
+- [x] **2.1** `Set-OERGroupPimPolicy -ApproverUser ... -WhatIf` against a made-up group id reports the refused approver lookup as itself, never as `ApproverNotFound`; the error id and the HTTP status are recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -425,11 +707,27 @@ permission.
 **Failure looks like:** `ApproverNotFound` -- the defect of this branch; a 403 as `oer-live-cc` would
 be a stop, but this is the no-permission identity.
 
-Result:
+Result: 2026-10-05 06:29 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. No output object; the cmdlet's own error is the refused approver lookup itself, Authorization_RequestDenied,Set-OERGroupPimPolicy (category OperationStopped, the transport's id and message), exactly once; no ApproverNotFound and no AmbiguousApproverName anywhere among the 15 records (the other 14 are the transport's nested records of the same refusal); the same user lookup made raw answers HTTP 403 Authorization_RequestDenied. Before this branch the cmdlet wrote ApproverNotFound (ObjectNotFound) for this refusal. Nothing written: -WhatIf and an identity with no permission.
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s83] Output objects: 0; error records: 15; the cmdlet's own: 1
+[oer-s83] Own error: Authorization_RequestDenied,Set-OERGroupPimPolicy; category OperationStopped; target '' -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s83] Any ApproverNotFound: False
+[oer-s83] The same lookup, raw: HTTP 403 Authorization_RequestDenied
+```
 
 ### 2.2. Set-OERDirectoryRoleManagementPolicy: the same, for a low-risk role
 
-- [ ] **2.2** `Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverUser ... -WhatIf` reports the refused approver lookup as itself; the error id and the HTTP status are recorded.
+- [x] **2.2** `Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -ApproverUser ... -WhatIf` reports the refused approver lookup as itself; the error id and the HTTP status are recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -458,11 +756,27 @@ written.
 **Failure looks like:** `ApproverNotFound`; an error about the role instead of the approver (the order
 changed).
 
-Result:
+Result: 2026-10-05 06:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. No output object; the cmdlet's own error is the refused approver lookup itself, Authorization_RequestDenied,Set-OERDirectoryRoleManagementPolicy (category OperationStopped), exactly once, never ApproverNotFound; no error about the role (the approvers are resolved before the role and its policy are read); the same user lookup made raw answers HTTP 403 Authorization_RequestDenied. Nothing written: -WhatIf and an identity with no permission.
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s83] Output objects: 0; error records: 15; the cmdlet's own: 1
+[oer-s83] Own error: Authorization_RequestDenied,Set-OERDirectoryRoleManagementPolicy; category OperationStopped; target '' -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s83] Any ApproverNotFound: False
+[oer-s83] The same lookup, raw: HTTP 403 Authorization_RequestDenied
+```
 
 ### 2.3. Remove-OERAccessReviewDefinition: a refused read warns that the Lifecycle check could not be made
 
-- [ ] **2.3** `Remove-OERAccessReviewDefinition -WhatIf` against a made-up id warns that the definition could not be read and the Lifecycle check could not be made, writes no error, and still plans the delete.
+- [x] **2.3** `Remove-OERAccessReviewDefinition -WhatIf` against a made-up id warns that the definition could not be read and the Lifecycle check could not be made, writes no error, and still plans the delete.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -489,13 +803,30 @@ identity with no permission.
 **Failure looks like:** no warning (the failure is still swallowed); an error record from the cmdlet
 (under a global Stop it would stop the delete).
 
-Result:
+Result: 2026-10-05 06:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, with one measured difference from the Expect line. A What if line plans the delete of the made-up id; besides the cmdlet's usual 'irreversible' warning, one new warning names the read's error and says the check for an assignment policy's Lifecycle access review could not be made and that the delete is not blocked; the cmdlet's own errors 0 (the 6 records are the transport's nested records of the failed read). MEASURED: Graph answered the read of a made-up definition id with 404 NotFound ('Fusion batch response 0 returned not found'), not 403, even for this identity with no permission -- it reports a missing definition before it checks authorization. The warning path is the same for any failed read, so the check stands; a 403 on an existing definition would need a target without this step's prefix, which is a stop condition, so it was not run. Before this branch the failed read was swallowed and nothing said the check had not been made. Nothing written.
+
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+What if: Performing the operation "Delete access review definition" on target "00000000-0000-0000-0000-000000000099".
+[oer-s83] Output objects: 0; warnings: 2; error records: 6; the cmdlet's own: 0
+[oer-s83] Warning: Deleting access review definition '00000000-0000-0000-0000-000000000099'. This is irreversible.
+[oer-s83] Warning: Could not read access review definition '00000000-0000-0000-0000-000000000099' before deleting it (NotFound: Fusion batch response 0 returned not found for review 00000000-0000-0000-0000-000000000099.), so the check for an assignment policy's Lifecycle access review could not be made. Whether this definition is an assignment policy's own Lifecycle access review is therefore unknown; if it is, deleting it leaves that policy un-updatable until the review is re-created or 'Require access reviews' is turned off. The delete is not blocked.
+[oer-s83] The same read, raw: HTTP 404
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans only `oer-s83-` objects.
+- [x] **T.1** `-Teardown -WhatIf` plans only `oer-s83-` objects.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -512,15 +843,50 @@ Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.
 ```
 
 **Expect:** the plan deletes, through the library (step 3 of 6), the policies `oer-s83-ext` and
-`oer-s83-ext2`, the access package `oer-s83-ap` and the catalog `oer-s83-catalog`, every tenant target
+`oer-s83-ext2`, the access package `oer-s83-ap` and the catalog `oer-s83-catalog`, and (step 5 of 6) the
+group `oer-s83-approvers`, every tenant target
 starting with `oer-s83-`; `WhatIf: nothing was created, removed or written`; exit code `0`.
 **Failure looks like:** a tenant target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-05 06:30 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; 6 What-if targets: the transcript under raw\s83\ and 5 in the tenant, all through the library: the policies oer-s83-ext2 and oer-s83-ext, the access package oer-s83-ap and the catalog oer-s83-catalog (step 3 of 6), and the group oer-s83-approvers (step 5 of 6), every one with the prefix; nothing removed; exit code 0.
+
+What if: Performing the operation "Start the redacted transcript" on target "raw\s83\teardown-20261005-063034Z.log".
+[oer-s83] Mode: REMOVE. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-approvers (no member, the approver); oer-s83-ext (allExternalUsers, approved by oer-s83-approvers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Residue: raw\residue.json holds no rows.
+[oer-s83] Teardown of 'oer-s83-': users 0, groups 1, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s83] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s83] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s83] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s83-ap: assignment policy 'oer-s83-ext2'".
+What if: Performing the operation "Delete (Graph v1.0 DELETE assignmentPolicies)" on target "oer-s83-ap: assignment policy 'oer-s83-ext'".
+What if: Performing the operation "Delete the access package (Graph v1.0 DELETE accessPackages)" on target "oer-s83-ap".
+What if: Performing the operation "Delete the catalog (Graph v1.0 DELETE catalogs)" on target "oer-s83-catalog".
+[oer-s83] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s83] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s83-approvers".
+[oer-s83] Teardown 6/6: the prefixed users.
+[oer-s83] Teardown of 'oer-s83-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s83] WhatIf: nothing was created, removed or written.
+[oer-s83] Done.
+[oer-s83] What-if targets: 6; in the tenant: 5; every tenant target starts with oer-s83-: True; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Every `oer-s83-` object is gone, and the counts match the baseline.
+- [x] **T.2** Every `oer-s83-` object is gone, and the counts match the baseline.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -534,17 +900,54 @@ Write-OerLiveRaw -InputObject ($Out -join "`n")
 Write-OerLiveStep "Exit code: $Code"
 ```
 
-**Expect:** the library deleting both policies, the package and the catalog; the sweep finding no
+**Expect:** the library deleting both policies, the package, the catalog and the group; the sweep finding no
 `oer-s83-` object (a catalog or package deleted seconds earlier can still be listed for a while --
 T.3 reads again); `Counts: catalogs ... equal: True` and `accessPackages ... equal: True`; exit code
 `0`.
 **Failure looks like:** a `RESIDUE` line or exit code `3` -- record it in the report; exit code `1`.
 
-Result:
+Result: 2026-10-05 06:31 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, with the known listing delay. The library deleted the policies oer-s83-ext2 and oer-s83-ext (204 each), the access package oer-s83-ap (204), the catalog oer-s83-catalog (204) and the group oer-s83-approvers (204): removed 5, residue 0, unreadable 0; exit code 0. Both counts equal the baseline (catalogs 5, access packages 6). The sweep right after still listed the group: the startswith listing lags a DELETE by seconds to minutes (measured in earlier steps). T.3 reads again minutes later.
+
+[oer-s83] Transcript (redacted): raw\s83\teardown-20261005-063054Z.log; OerLive 1.0.2.
+[oer-s83] Mode: REMOVE. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-approvers (no member, the approver); oer-s83-ext (allExternalUsers, approved by oer-s83-approvers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s83] Residue: raw\residue.json holds no rows.
+[oer-s83] Teardown of 'oer-s83-': users 0, groups 1, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s83] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s83] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s83] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s83] Deleted: oer-s83-ap: assignment policy 'oer-s83-ext2' (204).
+[oer-s83] Deleted: oer-s83-ap: assignment policy 'oer-s83-ext' (204).
+[oer-s83] Deleted: access package oer-s83-ap (204, 1 attempt(s)).
+[oer-s83] Deleted: catalog oer-s83-catalog (204, 1 attempt(s)).
+[oer-s83] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s83] Teardown 5/6: the prefixed groups.
+[oer-s83] Deleted: group oer-s83-approvers (204).
+[oer-s83] Teardown 6/6: the prefixed users.
+[oer-s83] Teardown of 'oer-s83-': removed 5, residue 0, unreadable 0.
+[oer-s83] Sweep: group 'oer-s83-approvers' (00000000-0000-0000-0000-000000000007) carries the prefix.
+[oer-s83] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s83] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s83] Done.
+[oer-s83] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** Minutes later the sweep is clean, the counts match the baseline, the main clone is still on `main` at the HEAD S.1 recorded, and the redaction map is deleted after the write-up.
+- [x] **T.3** Minutes later the sweep is clean, the counts match the baseline, the main clone is still on `main` at the HEAD S.1 recorded, and the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -567,4 +970,27 @@ copied into this file: `Clear-OerLiveRedactionMap`, and `raw\s83\` deleted.
 **Failure looks like:** a prefixed object left, or a residue row -- the teardown did not finish;
 record it in the report.
 
-Result:
+Result: 2026-10-05 06:35 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Minutes after T.2 the sweep finds no oer-s83- object in any of the six collections; prefixed objects left 0, unread collections 0, residue rows 0; catalogs 5 and access packages 6, both equal to the baseline; the main clone on main at 2a86120, the HEAD S.1 recorded, never switched; exit code 0. The redaction map is cleared and raw\s83\ deleted after this write-up.
+
+[oer-s83] Transcript (redacted): raw\s83\readback-20261005-063453Z.log; OerLive 1.0.2.
+[oer-s83] Mode: READ BACK. Prefix 'oer-s83-'. Objects (fixed): oer-s83-catalog (published, externally visible); oer-s83-ap (hidden) in it; oer-s83-approvers (no member, the approver); oer-s83-ext (allExternalUsers, approved by oer-s83-approvers) on it. OerLive 1.0.2.
+[oer-s83] Omnicit.EntraRBAC 1.1.2 loaded from REPO\.claude\worktrees\s8-steg3\output\module\Omnicit.EntraRBAC\1.1.2.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s83] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s83] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s83-' is left.
+[oer-s83] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s83] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s83] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s83] Done.
+[oer-s83] Main clone: branch main; HEAD 2a86120; exit code: 0
+```
