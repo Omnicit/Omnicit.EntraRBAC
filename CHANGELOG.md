@@ -41,7 +41,11 @@ is still written as an empty array. An access package binding whose resource nam
 written by the group's or application's object id, and when there is no such id the package's
 `resourceRoles` are written as `null` and reported as partial. `Test-OERStructure` now reports, and
 `Invoke-OERStructure` refuses, an empty or blank access package binding resource or role, catalog
-resource name, or administrative unit scoped role or principal.
+resource name, or administrative unit scoped role or principal. A scoped role declared by its role
+id now also matches a live scoped role that the directory role list names the same, so a role
+declared by its role template id is neither added again nor removed when the live scoped role
+carries the role's object id, or the other way round. `Export-OERInventory` now lists in the
+bundle's `README.md` everything it could not read, or states that it read everything.
 
 ## [1.1.1] - 2026-10-04
 
