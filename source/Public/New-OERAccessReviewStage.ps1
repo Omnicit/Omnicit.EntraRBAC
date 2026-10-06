@@ -53,7 +53,11 @@ function New-OERAccessReviewStage {
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth when name
-    resolution requires a Graph call.
+    resolution requires a Graph call. Without it the stage is built only under the session the
+    command began with: when another command in the same pipeline signed in to a different tenant or
+    identity, or disconnected, after this command began, the stage is refused with SignInSuperseded
+    before any reviewer is looked up and nothing is sent, even for a stage that names no reviewer by
+    name.
 
     .EXAMPLE
     New-OERAccessReviewStage -StageId '1' -DurationInDays 7 -Reviewer 'anna.berg@contoso.com'
@@ -97,6 +101,13 @@ function New-OERAccessReviewStage {
 
         [string]$TenantId
     )
+    begin {
+        # SEC (BL-81): the session this command began with (see Invoke-OERStructure's begin block for
+        # the pipeline order this rests on). This builder signs in only in its process block, through
+        # its name lookup (Resolve-OERReviewerScope), so without -TenantId a later pipeline command's
+        # sign-in would otherwise decide which tenant a name is looked up in.
+        $SignInSnapshot = Checkpoint-OERSignIn
+    }
     process {
         # -SelfReview is a distinct reviewer mode (the reviewers collection is left empty) and cannot
         # be combined with a named or manager reviewer: Resolve-OERReviewerScope silently ignores
@@ -140,6 +151,13 @@ function New-OERAccessReviewStage {
         if ($FallbackReviewerGroup){ $ReviewerParams.FallbackReviewerGroup = $FallbackReviewerGroup }
         if ($TenantId)             { $ReviewerParams.TenantId             = $TenantId }
 
+        # SEC (BL-81): without -TenantId, look a name up only under the session this command began
+        # with; a changed identity refuses with SignInSuperseded and nothing is sent. The builder takes
+        # no pipeline input, so its process block runs once and the snapshot is never taken again.
+        if (-not $TenantId -and (Checkpoint-OERSignIn -ChangedSince $SignInSnapshot)) {
+            $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name))
+            return
+        }
         $Resolved = Resolve-OERReviewerScope @ReviewerParams
         if ($Resolved.FailedValue) {
             # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such user or

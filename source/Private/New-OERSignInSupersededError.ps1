@@ -8,10 +8,12 @@ function New-OERSignInSupersededError {
     request made while a command on the call stack remembers another sign-in identity than the module's
     state now carries -- a command Get-OERSignInSupersession finds -- so nothing is sent, while that
     command runs, under a session another OER command in the same pipeline signed in to after it.
-    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, when the
-    identity changed after its begin block took a snapshot of the session (Checkpoint-OERSignIn),
-    which is why the message says the other sign-in came after the command began, not after it signed
-    in: a command refused there has not signed in at all.
+    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, and so do
+    New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and New-OERAccessReviewStage
+    before their name lookup without -TenantId, when the identity changed after the command's begin
+    block took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the
+    other sign-in came after the command began, not after it signed in: a command refused there has
+    not signed in at all.
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of

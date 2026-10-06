@@ -4397,6 +4397,108 @@ $RecordLines
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
+
+    # P14-P17 are BL-81's end-to-end proofs. The three builders that look a name up --
+    # New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and
+    # New-OERAccessReviewStage -- sign in only in their PROCESS block, through that lookup, so a
+    # command downstream of one -- Connect-OER in a ForEach-Object -Begin, as in P10 -- switches the
+    # module's sign-in before the name is looked up. Without -TenantId the lookup's sign-in would
+    # inherit that session and remember it, so the supersession gate above could not see it: the
+    # builder must refuse before it looks anything up. Each builder names one user, which it looks up
+    # by user principal name. The builder's output is the scenario's output, so OUTPUT COUNT counts
+    # what it built. Every Graph GET is answered with an empty list, so a user that IS looked up is
+    # not found.
+    It 'P14: New-OERAccessPackageApprovalStage without -TenantId looks nothing up when a command downstream of it signed in to another tenant before the lookup (BL-81)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            New-OERAccessPackageApprovalStage -DurationDays 7 -User 'person1@example.com' |
+                ForEach-Object -Begin { Connect-OER -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The two Connect-OER sign-ins, and no token for the lookup: it was refused before its sign-in.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # One record, written by the builder and naming it, and no other record.
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @('SignInSuperseded,New-OERAccessPackageApprovalStage | New-OERAccessPackageApprovalStage')
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike '*after New-OERAccessPackageApprovalStage began, so Omnicit.EntraRBAC sends nothing*'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P15: New-OERAccessPackageRequestorScope without -TenantId looks nothing up when a command downstream of it signed in to another tenant before the lookup (BL-81)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' |
+                ForEach-Object -Begin { Connect-OER -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @('SignInSuperseded,New-OERAccessPackageRequestorScope | New-OERAccessPackageRequestorScope')
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike '*after New-OERAccessPackageRequestorScope began, so Omnicit.EntraRBAC sends nothing*'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P16: New-OERAccessReviewStage without -TenantId looks nothing up when a command downstream of it signed in to another tenant before the lookup (BL-81)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' |
+                ForEach-Object -Begin { Connect-OER -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @('SignInSuperseded,New-OERAccessReviewStage | New-OERAccessReviewStage')
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike '*after New-OERAccessReviewStage began, so Omnicit.EntraRBAC sends nothing*'
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P17: New-OERAccessReviewStage without -TenantId looks its reviewer up when the command downstream of it signs in again as the same identity (BL-81 control)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' |
+                ForEach-Object -Begin { Connect-OER -TenantId '44444444-4444-4444-4444-444444444444' } -Process { $_ }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The downstream Connect-OER and the lookup's own sign-in were both cached returns of the first
+        # sign-in.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @('graph 44444444-4444-4444-4444-444444444444')
+        # The reviewer's lookup went out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/users?$filter=userPrincipalName eq ''person1%40example.com''&$select=id,userPrincipalName')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # Nothing was superseded: the one record is the builder's own not-found for the empty answer.
+        Get-PipelineProbeSuperseded -Probe $R | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -Be @(
+            'UserNotFound,New-OERAccessReviewStage | person1@example.com | User ''person1@example.com'' not found.')
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
 }
 
 Describe 'Invoke-OERGraphRequest stops at each of its own throws, outside any try (F3)' {
