@@ -159,13 +159,12 @@ function Get-OERGroup {
                 $Members = $null
                 $MembersRead = $true
                 try {
-                    $Members = @((Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/members" -f $GroupObj.Id) -All).value)
-                    # Tag each member through the shared converter, exactly as Get-OERAdministrativeUnit
-                    # does with ConvertTo-OERAdministrativeUnitMember, so Members carries formatted
+                    # Get-OERGroupRelation is the single reader of a group's members: the untyped
+                    # v1.0 read leaves service principals out, so it adds the typed read, and it
+                    # emits nothing unless both reads succeed. It also tags each member through the
+                    # shared ConvertTo-OERGroupMember, so Members carries formatted
                     # Omnicit.EntraRBAC.GroupMember objects instead of raw Graph dictionaries.
-                    $Members = @($Members | Where-Object { $_ } | ForEach-Object {
-                            ConvertTo-OERGroupMember -InputObject $_ -GroupId $GroupObj.Id -MemberType 'Member'
-                        })
+                    $Members = @(Get-OERGroupRelation -GroupId $GroupObj.Id -Relation members)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $MembersRead = $false
@@ -187,13 +186,10 @@ function Get-OERGroup {
                 $Owners = $null
                 $OwnersRead = $true
                 try {
-                    $Owners = @((Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/owners" -f $GroupObj.Id) -All).value)
-                    # Tag each owner through the shared converter, exactly as the -IncludeMembers block
-                    # above does, so Owners carries formatted Omnicit.EntraRBAC.GroupMember objects
-                    # instead of raw Graph dictionaries.
-                    $Owners = @($Owners | Where-Object { $_ } | ForEach-Object {
-                            ConvertTo-OERGroupMember -InputObject $_ -GroupId $GroupObj.Id -MemberType 'Owner'
-                        })
+                    # The same single reader as the -IncludeMembers block above: the untyped owners
+                    # read leaves service principals out too, so the helper adds the typed read,
+                    # tags each owner (MemberType Owner), and emits nothing unless both succeed.
+                    $Owners = @(Get-OERGroupRelation -GroupId $GroupObj.Id -Relation owners)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $OwnersRead = $false

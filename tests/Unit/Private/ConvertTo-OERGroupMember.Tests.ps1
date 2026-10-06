@@ -37,6 +37,29 @@ Describe 'ConvertTo-OERGroupMember' {
         }
     }
 
+    It 'uses -DefaultObjectType for an object Graph answered without @odata.type' {
+        InModuleScope $script:moduleName {
+            $Out = ConvertTo-OERGroupMember -InputObject @{ id = 'sp-1'; displayName = 'an app' } -GroupId 'g1' -MemberType 'Member' -DefaultObjectType 'servicePrincipal'
+            $Out.ObjectType | Should -BeExactly 'servicePrincipal'
+            $Out.PrincipalId | Should -Be 'sp-1'
+        }
+    }
+
+    It 'lets the @odata.type annotation win over -DefaultObjectType' {
+        InModuleScope $script:moduleName {
+            $Raw = @{ '@odata.type' = '#microsoft.graph.user'; id = 'u1'; displayName = 'Anna' }
+            $Out = ConvertTo-OERGroupMember -InputObject $Raw -GroupId 'g1' -MemberType 'Member' -DefaultObjectType 'servicePrincipal'
+            $Out.ObjectType | Should -BeExactly 'user'
+        }
+    }
+
+    It 'keeps a null ObjectType when neither @odata.type nor -DefaultObjectType is given' {
+        InModuleScope $script:moduleName {
+            $Out = ConvertTo-OERGroupMember -InputObject @{ id = 'x-1'; displayName = 'unannotated' } -GroupId 'g1' -MemberType 'Owner'
+            ($null -eq $Out.ObjectType) | Should -BeTrue
+        }
+    }
+
     It 'processes multiple objects from the pipeline' {
         InModuleScope $script:moduleName {
             $Raw = @(

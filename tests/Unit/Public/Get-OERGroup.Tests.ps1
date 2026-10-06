@@ -14,6 +14,13 @@ Describe 'Get-OERGroup' {
     BeforeEach {
         InModuleScope $script:moduleName { $script:_OERAuthState = $null }
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        # -IncludeMembers and -IncludeOwners also send the typed service principal read
+        # (Get-OERGroupRelation). Answered empty here for every test written before that read
+        # existed; a test that needs a service principal mocks the typed read itself, and its mock,
+        # defined later, wins.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter {
+            $Uri -like 'v1.0/groups/*/microsoft.graph.servicePrincipal'
+        }
     }
 
     It 'gets a group by id' {
@@ -526,6 +533,64 @@ Describe 'Get-OERGroup' {
                 $_.InvocationInfo -and $_.InvocationInfo.MyCommand -and $_.InvocationInfo.MyCommand.Name -eq 'Get-OERGroup'
             }
             @($Published).Count | Should -Be 0
+        }
+    }
+
+    Context 'a service principal only the typed read lists' {
+        # Microsoft Graph v1.0 groups/{id}/members and groups/{id}/owners leave service principals
+        # out (measured 2026-10-06); the typed .../microsoft.graph.servicePrincipal read lists them,
+        # without an @odata.type annotation.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222' }
+        }
+
+        It 'adds it to Members, after the untyped members, with ObjectType servicePrincipal' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeMembers -ErrorAction Stop
+            @($Group.Members).Count | Should -Be 2
+            @($Group.Members)[0].PrincipalId | Should -Be 'g-nested'
+            @($Group.Members)[0].ObjectType | Should -Be 'group'
+            @($Group.Members)[1].PrincipalId | Should -Be 'sp-1'
+            @($Group.Members)[1].ObjectType | Should -Be 'servicePrincipal'
+            @($Group.Members)[1].MemberType | Should -Be 'Member'
+            @($Group.Members)[1].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupMember'
+        }
+
+        It 'adds it to Owners, as an Owner with ObjectType servicePrincipal, when the untyped owners read is empty' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeOwners -ErrorAction Stop
+            @($Group.Owners).Count | Should -Be 1
+            @($Group.Owners)[0].PrincipalId | Should -Be 'sp-1'
+            @($Group.Owners)[0].ObjectType | Should -Be 'servicePrincipal'
+            @($Group.Owners)[0].MemberType | Should -Be 'Owner'
+        }
+
+        It 'sends the typed members and owners reads with -All' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' -or $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+
+            Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeMembers -IncludeOwners -ErrorAction Stop | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+            }
         }
     }
 }

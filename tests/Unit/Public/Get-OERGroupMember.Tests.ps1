@@ -77,7 +77,7 @@ Describe 'Get-OERGroupMember' {
         }
         Get-OERGroupMember -Group 'role_sec_x' | Out-Null
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
-            $Uri -like '*groups/g1/members*' -and $All
+            $Uri -eq 'v1.0/groups/g1/members' -and $All
         }
     }
 
@@ -126,7 +126,7 @@ Describe 'Get-OERGroupMember' {
         Get-OERGroupMember -Group 'g1' -AccessType owner | Out-Null
 
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly `
-            -ParameterFilter { $Uri -like '*groups/g1/owners*' }
+            -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners' }
     }
 
     It 'still binds a positional second argument to -TenantId' {
@@ -164,7 +164,7 @@ Describe 'Get-OERGroupMember' {
             Should -Not -Throw
 
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly `
-            -ParameterFilter { $Uri -like '*groups/g1/owners*' }
+            -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners' }
     }
 
     It 'does not bind -AccessType from the pipeline, even from a piped object carrying MemberType Owner' {
@@ -192,6 +192,68 @@ Describe 'Get-OERGroupMember' {
         $OwnerMember | Get-OERGroupMember -ErrorAction SilentlyContinue | Out-Null
 
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly `
-            -ParameterFilter { $Uri -like '*/members*' }
+            -ParameterFilter { $Uri -eq 'v1.0/groups/g1/members' }
+    }
+
+    Context 'a service principal only the typed read lists' {
+        # Microsoft Graph v1.0 groups/{id}/members and groups/{id}/owners leave service principals
+        # out (measured 2026-10-06); the typed .../microsoft.graph.servicePrincipal read lists them,
+        # without an @odata.type annotation.
+        It 'lists it after the untyped members, with ObjectType servicePrincipal' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/members/microsoft.graph.servicePrincipal' }
+
+            $R = @(Get-OERGroupMember -Group 'role_sec_x' -ErrorAction Stop)
+            $R.Count | Should -Be 2
+            $R[0].PrincipalId | Should -Be 'g-nested'
+            $R[0].ObjectType | Should -Be 'group'
+            $R[1].PrincipalId | Should -Be 'sp-1'
+            $R[1].ObjectType | Should -Be 'servicePrincipal'
+            $R[1].MemberType | Should -Be 'Member'
+            $R[1].GroupId | Should -Be 'g1'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/members/microsoft.graph.servicePrincipal' -and $All
+            }
+        }
+
+        It 'lists it as an Owner with -Owners when the untyped owners read is empty' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' }
+
+            $R = @(Get-OERGroupMember -Group 'role_sec_x' -Owners -ErrorAction Stop)
+            $R.Count | Should -Be 1
+            $R[0].PrincipalId | Should -Be 'sp-1'
+            $R[0].ObjectType | Should -Be 'servicePrincipal'
+            $R[0].MemberType | Should -Be 'Owner'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+        }
+
+        It 'lists it as an Owner with -AccessType owner when the untyped owners read is empty' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' }
+
+            $R = @(Get-OERGroupMember -Group 'role_sec_x' -AccessType owner -ErrorAction Stop)
+            $R.Count | Should -Be 1
+            $R[0].PrincipalId | Should -Be 'sp-1'
+            $R[0].ObjectType | Should -Be 'servicePrincipal'
+            $R[0].MemberType | Should -Be 'Owner'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+        }
     }
 }

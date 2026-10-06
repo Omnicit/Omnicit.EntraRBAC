@@ -106,18 +106,19 @@ function Get-OERGroupMember {
             return
         }
         $IsOwner = $Owners -or ($AccessType -eq 'owner')
-        $MemberType = if ($IsOwner) { 'Owner' } else { 'Member' }
-        $Segment = if ($IsOwner) { 'owners' } else { 'members' }
+        $Relation = if ($IsOwner) { 'owners' } else { 'members' }
+        # Collected first, emitted after: a typed read that fails after the untyped one succeeded
+        # must leave nothing in the pipeline (a collection is read whole or not at all).
+        $Items = $null
         try {
-            $Response = Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/{1}" -f $GroupId, $Segment) -All
+            $Items = @(Get-OERGroupRelation -GroupId $GroupId -Relation $Relation)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }
-        foreach ($Item in @($Response.value)) {
-            if ($null -eq $Item) { continue }
-            ConvertTo-OERGroupMember -InputObject $Item -GroupId $GroupId -MemberType $MemberType
-        }
+        # One at a time, not the array itself: emitting $Items whole reads to PSScriptAnalyzer as an
+        # undeclared System.Object[] output (PSUseOutputTypeCorrectly).
+        foreach ($Item in $Items) { $Item }
     }
 }

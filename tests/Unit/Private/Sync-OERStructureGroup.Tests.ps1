@@ -5980,4 +5980,107 @@ Describe 'Sync-OERStructureGroup' {
             @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
         }
     }
+
+    Context 'a service principal only the typed read lists' {
+        # Microsoft Graph v1.0 groups/{id}/members and groups/{id}/owners leave service principals
+        # out (measured 2026-10-06); Get-OERGroupRelation adds the typed
+        # .../microsoft.graph.servicePrincipal read. Get-OERGroup is NOT mocked here: the handler
+        # reads the live group through the real cmdlet and the real helper, and only the transport
+        # is answered. Live state: members g-nested (untyped read) and sp-1 (typed read only);
+        # owners u-1 (untyped read) and sp-1 (typed read only).
+        BeforeAll {
+            # Runs one item through the handler in module scope and hands back its rows, so the
+            # assertions below run OUTSIDE InModuleScope against the -ModuleName mocks.
+            function Invoke-SpSync {
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf } {
+                    param($Item, $PruneRun, $WhatIfRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun `
+                            -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+                }
+            }
+        }
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERGroupId { '22222222-2222-2222-2222-222222222222' }
+            # An object id resolves to itself, as the real resolver returns an id verbatim.
+            Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+            Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+            Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+            Mock -ModuleName $script:moduleName Add-OERGroupMember { }
+            Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+            # Any request the fixture does not answer fails the read visibly as a Failed row.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_x'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+        }
+
+        It 'reports a declared service principal member Unchanged and adds nothing' {
+            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested', 'sp-1') })
+            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "member 'g-nested' already present" }).Count | Should -Be 1
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "member 'sp-1' already present" }).Count | Should -Be 1
+            @($Rows | Where-Object { $_.Action -eq 'Extra' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal'
+            }
+        }
+
+        It 'reports an undeclared service principal member as Extra without -Prune' {
+            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested') })
+            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "member 'g-nested' already present" }).Count | Should -Be 1
+            $Extra = @($Rows | Where-Object { $_.Action -eq 'Extra' })
+            $Extra.Count | Should -Be 1
+            $Extra[0].Detail | Should -BeExactly "undeclared member 'sp-1' (use -Prune to remove)"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        }
+
+        It 'plans the removal of an undeclared service principal member under -Prune -WhatIf, and removes nothing' {
+            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested') }) -Prune -WhatIf
+            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $Planned = @($Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match 'undeclared member' })
+            $Planned.Count | Should -Be 1
+            $Planned[0].Detail | Should -BeExactly "would remove undeclared member 'sp-1'"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        }
+
+        It 'reports a user owner and a service principal owner both Unchanged when both are declared, and adds nothing' {
+            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-1', 'sp-1') })
+            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-1' already present" }).Count | Should -Be 1
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'sp-1' already present" }).Count | Should -Be 1
+            @($Rows | Where-Object { $_.Detail -match 'undeclared owner' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0
+        }
+
+        It 'reports an undeclared service principal owner as Extra without -Prune' {
+            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-1') })
+            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-1' already present" }).Count | Should -Be 1
+            $Extra = @($Rows | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -match 'owner' })
+            $Extra.Count | Should -Be 1
+            $Extra[0].Detail | Should -BeExactly "undeclared owner 'sp-1' (use -Prune to remove)"
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        }
+    }
 }

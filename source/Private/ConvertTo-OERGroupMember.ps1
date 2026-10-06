@@ -14,7 +14,8 @@ function ConvertTo-OERGroupMember {
     round-trips into Add-OERGroupMember and Remove-OERGroupMember via -PrincipalId
     ValueFromPipelineByPropertyName binding, and every existing .Id read keeps resolving to the same
     value. This private converter is the single owner of the group-member output shape and is used by
-    Get-OERGroupMember and Get-OERGroup -IncludeMembers.
+    Get-OERGroupRelation, the single reader behind Get-OERGroupMember and Get-OERGroup
+    -IncludeMembers/-IncludeOwners.
 
     .PARAMETER InputObject
     The raw Graph directory object (hashtable or PSObject) to convert. Accepts pipeline input.
@@ -24,6 +25,11 @@ function ConvertTo-OERGroupMember {
 
     .PARAMETER MemberType
     Whether the object is a Member or an Owner of the group.
+
+    .PARAMETER DefaultObjectType
+    The ObjectType to use when the input carries no @odata.type annotation, as an object from a
+    typed Graph read (groups/{id}/members/microsoft.graph.servicePrincipal) does not. An annotation
+    always wins. Without it, an object with no annotation keeps a null ObjectType.
 
     .EXAMPLE
     ConvertTo-OERGroupMember -InputObject $obj -GroupId 'g1' -MemberType 'Member'
@@ -38,11 +44,15 @@ function ConvertTo-OERGroupMember {
         [string]$GroupId,
 
         [ValidateSet('Member', 'Owner')]
-        [string]$MemberType = 'Member'
+        [string]$MemberType = 'Member',
+
+        [string]$DefaultObjectType
     )
     process {
         $OdataType = $InputObject.'@odata.type'
-        $ObjectType = if ($OdataType) { ([string]$OdataType -replace '^#microsoft\.graph\.', '') } else { $null }
+        $ObjectType = if ($OdataType) { ([string]$OdataType -replace '^#microsoft\.graph\.', '') }
+        elseif ($DefaultObjectType) { $DefaultObjectType }
+        else { $null }
         $Out = [PSCustomObject]@{
             PrincipalId       = $InputObject.id
             DisplayName       = $InputObject.displayName
