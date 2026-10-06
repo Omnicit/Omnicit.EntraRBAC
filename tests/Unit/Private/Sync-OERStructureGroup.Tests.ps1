@@ -1319,7 +1319,7 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'refuses to prune a lone service principal owner too, pending live verification of Graph''s user-owner rule' {
+        It 'withholds a lone service principal owner as a service principal (A9), so the last-owner guard is never consulted for it' {
             InModuleScope $script:moduleName {
                 function Invoke-SyncGroupViaCaller {
                     [CmdletBinding(SupportsShouldProcess)]
@@ -1328,12 +1328,13 @@ Describe 'Sync-OERStructureGroup' {
                 }
                 Mock Resolve-OERGroupId { 'g-1' }
                 Mock Get-OERGroup {
-                    # Microsoft Learn's last-owner restriction names "a user object" specifically, so a
-                    # sole SERVICE PRINCIPAL owner may in fact be prunable. The guard is deliberately
-                    # conservative (count-based, not type-aware) pending live verification -- this test
-                    # pins that deliberate choice. ObjectType mirrors the shape ConvertTo-OERGroupMember
-                    # actually produces (the '@odata.type' annotation stripped of its '#microsoft.graph.'
-                    # prefix), matching what a real Get-OERGroup -IncludeOwners call would return.
+                    # Before A9 this test pinned the last-owner guard's count for a lone service
+                    # principal owner. The group prune now never removes a service principal at all,
+                    # so the owner is withheld for its type before that guard is reached, and the
+                    # guard counts only owners of other types (the test above pins it for one).
+                    # ObjectType mirrors the shape ConvertTo-OERGroupMember actually produces (the
+                    # '@odata.type' annotation stripped of its '#microsoft.graph.' prefix, or the type
+                    # the typed read proves), matching what a real Get-OERGroup -IncludeOwners returns.
                     [PSCustomObject]@{
                         Id = 'g-1'; DisplayName = 'role_sec_x'; Description = $null; MailNickname = $null
                         Members = @()
@@ -1349,7 +1350,11 @@ Describe 'Sync-OERStructureGroup' {
                 $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; owners = @() }
                 $Records = @(Invoke-SyncGroupViaCaller -Item $Item -Prune -WarningAction SilentlyContinue)
                 Should -Invoke Remove-OERGroupMember -Times 0
-                @($Records | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match 'last' }).Count | Should -Be 1
+                $Owner = @($Records | Where-Object { $_.Detail -match "owner 'o-1'" })
+                $Owner.Count | Should -Be 1
+                $Owner[0].Action | Should -BeExactly 'Skipped'
+                $Owner[0].Detail | Should -BeLike "prune withheld: undeclared owner 'o-1' is a service principal, and -Prune never removes a service principal from a group; *"
+                @($Records | Where-Object { $_.Detail -match 'last' }).Count | Should -Be 0
             }
         }
 
@@ -6007,6 +6012,28 @@ Describe 'Sync-OERStructureGroup' {
                             -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
                 }
             }
+            # As Invoke-SpSync, and also hands back the warnings the run wrote, so a test can show
+            # which removals warned and that the service principal's withheld prune did not.
+            function Invoke-SpSyncCapture {
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf, [switch]$NoConfirm)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf; NoConfirmRun = [bool]$NoConfirm } {
+                    param($Item, $PruneRun, $WhatIfRun, $NoConfirmRun)
+                    function Invoke-SyncGroupViaCaller {
+                        [CmdletBinding(SupportsShouldProcess)]
+                        param([PSCustomObject]$Item, [switch]$Prune)
+                        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
+                    }
+                    $Confirmation = @{}
+                    if ($NoConfirmRun) { $Confirmation.Confirm = $false }
+                    $Rows = @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun @Confirmation `
+                            -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable SpWarnings)
+                    [PSCustomObject]@{ Rows = $Rows; Warnings = @($SpWarnings) }
+                }
+            }
+            # The reason ConvertTo-OERPruneWithheldResult gives for a service principal (A9), held
+            # here once so every test below compares the full text.
+            $script:SpMemberWithheld = "prune withheld: undeclared member 'sp-1' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
+            $script:SpOwnerWithheld = "prune withheld: undeclared owner 'sp-1' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
         }
         BeforeEach {
             Mock -ModuleName $script:moduleName Initialize-OERAuth { }
@@ -6048,23 +6075,120 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'reports an undeclared service principal member as Extra without -Prune' {
+        It 'reports an undeclared service principal member as Extra without -Prune, with a hint that -Prune leaves it' {
             $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested') })
             @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
             @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "member 'g-nested' already present" }).Count | Should -Be 1
             $Extra = @($Rows | Where-Object { $_.Action -eq 'Extra' })
             $Extra.Count | Should -Be 1
-            $Extra[0].Detail | Should -BeExactly "undeclared member 'sp-1' (use -Prune to remove)"
+            $Extra[0].Detail | Should -BeExactly "undeclared member 'sp-1' (a service principal, which -Prune leaves in place)"
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
         }
 
-        It 'plans the removal of an undeclared service principal member under -Prune -WhatIf, and removes nothing' {
-            $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested') }) -Prune -WhatIf
-            @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
-            $Planned = @($Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -match 'undeclared member' })
-            $Planned.Count | Should -Be 1
-            $Planned[0].Detail | Should -BeExactly "would remove undeclared member 'sp-1'"
-            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        It 'withholds the prune of an undeclared service principal member under -Prune -WhatIf: Skipped with the reason, no plan and no warning' {
+            $Out = Invoke-SpSyncCapture -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested') }) -Prune -WhatIf
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Positive identity first: the guard was reached for the service principal, and only once.
+            $Withheld = @($Out.Rows | Where-Object { $_.Detail -like "prune withheld: undeclared member 'sp-1' is a service principal*" })
+            $Withheld.Count | Should -Be 1
+            $Withheld[0].Action | Should -BeExactly 'Skipped'
+            $Withheld[0].Detail | Should -BeExactly $script:SpMemberWithheld
+            @($Out.Rows | Where-Object { $_.Detail -like 'would remove*' }).Count | Should -Be 0
+            @($Out.Warnings | Where-Object { "$_" -match 'sp-1' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'withholds the prune of an undeclared service principal owner under -Prune -WhatIf: Skipped with the reason, no plan and no warning' {
+            $Out = Invoke-SpSyncCapture -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = $null; owners = @('u-1') }) -Prune -WhatIf
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            $Withheld = @($Out.Rows | Where-Object { $_.Detail -like "prune withheld: undeclared owner 'sp-1' is a service principal*" })
+            $Withheld.Count | Should -Be 1
+            $Withheld[0].Action | Should -BeExactly 'Skipped'
+            $Withheld[0].Detail | Should -BeExactly $script:SpOwnerWithheld
+            @($Out.Rows | Where-Object { $_.Detail -like 'would remove*' }).Count | Should -Be 0
+            @($Out.Warnings | Where-Object { "$_" -match 'sp-1' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+        }
+
+        It 'never removes the service principal under a real -Prune, while the user, group, device and untyped members and the user owner of the same run are removed' {
+            # Live state for this run: the untyped members read lists a group, a user, a device and
+            # an object with no @odata.type, and the typed read the service principal; the owners are
+            # two users (untyped) and the service principal (typed). The document declares no member
+            # and one of the user owners, so every other live entry is a prune candidate -- and with
+            # the declared owner still standing, the last-owner guard does not hide a removal of the
+            # service principal owner.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }
+                        @{ '@odata.type' = '#microsoft.graph.user'; id = 'u-2'; displayName = 'a member user' }
+                        @{ '@odata.type' = '#microsoft.graph.device'; id = 'd-1'; displayName = 'a device' }
+                        @{ id = 'n-1'; displayName = 'no type' }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(
+                        @{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }
+                        @{ '@odata.type' = '#microsoft.graph.user'; id = 'u-3'; displayName = 'a kept user' }
+                    ) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+
+            $Out = Invoke-SpSyncCapture -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @(); owners = @('u-3') }) -Prune -NoConfirm
+
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            # Every other member, and the user owner, is removed exactly as before A9. A parameter
+            # filter does not see this test's loop variable, so each id has a literal filter.
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'g-nested' -and $AccessType -ne 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-2' -and $AccessType -ne 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'd-1' -and $AccessType -ne 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'n-1' -and $AccessType -ne 'owner' }
+            foreach ($Id in 'g-nested', 'u-2', 'd-1', 'n-1') {
+                @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared member '$Id'" }).Count | Should -Be 1
+                @($Out.Warnings | Where-Object { "$_" -eq "Sync-OERStructureGroup: removing undeclared member '$Id' from group 'role_sec_x'." }).Count | Should -Be 1
+            }
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -eq 'owner' }
+            @($Out.Rows | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared owner 'u-1'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-3' already present" }).Count | Should -Be 1
+            # The service principal: both rows withheld, no removal call, no warning naming it.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $script:SpMemberWithheld }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq $script:SpOwnerWithheld }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly -ParameterFilter { $PrincipalId -eq 'sp-1' }
+            @($Out.Warnings | Where-Object { "$_" -match 'sp-1' }).Count | Should -Be 0
+            @($Out.Rows | Where-Object { $_.Detail -match "'sp-1'" -and $_.Action -ne 'Skipped' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 5 -Exactly
+        }
+
+        It 'withholds a service principal that is the only owner for being a service principal, before the last-owner guard is consulted' {
+            # The live set measured on the test tenant: the service principal is the group's only owner.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+
+            $Out = Invoke-SpSyncCapture -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = $null; owners = @() }) -Prune -NoConfirm
+
+            $Owner = @($Out.Rows | Where-Object { $_.Detail -match "owner 'sp-1'" })
+            $Owner.Count | Should -Be 1
+            $Owner[0].Action | Should -BeExactly 'Skipped'
+            $Owner[0].Detail | Should -BeExactly $script:SpOwnerWithheld
+            @($Out.Rows | Where-Object { $_.Detail -match 'last remaining owner' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly -ParameterFilter { $AccessType -eq 'owner' }
+        }
+
+        It 'adds a declared service principal member and owner that are not live, and reports them Updated as for any principal' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+
+            $Out = Invoke-SpSyncCapture -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('g-nested', 'sp-2'); owners = @('u-1', 'sp-2') }) -Prune -NoConfirm
+
+            @($Out.Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'sp-2' -and $AccessType -ne 'owner' }
+            Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'sp-2' -and $AccessType -eq 'owner' }
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added member 'sp-2'" }).Count | Should -Be 1
+            @($Out.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -eq "added owner 'sp-2'" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
         }
 
         It 'reports a user owner and a service principal owner both Unchanged when both are declared, and adds nothing' {
@@ -6076,13 +6200,13 @@ Describe 'Sync-OERStructureGroup' {
             Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0
         }
 
-        It 'reports an undeclared service principal owner as Extra without -Prune' {
+        It 'reports an undeclared service principal owner as Extra without -Prune, with a hint that -Prune leaves it' {
             $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-1') })
             @($Rows | Where-Object { $_.Action -eq 'Failed' }).Count | Should -Be 0
             @($Rows | Where-Object { $_.Action -eq 'Unchanged' -and $_.Detail -eq "owner 'u-1' already present" }).Count | Should -Be 1
             $Extra = @($Rows | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -match 'owner' })
             $Extra.Count | Should -Be 1
-            $Extra[0].Detail | Should -BeExactly "undeclared owner 'sp-1' (use -Prune to remove)"
+            $Extra[0].Detail | Should -BeExactly "undeclared owner 'sp-1' (a service principal, which -Prune leaves in place)"
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
         }
 

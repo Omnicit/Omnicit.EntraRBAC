@@ -11,8 +11,8 @@ Group reads now include service principals, which Microsoft Graph's v1.0 member 
 leave out: `Get-OERGroup -IncludeMembers -IncludeOwners`, `Get-OERGroupMember`, the inventory export
 and `Invoke-OERStructure` missed them. Each read now also asks for them, and a read that cannot be
 completed leaves the collection unread rather than half-read. An apply document that does not list a
-group's service principals, such as one exported by an earlier version, now reports them `Extra`,
-and `-Prune` removes them: export again first.
+group's service principals, such as one exported by an earlier version, reports them `Extra`, and
+`-Prune` leaves them in place, as earlier versions did.
 
 ## [1.1.2] - 2026-10-06
 

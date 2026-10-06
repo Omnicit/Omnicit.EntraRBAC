@@ -3769,8 +3769,8 @@ path and is asked like any other existing group.
 
 Sprint 9 step 1 (BL-13) made `Get-OERGroupRelation` the single reader of a group's `members` and
 `owners` collections, and made that reader ask twice where it used to ask once. This anchor records
-the defect, what was measured, why the second request is a typed one, and what an apply document
-exported before the fix costs.
+the defect, what was measured, why the second request is a typed one, and why the group prune never
+removes a service principal (A9).
 
 **The defect (BL-13).** Microsoft Learn documents it twice: "Known issues in Microsoft Graph" lists
 "GET /groups/{id}/members doesn't return service principals in v1.0" (workaround: the `beta`
@@ -3838,44 +3838,43 @@ into a list before it emits any, since a cmdlet emits as it goes: output from a 
 read would already be in the pipeline when the second read failed. No ErrorId, parameter or output
 type is new.
 
-**Nothing else changed.** The export and the apply engine read a group through `Get-OERGroup`, so
-they follow with no code of their own, and `-Prune` is not changed. A group's service principal
-owners now count in the engine's owner comparison like any other owner, and the engine reconciles
-owners only when the document declares an `owners` key, as before.
+**Nothing else in the reads changed.** The export and the apply engine read a group through
+`Get-OERGroup`, so they follow with no code of their own. A group's service principal members and
+owners now count in the engine's comparison like any other principal: a declared one that is live
+is `Unchanged`, a declared one that is not live is added, and the engine reconciles owners only when
+the document declares an `owners` key, as before. The one change to the engine is A9, below.
 
-**R2: what a document that does not list a group's service principals costs.** Before this fix the
-module's reads did not see a service principal in a group, as measured on the test tenant and as
-Microsoft Learn documents. Learn calls the owners omission a "staged rollout", so a tenant whose
-`v1.0` read already listed them was exposed before this fix; nothing here claims the module never
-met one. Any apply document that does not list a group's service principals now meets them, not
-only one exported by an earlier version (which lacks them in its `members` list, and in its
-`owners` list where it declares one): a document written or trimmed by hand is the same. The engine
-reads a group through `Get-OERGroup`, so it sees the live service principals, reports each
-undeclared one `Extra` on every apply without `-Prune`, and removes it under `-Prune` (`-WhatIf`
-shows the plan). Members are compared unless the document declares `members` as null, and not on a
-dynamic group; owners only when the document declares an `owners` key, and the last-owner guard
-still applies. The guidance is to export again before applying such a document, which now writes
-them by object id, or to add them to it by hand. The release note says so, and so does the help of
-`Get-OERInventory` for the case of an earlier export.
+**A9: the group prune never removes a service principal (Sprint 9 step 1, round 1).** Microsoft
+Learn documents both omissions for every caller of `v1.0`, not as an effect of app-only: the List
+group members operation "currently doesn't return any service principals" ("Known issues in
+Microsoft Graph"), and "service principals are not listed as group owners" (the note on List group
+owners); the test tenant measured both (the table above). So before this fix no version of the
+module saw a service principal in a group, no version pruned one, and no document exported by an
+earlier version lists one. Making the reads whole would on its own have turned every such document
+into a removal: applied with `-Prune`, it would take every group's service principal members and
+owners away, which is more than any earlier version ever removed -- a decision that is not this
+fix's to make. So the reads and the export are whole, and the engine withholds the prune instead:
+an undeclared live member or owner whose ObjectType is `servicePrincipal` is reported `Extra`
+without `-Prune`, with a hint that `-Prune` leaves it in place, and `Skipped` with `-Prune`, with a
+Detail starting `prune withheld:`, under `-WhatIf` too. No warning is written, no ShouldProcess
+prompt is issued and `Remove-OERGroupMember` is not called for it. A declared service principal is
+added and reported like any other principal, and a member or owner of any other type, or of none, is
+pruned exactly as before. `ConvertTo-OERPruneWithheldResult` owns the rule and both texts, as the
+single owner of "prune withheld" (its `-ObjectType` form); the handler calls it straight after the
+unresolved-entry rule and, for owners, before the last-owner guard, so a lone service principal
+owner is withheld for its type and still counts as an owner standing. Removing one stays possible
+on purpose, one at a time, with `Remove-OERGroupMember`. Whether the engine should ever prune
+service principals is a separate decision, recorded as BL-82.
 
-**R2, self-removal: named, and not guarded.** The group prune has no guard for the signed-in
-identity: it removes any undeclared member the pass may prune, and any undeclared owner but the last
-one, whoever that is. The directory role prune is different: it never removes the signed-in
-identity's own assignment, nor one held through a group the identity belongs to
-(`#directory-role-assignments`). Before this fix an app-only identity (ClientCertificate,
-ClientSecret or ManagedIdentity) was never a group prune candidate, since its service principal was
-invisible to the reads; now it can be. A document that omits the running automation's own service
-principal -- an old export of a role-assignable group the app is a member of, or of a group the app
-was made an owner of (an app-only create adds no owner of its own, so that takes an explicit
-assignment) -- applied with `-Prune -Confirm:$false` by that app removes the running service
-principal from the group, which can cut its own privileges part-way through the run. A delegated
-user removing themselves through a group prune was already possible before this fix. What limits it
-today: `-Prune` is opt-in; `Invoke-OERStructure` has `ConfirmImpact = 'High'`, so each removal
-prompts unless `-Confirm:$false` is given; each removal writes a warning naming the principal's
-object id and the group; `-WhatIf` shows the plan; and for owners the last-owner guard refuses the
-removal that would leave a group with none. A group prune guard for the signed-in identity, the way
-the directory role prune has one, is a proposed follow-up and is not part of this change.
-
+**What A9 takes away: self-removal.** The group prune has no guard for the signed-in identity, unlike
+the directory role prune, which never removes the signed-in identity's own assignment nor one held
+through a group the identity belongs to (`#directory-role-assignments`). Without A9 the typed read
+would have made an app-only identity (ClientCertificate, ClientSecret or ManagedIdentity) a group
+prune candidate for the first time: a document that omits the running automation's own service
+principal, applied with `-Prune -Confirm:$false` by that app, would remove it from the group and
+could cut its own privileges part-way through the run. Under A9 that service principal is never
+removed, so the case does not arise. A delegated user removing themselves through a group prune was
+possible before this fix and still is; this change does not touch it.
 ## group-rename
 
 Sprint 6 step 5 made a group renameable through the apply document: `previousDisplayName` names the

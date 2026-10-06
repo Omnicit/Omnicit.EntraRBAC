@@ -169,12 +169,12 @@ function Get-OERStructureSchemaJson {
           "members": {
             "type": [ "array", "null" ],
             "items": { "type": "string" },
-            "description": "An omitted key still reconciles: existing members it does not name are removed under -Prune (or reported Extra without it). An explicit null leaves membership untouched entirely -- null, not an omitted key, is how a group is declared without touching its members. [] reconciles to no declared members. Get-OERInventory emits null here when the live read failed."
+            "description": "An omitted key still reconciles: existing members it does not name are removed under -Prune (or reported Extra without it), except a service principal, which -Prune never removes from a group. An explicit null leaves membership untouched entirely -- null, not an omitted key, is how a group is declared without touching its members. [] reconciles to no declared members. Get-OERInventory emits null here when the live read failed."
           },
           "owners": {
             "type": "array",
             "items": { "type": "string" },
-            "description": "Reconciled only when declared and non-null: an omitted OR explicit null owners key is never reconciled or pruned (unlike members, where only null skips it). [] reconciles to no declared owners."
+            "description": "Reconciled only when declared and non-null: an omitted OR explicit null owners key is never reconciled or pruned (unlike members, where only null skips it). [] reconciles to no declared owners. -Prune never removes a service principal owner."
           },
           "eligibility": {
             "type": "array",
