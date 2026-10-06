@@ -1427,6 +1427,21 @@ BeforeAll {
         Initialize-OERAuth, which compares the tenant ID it returns with the tenant each token was
         issued for. The lookup carries no credential of any kind: a second sender could add one, or
         send a secret to a request that needs none, so the call's own parameters are held as well.
+        Set-OERSessionUncertain, the single owner of the session-uncertain marker (A10, BL-89), is
+        called only by Initialize-OERAuth, which sets the marker at every entry past its BL-74 check and
+        puts it back or clears it at its two success ends, Connect-OER, which sets it first thing, and
+        Disconnect-OER, which clears it: a fourth caller could clear the marker for a session whose last
+        sign-in was refused, and a command that names no tenant would then act on the previous tenant.
+        The marker's variable, $script:_OERSessionUncertain, is read and written in no file but the
+        helper's own.
+
+        THE MARKER IS SET WHERE THE LATCH IS SET, AND PUT BACK WHERE IT IS RELEASED. In
+        Initialize-OERAuth exactly three Set-OERSessionUncertain calls stand, each a statement of its own
+        (an assignment counts): one directly after the Lock-OERSignIn statement, and one directly after
+        each Register-OERSignInIdentity statement, in the same block. Set before the BL-74 check, the
+        BL-74 refusal would mark the session for a command that never signed in; set later than
+        directly after the latch, a refusal between the two would leave the session marked certain; and
+        a success end that does not put the marker back leaves it as the entry set it.
 
         THE IDENTITY IS REMEMBERED WHERE THE LATCH IS RELEASED. In Initialize-OERAuth every
         Register-OERSignInIdentity call is the statement directly after an Unlock-OERSignIn call in
@@ -1491,6 +1506,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owners = @($script:transportGateArmPath) }
         [PSCustomObject]@{ Command = 'Invoke-RestMethod'; Owners = @($script:tenantLookupPath) }
         [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
+        [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
     )
     $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
 
@@ -2163,6 +2179,170 @@ BeforeAll {
         $MemoryRoot = $MemoryUnit.Definition
         while ($null -ne $MemoryRoot.Parent) { $MemoryRoot = $MemoryRoot.Parent }
         $script:signInMemoryReport = Get-OERSignInMemoryReport -Ast $MemoryRoot -FileLabel $script:signInMemoryPath
+    }
+
+    # --- The session-uncertain marker (A10, BL-89; see THE MARKER IS SET WHERE THE LATCH IS SET in the
+    # Pass 9 comment). ---
+    # The statement a call stands in, when it stands alone in a block: a pipeline of that call only, or
+    # an assignment whose right-hand side is such a pipeline ([bool]$X = Set-..., $null = Set-...).
+    # $null for a call that is piped, nested in an expression, or part of any other statement.
+    function Get-OERCallOrAssignmentStatement {
+        param($Call)
+
+        $Pipeline = $Call.Parent
+        if ($Pipeline -isnot [System.Management.Automation.Language.PipelineAst]) { return $null }
+        if (@($Pipeline.PipelineElements).Count -ne 1) { return $null }
+        $Statement = $Pipeline
+        if ($Pipeline.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
+            if (-not [System.Object]::ReferenceEquals($Pipeline.Parent.Right, $Pipeline)) { return $null }
+            $Statement = $Pipeline.Parent
+        }
+        if ($Statement.Parent -isnot [System.Management.Automation.Language.StatementBlockAst] -and
+            $Statement.Parent -isnot [System.Management.Automation.Language.NamedBlockAst]) { return $null }
+        return $Statement
+    }
+
+    # Every Set-OERSessionUncertain call in the tree must be the statement directly after a
+    # Lock-OERSignIn statement or a Register-OERSignInIdentity statement in the same block. Returns the
+    # number of Set calls, how many follow the Lock and how many follow a Register, and one line per
+    # violation. A statement has one predecessor, so a Set counted after a Register follows a Register
+    # no other Set follows: two after Registers, with two Registers, means every Register has its Set.
+    function Get-OERSessionUncertainPositionReport {
+        param($Ast, [string]$FileLabel)
+
+        $Sets = @(Find-OERCallNamed -Ast $Ast -Name 'Set-OERSessionUncertain')
+        $Report = [PSCustomObject]@{
+            Sets          = $Sets.Count
+            AfterLock     = 0
+            AfterRegister = 0
+            Violations    = [System.Collections.Generic.List[string]]::new()
+        }
+        $Anchors = [System.Collections.Generic.List[object]]::new()
+        foreach ($Kind in 'Lock-OERSignIn', 'Register-OERSignInIdentity') {
+            foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name $Kind)) {
+                $Statement = Get-OERCallOrAssignmentStatement -Call $Call
+                if ($null -ne $Statement) { $Anchors.Add([PSCustomObject]@{ Kind = $Kind; Statement = $Statement }) }
+            }
+        }
+        foreach ($Set in $Sets) {
+            $Statement = Get-OERCallOrAssignmentStatement -Call $Set
+            $Reason = $null
+            if ($null -eq $Statement) {
+                $Reason = 'is not a statement of its own (it is piped, or part of another statement or expression)'
+            } else {
+                $Siblings = @($Statement.Parent.Statements)
+                $Index = [System.Array]::IndexOf($Siblings, $Statement)
+                $Anchor = $null
+                if ($Index -gt 0) {
+                    $Anchor = @($Anchors | Where-Object { [System.Object]::ReferenceEquals($_.Statement, $Siblings[$Index - 1]) })[0]
+                }
+                if ($null -eq $Anchor) {
+                    $Reason = 'is not the statement directly after the Lock-OERSignIn statement or a Register-OERSignInIdentity statement in the same block'
+                } elseif ($Anchor.Kind -eq 'Lock-OERSignIn') {
+                    $Report.AfterLock++
+                } else {
+                    $Report.AfterRegister++
+                }
+            }
+            if ($Reason) {
+                $Report.Violations.Add(('{0}:{1} -- Set-OERSessionUncertain {2}: {3}' -f
+                        $FileLabel, $Set.Extent.StartLineNumber, $Reason, $Set.Extent.Text.Trim()))
+            }
+        }
+        return $Report
+    }
+
+    $script:sessionUncertainPositionReport = $null
+    if ($MemoryUnit -and $MemoryUnit.Definition) {
+        $script:sessionUncertainPositionReport = Get-OERSessionUncertainPositionReport -Ast $MemoryRoot -FileLabel $script:signInMemoryPath
+    }
+
+    # Known answers: each miniature carries the counts it must report as Sets/AfterLock/AfterRegister/Violations.
+    $FixtureEntry = '$C = Lock-OERSignIn; [bool]$W = Set-OERSessionUncertain -Value $true'
+    $FixtureCached = 'if ($Hit) { Unlock-OERSignIn -Invocation $C; Register-OERSignInIdentity -Invocation $C; $null = Set-OERSessionUncertain -Value $W; return }'
+    $FixtureEnd = 'try { Unlock-OERSignIn -Invocation $C; Register-OERSignInIdentity -Invocation $C; $null = Set-OERSessionUncertain -Value $W } finally { }'
+    $script:sessionUncertainPositionKnownAnswers = @(
+        @{ Case = 'the specified shape'; Expect = '3/1/2/0'; Text = "function F { $FixtureEntry; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'the set before the latch'; Expect = '3/0/2/1'; Text = "function F { [bool]`$W = Set-OERSessionUncertain -Value `$true; `$C = Lock-OERSignIn; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'a statement between the latch and the set'; Expect = '3/0/2/1'; Text = "function F { `$C = Lock-OERSignIn; `$X = 1; [bool]`$W = Set-OERSessionUncertain -Value `$true; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'a success end that does not put it back'; Expect = '2/1/1/0'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C } finally { } }" }
+        @{ Case = 'the put-back in a nested block'; Expect = '3/1/1/1'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C; if (`$Y) { `$null = Set-OERSessionUncertain -Value `$W } } finally { } }" }
+        @{ Case = 'a piped put-back'; Expect = '3/1/1/1'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C; Set-OERSessionUncertain -Value `$W | Out-Null } finally { } }" }
+        @{ Case = 'a fourth set'; Expect = '4/1/2/1'; Text = "function F { $FixtureEntry; $FixtureCached; $FixtureEnd; `$null = Set-OERSessionUncertain -Value `$false }" }
+    )
+    $script:sessionUncertainPositionKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:sessionUncertainPositionKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $CaseReport = Get-OERSessionUncertainPositionReport -Ast $CaseAst -FileLabel $Case.Case
+        $Got = '{0}/{1}/{2}/{3}' -f $CaseReport.Sets, $CaseReport.AfterLock, $CaseReport.AfterRegister, $CaseReport.Violations.Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:sessionUncertainPositionKnownAnswerFailures.Add(('{0} -- expected {1} (sets/after lock/after register/violations), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # The marker's variable: every reference to _OERSessionUncertain, in any scope ($script:, a bare
+    # name, which reads the module scope's variable from inside a function, or ${...}), whatever the
+    # letter case. A file whose text never names the variable cannot hold a reference to it, so only the
+    # files that do are parsed again. KNOWN LIMIT: a reference the AST cannot see -- Get-Variable or
+    # Set-Variable with the name as a string, or a name built at run time -- is not found.
+    function Find-OERSessionUncertainVariable {
+        param($Ast)
+
+        $Ast.FindAll({
+                $args[0] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                (($args[0].VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq '_OERSessionUncertain')
+            }, $true)
+    }
+
+    $script:sessionUncertainOwnerPath = 'source\Private\Set-OERSessionUncertain.ps1'
+    $script:sessionUncertainVariableOwnerSites = 0
+    $script:sessionUncertainVariableFiles = 0
+    $script:sessionUncertainVariableViolations = [System.Collections.Generic.List[string]]::new()
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -notmatch '^source[\\/]') { continue }
+        if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
+        if ($File.Text -notmatch '_OERSessionUncertain') { continue }
+        $script:sessionUncertainVariableFiles++
+        $Relative = $File.RelativePath -replace '/', '\'
+        $VariableTokens = $null
+        $VariableErrors = $null
+        $VariableAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $File.Text, $File.Path, [ref]$VariableTokens, [ref]$VariableErrors)
+        if ($VariableErrors.Count -gt 0) {
+            $script:sessionUncertainVariableViolations.Add(('{0} -- names _OERSessionUncertain and does not parse, so its references cannot be placed' -f $Relative))
+            continue
+        }
+        foreach ($Reference in @(Find-OERSessionUncertainVariable -Ast $VariableAst)) {
+            if ($Relative -eq $script:sessionUncertainOwnerPath) {
+                $script:sessionUncertainVariableOwnerSites++
+            } else {
+                $script:sessionUncertainVariableViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+            }
+        }
+    }
+
+    # Known answers for the variable scan: the number of references each miniature must report.
+    $script:sessionUncertainVariableKnownAnswers = @(
+        @{ Case = 'a script-scoped write'; Expect = 1; Text = '$script:_OERSessionUncertain = $true' }
+        @{ Case = 'a bare read'; Expect = 1; Text = 'if ($_OERSessionUncertain) { }' }
+        @{ Case = 'a braced name in another letter case'; Expect = 1; Text = '${SCRIPT:_oerSessionUncertain}' }
+        @{ Case = 'a read inside an expandable string'; Expect = 1; Text = '"$script:_OERSessionUncertain"' }
+        @{ Case = 'a longer name'; Expect = 0; Text = '$script:_OERSessionUncertainty = 1' }
+        @{ Case = 'the name as a string'; Expect = 0; Text = 'Get-Variable -Name _OERSessionUncertain -Scope Script' }
+    )
+    $script:sessionUncertainVariableKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:sessionUncertainVariableKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $Got = @(Find-OERSessionUncertainVariable -Ast $CaseAst).Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:sessionUncertainVariableKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
     }
 
     # --- Known answers: the checker above must refuse each way of leaving a statement ungated. ---
@@ -3313,6 +3493,64 @@ statement directly after its Unlock, passing the same -Invocation variable.
             'Initialize-OERAuth remembers the identity at the same two success ends at which it releases the latch')
         $script:signInMemoryReport.Pairs | Should -Be 2 -Because (
             'each of the two success ends holds an Unlock-OERSignIn and, as the statement directly after it, a Register-OERSignInIdentity passing the same invocation')
+    }
+
+    It 'sets and clears the session-uncertain marker with Set-OERSessionUncertain only in Initialize-OERAuth, Connect-OER and Disconnect-OER' {
+        $script:transportOwnerStale['Set-OERSessionUncertain'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Initialize-OERAuth, Connect-OER and Disconnect-OER must each really call Set-OERSessionUncertain; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Set-OERSessionUncertain'] -join "`n" | Should -BeNullOrEmpty -Because @'
+The session-uncertain marker (A10, BL-89) says that the last sign-in did not succeed, so the module's
+session may still belong to the tenant before it; while it is set, Initialize-OERAuth refuses a sign-in
+that names no tenant. Initialize-OERAuth sets it at every entry and clears it only for a sign-in that
+named its tenant or was Connect-OER's, Connect-OER sets it first thing, and Disconnect-OER clears it. A
+fourth caller can clear it after a refused sign-in, and the next command that names no tenant then acts
+on the previous tenant -- the loop over tenant profiles that applied one tenant's document, prune
+included, in another. Change the marker only in those three files.
+'@
+    }
+
+    It 'reads and writes $script:_OERSessionUncertain only in Set-OERSessionUncertain.ps1' {
+        $script:sessionUncertainVariableKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the variable scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
+        @($script:sessionUncertainVariableKnownAnswers).Count | Should -Be 6 -Because (
+            'the known-answer table holds six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:sessionUncertainVariableOwnerSites | Should -BeGreaterThan 0 -Because (
+            'Set-OERSessionUncertain.ps1 must really read and write the variable, or this rule has nothing to be the only owner of')
+        $script:sessionUncertainVariableViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+Set-OERSessionUncertain is the single owner of the session-uncertain marker: it is the one reader and
+the one writer of $script:_OERSessionUncertain, and it returns what the marker was. A second reader can
+decide differently from Initialize-OERAuth whether the session is uncertain; a second writer can set or
+clear the marker where the ownership rule above cannot see a call, which is the very hole that rule
+closes. Read and change the marker through Set-OERSessionUncertain.
+'@
+    }
+
+    It 'sets the marker directly after Lock-OERSignIn and puts it back directly after each Register-OERSignInIdentity in Initialize-OERAuth' {
+        $script:sessionUncertainPositionReport | Should -Not -BeNullOrEmpty -Because (
+            'Initialize-OERAuth.ps1 must be among the parsed source files, or the position rule judges nothing')
+        @($script:sessionUncertainPositionKnownAnswers).Count | Should -Be 7 -Because (
+            'the position known-answer table holds seven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:sessionUncertainPositionKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
+The position checker no longer reaches the verdict a known-answer case requires. Each line names the
+case and the counts it expected. Fix the checker rather than the case; a case is changed only when the
+rule it models changed.
+'@
+
+        $script:sessionUncertainPositionReport.Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+Initialize-OERAuth marks the session uncertain at the statement directly after it latches its caller
+(Lock-OERSignIn), so every refusal from there on -- the credential checks, the tenant lookup, the token
+calls, GraphSessionChanged and ArmTokenAcquisitionFailed included -- leaves the marker set, while the
+BL-74 refusal before the latch, which concerns a sign-in that was never attempted, leaves it as it was.
+It puts the marker back, or clears it, at the statement directly after each
+Register-OERSignInIdentity, which stands where a sign-in succeeded. Put each Set-OERSessionUncertain
+call back as a statement of its own in one of those three places.
+'@
+        $script:sessionUncertainPositionReport.Sets | Should -Be 3 -Because (
+            'Initialize-OERAuth sets the marker once at its entry and puts it back at its two success ends; a different count means a call was added or removed, and the expected number here is then updated deliberately')
+        $script:sessionUncertainPositionReport.AfterLock | Should -Be 1 -Because (
+            'the marker is set by the statement directly after the Lock-OERSignIn statement')
+        $script:sessionUncertainPositionReport.AfterRegister | Should -Be 2 -Because (
+            'each of the two Register-OERSignInIdentity statements, one per success end, is followed directly by the statement that puts the marker back')
     }
 
     It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers and in Initialize-OERAuth' {

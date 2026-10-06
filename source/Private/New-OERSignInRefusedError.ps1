@@ -22,15 +22,31 @@ function New-OERSignInRefusedError {
     inside a refused command's output. The target is then that latched outer command's name, and
     the request the fixed message calls "this request" is the sign-in, which is not made.
 
+    With -SessionUncertain it builds the record Initialize-OERAuth raises for A10 (BL-89): an earlier
+    sign-in in the session failed or was refused, so the module's session may still belong to the tenant
+    before it, and a sign-in that names no tenant is refused before any token call or Connect-MgGraph. The
+    id and the category are the same, and the target is the command whose sign-in is refused, which stays
+    latched; the message is fixed text of its own, which names no tenant and tells the operator to name
+    the tenant or to run Connect-OER or Disconnect-OER.
+
     .PARAMETER Command
     The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it, with or
     without -OutsideCaller ('a script block' when the held frame carries no command name). It becomes
     the record's target object.
 
+    .PARAMETER SessionUncertain
+    Builds the session-uncertain variant (A10): the same id, category and target, with the message for a
+    sign-in that names no tenant while an earlier sign-in's failure leaves the session uncertain.
+
     .EXAMPLE
     throw (New-OERSignInRefusedError -Command 'Get-OERGroup')
 
     Refuses a request made on behalf of Get-OERGroup after its sign-in was refused.
+
+    .EXAMPLE
+    Write-CmdletError -ErrorRecord (New-OERSignInRefusedError -Command 'Invoke-OERStructure' -SessionUncertain) -Cmdlet $PSCmdlet -Terminating
+
+    Refuses the sign-in of Invoke-OERStructure, which names no tenant, after an earlier sign-in failed.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
         Justification = 'Pure in-memory error-record builder; returns an ErrorRecord and performs no state change, so ShouldProcess does not apply.')]
@@ -38,13 +54,23 @@ function New-OERSignInRefusedError {
     [OutputType([System.Management.Automation.ErrorRecord])]
     param(
         [Parameter(Mandatory)]
-        [string]$Command
+        [string]$Command,
+
+        [switch]$SessionUncertain
     )
+    [string]$Message = if ($SessionUncertain) {
+        "An earlier sign-in in this PowerShell session failed or was refused, so the module's session " +
+        "may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that " +
+        "names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or " +
+        "Disconnect-OER, to send requests again."
+    }
+    else {
+        "The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for " +
+        "this command: this request was not sent. Run Connect-OER, or run a new command whose " +
+        "sign-in succeeds, to send requests again."
+    }
     [System.Management.Automation.ErrorRecord]::new(
-        [System.Exception]::new(
-            "The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for " +
-            "this command: this request was not sent. Run Connect-OER, or run a new command whose " +
-            "sign-in succeeds, to send requests again."),
+        [System.Exception]::new($Message),
         'SignInRefused',
         [System.Management.Automation.ErrorCategory]::AuthenticationError,
         $Command)

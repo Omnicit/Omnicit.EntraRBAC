@@ -69,7 +69,12 @@ function Connect-OER {
     its own, it signs in as before. An OER command whose sign-in another command in the same
     pipeline later replaced with a different tenant or identity sends nothing more either: each
     request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
-    tenant with one identity, so run such commands as separate statements.
+    tenant with one identity, so run such commands as separate statements. And after a sign-in that
+    failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
+    as an unknown -TenantAlias -- the module's session may still belong to the tenant before it, so a
+    later OER command that names no tenant sends nothing: its sign-in is refused with a SignInRefused
+    error that says so. A command that names its tenant with -TenantId, a successful Connect-OER, or
+    Disconnect-OER makes the module send again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
@@ -259,6 +264,12 @@ function Connect-OER {
         [switch]$Force
     )
     process {
+        # SEC (A10, BL-89): mark the session uncertain first thing. Connect-OER's own refusals before the
+        # sign-in -- AmbiguousTenant, InvalidTenantAlias, TenantAliasNotFound -- leave the session an
+        # earlier sign-in left in place, and outside any try the script carries on, so they leave the
+        # session uncertain too; a successful sign-in clears it (Initialize-OERAuth).
+        $null = Set-OERSessionUncertain -Value $true
+
         if ($TenantId -and $TenantAlias) {
             Write-CmdletError `
                 -Message ([System.Exception]::new(

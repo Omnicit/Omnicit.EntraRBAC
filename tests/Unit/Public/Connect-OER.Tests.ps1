@@ -123,6 +123,48 @@ Describe 'Connect-OER' {
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
     }
 
+    Context 'the session-uncertain marker (A10, BL-89)' {
+        # A Connect-OER that does not sign in leaves the module's session as the previous sign-in left
+        # it, and outside any try the script carries on: in a loop over tenant profiles the next command
+        # that names no tenant would act on the previous tenant. Connect-OER therefore marks the session
+        # uncertain first thing in its process block; Initialize-OERAuth clears the marker when the
+        # sign-in succeeds. Initialize-OERAuth is mocked here, so only Connect-OER's own set is seen.
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain = $null }
+        }
+
+        It 'leaves the session uncertain when its own refusal <Id> comes before any sign-in' -ForEach @(
+            @{ Id = 'TenantAliasNotFound'; Parameters = @{ TenantAlias = 'missing' } }
+            @{ Id = 'InvalidTenantAlias'; Parameters = @{ TenantAlias = '../../../evil' } }
+            @{ Id = 'AmbiguousTenant'; Parameters = @{ TenantId = 'x'; TenantAlias = 'corp' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            # No profile is found: nothing is read from disk.
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the refusal named was reached, and that no sign-in was made.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Connect-OER" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'marks the session uncertain before it signs in' {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {
+                $script:MarkerAtSignIn = & (Get-Module Omnicit.EntraRBAC) { $script:_OERSessionUncertain }
+            }
+            $script:MarkerAtSignIn = $null
+
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444' -Interactive
+
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+            # Set before the sign-in, which is the one that clears it when it succeeds.
+            $script:MarkerAtSignIn | Should -BeTrue
+        }
+    }
+
     It 'binds -TenantAlias from the pipeline by property name (Get-OERConfiguration | Connect-OER)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         $Base = Join-Path $TestDrive 'PipeProfiles'

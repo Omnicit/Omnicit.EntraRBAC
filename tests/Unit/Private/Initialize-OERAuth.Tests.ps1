@@ -42,6 +42,7 @@ Describe 'Initialize-OERAuth' {
         # next test, which would then silently gain the -Force the public path must never carry.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -481,6 +482,7 @@ Describe 'Initialize-OERAuth ARM cache isolation' {
         # next test, which would then silently gain the -Force the public path must never carry.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -616,6 +618,7 @@ Describe 'Initialize-OERAuth error hygiene' {
         # next test, which would then silently gain the -Force the public path must never carry.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -722,6 +725,7 @@ Describe 'Initialize-OERAuth session inheritance' {
         # next test, which would then silently gain the -Force the public path must never carry.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1023,6 +1027,7 @@ Describe 'Initialize-OERAuth sovereign clouds' {
         # next test, which would then silently gain the -Force the public path must never carry.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1301,6 +1306,7 @@ Describe 'Initialize-OERAuth AZURE_AUTHORITY_HOST restore' {
         [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1414,6 +1420,7 @@ Describe 'Initialize-OERAuth sovereign cloud -Force scoping' {
         [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1519,8 +1526,10 @@ Describe 'Initialize-OERAuth sovereign cloud -Force scoping' {
             }
             $script:_OERAuthState.Environment | Should -Be 'Global'
 
-            # An ARM cmdlet: Graph is cached, so ONLY the ARM branch runs.
-            Initialize-OERAuth -IncludeARM
+            # An ARM cmdlet: Graph is cached, so ONLY the ARM branch runs. It names the session's tenant:
+            # after the failed attempt the session is uncertain (A10), and a sign-in that names no tenant
+            # would be refused before its token call. Named or inherited, the tenant is the same.
+            Initialize-OERAuth -TenantId 'contoso' -IncludeARM
         }
 
         $script:ArmOnlyKeys | Should -Not -BeNullOrEmpty -Because 'the third call must have run, or the assertion below is vacuous'
@@ -1547,6 +1556,7 @@ Describe 'Initialize-OERAuth authority tracking across a failed acquisition' {
         [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1633,6 +1643,7 @@ Describe 'Initialize-OERAuth ambient AZURE_AUTHORITY_HOST warning' {
         [System.Environment]::SetEnvironmentVariable('AZURE_AUTHORITY_HOST', [NullString]::Value)
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1727,6 +1738,7 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -1917,6 +1929,7 @@ Describe 'Initialize-OERAuth granted-tenant guard' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
             # The resolver's process-wide cache, which one It below reaches through the real resolver.
@@ -2420,6 +2433,7 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
         # here, or one It's recorded credential build or authority leaks into the next.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -3034,6 +3048,7 @@ Describe 'Initialize-OERAuth Graph SDK session fingerprint (A18)' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -3122,6 +3137,7 @@ Describe 'Initialize-OERAuth Graph SDK session check (A18)' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -3425,6 +3441,7 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -3706,7 +3723,9 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
                 function Invoke-LaterCommand {
                     [CmdletBinding()]
                     param()
-                    Initialize-OERAuth
+                    # Names the tenant: after the refused sign-in the session is uncertain (A10), and a
+                    # sign-in that names no tenant would be refused before it could release anything.
+                    Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444'
                     @(Get-OERSignInRefusal)
                 }
                 # Held here, so the weak table cannot drop the entry while the later command runs.
@@ -3906,6 +3925,7 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
         }
@@ -4192,6 +4212,7 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
             $script:_OERTenantDomainCache = $null
@@ -4483,6 +4504,463 @@ Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
             $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'AppOnlySessionCredentialUnavailable,Initialize-OERAuth'
             Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+        }
+    }
+}
+
+Describe 'Initialize-OERAuth session uncertain after a refused sign-in (A10)' {
+    # BL-89: outside any try a script carries on past a refused sign-in, and the module's session still
+    # belongs to the tenant before it. In
+    # foreach ($T in $Profiles) { Connect-OER -TenantAlias $T; Invoke-OERStructure -Path "$T.json" -Prune }
+    # a refused Connect-OER left the previous tenant's session in place, and the next Invoke-OERStructure,
+    # which names no tenant, applied X's document there, prune included. A sign-in that does not succeed
+    # therefore leaves the session uncertain, and while it is, a sign-in that names no tenant is refused
+    # with SignInRefused before it requests a token or sends anything. Each probe below calls
+    # Initialize-OERAuth from a command of its own, Invoke-UncertainProbeCommand -- the shape of a
+    # public cmdlet -- and reads the latch from that same command. The tenants are invented: A is
+    # 4444..., and every token is issued for the tenant it was requested for.
+    BeforeAll {
+        # Returns the record the sign-in raised (if any), the ids of the errors it wrote (with -Quiet,
+        # for the non-terminating ArmTokenAcquisitionFailed) and the probe command's own latch.
+        function script:Invoke-UncertainProbe {
+            param([hashtable]$Parameters = @{}, [switch]$Quiet)
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters; Quiet = [bool]$Quiet } {
+                param($P, $Quiet)
+                function Invoke-UncertainProbeCommand {
+                    [CmdletBinding()]
+                    param([hashtable]$AuthParams, [bool]$Quiet)
+                    $Caught = $null
+                    $Errs = @()
+                    try {
+                        if ($Quiet) {
+                            Initialize-OERAuth @AuthParams -ErrorAction SilentlyContinue -ErrorVariable Errs
+                        }
+                        else {
+                            Initialize-OERAuth @AuthParams
+                        }
+                    } catch { $Caught = $PSItem }
+                    @{
+                        Caught  = $Caught
+                        Ids     = @(@($Errs) | ForEach-Object { [string]$_.FullyQualifiedErrorId })
+                        Refusal = Get-OERSignInRefusal
+                    }
+                }
+                Invoke-UncertainProbeCommand -AuthParams $P -Quiet $Quiet
+            }
+        }
+
+        # Connects the module once, from its own script block, as its own session for tenant A.
+        function script:Connect-OwnSession {
+            InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+            }
+        }
+
+        # A sign-in refused for a reason of its own after the latch: an explicit client secret sign-in
+        # for tenant A with no secret.
+        function script:Invoke-RefusedSignIn {
+            $Refused = Invoke-UncertainProbe -Parameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientSecret'; ClientId = '33333333-3333-3333-3333-333333333333'
+            }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+        }
+
+        # The marker, read through its owner with a round trip that puts back what it found.
+        function script:Get-UncertainMarker {
+            InModuleScope $script:moduleName {
+                $Was = Set-OERSessionUncertain -Value $true
+                $null = Set-OERSessionUncertain -Value $Was
+                $Was
+            }
+        }
+
+        function script:Get-UncertainState {
+            InModuleScope $script:moduleName {
+                @{
+                    TenantId         = $script:_OERAuthState.TenantId
+                    AuthMethod       = $script:_OERAuthState.AuthMethod
+                    GraphTokenExpiry = $script:_OERAuthState.GraphTokenExpiry
+                    Fingerprint      = $script:_OERAuthState.GraphSessionFingerprint
+                }
+            }
+        }
+
+        # A sign-in that names no tenant (or 'organizations'), refused for the uncertain session: the A10
+        # record, naming the probe command, with the probe command latched, no token call, no connection
+        # and the state as it was. Returns the probe.
+        function script:Assert-RefusedWhileUncertain {
+            param([hashtable]$Parameters = @{})
+            $StateBefore = Get-UncertainState
+            $TokensBefore = $script:TokenCalls
+            $ConnectsBefore = $script:ConnectCalls
+
+            $Probe = Invoke-UncertainProbe -Parameters $Parameters
+
+            $Probe.Caught | Should -Not -BeNullOrEmpty
+            $Probe.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $Probe.Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $Probe.Caught.Exception.Message | Should -Match '^An earlier sign-in'
+            $Probe.Caught.TargetObject | Should -BeExactly 'Invoke-UncertainProbeCommand'
+            $Probe.Refusal | Should -BeExactly 'Invoke-UncertainProbeCommand'
+            $script:TokenCalls | Should -Be $TokensBefore
+            $script:ConnectCalls | Should -Be $ConnectsBefore
+            $StateAfter = Get-UncertainState
+            $StateAfter.TenantId | Should -Be $StateBefore.TenantId
+            $StateAfter.AuthMethod | Should -Be $StateBefore.AuthMethod
+            $StateAfter.GraphTokenExpiry | Should -Be $StateBefore.GraphTokenExpiry
+            $StateAfter.Fingerprint | Should -Be $StateBefore.Fingerprint
+            $Probe
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERTenantDomainCache = $null
+        }
+        $script:TokenCalls = 0
+        $script:ConnectCalls = 0
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        $script:ForeignContext = [pscustomobject]@{
+            AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+            ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $script:TokenCalls++
+            [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own.
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:ConnectCalls++; $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
+    }
+
+    Context 'a command that names no tenant, after a refused sign-in' {
+        It 'is refused with SignInRefused after MissingClientSecret, before any token call, leaving the state as it was and the command latched' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $null = Assert-RefusedWhileUncertain
+
+            # The session it would have used is tenant A's, connected once.
+            (Get-UncertainState).TenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+            $script:TokenCalls | Should -Be 1
+            $script:ConnectCalls | Should -Be 1
+        }
+
+        It 'is refused after GraphTokenAcquisitionFailed' {
+            Connect-OwnSession
+            Mock -ModuleName $script:moduleName Get-AzToken { $script:TokenCalls++; throw [System.Exception]::new('AADSTS50076: interaction required') }
+
+            $Refused = Invoke-UncertainProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'GraphTokenAcquisitionFailed,Initialize-OERAuth'
+
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after TenantMismatch on the Microsoft Graph token' {
+            Connect-OwnSession
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                $script:TokenCalls++
+                [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '22222222-2222-2222-2222-222222222222' }
+            }
+
+            $Refused = Invoke-UncertainProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
+            $Refused.Caught.Exception.Message | Should -Match 'Microsoft Graph token'
+
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after TenantResolutionFailed' {
+            Connect-OwnSession
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { throw [System.InvalidOperationException]::new('did not resolve') }
+
+            $Refused = Invoke-UncertainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after GraphConnectFailed' {
+            Connect-OwnSession
+            Mock -ModuleName $script:moduleName Connect-MgGraph { $script:ConnectCalls++; throw [System.Exception]::new('handshake failed') }
+
+            $Refused = Invoke-UncertainProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'GraphConnectFailed,Initialize-OERAuth'
+
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after ArmTokenAcquisitionFailed, although the sign-in named its tenant and its Microsoft Graph token was cached' {
+            Connect-OwnSession
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                      $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                      $Scope, $Force, $Claim)
+                $script:TokenCalls++
+                if ($Resource -match 'management') { throw [System.Exception]::new('ARM consent required') }
+                [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = $Tenant }
+            }
+
+            # Non-terminating: Write-CmdletError without -Terminating, then return.
+            $Refused = Invoke-UncertainProbe -Quiet -Parameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; IncludeARM = $true
+            }
+            $Refused.Caught | Should -BeNullOrEmpty
+            $Refused.Ids | Should -Contain 'ArmTokenAcquisitionFailed,Initialize-OERAuth'
+
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after AppOnlySessionCredentialUnavailable, which itself named no tenant' {
+            InModuleScope $script:moduleName {
+                # An app-only session the module did not connect itself, holding no ARM token.
+                $script:_OERAuthState = @{
+                    TenantId         = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod       = 'ClientSecret'
+                    ClientId         = '33333333-3333-3333-3333-333333333333'
+                    Environment      = 'Global'
+                    Account          = 'sp'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmToken         = $null
+                    ArmTokenExpiry   = $null
+                    ArmResourceUrl   = $null
+                    ClaimsSatisfied  = $false
+                }
+            }
+
+            # No sign-in was refused before this one, so naming no tenant takes it to its own refusal.
+            $Refused = Invoke-UncertainProbe -Parameters @{ IncludeARM = $true }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'AppOnlySessionCredentialUnavailable,Initialize-OERAuth'
+
+            # A Microsoft Graph sign-in only, which the cached token would otherwise answer.
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused after GraphSessionChanged, once the module''s own session is back' {
+            Connect-OwnSession
+            $script:CurrentContext = $script:ForeignContext
+
+            $Refused = Invoke-UncertainProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive' }
+            $Refused.Caught.FullyQualifiedErrorId | Should -BeExactly 'GraphSessionChanged,Initialize-OERAuth'
+
+            # The module's own session back, so the probe gets past the GraphSessionChanged refusal.
+            $script:CurrentContext = $script:OwnContext
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'reads GraphSessionChanged, not SignInRefused, while another session is in place' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+            $script:CurrentContext = $script:ForeignContext
+
+            $Changed = Invoke-UncertainProbe
+
+            # The A18 refusal comes first: a changed session is still reported as a changed session.
+            $Changed.Caught.FullyQualifiedErrorId | Should -BeExactly 'GraphSessionChanged,Initialize-OERAuth'
+            # Not vacuous: with the module's own session back, the same probe is refused for the
+            # uncertain session.
+            $script:CurrentContext = $script:OwnContext
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'is refused for -TenantId organizations, which names no tenant (Review Focus 5a)' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            # 'organizations' differs from the session's tenant, so a sign-in that got past the check
+            # would request a token.
+            $null = Assert-RefusedWhileUncertain -Parameters @{ TenantId = 'organizations'; AuthMethod = 'Interactive' }
+        }
+
+        It 'leaves the session uncertain when it is refused itself, so the next one is refused too' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $null = Assert-RefusedWhileUncertain
+            Get-UncertainMarker | Should -BeTrue
+            $null = Assert-RefusedWhileUncertain
+            Get-UncertainMarker | Should -BeTrue
+        }
+    }
+
+    Context 'cleared by a sign-in that names its tenant' {
+        It 'is cleared by a cached return for a command that names tenant A, and a command that names no tenant is answered again' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+            Get-UncertainMarker | Should -BeTrue
+
+            $Named = Invoke-UncertainProbe -Parameters @{ TenantId = '44444444-4444-4444-4444-444444444444' }
+
+            $Named.Caught | Should -BeNullOrEmpty
+            $Named.Refusal | Should -BeNullOrEmpty
+            # The cached return: the one token and the one connection are Connect-OwnSession's.
+            $script:TokenCalls | Should -Be 1
+            $script:ConnectCalls | Should -Be 1
+            Get-UncertainMarker | Should -BeFalse
+
+            $Later = Invoke-UncertainProbe
+            $Later.Caught | Should -BeNullOrEmpty
+            $Later.Refusal | Should -BeNullOrEmpty
+            $script:TokenCalls | Should -Be 1
+        }
+
+        It 'is cleared by a new connection for a command that names another tenant' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $Named = Invoke-UncertainProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+
+            $Named.Caught | Should -BeNullOrEmpty
+            $Named.Refusal | Should -BeNullOrEmpty
+            # A new connection: the second token and the second connection.
+            $script:TokenCalls | Should -Be 2
+            $script:ConnectCalls | Should -Be 2
+            Get-UncertainMarker | Should -BeFalse
+
+            # Answered from the new session's cache.
+            $Later = Invoke-UncertainProbe
+            $Later.Caught | Should -BeNullOrEmpty
+            $script:TokenCalls | Should -Be 2
+            (Get-UncertainState).TenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+
+        It 'is not refused for Connect-OER''s sign-in (-ReclaimGraphSession) that names no tenant, which clears it' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $Reclaim = Invoke-UncertainProbe -Parameters @{ ReclaimGraphSession = $true }
+
+            $Reclaim.Caught | Should -BeNullOrEmpty
+            $Reclaim.Refusal | Should -BeNullOrEmpty
+            Get-UncertainMarker | Should -BeFalse
+            $Later = Invoke-UncertainProbe
+            $Later.Caught | Should -BeNullOrEmpty
+            $Later.Refusal | Should -BeNullOrEmpty
+        }
+
+        It 'is cleared when a sign-in from the same frame names the tenant and succeeds after a refusal (A19''s retry, Review Focus 5b)' {
+            $R = InModuleScope $script:moduleName {
+                $Caught = $null
+                try {
+                    Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'ClientSecret' -ClientId '33333333-3333-3333-3333-333333333333'
+                } catch { $Caught = $PSItem }
+                $AfterRefusal = Get-OERSignInRefusal
+                $MarkerAfterRefusal = [bool]$script:_OERSessionUncertain
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+                $AfterSuccess = Get-OERSignInRefusal
+                @{ Caught = $Caught; AfterRefusal = $AfterRefusal; MarkerAfterRefusal = $MarkerAfterRefusal; AfterSuccess = $AfterSuccess }
+            }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+            $R.AfterRefusal | Should -Not -BeNullOrEmpty
+            $R.MarkerAfterRefusal | Should -BeTrue
+            $R.AfterSuccess | Should -BeNullOrEmpty
+            Get-UncertainMarker | Should -BeFalse
+        }
+    }
+
+    Context 'not cleared by a transport''s own refresh (Review Focus 4)' {
+        # The Graph wrapper's token-rejected retry and the ARM wrapper's 401 retry pass -ForceRefresh,
+        # and the claims step-up passes -ClaimsChallenge, each naming the state's tenant on the command's
+        # behalf. A refresh that succeeds while the session is uncertain must leave it uncertain.
+        It 'stays set after a forced refresh (-ForceRefresh) that names the session''s tenant and succeeds' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $Refresh = Invoke-UncertainProbe -Parameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; ForceRefresh = $true
+            }
+
+            $Refresh.Caught | Should -BeNullOrEmpty
+            $Refresh.Refusal | Should -BeNullOrEmpty
+            # Positive proof that the refresh went the whole way: a second token, a second connection.
+            $script:TokenCalls | Should -Be 2
+            $script:ConnectCalls | Should -Be 2
+            Get-UncertainMarker | Should -BeTrue
+            $null = Assert-RefusedWhileUncertain
+        }
+
+        It 'stays set after a claims-challenge step-up (-ClaimsChallenge) that names the session''s tenant and succeeds' {
+            Connect-OwnSession
+            Invoke-RefusedSignIn
+
+            $StepUp = Invoke-UncertainProbe -Parameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'; ClaimsChallenge = '{}'
+            }
+
+            $StepUp.Caught | Should -BeNullOrEmpty
+            $StepUp.Refusal | Should -BeNullOrEmpty
+            $script:TokenCalls | Should -Be 2
+            $script:ConnectCalls | Should -Be 2
+            Get-UncertainMarker | Should -BeTrue
+            $null = Assert-RefusedWhileUncertain
+        }
+    }
+
+    Context 'left as it was' {
+        It 'stays clear after a sign-in that names no tenant succeeds with no sign-in refused before it' {
+            Get-UncertainMarker | Should -BeFalse
+
+            # No session: a new connection for 'organizations', then the cached return.
+            $First = Invoke-UncertainProbe -Parameters @{ AuthMethod = 'Interactive' }
+            $First.Caught | Should -BeNullOrEmpty
+            $First.Refusal | Should -BeNullOrEmpty
+            $script:TokenCalls | Should -Be 1
+            Get-UncertainMarker | Should -BeFalse
+
+            $Second = Invoke-UncertainProbe
+            $Second.Caught | Should -BeNullOrEmpty
+            $Second.Refusal | Should -BeNullOrEmpty
+            $script:TokenCalls | Should -Be 1
+            Get-UncertainMarker | Should -BeFalse
+        }
+
+        It 'is neither set nor cleared by the refusal under a latched outer command (BL-74)' {
+            Connect-OwnSession
+            $Before = Get-UncertainMarker
+
+            $R = InModuleScope $script:moduleName {
+                $Holder = @{ Caught = $null }
+                function Invoke-NestedCommand {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-OERAuth
+                }
+                function Invoke-OuterCommand {
+                    [CmdletBinding()]
+                    param()
+                    # Latched by its own invocation, as Lock-OERSignIn latches a refused command.
+                    if ($null -eq $script:_OERSignInLatch) {
+                        $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                    }
+                    $script:_OERSignInLatch.AddOrUpdate($MyInvocation, $true)
+                    try { Invoke-NestedCommand } catch { $Holder.Caught = $PSItem }
+                }
+                Invoke-OuterCommand
+                $Holder
+            }
+
+            # Positive proof that the BL-74 refusal was reached: SignInRefused naming the outer command,
+            # with BL-74's own message.
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+            $R.Caught.Exception.Message | Should -Not -Match 'An earlier sign-in'
+            $Before | Should -BeFalse
+            Get-UncertainMarker | Should -Be $Before
         }
     }
 }

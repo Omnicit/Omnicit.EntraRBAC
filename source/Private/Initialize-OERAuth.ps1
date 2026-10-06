@@ -90,6 +90,18 @@ function Initialize-OERAuth {
     make the first command create its group in B; and an outer command's nested cmdlets, which inherit
     the session, would otherwise send under a state a later pipeline command switched.
 
+    A sign-in that does not succeed also leaves the session uncertain (A10, BL-89): the module's session
+    is still the one an earlier sign-in left -- the previous tenant's, or none -- and outside any try the
+    script carries on, so a command that names no tenant would act on that previous tenant. Every entry
+    past the BL-74 check therefore marks the session uncertain (Set-OERSessionUncertain), directly after
+    it latches its caller, and a success clears the marker when the sign-in named its tenant -- a
+    -TenantId other than 'organizations', and not a transport's own refresh (-ForceRefresh or
+    -ClaimsChallenge) -- or was Connect-OER's (-ReclaimGraphSession); any other success puts back the
+    value it found. While the marker is set, a sign-in that names no tenant is refused with a terminating
+    SignInRefused (New-OERSignInRefusedError -SessionUncertain), after the GraphSessionChanged refusal and
+    before the cached return and any token call, and its caller stays latched. Connect-OER sets the marker
+    first thing, and Disconnect-OER clears it.
+
     Before a client secret token request, a warning is written when the token request that last made
     AzAuth build its credential in this PowerShell session was also a client secret request, for the
     same application but a different tenant, and no Force is on the call (neither -ForceRefresh nor
@@ -279,8 +291,8 @@ function Initialize-OERAuth {
     # SEC (A20): the sign-in memory, beside the latch. Where the latch is released -- the cached return
     # and the last statement of the big try -- the module also remembers, keyed on the same invocation
     # ($SignInCaller), which identity the calling command signed in as (Register-OERSignInIdentity):
-    # the tenant, method, client and cloud, the terms of $ArmIdentityUnchanged below, as one string
-    # from Get-OERSignInIdentity, never a token. Both transports read it through
+    # the tenant (the one the Graph token was issued for, when that is a GUID), method, client and
+    # cloud, as one string from Get-OERSignInIdentity, never a token. Both transports read it through
     # Get-OERSignInSupersession before every request and refuse with SignInSuperseded
     # (New-OERSignInSupersededError) a request made while ANY frame on the call stack remembers another
     # identity than the state now carries. The pipeline case: every begin block runs first, so in
@@ -292,7 +304,17 @@ function Initialize-OERAuth {
     # equals the state. A command with no memory (a unit test that mocks this function) is not
     # compared. The table ($script:_OERSignInIdentity, a ConditionalWeakTable) is the only other
     # module variable this adds; its values are those identity strings.
+    #
+    # SEC (A10, BL-89): the session-uncertain marker, set as the statement directly after the latch, so
+    # every refusal from here on -- ArmTokenAcquisitionFailed's early return and GraphSessionChanged
+    # included -- leaves the session uncertain, while the BL-74 refusal above, for a sign-in never
+    # attempted, leaves the marker as it was. $SessionWasUncertain keeps what the marker said before this
+    # entry: the refusal below the GraphSessionChanged one reads it, and the two success ends put it back
+    # unless this sign-in clears it ($ClearsUncertainty). Set-OERSessionUncertain is the marker's single
+    # owner, and $script:_OERSessionUncertain the one module variable it keeps; gate 10 of
+    # tests/QA/sourcehygiene.tests.ps1 holds where the three calls in this function stand.
     $SignInCaller = Lock-OERSignIn
+    [bool]$SessionWasUncertain = Set-OERSessionUncertain -Value $true
 
     # Public first-party client 'Microsoft Graph Command Line Tools'. It is preauthorized for
     # delegated Microsoft Graph scopes, so interactive and device-code sign-in can request the
@@ -341,6 +363,14 @@ function Initialize-OERAuth {
     else {
         'organizations'
     }
+
+    # SEC (A10): whether this sign-in names its tenant, for the session-uncertain marker. 'organizations'
+    # names none. A transport's own refresh (-ForceRefresh or -ClaimsChallenge without
+    # -ReclaimGraphSession) passes the state's tenant on the command's behalf, so it neither counts as
+    # naming one nor clears the marker; Connect-OER (-ReclaimGraphSession) always does.
+    [bool]$TenantNamed = [bool]$TenantId -and $TenantId -ne 'organizations'
+    [bool]$ClearsUncertainty = $ReclaimGraphSession -or
+        ($TenantNamed -and -not $ForceRefresh -and -not $ClaimsChallenge)
 
     # SEC: AuthMethod and ClientId are inherited as a PAIR, and only when the caller stated no
     # -AuthMethod and either no -ClientId or the SAME -ClientId as the cached session. Inheriting a
@@ -556,12 +586,31 @@ function Initialize-OERAuth {
         Write-CmdletError -ErrorRecord (New-OERGraphSessionChangedError) -Cmdlet $PSCmdlet -Terminating
     }
 
+    # SEC (A10, BL-89): while the session is uncertain, a sign-in that names no tenant is refused. A
+    # sign-in that fails or is refused leaves the session an earlier sign-in left in place -- the
+    # previous tenant's, or none -- and outside any try the script carries on: in
+    # foreach ($T in $Profiles) { Connect-OER -TenantAlias $T; Invoke-OERStructure -Path "$T.json" -Prune }
+    # a refused Connect-OER let the next Invoke-OERStructure, which names no tenant, apply X's document,
+    # prune included, in the previous tenant. Placed after the GraphSessionChanged refusal, so a changed
+    # session still reads GraphSessionChanged, and before the cached return and every token call, so the
+    # refused sign-in requests nothing and connects nothing. The caller stays latched: the transports
+    # refuse its requests with SignInRefused, and the cmdlets it calls are refused by BL-74. A sign-in
+    # that names its tenant gets past this check, and so does Connect-OER's (-ReclaimGraphSession),
+    # named tenant or not; either clears the marker when it succeeds.
+    if ($SessionWasUncertain -and -not $TenantNamed -and -not $ReclaimGraphSession) {
+        [string]$UncertainCaller = if ($SignInCaller -and $SignInCaller.MyCommand.Name) { $SignInCaller.MyCommand.Name } else { 'a script block' }
+        Write-CmdletError -ErrorRecord (New-OERSignInRefusedError -Command $UncertainCaller -SessionUncertain) -Cmdlet $PSCmdlet -Terminating
+        return
+    }
+
     if ($GraphCached -and $ArmCached) {
         Write-Verbose "[Initialize-OERAuth] Returning cached auth state for tenant '$EffectiveTenant'."
         # SEC (A19): a cache hit is a success; release the calling command's latch. SEC (A20): and
-        # remember which identity it signed in as.
+        # remember which identity it signed in as. SEC (A10): and clear the session-uncertain marker
+        # when this sign-in named its tenant or was Connect-OER's, or put back what it found.
         Unlock-OERSignIn -Invocation $SignInCaller
         Register-OERSignInIdentity -Invocation $SignInCaller
+        $null = Set-OERSessionUncertain -Value ($SessionWasUncertain -and -not $ClearsUncertainty)
         return
     }
 
@@ -632,14 +681,14 @@ function Initialize-OERAuth {
     # SEC (BL-12, decided by Philip 2026-10-06, P-2): a tenant named by domain is resolved to its tenant
     # ID before any token is requested, through the cloud authority's OpenID discovery document
     # (Resolve-OERTenantDomain, the module's one unauthenticated network call), and every token is then
-    # compared with that ID (TenantMismatch, below). Until this, a domain could not be compared with
-    # the GUID a token carries, so a device code, managed identity or reused client secret sign-in that
-    # came back from another tenant was at most warned about. A GUID needs no lookup; 'organizations'
-    # names no tenant and is not compared. Placed after the cached return -- a session that needs no new
-    # token was verified when it was established -- and after the credential checks, but before the
-    # trackers below move and before any token call, so a refused lookup builds no AzAuth credential and
-    # requests nothing. A failed lookup is raised after the try statement, not inside its catch: a
-    # terminating error suppressed inside a catch resumes after the whole try statement.
+    # compared with that ID (TenantMismatch, below): a token carries its tenant as a GUID, so a domain
+    # is compared through the GUID it resolves to, and a device code, managed identity or reused client
+    # secret sign-in that comes back from another tenant is refused. A GUID needs no lookup;
+    # 'organizations' names no tenant and is not compared. Placed after the cached return -- a session
+    # that needs no new token was verified when it was established -- and after the credential checks,
+    # but before the trackers below move and before any token call, so a refused lookup builds no AzAuth
+    # credential and requests nothing. A failed lookup is raised after the try statement, not inside its
+    # catch: a terminating error suppressed inside a catch resumes after the whole try statement.
     $ExpectedTenantId = $null
     $TenantResolutionError = $null
     if (Test-OERGuid -Value $EffectiveTenant) {
@@ -1118,9 +1167,10 @@ function Initialize-OERAuth {
                 # never in place of it. TenantId is what the caller asked for and is what the cache-key
                 # predicates ($GraphCached, $ArmCached, $ArmIdentityUnchanged) compare, so repointing it
                 # at the granted value would silently change session-reuse semantics module-wide. This
-                # field is evidence, not a key: the guard above has compared it with the tenant ID the
+                # field is not a cache key: the guard above has compared it with the tenant ID the
                 # request named or its domain resolved to, and for a domain this is the session's record
-                # of that tenant ID.
+                # of that tenant ID. The sign-in identity (Get-OERSignInIdentity) uses it as its tenant
+                # term when it is a GUID (BL-77).
                 TokenTenantId    = $GrantedTenant
                 # The signed-in identity's own object id, from the Graph token's oid claim -- the
                 # user on a delegated sign-in, the service principal on an app-only one. Read by
@@ -1234,12 +1284,15 @@ function Initialize-OERAuth {
 
         # SEC (A19): the new connection went the whole way -- Graph connected or cached, and the ARM
         # token acquired or not asked for -- so release the calling command's latch, and (SEC (A20))
-        # remember which identity it signed in as. The release and the memory are the LAST statements
-        # of this try and deliberately not in the finally below: the finally also runs on every
-        # terminating error and on ArmTokenAcquisitionFailed's early return, which must leave the
-        # command latched and must not remember that sign-in.
+        # remember which identity it signed in as, and (SEC (A10)) clear the session-uncertain marker
+        # when this sign-in named its tenant or was Connect-OER's, or put back what it found. The
+        # release, the memory and the marker are the LAST statements of this try and deliberately not in
+        # the finally below: the finally also runs on every terminating error and on
+        # ArmTokenAcquisitionFailed's early return, which must leave the command latched, must not
+        # remember that sign-in and must leave the session uncertain.
         Unlock-OERSignIn -Invocation $SignInCaller
         Register-OERSignInIdentity -Invocation $SignInCaller
+        $null = Set-OERSessionUncertain -Value ($SessionWasUncertain -and -not $ClearsUncertainty)
     } finally {
         # M5: drop this function's references to the materialized plaintext secret once the token
         # calls are done -- on the terminating paths as well as the success path, which the previous

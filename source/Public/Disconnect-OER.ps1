@@ -29,6 +29,11 @@ function Disconnect-OER {
     reports AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret or
     certificate.
 
+    Disconnect-OER also ends the uncertainty a failed or refused sign-in leaves: after such a sign-in
+    the module's session may still belong to the tenant before it, so an OER command that names no
+    tenant sends nothing and reports a SignInRefused error. After Disconnect-OER there is no session to
+    be uncertain about, and the next command signs in afresh.
+
     An Az PowerShell session you started yourself is deliberately LEFT ALONE. Omnicit.EntraRBAC
     never establishes an Az context: -IncludeARM only acquires an Azure Resource Manager token,
     which the module sends itself from its own Azure cmdlets. Any Az context on the machine
@@ -49,6 +54,9 @@ function Disconnect-OER {
     process {
         if ($PSCmdlet.ShouldProcess('Omnicit.EntraRBAC session', 'Disconnect and clear cached auth state')) {
             $script:_OERAuthState = $null
+            # SEC (A10, BL-89): with no session left, nothing is uncertain any more; a command that names
+            # no tenant signs in afresh instead of being refused for an earlier failed sign-in.
+            $null = Set-OERSessionUncertain -Value $false
             Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
         }
     }

@@ -49,4 +49,39 @@ Describe 'New-OERSignInRefusedError' {
         @($Parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.Mandatory }).Count |
             Should -Be 1
     }
+
+    Context 'with -SessionUncertain (A10)' {
+        BeforeAll {
+            $script:UncertainRecord = InModuleScope Omnicit.EntraRBAC { New-OERSignInRefusedError -Command 'Invoke-OERStructure' -SessionUncertain }
+        }
+
+        It 'carries the same id, category and target' {
+            $script:UncertainRecord | Should -BeOfType ([System.Management.Automation.ErrorRecord])
+            $script:UncertainRecord.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused'
+            $script:UncertainRecord.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::AuthenticationError)
+            $script:UncertainRecord.TargetObject | Should -BeOfType ([string])
+            $script:UncertainRecord.TargetObject | Should -BeExactly 'Invoke-OERStructure'
+        }
+
+        It 'carries the exact session-uncertain message, naming no tenant' {
+            $script:UncertainRecord.Exception | Should -BeOfType ([System.Exception])
+            $script:UncertainRecord.Exception.Message | Should -BeExactly (
+                "An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong " +
+                'to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request ' +
+                'was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.')
+        }
+
+        It 'keeps the default message without the switch' {
+            $script:UncertainRecord.Exception.Message | Should -Not -BeExactly $script:Record.Exception.Message
+            $Default = InModuleScope Omnicit.EntraRBAC { New-OERSignInRefusedError -Command 'Invoke-OERStructure' -SessionUncertain:$false }
+            $Default.Exception.Message | Should -BeExactly $script:Record.Exception.Message
+        }
+
+        It 'declares -SessionUncertain as an optional switch' {
+            $Parameter = InModuleScope Omnicit.EntraRBAC { (Get-Command New-OERSignInRefusedError).Parameters['SessionUncertain'] }
+            $Parameter.ParameterType | Should -Be ([switch])
+            @($Parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.Mandatory }).Count |
+                Should -Be 0
+        }
+    }
 }
