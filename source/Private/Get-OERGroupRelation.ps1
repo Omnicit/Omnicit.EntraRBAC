@@ -18,7 +18,12 @@ function Get-OERGroupRelation {
 
     A collection is read whole or not at all. Nothing is emitted until both reads have succeeded,
     and a failure of either read is not caught here: it propagates to the caller, whose catch
-    reports it. Half a collection would let a later -Prune remove what the missing half held.
+    reports it. Half a collection would let a later -Prune remove what the missing half held. Call
+    it only inside a try (or with -ErrorAction Stop inside one): outside any try a caller can
+    continue past the failed read, and the untyped half would then be emitted.
+
+    Why the collection is read twice, what was measured, and what the second read costs an apply
+    document: docs/development/rationale.md#typed-group-member-read.
 
     .PARAMETER GroupId
     The object id of the group whose collection is read.
@@ -45,6 +50,7 @@ function Get-OERGroupRelation {
     # The object types the untyped v1.0 read leaves out, each read typed. Measured 2026-10-06:
     # service principals only (members and owners); the user, group, device and organizational
     # contact casts showed nothing missing. Add a type here only after measuring it.
+    # Why: docs/development/rationale.md#typed-group-member-read
     $TypedReadTypes = @('servicePrincipal')
 
     $Untyped = @(@((Invoke-OERGraphRequest -Uri ('v1.0/groups/{0}/{1}' -f $GroupId, $Relation) -All).value) |

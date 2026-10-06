@@ -3843,13 +3843,38 @@ they follow with no code of their own, and `-Prune` is not changed. A group's se
 owners now count in the engine's owner comparison like any other owner, and the engine reconciles
 owners only when the document declares an `owners` key, as before.
 
-**R2: what an apply document exported before the fix costs.** Before this fix the module's own reads
-never saw a service principal, so the module itself never pruned one. An apply document exported by
-an earlier version lacks them: its `members` list, and its `owners` list where it declares one, name
-none. Applied with `-Prune` by this version, the engine now sees the live service principals and
-removes them as undeclared (`-WhatIf` shows the plan; without `-Prune` they are reported `Extra`).
-The guidance is to export again before applying an older document, which now writes them by object
-id, or to add them to it by hand. The release note and the help of `Get-OERInventory` say so.
+**R2: what a document that does not list a group's service principals costs.** Before this fix the
+module's reads did not see a service principal in a group, as measured on the test tenant and as
+Microsoft Learn documents. Learn calls the owners omission a "staged rollout", so a tenant whose
+`v1.0` read already listed them was exposed before this fix; nothing here claims the module never
+met one. Any apply document that does not list a group's service principals now meets them, not
+only one exported by an earlier version (which lacks them in its `members` list, and in its
+`owners` list where it declares one): a document written or trimmed by hand is the same. The engine
+reads a group through `Get-OERGroup`, so it sees the live service principals, reports each
+undeclared one `Extra` on every apply without `-Prune`, and removes it under `-Prune` (`-WhatIf`
+shows the plan). Members are compared unless the document declares `members` as null, and not on a
+dynamic group; owners only when the document declares an `owners` key, and the last-owner guard
+still applies. The guidance is to export again before applying such a document, which now writes
+them by object id, or to add them to it by hand. The release note says so, and so does the help of
+`Get-OERInventory` for the case of an earlier export.
+
+**R2, self-removal: named, and not guarded.** The group prune has no guard for the signed-in
+identity: it removes any undeclared member the pass may prune, and any undeclared owner but the last
+one, whoever that is. The directory role prune is different: it never removes the signed-in
+identity's own assignment, nor one held through a group the identity belongs to
+(`#directory-role-assignments`). Before this fix an app-only identity (ClientCertificate,
+ClientSecret or ManagedIdentity) was never a group prune candidate, since its service principal was
+invisible to the reads; now it can be. A document that omits the running automation's own service
+principal -- an old export of a role-assignable group the app is a member of, or of a group the app
+was made an owner of (an app-only create adds no owner of its own, so that takes an explicit
+assignment) -- applied with `-Prune -Confirm:$false` by that app removes the running service
+principal from the group, which can cut its own privileges part-way through the run. A delegated
+user removing themselves through a group prune was already possible before this fix. What limits it
+today: `-Prune` is opt-in; `Invoke-OERStructure` has `ConfirmImpact = 'High'`, so each removal
+prompts unless `-Confirm:$false` is given; each removal writes a warning naming the principal's
+object id and the group; `-WhatIf` shows the plan; and for owners the last-owner guard refuses the
+removal that would leave a group with none. A group prune guard for the signed-in identity, the way
+the directory role prune has one, is a proposed follow-up and is not part of this change.
 
 ## group-rename
 
