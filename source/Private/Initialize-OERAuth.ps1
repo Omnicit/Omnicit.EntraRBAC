@@ -47,8 +47,10 @@ function Initialize-OERAuth {
     token minted for another tenant never becomes a usable session, whether the tenant was named by
     GUID or by domain. 'organizations' names no tenant and is not compared with one; an Azure
     Resource Manager token the sign-in acquires under it is compared with the session's Microsoft
-    Graph token instead, and refused with TenantMismatch when the two report different tenant IDs,
-    while one carried over a Microsoft Graph-only renewal is not compared again.
+    Graph token instead, and refused with TenantMismatch when the two report different tenant IDs.
+    A cached Azure Resource Manager token is carried over a renewal of the Microsoft Graph token only
+    when it was issued for the tenant the renewed Graph token was issued for, both tenant IDs (GUIDs);
+    otherwise it is dropped, and acquired again and compared as above when a call next needs one.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the
@@ -521,6 +523,11 @@ function Initialize-OERAuth {
     # minted at one cloud's authority for that cloud's ARM audience is worthless -- and misleading --
     # under another cloud's label, and a cloud switch made WITHOUT -IncludeARM short-circuits
     # $ArmCached to $true, so only this guard can drop it.
+    #
+    # Unchanged TERMS are not enough on their own: on a session that names no tenant the label is
+    # 'organizations' before and after a renewal answered by another tenant's account. The rebuild
+    # therefore also requires the ARM token's tenant to equal the new Graph token's ($ArmTokenKept,
+    # SEC (A13, BL-95) at the rebuild), which only the new Graph token can tell.
     [bool]$ArmIdentityUnchanged = $script:_OERAuthState -and
         $script:_OERAuthState.TenantId   -eq $EffectiveTenant -and
         $script:_OERAuthState.AuthMethod -eq $EffectiveMethod -and
@@ -993,6 +1000,11 @@ function Initialize-OERAuth {
             }
         }
 
+        # SEC (A13, BL-95): whether the ARM token the state held at entry is still in it. Only the state
+        # rebuild below can drop it -- see the SEC (A13) comment there -- so with the Graph token cached it
+        # stays $true; the ARM step reads it beside $ArmCached, which was decided before the rebuild.
+        [bool]$ArmTokenKept = $true
+
         # -- Graph token --
         if (-not $GraphCached) {
             # M6: Clone() is a shallow clone - only top-level keys are mutated per-resource call,
@@ -1160,6 +1172,24 @@ function Initialize-OERAuth {
                     -Terminating
             }
 
+            # SEC (A13, BL-95): the cached ARM token is carried into the rebuilt state below only when it
+            # was issued for the tenant this new Graph token was issued for, both GUIDs -- besides the
+            # unchanged tenant label, identity and cloud ($ArmIdentityUnchanged). The label alone does not
+            # name a tenant on a session that names none ('organizations'): there a renewal of the Graph
+            # token -- near its expiry, or a transport's refresh -- can be answered by an account of another
+            # tenant, and the carried token left the session with that tenant's Graph token beside the first
+            # tenant's ARM token under one sign-in identity (BL-77), so a later Invoke-OERStructure -Prune
+            # without -TenantId removed Azure role assignments in the first tenant. A token that is not
+            # carried is acquired again -- by the ARM step below in this very call under -IncludeARM, which
+            # reads $ArmTokenKept, or else by the next call that needs one -- and that token is compared with
+            # the tenant named, or with this Graph token when none is (F3). A tenant that is not a GUID on
+            # either side proves nothing, so that token is not carried either. Every term on its own line
+            # and independently deletable, so each stays mutation-provable.
+            $ArmTokenKept = $ArmIdentityUnchanged -and
+                (Test-OERGuid -Value $script:_OERAuthState.ArmTokenTenantId) -and
+                (Test-OERGuid -Value $GrantedTenant) -and
+                $script:_OERAuthState.ArmTokenTenantId -eq $GrantedTenant
+
             $script:_OERAuthState = @{
                 TenantId         = $EffectiveTenant
                 AuthMethod       = $EffectiveMethod
@@ -1190,14 +1220,15 @@ function Initialize-OERAuth {
                 # compared -- and refused when someone else's appears.
                 GraphSessionFingerprint = Get-OERGraphSessionFingerprint
                 # SEC: carry the cached ARM token into the rebuilt state ONLY when the tenant and auth
-                # identity are unchanged. Otherwise drop it, so the next -IncludeARM call re-acquires for
+                # identity are unchanged and the token was issued for the new Graph token's tenant
+                # ($ArmTokenKept, above). Otherwise drop it, so the next -IncludeARM call re-acquires for
                 # the tenant actually being targeted instead of inheriting the previous customer's token.
-                ArmToken         = if ($ArmIdentityUnchanged) { $script:_OERAuthState.ArmToken } else { $null }
-                ArmTokenExpiry   = if ($ArmIdentityUnchanged) { $script:_OERAuthState.ArmTokenExpiry } else { $null }
-                ArmResourceUrl   = if ($ArmIdentityUnchanged) { $script:_OERAuthState.ArmResourceUrl } else { $null }
+                ArmToken         = if ($ArmTokenKept) { $script:_OERAuthState.ArmToken } else { $null }
+                ArmTokenExpiry   = if ($ArmTokenKept) { $script:_OERAuthState.ArmTokenExpiry } else { $null }
+                ArmResourceUrl   = if ($ArmTokenKept) { $script:_OERAuthState.ArmResourceUrl } else { $null }
                 # Carried on the SAME condition as the ARM token it describes: an evidence field that
                 # outlived the token it was recorded for would be worse than none at all.
-                ArmTokenTenantId = if ($ArmIdentityUnchanged) { $script:_OERAuthState.ArmTokenTenantId } else { $null }
+                ArmTokenTenantId = if ($ArmTokenKept) { $script:_OERAuthState.ArmTokenTenantId } else { $null }
                 ClaimsSatisfied  = [bool]$ClaimsChallenge
             }
 
@@ -1206,7 +1237,9 @@ function Initialize-OERAuth {
         }
 
         # -- ARM token (optional) --
-        if ($IncludeARM -and -not $ArmCached) {
+        # SEC (A13, BL-95): $ArmCached was decided on the state at entry, so a cached ARM token the rebuild
+        # above dropped ($ArmTokenKept) is acquired again here, never left missing under -IncludeARM.
+        if ($IncludeARM -and -not ($ArmCached -and $ArmTokenKept)) {
             # M6: Clone() is a shallow clone - only top-level keys are mutated per-resource call,
             #     so nested objects (e.g. certificate) are safely shared without duplication.
             $ArmParams = $TokenParams.Clone()

@@ -611,6 +611,191 @@ Describe 'Initialize-OERAuth ARM cache isolation' {
     }
 }
 
+Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the renewed Graph token''s tenant (A13, BL-95)' {
+    # BL-95: a sign-in that rebuilds the state -- a renewal of the Microsoft Graph token near its expiry,
+    # or a transport's refresh -- carried the cached Azure Resource Manager token into the new state
+    # whenever the tenant LABEL, method, client and cloud were unchanged. On a session that names no
+    # tenant ('organizations') that label says nothing about the tenant: an interactive renewal answered
+    # by another tenant's account rebuilt the state with that tenant's Graph token beside the first
+    # tenant's ARM token, under one sign-in identity, and a later -Prune without -TenantId removed Azure
+    # role assignments in the first tenant. The ARM token is now carried only when its recorded tenant
+    # equals the renewed Graph token's tenant, both GUIDs; otherwise it is dropped, and acquired again --
+    # in the same call under -IncludeARM -- and compared with the Graph token (F3).
+    #
+    # A mutation set: (a), (d), (e) and (f) fail with the old carry condition ($ArmIdentityUnchanged
+    # alone); (d) and (e) fail when the ARM step reads $ArmCached alone; (b) and (c) fail when the token
+    # is never carried; (f) fails with either GUID term deleted.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+        }
+        $script:BL95GraphTenant = '11111111-1111-1111-1111-111111111111'
+        $script:BL95ArmTenant = '11111111-1111-1111-1111-111111111111'
+        # Every token names the tenant it was issued for, so the test can tell which one the state holds.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $IsArm = $Resource -match 'management'
+            $Granted = if ($IsArm) { $script:BL95ArmTenant } else { $script:BL95GraphTenant }
+            [pscustomobject]@{
+                Token     = '{0}-{1}' -f $(if ($IsArm) { 'NOT-A-REAL-TOKEN-arm' } else { 'NOT-A-REAL-TOKEN-graph' }), $Granted
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Granted
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+    }
+
+    It '(a) drops the ARM token when a Microsoft Graph-only renewal of an organizations session is answered from another tenant' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+            # The Graph token nears its expiry; the ARM token stays valid for an hour.
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+        }
+        # The renewal's prompt is answered by an account of another tenant.
+        $script:BL95GraphTenant = '22222222-2222-2222-2222-222222222222'
+
+        InModuleScope $script:moduleName {
+            # A cmdlet that calls only Microsoft Graph, naming no tenant, renews the Graph token.
+            Initialize-OERAuth
+
+            $script:_OERAuthState.TenantId | Should -BeExactly 'organizations'
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenExpiry | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmResourceUrl | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeNullOrEmpty
+        }
+        # The first sign-in's two tokens and the renewal's Graph token: the renewal requested no ARM token.
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It '(b) carries the ARM token over a Microsoft Graph-only renewal answered from its own tenant, on <Case>' -ForEach @(
+        @{ Case = 'an organizations session'; Tenant = $null }
+        @{ Case = 'a session named by its tenant ID'; Tenant = '11111111-1111-1111-1111-111111111111' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Tenant = $Tenant } {
+            param($Tenant)
+            $Named = @{}
+            if ($Tenant) { $Named.TenantId = $Tenant }
+            Initialize-OERAuth @Named -AuthMethod 'Interactive' -IncludeARM
+            $Before = $script:_OERAuthState.ArmToken
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+
+            Initialize-OERAuth @Named
+
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+            [object]::ReferenceEquals($script:_OERAuthState.ArmToken, $Before) | Should -BeTrue
+            $script:_OERAuthState.ArmTokenExpiry | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.ArmResourceUrl | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+    }
+
+    It '(c) keeps the carried ARM token without a new ARM request when a renewal under -IncludeARM is answered from its own tenant' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            $Before = $script:_OERAuthState.ArmToken
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+
+            Initialize-OERAuth -IncludeARM
+
+            [object]::ReferenceEquals($script:_OERAuthState.ArmToken, $Before) | Should -BeTrue
+        }
+        # One ARM token in all: the renewal kept it, and requested only a Graph token.
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It '(d) acquires a new ARM token when a renewal under -IncludeARM is answered from another tenant, and caches it when it matches the renewed Graph token' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+        }
+        $script:BL95GraphTenant = '22222222-2222-2222-2222-222222222222'
+        $script:BL95ArmTenant = '22222222-2222-2222-2222-222222222222'
+
+        InModuleScope $script:moduleName {
+            # The cached ARM token is still valid, so before A13 this call requested no ARM token at all
+            # and kept the first tenant's.
+            Initialize-OERAuth -IncludeARM
+
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+            [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password |
+                Should -BeExactly 'NOT-A-REAL-TOKEN-arm-22222222-2222-2222-2222-222222222222'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It '(e) refuses the new ARM token with TenantMismatch when it comes from another tenant than the renewed Graph token, caching none (F3)' {
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+        }
+        # The Graph prompt is answered from tenant 2, the ARM prompt again from tenant 1.
+        $script:BL95GraphTenant = '22222222-2222-2222-2222-222222222222'
+
+        InModuleScope $script:moduleName {
+            $Caught = $null
+            try {
+                Initialize-OERAuth -IncludeARM
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty -Because 'an ARM token from another tenant than the renewed Graph token must terminate rather than stay cached'
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
+            $Caught.Exception.Message | Should -Match ([regex]::Escape(
+                "The Azure Resource Manager token was issued for tenant '11111111-1111-1111-1111-111111111111', but the Microsoft Graph token of the same session was issued for tenant '22222222-2222-2222-2222-222222222222'"))
+            # Neither the carried token nor the refused one is left for Invoke-OERArmRequest to send.
+            $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeNullOrEmpty
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '22222222-2222-2222-2222-222222222222'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It '(f) does not carry the ARM token over a renewal when <Case>' -ForEach @(
+        @{ Case = 'the cached ARM token reports no GUID tenant'; FirstArm = $null; RenewGraph = '11111111-1111-1111-1111-111111111111' }
+        @{ Case = 'the renewed Graph token reports no GUID tenant'; FirstArm = '11111111-1111-1111-1111-111111111111'; RenewGraph = $null }
+    ) {
+        # Nothing proves that such a token belongs with the renewed Graph token, so it is acquired again
+        # when a call next needs one rather than carried.
+        $script:BL95ArmTenant = $FirstArm
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            $script:_OERAuthState.ArmToken | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1)
+        }
+        $script:BL95GraphTenant = $RenewGraph
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth
+
+            $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeNullOrEmpty
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+    }
+}
+
 Describe 'Initialize-OERAuth error hygiene' {
     BeforeEach {
         # $script:_OERLastAuthorityHost is deliberately NOT cleared by Disconnect-OER, so nothing in
