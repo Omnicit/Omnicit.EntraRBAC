@@ -1293,6 +1293,62 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be 'organizations'
     }
 
+    It 'refuses every piped document when a later pipeline command switched the tenant: a refusal does not move the session the next document is compared with' {
+        # A refused document signs nothing in, so the document after it is compared with the session
+        # the call began with, not with the one the downstream command switched to.
+        $Doc1 = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-1" } ] }' | ConvertFrom-Json
+        $Doc2 = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-2" } ] }' | ConvertFrom-Json
+        $Errs = $null
+        $Out = @($Doc1, $Doc2 | Invoke-OERStructure -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out | Should -BeNullOrEmpty
+        # Both documents reached the check, and both were refused.
+        $Superseded = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })
+        $Superseded.Count | Should -Be 2
+        @($Superseded | Where-Object { $_.TargetObject -eq 'Invoke-OERStructure' }).Count | Should -Be 2
+        @($Errs).Count | Should -Be 2
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It 'refuses the documents after one whose rows a later pipeline command answered by switching the tenant, and applies that first document' {
+        # A downstream command's process block runs while Invoke-OERStructure emits a document's rows,
+        # after that document signed in. A switch made there must refuse the documents after it: each
+        # is compared with the session the first document signed in under, not with the one the
+        # switch left. Three documents, so the third shows that the second's refusal moved nothing.
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Sync-OERStructureGroup {
+                ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Skipped' -Detail "would create group $([string]$Item.displayName)"
+            }
+        }
+        $Doc1 = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-1" } ] }' | ConvertFrom-Json
+        $Doc2 = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-2" } ] }' | ConvertFrom-Json
+        $Doc3 = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-3" } ] }' | ConvertFrom-Json
+        $RowsSeen = 0
+        $Errs = $null
+        $Out = @($Doc1, $Doc2, $Doc3 | Invoke-OERStructure -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Process {
+                    if ($RowsSeen -eq 0) { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' }
+                    $RowsSeen++
+                    $_
+                })
+        # The first document was applied and its one row reached the downstream command.
+        $Out.Count | Should -Be 1
+        $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.StructureResult'
+        $Out[0].Item | Should -Be 'oer-bl76-probe-1'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly -ParameterFilter { $Item.displayName -eq 'oer-bl76-probe-1' }
+        # The second and third documents were refused, before signing in.
+        $Superseded = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })
+        $Superseded.Count | Should -Be 2
+        @($Superseded | Where-Object { $_.TargetObject -eq 'Invoke-OERStructure' }).Count | Should -Be 2
+        @($Errs).Count | Should -Be 2
+        # Not vacuous: the downstream switch really happened, on the first document's row.
+        $RowsSeen | Should -Be 1
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be '77777777-7777-7777-7777-777777777777'
+    }
+
     It 'applies a document piped from an upstream command that signed in in its own begin block' {
         # Review Focus 2: Get-OERInventory -TenantId A | Invoke-OERStructure -WhatIf. The upstream
         # command's begin block runs BEFORE Invoke-OERStructure's, so the snapshot already holds A.

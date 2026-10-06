@@ -27,9 +27,12 @@ function New-OERSignInSupersededError {
     and the command's name is the only value the record carries.
 
     .PARAMETER Command
-    The name of the command whose sign-in was superseded, as Get-OERSignInSupersession returns it ('a
-    script block' when the frame carries no command name). It becomes the record's target object, and
-    the message names it exactly as passed.
+    The name of the command the record names. From a transport, that is the command whose remembered
+    sign-in was superseded, as Get-OERSignInSupersession returns it ('a script block' when the frame
+    carries no command name). From Invoke-OERStructure or one of the three builders, it is the
+    refusing command's own name, passed before that command signs in, when the session changed after
+    its begin block -- or, for Invoke-OERStructure, after its last sign-in for an earlier document.
+    It becomes the record's target object, and the message names it exactly as passed.
 
     .EXAMPLE
     throw (New-OERSignInSupersededError -Command 'New-OERGroup')

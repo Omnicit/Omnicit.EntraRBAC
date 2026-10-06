@@ -66,9 +66,11 @@ function Invoke-OERStructure {
     another tenant, downstream of this command: every begin block of a pipeline runs before this
     command's process block, where it signs in. Run such commands as separate statements. A document
     that cannot be read or does not validate reports its own error, as before. Several documents piped
-    into one call are each compared with the session the document before them signed in under, so a
-    first sign-in from no session does not refuse the next document. With -TenantId the command signs
-    in to that tenant as before.
+    into one call are each compared with the session the last sign-in of this call left, or, before
+    its first sign-in, with the session the call began with. So a first sign-in from no session does
+    not refuse the next document, while a document that was refused, could not be read or did not
+    validate signs nothing in and moves nothing: the document after it is compared with the same
+    session. With -TenantId the command signs in to that tenant as before.
 
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
