@@ -59,6 +59,17 @@ function Invoke-OERStructure {
     Microsoft Graph only, so a document holding either section never requests an ARM token on its
     account.
 
+    Pipeline session rule: without -TenantId the command acts only under the session it began with.
+    A document is refused with SignInSuperseded, and nothing is signed in to or sent for it, when
+    another command in the same pipeline signed in to a different tenant or identity, or
+    disconnected, before the document was processed -- for example Connect-OER, or a cmdlet naming
+    another tenant, downstream of this command: every begin block of a pipeline runs before this
+    command's process block, where it signs in. Run such commands as separate statements. A document
+    that cannot be read or does not validate reports its own error, as before. Several documents piped
+    into one call are each compared with the session the document before them signed in under, so a
+    first sign-in from no session does not refuse the next document. With -TenantId the command signs
+    in to that tenant as before.
+
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
     the canonical RESOLVED scope, compared without regard to letter case -- never on the scope text
@@ -174,7 +185,8 @@ function Invoke-OERStructure {
     to limit the apply run (for example -Include Groups,Catalogs to skip Azure sections).
 
     .PARAMETER TenantId
-    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
+    the command acts only under the session it began with (see the pipeline session rule above).
 
     .PARAMETER IncludeARM
     Acquire an ARM token before dispatching. Required explicitly only if the document does not
@@ -220,6 +232,17 @@ function Invoke-OERStructure {
         [string]$TenantId,
         [switch]$IncludeARM
     )
+    begin {
+        # SEC (BL-76): the session this command began with. Every begin block in a pipeline runs before
+        # any process block, so this snapshot holds the module's sign-in identity from before any LATER
+        # command in the pipeline signed in. This command signs in in its process block; without
+        # -TenantId that sign-in inherits whatever session the module holds by then, so a downstream
+        # command's begin block (Connect-OER, or any cmdlet naming another tenant) would otherwise
+        # switch it -- and this command's document, -Prune deletions included, would go to that tenant
+        # with no error (A20 cannot see it: the inherited sign-in remembers the switched identity).
+        # Checkpoint-OERSignIn owns the snapshot (A6: the tenant is never re-named as -TenantId here).
+        $SignInSnapshot = Checkpoint-OERSignIn
+    }
     process {
         # -- 1. Parse document ----------------------------------------------------------
         $ReadParams = @{}
@@ -263,7 +286,21 @@ function Invoke-OERStructure {
         $AuthParams = @{}
         if ($TenantId)  { $AuthParams.TenantId   = $TenantId }
         if ($NeedArm)   { $AuthParams.IncludeARM  = $true }
+        # SEC (BL-76): without -TenantId, act only under the session this command began with (see
+        # begin). A changed identity -- another tenant, application, method or cloud, or none at all
+        # -- refuses this document with SignInSuperseded before anything is signed in to or sent. With
+        # -TenantId nothing changes: the sign-in names its tenant, and A20 refuses the requests of
+        # whichever command's sign-in that replaced.
+        if (-not $TenantId -and (Checkpoint-OERSignIn -ChangedSince $SignInSnapshot)) {
+            $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name))
+            return
+        }
         Initialize-OERAuth @AuthParams
+        # The next piped document compares with the session this one signed in under: a first sign-in
+        # from no session must not refuse the second document. Taken after every sign-in, refused or
+        # not: without -TenantId a refused sign-in leaves the identity as it was, or sets the one this
+        # command itself asked for.
+        $SignInSnapshot = Checkpoint-OERSignIn
 
         # -- 6. Dispatch sections in dependency order ------------------------------------
         $Results = [System.Collections.Generic.List[object]]::new()

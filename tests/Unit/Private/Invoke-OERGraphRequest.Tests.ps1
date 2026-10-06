@@ -4267,6 +4267,136 @@ $RecordLines
         $R.Output | Should -Contain 'OUTPUT COUNT: 1'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
+
+    # P10-P13 are BL-76's end-to-end proofs. Invoke-OERStructure signs in in its PROCESS block, not
+    # its begin block, so a command downstream of it -- here Connect-OER in a ForEach-Object -Begin,
+    # which runs after Invoke-OERStructure's begin block and before its process block -- switches the
+    # module's sign-in before the document is processed. Without -TenantId, Invoke-OERStructure's own
+    # sign-in would inherit that session and remember it, so the supersession gate above could not see
+    # it: the document must be refused before anything is signed in to or sent for it. Each scenario
+    # writes its documents to temporary files and removes them again. The harness counts the
+    # scenario's output but does not print it, so each scenario reports, as warnings (the answering
+    # runspace returns them in $R.Warnings), whether its documents were removed and one 'ROW:' line per
+    # StructureResult the run returned. Every Graph GET is answered with an empty list, so a document's
+    # one group is read by name, not found, and reported Skipped under -WhatIf.
+    It 'P10: Invoke-OERStructure without -TenantId sends nothing for its document when a command downstream of it signed in to another tenant before the document was processed (BL-76)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl76-p10-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            Set-Content -LiteralPath $Doc -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe" } ] }' -Encoding utf8
+            $Rows = @(Invoke-OERStructure -Path $Doc -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+            Remove-Item -LiteralPath $Doc
+            Write-Warning ('DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc)))
+            foreach ($Row in $Rows) { Write-Warning ('ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail) }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Warnings | Should -Contain 'DOCUMENT REMOVED: True'
+        # The two Connect-OER sign-ins, and no token for the document: it was refused before its own
+        # sign-in.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # One record, written by Invoke-OERStructure and naming it, and no other record.
+        Get-PipelineProbeSuperseded -Probe $R | Should -Be @('SignInSuperseded,Invoke-OERStructure | Invoke-OERStructure')
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike '*after Invoke-OERStructure began, so Omnicit.EntraRBAC sends nothing*'
+        @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P11: Invoke-OERStructure without -TenantId applies its document when the command downstream of it signs in again as the same identity (BL-76 control)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl76-p11-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            Set-Content -LiteralPath $Doc -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe" } ] }' -Encoding utf8
+            $Rows = @(Invoke-OERStructure -Path $Doc -WhatIf | ForEach-Object -Begin { Connect-OER -TenantId '44444444-4444-4444-4444-444444444444' } -Process { $_ })
+            Remove-Item -LiteralPath $Doc
+            Write-Warning ('DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc)))
+            foreach ($Row in $Rows) { Write-Warning ('ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail) }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Warnings | Should -Contain 'DOCUMENT REMOVED: True'
+        # The downstream Connect-OER and the document's own sign-in were both cached returns of the
+        # first sign-in.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @('graph 44444444-4444-4444-4444-444444444444')
+        # The document's group read went out, and the run planned the group's creation.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?$filter=displayName eq ''oer-bl76-probe''&$select=id,displayName')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -Be @('ROW: groups | oer-bl76-probe | Skipped | would create group oer-bl76-probe')
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P12: Invoke-OERStructure -TenantId signs in to the tenant it names again and applies there, as before, when a command downstream of it signed in to another tenant' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl76-p12-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            Set-Content -LiteralPath $Doc -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe" } ] }' -Encoding utf8
+            $Rows = @(Invoke-OERStructure -Path $Doc -TenantId '44444444-4444-4444-4444-444444444444' -WhatIf |
+                    ForEach-Object -Begin { Connect-OER -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+            Remove-Item -LiteralPath $Doc
+            Write-Warning ('DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc)))
+            foreach ($Row in $Rows) { Write-Warning ('ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail) }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Warnings | Should -Contain 'DOCUMENT REMOVED: True'
+        # The document's own sign-in named A while the state held B: a new token for A, as before.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'graph 77777777-7777-7777-7777-777777777777'
+            'graph 44444444-4444-4444-4444-444444444444')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?$filter=displayName eq ''oer-bl76-probe''&$select=id,displayName')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        # No record at all: Invoke-OERStructure did not compare, and its sign-in remembered A, the
+        # identity the state then carried.
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -Be @('ROW: groups | oer-bl76-probe | Skipped | would create group oer-bl76-probe')
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P13: two documents piped to Invoke-OERStructure from a process that holds no session are both applied: the first sign-in is the session the second document is compared with (BL-76)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            $Doc1 = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl76-p13a-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            $Doc2 = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl76-p13b-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            Set-Content -LiteralPath $Doc1 -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-1" } ] }' -Encoding utf8
+            Set-Content -LiteralPath $Doc2 -Value '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe-2" } ] }' -Encoding utf8
+            $Rows = @($Doc1, $Doc2 | Invoke-OERStructure -WhatIf)
+            Remove-Item -LiteralPath $Doc1, $Doc2
+            Write-Warning ('DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc1) -and -not (Test-Path -LiteralPath $Doc2)))
+            foreach ($Row in $Rows) { Write-Warning ('ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail) }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Warnings | Should -Contain 'DOCUMENT REMOVED: True'
+        # One sign-in, by the first document, to no named tenant ('organizations' sends no -Tenant);
+        # the second document's sign-in was a cached return of it.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @('graph ')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @(
+            'v1.0/groups?$filter=displayName eq ''oer-bl76-probe-1''&$select=id,displayName'
+            'v1.0/groups?$filter=displayName eq ''oer-bl76-probe-2''&$select=id,displayName')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -Be @(
+            'ROW: groups | oer-bl76-probe-1 | Skipped | would create group oer-bl76-probe-1'
+            'ROW: groups | oer-bl76-probe-2 | Skipped | would create group oer-bl76-probe-2')
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
 }
 
 Describe 'Invoke-OERGraphRequest stops at each of its own throws, outside any try (F3)' {

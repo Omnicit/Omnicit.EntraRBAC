@@ -8,6 +8,10 @@ function New-OERSignInSupersededError {
     request made while a command on the call stack remembers another sign-in identity than the module's
     state now carries -- a command Get-OERSignInSupersession finds -- so nothing is sent, while that
     command runs, under a session another OER command in the same pipeline signed in to after it.
+    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, when the
+    identity changed after its begin block took a snapshot of the session (Checkpoint-OERSignIn),
+    which is why the message says the other sign-in came after the command began, not after it signed
+    in: a command refused there has not signed in at all.
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of
@@ -42,7 +46,7 @@ function New-OERSignInSupersededError {
     # The command's name is the only value in the text. It is an argument of -f, never part of the
     # format string, so a name is written exactly as passed, whatever characters it holds.
     [string]$Message = ('Another OER command in the same pipeline signed in to a different tenant or ' +
-        'identity after {0} signed in, so Omnicit.EntraRBAC sends nothing while {0} runs: this request ' +
+        'identity after {0} began, so Omnicit.EntraRBAC sends nothing while {0} runs: this request ' +
         'was not sent. Run the commands as separate statements, so that each one signs in and finishes ' +
         'before the next one starts.') -f $Command
     [System.Management.Automation.ErrorRecord]::new(

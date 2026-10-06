@@ -47,7 +47,7 @@ Describe 'New-OERSignInSupersededError' {
         $script:Record.Exception | Should -BeOfType ([System.Exception])
         $script:Record.Exception.Message | Should -BeExactly (
             'Another OER command in the same pipeline signed in to a different tenant or identity after New-OERGroup ' +
-            'signed in, so Omnicit.EntraRBAC sends nothing while New-OERGroup runs: this request was not sent. Run ' +
+            'began, so Omnicit.EntraRBAC sends nothing while New-OERGroup runs: this request was not sent. Run ' +
             'the commands as separate statements, so that each one signs in and finishes before the next one starts.')
     }
 
@@ -63,7 +63,7 @@ Describe 'New-OERSignInSupersededError' {
         $Other.TargetObject | Should -BeExactly 'a script block'
         $Other.Exception.Message | Should -BeExactly (
             'Another OER command in the same pipeline signed in to a different tenant or identity after a script block ' +
-            'signed in, so Omnicit.EntraRBAC sends nothing while a script block runs: this request was not sent. Run ' +
+            'began, so Omnicit.EntraRBAC sends nothing while a script block runs: this request was not sent. Run ' +
             'the commands as separate statements, so that each one signs in and finishes before the next one starts.')
         # The name is the only value in the text: with each name taken out, the two messages are one.
         $Other.Exception.Message.Replace('a script block', '#') |
@@ -73,7 +73,7 @@ Describe 'New-OERSignInSupersededError' {
     It 'writes a name that holds a format item as it is' {
         $Braced = InModuleScope Omnicit.EntraRBAC { New-OERSignInSupersededError -Command 'Invoke-{0}Probe' }
         $Braced.TargetObject | Should -BeExactly 'Invoke-{0}Probe'
-        $Braced.Exception.Message | Should -BeLike '*after Invoke-{0}Probe signed in,*while Invoke-{0}Probe runs:*'
+        $Braced.Exception.Message | Should -BeLike '*after Invoke-{0}Probe began,*while Invoke-{0}Probe runs:*'
     }
 
     It 'requires the command it targets' {
