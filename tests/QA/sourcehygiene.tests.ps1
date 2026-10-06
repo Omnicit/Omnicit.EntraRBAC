@@ -43,11 +43,13 @@ BeforeAll {
     # credential-acquisition commands are in the set for exactly that reason: a failed Get-AzToken,
     # Connect-MgGraph or Connect-AzAccount record is as sensitive as a failed Graph call, and
     # source/Private/Initialize-OERAuth.ps1 -- the module's token-handling file -- reaches nothing
-    # else.
+    # else. Invoke-RestMethod joined the set with the tenant lookup (Resolve-OERTenantDomain): it
+    # carries no credential, but it is the module's one network call outside the two transports, and
+    # a record from a failed request can carry the request message, so its catch scrubs like any other.
     # =====================================================================================
     $script:transportCommands = @(
         'Invoke-OERGraphRequest', 'Invoke-OERArmRequest', 'Invoke-MgGraphRequest', 'Invoke-WebRequest',
-        'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
+        'Invoke-RestMethod', 'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
     )
 
     # Catch clauses that legitimately do NOT scrub. Keyed by file, but a file entry alone is NOT
@@ -1420,6 +1422,11 @@ BeforeAll {
         the drift this rule exists to stop. Checkpoint-OERSignIn's own callers get no row: the
         snapshot is a value a command keeps in its own variable, never a gate in front of a
         request. Invoke-MgGraphRequest and Invoke-WebRequest are called only by their wrapper.
+        Invoke-RestMethod, the module's one unauthenticated call (the tenant lookup of a tenant named
+        by domain), is called only by Resolve-OERTenantDomain, and Resolve-OERTenantDomain only by
+        Initialize-OERAuth, which compares the tenant ID it returns with the tenant each token was
+        issued for. The lookup carries no credential of any kind: a second sender could add one, or
+        send a secret to a request that needs none, so the call's own parameters are held as well.
 
         THE IDENTITY IS REMEMBERED WHERE THE LATCH IS RELEASED. In Initialize-OERAuth every
         Register-OERSignInIdentity call is the statement directly after an Unlock-OERSignIn call in
@@ -1454,10 +1461,9 @@ BeforeAll {
         success end leaves the remaining pair matched: the exact count of two pairs is what catches
         that, so a new success end is a deliberate edit of that number. A command name built at run
         time (a call through a variable) is invisible to GetCommandName(), the same limit the Az
-        context gate records. The ownership scan resolves a module-qualified name and the three
-        Invoke-WebRequest aliases and nothing else; Invoke-RestMethod is not scanned, since the
-        module calls it nowhere. A bearer read spelled any other way (`.Item('ArmToken')`, a key
-        held in a variable) is not a marker.
+        context gate records. The ownership scan resolves a module-qualified name, the three
+        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else. A bearer read
+        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -1470,6 +1476,7 @@ BeforeAll {
     # directly after it, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
     # successful ends.
     $script:signInMemoryPath = 'source\Private\Initialize-OERAuth.ps1'
+    $script:tenantLookupPath = 'source\Private\Resolve-OERTenantDomain.ps1'
     $script:transportGateOwners = @(
         [PSCustomObject]@{ Command = 'Get-MgContext'; Owners = @('source\Private\Get-OERGraphSessionFingerprint.ps1') }
         [PSCustomObject]@{ Command = 'Lock-OERSignIn'; Owners = @($script:signInMemoryPath) }
@@ -1482,11 +1489,13 @@ BeforeAll {
                 'source\Private\Checkpoint-OERSignIn.ps1') }
         [PSCustomObject]@{ Command = 'Invoke-MgGraphRequest'; Owners = @($script:transportGateGraphPath) }
         [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owners = @($script:transportGateArmPath) }
+        [PSCustomObject]@{ Command = 'Invoke-RestMethod'; Owners = @($script:tenantLookupPath) }
+        [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
     )
-    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest' }
+    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
 
     # The command a call really names: a module-qualified call (Microsoft.PowerShell.Utility\Invoke-WebRequest)
-    # is the same command, and so is one of the Invoke-WebRequest aliases.
+    # is the same command, and so is one of the Invoke-WebRequest aliases or irm, the Invoke-RestMethod alias.
     function Resolve-OERTransportCommandName {
         param([string]$Name)
 
@@ -1511,6 +1520,46 @@ BeforeAll {
         foreach ($Call in $Found) {
             if ((Get-OERCallName -CommandAst $Call) -in $Name) { $Call }
         }
+    }
+
+    # THE TENANT LOOKUP CARRIES NO CREDENTIAL. Resolve-OERTenantDomain's one Invoke-RestMethod call goes
+    # to the Microsoft Entra ID authority with nothing to authenticate it, and must stay that way: a
+    # credential on it would send a secret to a request that needs none. Two lists, both read from the
+    # call's own parameter names, both case-insensitive. The DENIED list is every credential-carrying
+    # parameter of the cmdlet. It cannot stand alone: PowerShell binds an abbreviated name (-Head for
+    # -Headers, -Cred for -Credential), and a parameter added to the cmdlet later is on no list, so the
+    # ALLOWED list pins the call to exactly the four parameters the lookup is specified to send.
+    $script:tenantLookupDeniedParameters = @(
+        'Headers', 'Authentication', 'Token', 'Credential', 'UseDefaultCredentials', 'WebSession',
+        'SessionVariable', 'Certificate', 'CertificateThumbprint', 'PreserveAuthorizationOnRedirect',
+        'AllowUnencryptedAuthentication'
+    )
+    $script:tenantLookupAllowedParameters = @('Uri', 'Method', 'TimeoutSec', 'ErrorAction')
+
+    # One report per tree: how many Invoke-RestMethod calls (an alias or a module-qualified name
+    # included), and which of them name a denied parameter, a parameter outside the allowed list, or
+    # pass a splatted variable -- a splat hides its parameter names from this scan, so it is refused.
+    function Get-OERTenantLookupReport {
+        param($Ast)
+
+        $Calls = @(Find-OERCallNamed -Ast $Ast -Name 'Invoke-RestMethod')
+        $Report = [PSCustomObject]@{
+            Calls      = $Calls.Count
+            Denied     = [System.Collections.Generic.List[string]]::new()
+            Unexpected = [System.Collections.Generic.List[string]]::new()
+            Splats     = 0
+        }
+        foreach ($Call in $Calls) {
+            foreach ($Element in $Call.CommandElements) {
+                if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    if ($Element.ParameterName -in $script:tenantLookupDeniedParameters) { $Report.Denied.Add($Element.ParameterName) }
+                    if ($Element.ParameterName -notin $script:tenantLookupAllowedParameters) { $Report.Unexpected.Add($Element.ParameterName) }
+                } elseif ($Element -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Splatted) {
+                    $Report.Splats++
+                }
+            }
+        }
+        return $Report
     }
 
     # True when the first clause body of the if holds a throw of the named error factory that is
@@ -2061,6 +2110,49 @@ BeforeAll {
             if ($script:transportOwnerFileSites[$Rule.Command][$Owner] -gt 0) { continue }
             $script:transportOwnerStale[$Rule.Command].Add(('{0} -- listed as an owner of {1}, but calls it nowhere (or is not among the parsed files)' -f
                     $Owner, $Rule.Command))
+        }
+    }
+
+    # --- The tenant lookup's call, from the text of its owner file already read into $script:hygieneFiles. ---
+    $script:tenantLookupReport = $null
+    $TenantLookupFile = @($script:hygieneFiles | Where-Object {
+            ($_.RelativePath -replace '/', '\') -eq $script:tenantLookupPath
+        })[0]
+    if ($TenantLookupFile) {
+        $TenantLookupTokens = $null
+        $TenantLookupErrors = $null
+        $TenantLookupAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $TenantLookupFile.Text, $TenantLookupFile.Path, [ref]$TenantLookupTokens, [ref]$TenantLookupErrors)
+        if ($TenantLookupErrors.Count -eq 0) {
+            $script:tenantLookupReport = Get-OERTenantLookupReport -Ast $TenantLookupAst
+        }
+    }
+
+    # Known answers: the checker above must reach each verdict below, or a green gate proves nothing.
+    # Each case is the text of a miniature, and the counts it must report as Calls/Denied/Unexpected/Splats.
+    $script:tenantLookupKnownAnswers = @(
+        @{ Case = 'the specified call'; Expect = '1/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -ErrorAction Stop }' }
+        @{ Case = 'no call at all'; Expect = '0/0/0/0'; Text = 'function F { Get-Date }' }
+        @{ Case = 'two calls'; Expect = '2/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $A; Invoke-RestMethod -Uri $B }' }
+        @{ Case = 'the alias irm'; Expect = '1/0/0/0'; Text = 'function F { irm -Uri $Uri }' }
+        @{ Case = 'a module-qualified name'; Expect = '1/0/0/0'; Text = 'function F { Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $Uri }' }
+        @{ Case = 'a header'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Headers @{} }' }
+        @{ Case = 'a credential'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Credential $C }' }
+        @{ Case = 'a denied name in lower case'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -token $T }' }
+        @{ Case = 'an abbreviated header parameter'; Expect = '1/0/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Head @{} }' }
+        @{ Case = 'a parameter on no list'; Expect = '1/0/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -UserAgent x }' }
+        @{ Case = 'a splatted argument'; Expect = '1/0/0/1'; Text = 'function F { Invoke-RestMethod @Params }' }
+    )
+    $script:tenantLookupKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:tenantLookupKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $CaseReport = Get-OERTenantLookupReport -Ast $CaseAst
+        $Got = '{0}/{1}/{2}/{3}' -f $CaseReport.Calls, $CaseReport.Denied.Count, $CaseReport.Unexpected.Count, $CaseReport.Splats
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:tenantLookupKnownAnswerFailures.Add(('{0} -- expected {1} (calls/denied/unexpected/splats), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
         }
     }
 
@@ -3281,6 +3373,59 @@ gate, the supersession gate, the bearer scrub and the retry logic live, so a cal
 or Invoke-WebRequest from any other file sends a request past all of them. Route the call through the
 wrapper.
 '@
+    }
+
+    It 'looks a tenant up with Invoke-RestMethod only in Resolve-OERTenantDomain.ps1, and calls that only in Initialize-OERAuth.ps1' {
+        $script:transportOwnerSites['Invoke-RestMethod'] | Should -BeGreaterThan 0 -Because (
+            'Resolve-OERTenantDomain must really call Invoke-RestMethod, or this rule has nothing to be the only owner of')
+        $script:transportOwnerStale['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Resolve-OERTenantDomain must really call Invoke-RestMethod; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Resolve-OERTenantDomain is the single owner of the module's one unauthenticated network call: the OpenID
+discovery GET that turns a tenant named by domain into its tenant ID. Every other request goes through
+Invoke-OERGraphRequest or Invoke-OERArmRequest, where the gates, the bearer scrub and the retry logic
+live, so an Invoke-RestMethod anywhere else is a second sender no check stands in front of -- and one a
+credential could be added to, sending a secret to a request that needs none. Call Resolve-OERTenantDomain
+instead, or route a Graph or ARM request through its wrapper.
+'@
+        $script:transportOwnerViolations['Resolve-OERTenantDomain'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Initialize-OERAuth is the one caller of Resolve-OERTenantDomain: it asks for the tenant ID of a tenant
+named by domain before any token is requested, and compares the answer with the tenant each token was
+issued for (TenantMismatch). A second caller is a second place that turns a name into a tenant ID by a
+network call, with its own cache use and its own idea of what a failure means, and the comparison
+Initialize-OERAuth makes is the only one that holds the answer against a token. Resolve the tenant
+through Initialize-OERAuth.
+'@
+        # Last on purpose: until Initialize-OERAuth calls the helper, this is the one assertion that is
+        # red, and it must not hide the ones above.
+        $script:transportOwnerStale['Resolve-OERTenantDomain'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Initialize-OERAuth must really call Resolve-OERTenantDomain, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
+    }
+
+    It 'sends the tenant lookup with no credential' {
+        $script:tenantLookupReport | Should -Not -BeNullOrEmpty -Because (
+            'Resolve-OERTenantDomain.ps1 must be among the parsed source files, or this rule judges nothing')
+        $script:tenantLookupKnownAnswerFailures.Count | Should -Be 0 -Because (
+            'the checker no longer reaches the verdict a known-answer case requires: {0}' -f ($script:tenantLookupKnownAnswerFailures -join '; '))
+        @($script:tenantLookupKnownAnswers).Count | Should -Be 11 -Because (
+            'the known-answer table holds eleven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+
+        $script:tenantLookupReport.Calls | Should -Be 1 -Because (
+            'Resolve-OERTenantDomain holds exactly one Invoke-RestMethod call; a second one is a send path this rule does not place')
+        $script:tenantLookupReport.Denied -join ', ' | Should -BeNullOrEmpty -Because @'
+The tenant lookup is an unauthenticated GET to the Microsoft Entra ID authority: it needs no secret and
+must carry none. A credential on it -- a header, a token, a credential object, a certificate, the
+default credentials or a session -- would send that secret to a request that has no use for it, and to
+whatever answers it, a redirect included. Remove the parameter.
+'@
+        $script:tenantLookupReport.Unexpected -join ', ' | Should -BeNullOrEmpty -Because @'
+The tenant lookup sends exactly four parameters: Uri, Method, TimeoutSec and ErrorAction. Any other
+parameter is either a credential under a name the denied list does not know (PowerShell binds an
+abbreviated parameter name, -Head for -Headers, and a cmdlet gains parameters over time) or a change to
+what the module sends that needs a decision of its own. Remove it, or widen this list deliberately.
+'@
+        $script:tenantLookupReport.Splats | Should -Be 0 -Because (
+            'a splatted argument hides its parameter names from this scan, so a credential could be passed through it unseen; write the parameters out')
     }
 
     It 'precedes every Graph transport statement with the session gate, the latch gate and the supersession gate, in that order' {
