@@ -337,9 +337,9 @@ Describe 'New-OERAccessPackageRequestorScope looks a target up only under the se
         $Errs = $null
         $Out = @(New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User 'person1@example.com' -ErrorAction SilentlyContinue -ErrorVariable Errs |
                 ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
-        # Nothing was looked up or signed in to; the record below proves the check was reached.
+        # Nothing was looked up -- the lookup is where the builder signs in; the record below proves the
+        # check was reached.
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageRequestorScope' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageRequestorScope' })[0].TargetObject |
             Should -BeExactly 'New-OERAccessPackageRequestorScope'
@@ -366,6 +366,26 @@ Describe 'New-OERAccessPackageRequestorScope looks a target up only under the se
         $Out.Count | Should -Be 1
         $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RequestorScope'
         $Out[0].AllowedTargetScope | Should -BeExactly 'allMemberUsers'
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
+        # Not vacuous: the downstream switch really happened before the scope was built.
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be '77777777-7777-7777-7777-777777777777'
+    }
+
+    It 'builds a non-specific scope given -User under a changed session: it warns, ignores the target and is not refused' {
+        # The check stands in the branch that resolves targets for SpecificDirectoryUsers, not merely
+        # under -User or -Group: a scope that ignores its targets with a warning looks nothing up, so it
+        # is never refused.
+        $Errs = $null
+        $Warn = $null
+        $Out = @(New-OERAccessPackageRequestorScope -Scope AllMemberUsers -User 'person1@example.com' -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue -WarningVariable Warn |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RequestorScope'
+        $Out[0].AllowedTargetScope | Should -BeExactly 'allMemberUsers'
+        @($Out[0].SpecificAllowedTargets).Count | Should -Be 0
+        @($Warn | Where-Object { [string]$_ -match 'apply only to -Scope SpecificDirectoryUsers' }).Count | Should -Be 1
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 0
         @($Errs).Count | Should -Be 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
         # Not vacuous: the downstream switch really happened before the scope was built.

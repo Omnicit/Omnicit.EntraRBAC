@@ -283,9 +283,9 @@ Describe 'New-OERAccessPackageApprovalStage looks a name up only under the sessi
         $Errs = $null
         $Out = @(New-OERAccessPackageApprovalStage -DurationDays 7 -User 'person1@example.com' -ErrorAction SilentlyContinue -ErrorVariable Errs |
                 ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
-        # Nothing was looked up or signed in to; the record below proves the check was reached.
+        # Nothing was looked up -- the lookup is where the builder signs in; the record below proves the
+        # check was reached.
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERTargetList -Times 0
-        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageApprovalStage' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessPackageApprovalStage' })[0].TargetObject |
             Should -BeExactly 'New-OERAccessPackageApprovalStage'
