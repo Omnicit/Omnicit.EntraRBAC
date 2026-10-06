@@ -18,9 +18,15 @@ function Checkpoint-OERSignIn {
     (New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope, New-OERAccessReviewStage),
     take a snapshot in their begin block. In a pipeline every begin block runs before any process
     block, so the snapshot holds the session from before any later command in the pipeline signed
-    in. Before such a command signs in in its process block without -TenantId -- a sign-in that would
-    inherit whatever session the module holds by then -- it compares, and refuses with
-    SignInSuperseded, sending nothing, when the identity changed.
+    in. Without -TenantId each of them compares in its process block, before the sign-in or lookup
+    that would inherit whatever session the module holds by then, and refuses with SignInSuperseded,
+    sending nothing, when the identity changed. Invoke-OERStructure compares for each document after the
+    document is read and validated, directly before its sign-in, and takes the snapshot again after
+    every sign-in, refused or not, so the next piped document is compared with the session that
+    sign-in left. The builders compare directly before their first lookup call (Resolve-OERTargetList
+    or Resolve-OERReviewerScope), after their own argument checks and whether or not a value is a
+    name -- New-OERAccessPackageRequestorScope only when it has -User or -Group targets to resolve
+    for SpecificDirectoryUsers -- and take no pipeline input, so they never take it again.
 
     The snapshot is a value the command keeps in its own variable, not module state: nothing outside
     the command reads it, and it ends with the command.

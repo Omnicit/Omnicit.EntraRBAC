@@ -313,10 +313,14 @@ GRAPH SDK SESSION
     tenant two ways is therefore refused too; name it the same way on every
     command, as "Name the tenant explicitly and consistently" under SOVEREIGN
     CLOUDS below says. Invoke-OERStructure signs in when it processes its
-    document, not before: without -TenantId it takes whatever tenant the
-    session holds at that moment, which a later command in the same pipeline
-    may already have switched, and nothing refuses that. Name -TenantId on
-    it, or run it as a statement of its own. Run the commands as separate
+    document, not before, so without -TenantId it acts only under the
+    session it began with: when another command in the same pipeline has
+    signed in to a different tenant or identity by then -- any sign-in counts
+    if the module held no session when it began -- it refuses that document
+    with SignInSuperseded and sends nothing for it.
+    New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and
+    New-OERAccessReviewStage do the same before they resolve the approvers,
+    targets or reviewers they are given. Run the commands as separate
     statements; to move objects between tenants, collect them in a variable
     first:
 

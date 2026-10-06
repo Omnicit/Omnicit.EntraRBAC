@@ -62,15 +62,18 @@ function Invoke-OERStructure {
     Pipeline session rule: without -TenantId the command acts only under the session it began with.
     A document is refused with SignInSuperseded, and nothing is signed in to or sent for it, when
     another command in the same pipeline signed in to a different tenant or identity, or
-    disconnected, before the document was processed -- for example Connect-OER, or a cmdlet naming
-    another tenant, downstream of this command: every begin block of a pipeline runs before this
-    command's process block, where it signs in. Run such commands as separate statements. A document
-    that cannot be read or does not validate reports its own error, as before. Several documents piped
-    into one call are each compared with the session the last sign-in of this call left, or, before
-    its first sign-in, with the session the call began with. So a first sign-in from no session does
-    not refuse the next document, while a document that was refused, could not be read or did not
-    validate signs nothing in and moves nothing: the document after it is compared with the same
-    session. With -TenantId the command signs in to that tenant as before.
+    disconnected, after this command began and before the document was processed -- for example
+    Connect-OER, or a cmdlet naming another tenant, downstream of this command (every begin block of
+    a pipeline runs before this command's process block, where it signs in), or a sign-in made
+    upstream in the process block that emits the document. When the module held no session as this
+    command began, any such sign-in counts, even one that names no tenant. Run such commands as
+    separate statements. A document that cannot be read or does not validate reports its own error,
+    as before. Several documents piped into one call are each compared with the session the last
+    sign-in of this call left, whether that sign-in succeeded or was refused, or, before its first
+    sign-in, with the session the call began with. So a first sign-in from no session does not refuse
+    the next document, while a document refused with SignInSuperseded, or one that could not be read
+    or did not validate, signs nothing in and moves nothing: the document after it is compared with
+    the same session. With -TenantId the command signs in to that tenant as before.
 
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on

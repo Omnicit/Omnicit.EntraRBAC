@@ -14,6 +14,13 @@ completed leaves the collection unread rather than half-read. An apply document 
 group's service principals, such as one exported by an earlier version, reports them `Extra`, and
 `-Prune` leaves them in place, as earlier versions did.
 
+`Invoke-OERStructure` without `-TenantId`, and the builders that look up a name
+(`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope`,
+`New-OERAccessReviewStage`), now act only under the session they began with: when another command
+in the same pipeline signs in to a different tenant or identity after they began, they refuse with
+`SignInSuperseded` and send nothing. When a command's sign-in is refused, the cmdlets it calls are
+now refused at their own sign-in too, with `SignInRefused`, before any token request or prompt.
+
 ## [1.1.2] - 2026-10-06
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope, ignoring
