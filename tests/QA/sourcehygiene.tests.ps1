@@ -1408,10 +1408,14 @@ BeforeAll {
         stamp a command again with the identity a later sign-in switched the state to, so that
         command is never seen as superseded. Get-OERSignInRefusal and Get-OERSignInSupersession, the readers the gates consult, are
         called only by the two wrappers: a reader anywhere else is a gate no static check places.
-        Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it, and
-        Get-OERSignInSupersession, which compares it: a second identity builder can drift from the
-        one the comparison uses. Invoke-MgGraphRequest and Invoke-WebRequest are called only by
-        their wrapper.
+        Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it,
+        Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a
+        command's snapshot of it and compares that snapshot with the identity the state carries
+        now (BL-76, BL-81): building the snapshot's value through the same function is what keeps
+        its terms identical to the remembered ones, and a second identity builder there is exactly
+        the drift this rule exists to stop. Checkpoint-OERSignIn's own callers get no row: the
+        snapshot is a value a command keeps in its own variable, never a gate in front of a
+        request. Invoke-MgGraphRequest and Invoke-WebRequest are called only by their wrapper.
 
         THE IDENTITY IS REMEMBERED WHERE THE LATCH IS RELEASED. In Initialize-OERAuth every
         Register-OERSignInIdentity call is the statement directly after an Unlock-OERSignIn call in
@@ -1469,7 +1473,8 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInSupersession'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInIdentity'; Owners = @(
-                'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1') }
+                'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1',
+                'source\Private\Checkpoint-OERSignIn.ps1') }
         [PSCustomObject]@{ Command = 'Invoke-MgGraphRequest'; Owners = @($script:transportGateGraphPath) }
         [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owners = @($script:transportGateArmPath) }
     )
@@ -3238,16 +3243,19 @@ supersession gates.
 '@
     }
 
-    It 'builds a sign-in identity with Get-OERSignInIdentity only in Register-OERSignInIdentity.ps1 and Get-OERSignInSupersession.ps1' {
+    It 'builds a sign-in identity with Get-OERSignInIdentity only in Register-OERSignInIdentity.ps1, Get-OERSignInSupersession.ps1 and Checkpoint-OERSignIn.ps1' {
         $script:transportOwnerStale['Get-OERSignInIdentity'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'Register-OERSignInIdentity, which stores the identity, and Get-OERSignInSupersession, which compares it, must both really call Get-OERSignInIdentity; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'Register-OERSignInIdentity, which stores the identity, Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a command''s snapshot of it and compares that snapshot with the identity the state carries now, must each really call Get-OERSignInIdentity; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSignInIdentity'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSignInIdentity is the single owner of what a sign-in's identity is: Register-OERSignInIdentity
-stores the value it returns, and Get-OERSignInSupersession compares the value it returns now with every
-stored one. A second caller is a second identity builder in the making, and one that drifts from the
-identity the comparison uses -- a term added or dropped on one side only -- makes the supersession gate
-refuse a command it should not, or let through one it should refuse. Read the identity only through
-those two helpers.
+stores the value it returns, Get-OERSignInSupersession compares the value it returns now with every
+stored one, and Checkpoint-OERSignIn keeps the value it returns when a command begins and compares that
+snapshot with the value it returns later (BL-76, BL-81), which is the one reason a third file may call
+it. A fourth caller is a second identity builder in the making, and one that drifts from the identity
+the comparisons use -- a term added or dropped on one side only -- makes a gate refuse a command it
+should not, or let through one it should refuse. The list is never wider than the call requires: read
+the identity only through those three helpers, and take a snapshot of it with Checkpoint-OERSignIn
+instead of calling Get-OERSignInIdentity again.
 '@
     }
 
