@@ -836,10 +836,13 @@ function Invoke-OERGraphRequest {
             # latches the command that called it at entry and releases it only when the sign-in
             # succeeds. Its refusal does not stop that command, which carries on past it when no try is
             # active up the call stack (the measurement above) and would send under the session an
-            # earlier sign-in left -- another tenant's, when the command named -TenantId. Every public
-            # cmdlet the command calls signs in again from that session's cache and releases only its
-            # own latch, so Get-OERSignInRefusal looks for a latched command anywhere on the call
-            # stack. Checked after the session gate, so a changed session is still reported as
+            # earlier sign-in left -- another tenant's, when the command named -TenantId. A cmdlet that
+            # command calls, or that runs inside its output, is refused at its own sign-in (BL-74); a
+            # downstream command whose begin block signed in while the refused command was on no call
+            # stack -- every begin block runs before any process block -- is not, and runs inside the
+            # refused command's output with its own latch released. So Get-OERSignInRefusal looks for a
+            # latched command anywhere on the call stack: that pipeline case, and defence in depth for
+            # a nested call. Checked after the session gate, so a changed session is still reported as
             # GraphSessionChanged, and outside the try below for the same reason as that gate.
             #
             # The return is load-bearing for the same reason as the session gate's: under -ErrorAction

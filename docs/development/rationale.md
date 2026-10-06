@@ -604,13 +604,12 @@ files, more than 2700 `CommandAst` nodes, and at least one recognised `-Az`-shap
 so a matcher that stopped matching cannot pass by finding nothing to complain about.
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
-Sprint 9 step 2). The gates that stand in front
-of every request -- the Graph SDK session gate in the Graph transport, and the sign-in latch gate
-and the sign-in supersession gate in both transports, all described under
-[#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
-this gate machine-checks that claim from the source. Ownership rules, read from the command names
-the shared walk collected per file: `Get-MgContext` is called only in
-`Get-OERGraphSessionFingerprint`; `Lock-OERSignIn`, `Unlock-OERSignIn` and
+Sprint 9 step 2). The gates that stand in front of every request -- the Graph SDK session gate in
+the Graph transport, and the sign-in latch gate and the sign-in supersession gate in both
+transports, all described under [#auth-state](#auth-state) -- are only as good as the claim that no
+request can go around them, and this gate machine-checks that claim from the source. Ownership
+rules, read from the command names the shared walk collected per file: `Get-MgContext` is called
+only in `Get-OERGraphSessionFingerprint`; `Lock-OERSignIn`, `Unlock-OERSignIn` and
 `Register-OERSignInIdentity` only in `Initialize-OERAuth`; `Get-OERSignInRefusal` only in the two
 wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the two wrappers;
 `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
@@ -627,16 +626,15 @@ holds that. `Checkpoint-OERSignIn` builds the snapshot of the session a command 
 BL-81) through the same function the memory uses, which keeps its terms identical to the
 remembered ones -- a second identity builder there is the drift the rule exists to stop. Its own
 callers get no row: the snapshot is a value a command keeps in its own variable, never a gate in
-front of a request. A pairing rule,
-read from `Initialize-OERAuth`: each `Register-OERSignInIdentity` call is the statement directly
-after an `Unlock-OERSignIn` call in the same block, each call standing alone and both passing
-`-Invocation` the same variable, and the two are called equally often -- two pairs, counted
-exactly, so a new success end is a deliberate edit of that number. A dropped memory write leaves
-that success path unremembered with nothing but `Initialize-OERAuth`'s own tests to show it, and a
-`Register-OERSignInIdentity` made conditional, piped, assigned or handed its invocation
-positionally is refused rather than judged. And one structural rule,
-read from the two wrappers' own ASTs: every send sits in the BODY of a try that holds exactly one
-call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
+front of a request. A pairing rule, read from `Initialize-OERAuth`: each
+`Register-OERSignInIdentity` call is the statement directly after an `Unlock-OERSignIn` call in the
+same block, each call standing alone and both passing `-Invocation` the same variable, and the two
+are called equally often -- two pairs, counted exactly, so a new success end is a deliberate edit of
+that number. A dropped memory write leaves that success path unremembered with nothing but
+`Initialize-OERAuth`'s own tests to show it, and a `Register-OERSignInIdentity` made conditional,
+piped, assigned or handed its invocation positionally is refused rather than judged. And one
+structural rule, read from the two wrappers' own ASTs: every send sits in the BODY of a try that
+holds exactly one call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
 `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
 `Invoke-ArmCall`), and that try is preceded, in the very block that holds it and in this order, by
 its session gate (Graph only), its latch gate and its supersession gate, each a throw followed by a
@@ -2192,12 +2190,18 @@ Graph SDK session is still the module's own, with that sign-in failing at its to
 handler makes itself nor the role assignment read of a nested `Get-OERRoleAssignment`, whose own
 sign-in, which A's cache would have answered before Sprint 9 step 2, is now refused at its entry
 (BL-74) -- both sections answer with rows, and none is planned or written. H2 pins that a plain
-command after it, on the same state, sends its request. H3 and H4 pin BL-74 in the same Describe:
-H3 is H1 with A's Microsoft Graph token two minutes from expiry, where the nested sign-in, had it got
-past the check, would renew it, and it shows one token call (the refused one) and no
+command after it, on the same state, sends its request. H3, H4 and H5 pin BL-74 in the same
+Describe: H3 is H1 with A's Microsoft Graph token two minutes from expiry, where the nested sign-in,
+had it got past the check, would renew it, and it shows one token call (the refused one) and no
 `Connect-MgGraph`; H4 pipes two documents to `Invoke-OERStructure -TenantId`, the first document's
 sign-in failing, and shows the second document's own sign-in attempted and its group read sent --
-the command's own latched frame is not a reason to refuse. The latch's own states are pinned in
+the command's own latched frame is not a reason to refuse. In H3 the nested refusal is caught by
+the apply handler's own `try`; H5 has no `try` anywhere. In H3's state it pipes a groups-only
+`Invoke-OERStructure -TenantId` into `ForEach-Object { Get-OERGroup -Filter ...; $_ }`, so
+`Get-OERGroup` signs in in its `begin` block, outside any `try`, inside the refused command's
+output, which `Invoke-OERStructure` also emits outside any `try`. It shows the same single token
+call, no connection, no Graph request, and the `SignInRefused` that `Initialize-OERAuth` raised
+naming `Invoke-OERStructure`. The latch's own states are pinned in
 `tests/Unit/Private/Initialize-OERAuth.Tests.ps1` (Describe `Initialize-OERAuth sign-in latch (A19)`,
 which holds the BL-74 Context `refused under a latched outer command (BL-74)`), and each wrapper's
 gate in its own test file (Describes `Invoke-OERGraphRequest sign-in latch gate (A19)` and
@@ -2382,6 +2386,21 @@ working, not a limit to work around: work in another tenant belongs in a stateme
   `SignInSuperseded` and sends nothing for it. The three name-looking builders had the same gap
   (BL-81) and are closed the same way. See
   [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with).
+- OPEN, and older than Sprint 9 step 2: `Invoke-OERStructure` or one of the three name-looking
+  builders WITHOUT `-TenantId`, called inside a script block or a function in a pipeline. The
+  snapshot that closed the bullet above is taken when the command's own `begin` block runs, and
+  inside a script block that is when the block runs, after every `begin` block of the outer
+  pipeline. In
+  `Get-ChildItem *.json | ForEach-Object { Invoke-OERStructure -Path $_ -Prune } | ForEach-Object -Begin { Connect-OER -TenantId B } -Process { $_ }`,
+  after a sign-in to A, `Invoke-OERStructure` begins under B, compares B with B, signs in under B and
+  remembers it, so neither its own check nor the supersession gate sees a difference, and `-Prune`
+  runs in B with no error. The three builders, called the same way, look their names up in B.
+  MEASURED by the final review of Sprint 9 step 2 with plain-PowerShell stand-ins of the shape: the
+  direct pipeline was refused, and the same command wrapped in `ForEach-Object` applied under B. The
+  code is no worse than before that step, which left the gap open (its Ruling R11). The texts tell
+  the operator to name `-TenantId` on such a command, or to run it as a statement of its own:
+  README's `### Disconnect` section and the about topic's `GRAPH SDK SESSION` in one clause each,
+  CLAUDE.md as a rule.
 - A command that signs in again inside its own `process` block, to another tenant, replaces its own
   memory, and nothing compares that second sign-in with its first: it is the same command's own
   choice.
@@ -2397,20 +2416,25 @@ that reports a failed lookup under an error of its own, `New-OERGroup`'s `GroupR
 one, carries the refusal's message in that error instead; a tenant counts by the name given, so its
 GUID, its domain and none named before the module holds a session (`organizations`) are three
 sign-ins and a pipeline naming one tenant two ways is refused, with a pointer to "Name the tenant
-explicitly and consistently"; `Invoke-OERStructure` signs in when it processes its document, so
+explicitly and consistently"; `Invoke-OERStructure` signs in when it processes its document, but
 without `-TenantId` it acts only under the session it began with, and refuses a document with
 `SignInSuperseded`, sending nothing for it, when another command in the pipeline has signed in to a
 different tenant or identity by then -- any sign-in counting when the module held no session --
 and the three builders that look up a name do the same before they resolve what they are given
 (until Sprint 9 step 2 this clause said that nothing refused it, and told the operator to name
-`-TenantId` on it or run it as a statement of its own); the commands run as separate statements,
-with objects collected in a variable first to move them between tenants. Both give the
-two-statement examples -- groups read and created, and an inventory read and applied -- the two
-pipelines they replace commented out, and a pointer to the limits per sign-in type that
-`SWITCHING TENANTS` states for the statement that switches tenant. `Connect-OER`'s help carries the
-same rule in two sentences, beside the general case of a refused sign-in; its sentence that a
-cmdlet a refused command calls does not change that by signing in stays true, since such a cmdlet
-is now refused at its sign-in (BL-74). The `Invoke-OERStructure` help states its pipeline session
+`-TenantId` on it or run it as a statement of its own); called inside a script block or a function
+in a pipeline, each of those four commands begins only when that block runs, after every other
+command in the pipeline has begun and so after most of their sign-ins, and takes the session they
+left for its own, so the operator is told to name `-TenantId` there (the open known limit above);
+the commands run as separate statements, with objects collected in a variable first to move them
+between tenants. Both give the two-statement examples -- groups read and created, and an inventory
+read and applied -- the two pipelines they replace commented out, and a pointer to the limits per
+sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
+`Connect-OER`'s help carries the same rule in two sentences, beside the general case of a refused
+sign-in; its sentence that a cmdlet a refused command calls does not change that by signing in
+stays true, since such a cmdlet is now refused at its sign-in (BL-74), and a sentence beside it
+says that `Connect-OER` run inside a refused command's output is refused the same way and signs in
+as before as a statement of its own. The `Invoke-OERStructure` help states its pipeline session
 rule in full, and each builder's `-TenantId` help states its own, the fail-safe refusals included.
 BL-74 has no paragraph of its own in the README or the about topic: what an operator sees is the
 existing rule that a refused command sends nothing, except that a cmdlet it calls no longer reaches
@@ -2443,9 +2467,9 @@ place. P10 to P17, in the same Describe, belong to the next subsection.
 **The findings.** Sprint 9 step 2 closed three gaps in what the two subsections above describe,
 each a sign-in that should not have run as it did.
 
-- BL-76, the OPEN known limit above: `Invoke-OERStructure` WITHOUT `-TenantId` signs in in its
-  `process` block and names no tenant, so it inherited whatever state a downstream command's
-  `begin` block had left by then, remembered that, and passed every gate.
+- BL-76, the known limit above, open until this step: `Invoke-OERStructure` WITHOUT `-TenantId`
+  signs in in its `process` block and names no tenant, so it inherited whatever state a downstream
+  command's `begin` block had left by then, remembered that, and passed every gate.
 - BL-81, the same gap in three builders the count of direct call sites did not show:
   `New-OERAccessPackageApprovalStage` and `New-OERAccessPackageRequestorScope` sign in only through
   `Resolve-OERTargetList`, and `New-OERAccessReviewStage` only through `Resolve-OERReviewerScope`,
@@ -2470,8 +2494,12 @@ whether the identity now differs, by the same case-insensitive `-eq` the superse
 no state matches only a snapshot of no state. The snapshot is a value the command keeps in its own
 variable: nothing else reads it, and it ends with the command. `Invoke-OERStructure` and the three
 builders take it in their `begin` block, and every `begin` block of a pipeline runs before any
-`process` block, so it holds the session after every UPSTREAM command's `begin`-block sign-in and
-before any DOWNSTREAM one. Without `-TenantId` each of them compares in `process`:
+`process` block, so for a command that stands in the pipeline itself it holds the session after
+every UPSTREAM command's `begin`-block sign-in and before any DOWNSTREAM one. A command called inside
+a script block or a function in a pipeline begins only when that block runs, after every `begin`
+block of the outer pipeline, so its snapshot may already hold a downstream command's sign-in: that
+is the open known limit above, which this step did not close. Without `-TenantId` each of them
+compares in `process`:
 
 - `Invoke-OERStructure` for each document after the document is read and validated, directly
   before `Initialize-OERAuth`, so a document that cannot be read or does not validate still reports
@@ -2498,14 +2526,15 @@ identity and is never refused. The `SignInSuperseded` message now says the other
 "after X began" instead of "after X signed in": a command refused here has not signed in at all,
 and "began" is true of every A20 refusal too.
 
-**Why a snapshot, and never `-TenantId` from `begin` (A6, decided 2026-10-06).** The fix the OPEN
-bullet sketched was to capture the tenant in `begin` and name it in the `process` block's sign-in.
-A `-TenantId` other than the tenant the state holds inherits nothing (`$SessionUsable` in
-`Initialize-OERAuth`), so that sign-in would fall back to the default method, `Interactive`: an
-app-only or managed-identity session -- the unattended case -- would get a browser prompt instead
-of a refusal. A tenant alone would also miss a change of application, method or cloud, all of which
-the snapshot's four terms catch. The snapshot only compares, and the command refuses, which is the
-safe direction; it never signs in on the command's behalf.
+**Why a snapshot, and never `-TenantId` from `begin` (A6, decided 2026-10-06).** The fix that the
+known limit above sketched, while it was open until this step, was to capture the tenant in `begin`
+and name it in the `process` block's sign-in. A `-TenantId` other than the tenant the state holds
+inherits nothing (`$SessionUsable` in `Initialize-OERAuth`), so that sign-in would fall back to the
+default method, `Interactive`: an app-only or managed-identity session -- the unattended case --
+would get a browser prompt instead of a refusal. A tenant alone would also miss a change of
+application, method or cloud, all of which the snapshot's four terms catch. The snapshot only
+compares, and the command refuses, which is the safe direction; it never signs in on the command's
+behalf.
 
 **BL-74: a sign-in under a refused command is refused before it is made.** `Initialize-OERAuth`
 now asks `Get-OERSignInRefusal -OutsideCaller` before anything else. The walk starts after the
@@ -2538,8 +2567,14 @@ refuses every request the caller makes while it runs.
 - A builder whose values are all object ids, or that has only switches (`-Manager`, `-SelfReview`),
   is refused too under a changed session, although it would look nothing up: the check stands
   before the lookup call, not inside the resolver's branch for names. The builders take no pipeline
-  input and their output binds to no pipeline parameter, so in a real pipeline the false refusal is
-  theoretical, and it is on the safe side.
+  input, and their output is assigned to a variable or passed as a value, not piped: the
+  parameters it is built for -- `-ApprovalStage` and `-RequestorScope` of
+  `New-OERAccessPackageAssignmentPolicy` and `Set-OERAccessPackageAssignmentPolicy`, `-Stage` of
+  `New-OERAccessReviewDefinition` and `Set-OERAccessReviewDefinition` -- bind nothing from the
+  pipeline (read in the code). `New-OERAccessReviewStage`'s `StageId` does bind one elsewhere,
+  `Get-OERAccessReviewInstanceDecision -Stage`, through that parameter's alias, but that is not how a
+  built stage is used. So the false refusal needs a pipeline the builders are not used in, and it is
+  on the safe side: the builder builds nothing and sends nothing.
 - From a process with no session the snapshot is "no session", so any sign-in by another command
   before the document is processed is a change -- even a downstream command that names no tenant
   and signs in to `organizations`, the identity `Invoke-OERStructure` itself would have used.
@@ -2569,7 +2604,8 @@ again only after a sign-in -- every piped document refused under a switch, and t
 one whose rows a downstream command answered by switching. The three builders' test files each hold
 a Describe `... looks a name up only under the session it began with (BL-81)` (`a target` for the
 requestor scope): the refusal, the fail-safe refusal, an argument error as itself (the no-target
-scope for the requestor scope), an unchanged identity, `-TenantId` and the nested call.
+scope for the requestor scope, which also has a non-specific scope given `-User`, built with its
+warning and never refused), an unchanged identity, `-TenantId` and the nested call.
 `tests/Unit/Private/Get-OERSignInRefusal.Tests.ps1` has the Describe
 `Get-OERSignInRefusal -OutsideCaller (BL-74)`, and `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`
 the Context `refused under a latched outer command (BL-74)`, with `Get-AzToken` and
@@ -2586,7 +2622,7 @@ downstream one), no Graph or ARM request leaves and one `SignInSuperseded` names
 `Invoke-OERStructure`; P11 the same identity again, applied; P12 with `-TenantId`, signed in to the
 named tenant again and applied there; P13 two documents from no session, both applied. In P14 to
 P16 each builder is refused after a downstream switch and no lookup is sent; in P17 the lookup is
-sent when the downstream command signs in again as the same identity. H3 and H4 in the A19
+sent when the downstream command signs in again as the same identity. H3, H4 and H5 in the A19
 Describe pin BL-74, as described under
 [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing).
 
@@ -2596,9 +2632,12 @@ deleting the second snapshot turns the two-documents test and P13 red; moving th
 read turns both validation-order tests red; and taking the snapshot again inside the refusal branch,
 or after the output loop, turns the re-take tests red. For each builder, deleting the check turns
 its unit refusals and its P test red, dropping `-not $TenantId` its `-TenantId` control, and moving
-the requestor scope's check out of its branch the no-target test. Deleting BL-74's check turns the
-BL-74 Context, the rewritten nested test and H3 red; dropping `-OutsideCaller` turns H4, the unit
-test `is released when a sign-in from the same frame succeeds after a refusal` and five other
+the requestor scope's check out of its branch the no-target test; hoisting it only out of the
+`SpecificDirectoryUsers` branch, still under `-User` or `-Group`, turns the non-specific scope's
+test red, and no other test in that file. Deleting BL-74's check turns the BL-74 Context, the
+rewritten nested test, H3 and H5 red, H5 with two token calls and one connection; dropping
+`-OutsideCaller` turns H4, the unit test
+`is released when a sign-in from the same frame succeeds after a refusal` and five other
 same-frame retries red; starting the walk at frame 0 turns two `-OutsideCaller` tests and those six
 `Initialize-OERAuth` tests red; moving the check after `Lock-OERSignIn` turns
 `leaves the calling command unlatched when it refuses (the check stands before Lock-OERSignIn)` red.

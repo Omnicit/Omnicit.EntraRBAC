@@ -16,10 +16,11 @@ group's service principals, such as one exported by an earlier version, reports 
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name
 (`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope`,
-`New-OERAccessReviewStage`), now act only under the session they began with: when another command
-in the same pipeline signs in to a different tenant or identity after they began, they refuse with
-`SignInSuperseded` and send nothing. When a command's sign-in is refused, the cmdlets it calls are
-now refused at their own sign-in too, with `SignInRefused`, before any token request or prompt.
+`New-OERAccessReviewStage`), now refuse with `SignInSuperseded` and send nothing when another
+command in their pipeline signs in to another tenant or identity after they began. In a script
+block they begin only when it runs: name `-TenantId` there. When a command's sign-in is refused, the
+cmdlets it calls are now refused at their own sign-in too (`SignInRefused`), before any token
+request or prompt.
 
 ## [1.1.2] - 2026-10-06
 

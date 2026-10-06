@@ -512,11 +512,12 @@ object id read from the Graph token's `oid` claim -- never the token itself.
 SDK session the module's own `Connect-MgGraph` left in the process -- never a token, never the
 context object, and never written to any stream. `Get-OERGraphSessionFingerprint` is the single
 owner of the fingerprint and `Get-OERGraphSessionState` of the comparison. Every
-`Initialize-OERAuth` entry checks it, the cached return included, and so does
-`Invoke-OERGraphRequest` before every Graph call; a session another `Connect-MgGraph` started is
-refused with `GraphSessionChanged`. Only `Connect-OER` passes `-ReclaimGraphSession`, which takes
-the session back. Never add a second reclaim caller, and never make the module switch the session
-back by itself: either one moves the other session's Graph calls to this module's tenant.
+`Initialize-OERAuth` entry that gets past its BL-74 check (below) checks it, the cached return
+included, and so does `Invoke-OERGraphRequest` before every Graph call; a session another
+`Connect-MgGraph` started is refused with `GraphSessionChanged`. Only `Connect-OER` passes
+`-ReclaimGraphSession`, which takes the session back. Never add a second reclaim caller, and never
+make the module switch the session back by itself: either one moves the other session's Graph calls
+to this module's tenant.
 `Why: docs/development/rationale.md#auth-state`
 
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
@@ -525,11 +526,13 @@ called it carries on, and used to send its calls under the session an earlier si
 `Invoke-OERStructure -TenantId B -Prune`, B's document applied to A. So `Initialize-OERAuth` latches
 its calling command (`Lock-OERSignIn`) directly after its BL-74 check below and releases it only on
 success (`Unlock-OERSignIn`: the cached return, or a new connection that went the whole way); both
-are called only there. Every refusal, terminating error and early return leaves the command latched --
-`ArmTokenAcquisitionFailed` included, so that command's Graph calls are refused too although its
-Graph half connected. Both transports ask `Get-OERSignInRefusal` before every request and refuse it
-while any frame on the call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns
-the id and the message) -- the Graph wrapper after its session gate, so a changed session still reads
+are called only there. Every refusal, terminating error and early return leaves the command
+latched, `ArmTokenAcquisitionFailed` included, so that command's Graph calls are refused too
+although its Graph half connected -- except the BL-74 refusal, which comes before `Lock-OERSignIn`
+and latches nothing of its own: the latched outer command it found covers the caller. Both
+transports ask `Get-OERSignInRefusal` before every request and refuse it while any frame on the
+call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns the id and the
+message) -- the Graph wrapper after its session gate, so a changed session still reads
 `GraphSessionChanged`, and after a `GraphSessionChanged` refusal at the cmdlet's entry its ARM calls
 read `SignInRefused`. The latch is keyed weakly on the calling command's INVOCATION, never a module
 boolean: a pipeline neighbour's successful sign-in releases only its own entry. A refused command's
@@ -544,11 +547,12 @@ command whose sign-in was refused earlier in the same invocation -- `Invoke-OERS
 next piped document -- may sign in again. Only `Initialize-OERAuth` passes `-OutsideCaller`; never
 make that check walk the whole stack. A finished command is on no call stack, so the next command,
 or `Connect-OER`, sends again. An ARM call of a command whose entry was not refused still goes out
-with the module's own token: ARM has no session gate. Never write that the cmdlet stops -- it carries on and sends nothing -- and never call
-`Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`. Call `Initialize-OERAuth`
-directly in the command's own block, never from a nested function, `& { }` or any other scriptblock:
-the latch is keyed on the frame that calls it, and such a frame ends at once (the transports' own
-refreshes, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the one exception).
+with the module's own token: ARM has no session gate. Never write that the cmdlet stops -- it
+carries on and sends nothing -- and never call `Lock-OERSignIn` or `Unlock-OERSignIn` outside
+`Initialize-OERAuth`. Call `Initialize-OERAuth` directly in the command's own block, never from a
+nested function, `& { }` or any other scriptblock: the latch is keyed on the frame that calls it,
+and such a frame ends at once (the transports' own refreshes, in `Invoke-GraphSingle` and
+`Invoke-ArmCallWithRefresh`, are the one exception).
 `Why: docs/development/rationale.md#auth-state`
 
 **A command sends nothing under a sign-in a later command replaced.** In a pipeline every `begin`
@@ -584,14 +588,23 @@ the session that sign-in left; the builders take no pipeline input and never tak
 command that signs in only in `process`, directly or through a helper, without `-TenantId` takes
 the same snapshot. Never name the tenant the command began with as `-TenantId` in `process`
 instead: a `-TenantId` other than the state's inherits nothing, so an app-only session would get a
-browser prompt (A6). The identity's tenant term is the tenant as NAMED, so one tenant named by
-GUID on one command and by domain on another -- or not named at all before the module holds a
-session, which is recorded as `organizations` -- is two identities, to the snapshot as to the
-memory, and that pipeline is refused (fail-safe; README's "Name the tenant explicitly and
-consistently", the about topic's equivalent under SOVEREIGN CLOUDS). The order is fixed: in the
-Graph wrapper the session gate, then the latch gate, then the supersession gate; in the ARM wrapper
-the latch gate, then the supersession gate. A command with no memory is not compared by that gate. A pipeline must not span tenants or identities: run the
-commands as separate statements, for example collecting into a variable first.
+browser prompt (A6). The snapshot is taken when the command's own `begin` runs, so it covers a
+command that stands in the pipeline itself and not one called inside a script block or a function
+in a pipeline -- `ForEach-Object { Invoke-OERStructure ... }`. Such a command begins only when the
+block runs, after every `begin` block of the outer pipeline, so it takes a downstream command's
+sign-in for the session it began with: `Invoke-OERStructure`'s document, `-Prune` included, then
+applies to the downstream command's tenant, and a builder looks its names up there -- an open gap,
+older than BL-76. So never call `Invoke-OERStructure` or a name-looking builder without `-TenantId`
+inside a script block or function in a pipeline that signs in to another tenant or identity. The
+identity's tenant term is the tenant as NAMED, so one tenant named by GUID on one command and by
+domain on another -- or not named at all before the module holds a session, which is recorded as
+`organizations` -- is two identities, to the snapshot as to the memory, and that pipeline is
+refused (fail-safe; README's "Name the tenant explicitly and consistently", the about topic's
+equivalent under SOVEREIGN CLOUDS). The order is fixed: in the Graph wrapper the session gate, then
+the latch gate, then the supersession gate; in the ARM wrapper the latch gate, then the
+supersession gate. A command with no memory is not compared by that gate. A pipeline must not span
+tenants or identities: run the commands as separate statements, for example collecting into a
+variable first.
 Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after
 an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
 transports.
