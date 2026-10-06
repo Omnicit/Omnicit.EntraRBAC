@@ -247,4 +247,106 @@ Describe 'Get-OERGroupRelation' {
             }
         }
     }
+
+    Context 'the typed read list is the measured one' {
+        # Scope 3 of Sprint 9 step 1: the typed read covers servicePrincipal only, for both relations.
+        # The user, group, device and organizational contact casts showed nothing missing, so a type
+        # added to the helper's list without a measurement is a defect this Context turns red.
+        It 'reads the untyped collection and exactly one typed collection, servicePrincipal, for members (the list is the 2026-10-06 measurement)' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                $null = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members)
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -notmatch 'microsoft\.graph' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -match 'microsoft\.graph' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/microsoft.graph.servicePrincipal' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -match 'microsoft\.graph\.(device|orgContact|user|group)$' }
+            }
+        }
+
+        It 'reads the untyped collection and exactly one typed collection, servicePrincipal, for owners (the list is the 2026-10-06 measurement)' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest { @{ value = @() } }
+                $null = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation owners)
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -notmatch 'microsoft\.graph' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -match 'microsoft\.graph' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like '*/microsoft.graph.servicePrincipal' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -match 'microsoft\.graph\.(device|orgContact|user|group)$' }
+            }
+        }
+    }
+
+    Context 'the helper is the single reader of a group collection' {
+        BeforeAll {
+            # Not module code: the scan reads source files with the AST and imports nothing. Unset,
+            # OER_COHORT_SOURCE_ROOT leaves it on the repository's own source/; a mutation proof sets
+            # it to a scratch copy of source/ so the scan reads the mutated tree and not this one.
+            $SourceRoot = if ($env:OER_COHORT_SOURCE_ROOT) {
+                $env:OER_COHORT_SOURCE_ROOT
+            } else {
+                Join-Path -Path $PSScriptRoot -ChildPath '../../../source'
+            }
+            $SourceRoot = (Resolve-Path -Path $SourceRoot).Path
+
+            # A Graph read of a group's members or owners collection: the Graph path ends at the
+            # collection (the {1} of the helper's own format string included). A write (the /$ref
+            # suffix), an administrative unit read and the export's unread-collection label
+            # (groups/<name>/members, no v1.0 prefix) are no read of this collection.
+            $CollectionPattern = '^(v1\.0|beta)/groups/[^/]+/(members|owners|\{1\})$'
+
+            # Every string literal of the tree the AST holds, single quoted and expandable alike,
+            # that matches the pattern.
+            $GetCollectionReads = {
+                param($Ast, $RelativePath)
+                foreach ($Node in $Ast.FindAll({
+                            param($Candidate)
+                            $Candidate -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                            $Candidate -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+                        }, $true)) {
+                    if ($Node.Value -match $CollectionPattern) {
+                        [PSCustomObject]@{ Path = $RelativePath; Line = $Node.Extent.StartLineNumber; Value = $Node.Value }
+                    }
+                }
+            }
+
+            $Reads = @(
+                foreach ($File in (Get-ChildItem -Path $SourceRoot -Filter '*.ps1' -File -Recurse | Where-Object { $_.Extension -eq '.ps1' })) {
+                    $FileAst = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
+                    $Relative = [System.IO.Path]::GetRelativePath($SourceRoot, $File.FullName) -replace '\\', '/'
+                    & $GetCollectionReads $FileAst $Relative
+                }
+            )
+        }
+
+        It 'finds no read of a group collection outside Get-OERGroupRelation' {
+            $Outside = @($Reads | Where-Object { $_.Path -ne 'Private/Get-OERGroupRelation.ps1' } |
+                    ForEach-Object { '{0}:{1} {2}' -f $_.Path, $_.Line, $_.Value })
+            $Outside | Should -BeNullOrEmpty -Because 'a second reader of a group collection would leave out the service principals again'
+        }
+
+        It 'does find the helper''s own read, so the scan is not vacuous' {
+            $Own = @($Reads | Where-Object { $_.Path -eq 'Private/Get-OERGroupRelation.ps1' })
+            $Own.Count | Should -BeGreaterOrEqual 1
+            $Own.Value | Should -Contain 'v1.0/groups/{0}/{1}'
+        }
+
+        It 'reads a double quoted literal as well as a single quoted one' {
+            $Snippet = 'Invoke-OERGraphRequest -Uri "v1.0/groups/$Id/members" -All; Invoke-OERGraphRequest -Uri ''v1.0/groups/{0}/owners'' -All'
+            $SnippetAst = [System.Management.Automation.Language.Parser]::ParseInput($Snippet, [ref]$null, [ref]$null)
+            $Found = @(& $GetCollectionReads $SnippetAst 'snippet.ps1')
+            $Found.Count | Should -Be 2
+            $Found.Value | Should -Contain 'v1.0/groups/$Id/members'
+            $Found.Value | Should -Contain 'v1.0/groups/{0}/owners'
+        }
+
+        It 'matches the shapes of a group collection read and not the writes, an administrative unit read or the export label' {
+            foreach ($Shape in @('v1.0/groups/{0}/members', 'v1.0/groups/{0}/owners', 'v1.0/groups/{0}/{1}', 'beta/groups/{0}/members')) {
+                $Shape | Should -Match $CollectionPattern
+            }
+            foreach ($Shape in @('v1.0/groups/{0}/{1}/$ref', 'v1.0/directory/administrativeUnits/{0}/members', 'groups/role_sec_x/members')) {
+                $Shape | Should -Not -Match $CollectionPattern
+            }
+        }
+    }
 }
