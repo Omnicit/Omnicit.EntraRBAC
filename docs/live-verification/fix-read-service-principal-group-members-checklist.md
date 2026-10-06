@@ -236,7 +236,7 @@ function Read-S91 {
     param([string]$Uri, [switch]$One)
     try {
         $R = & (Get-Module Omnicit.EntraRBAC) { param($U, $O) if ($O) { Invoke-OERGraphRequest -Uri $U -ErrorAction Stop } else { Invoke-OERGraphRequest -Uri $U -All -ErrorAction Stop } } $Uri $One.IsPresent
-        $Rows = if ($One) { @($R) } else { @(@($R.value) | Where-Object { $null -ne $_ }) }
+        $Rows = @(if ($One) { $R } else { @($R.value) | Where-Object { $null -ne $_ } })
         [PSCustomObject]@{ Ok = $true; Rows = $Rows; Error = '' }
     } catch {
         $E = "$($PSItem.FullyQualifiedErrorId) -- $($PSItem.Exception.Message)"
@@ -248,6 +248,7 @@ $Gid = [string](Read-S91 -Uri ("v1.0/groups?`$filter={0}&`$select=id" -f [uri]::
 $Nid = [string](Read-S91 -Uri ("v1.0/groups?`$filter={0}&`$select=id" -f [uri]::EscapeDataString("displayName eq 'oer-s91-nested'"))).Rows[0].id
 $Sid = [string](Read-S91 -One -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $Cfg.NoPermAppId)).Rows[0].id
 Write-OerLiveStep "oer-s91-grp is $Gid; oer-s91-nested is $Nid; the service principal oer-live-cc-noperm is $Sid"
+if (-not $Gid -or -not $Sid -or -not $Nid) { Write-OerLiveStep 'STOP: an id lookup returned nothing, so nothing below would measure anything.'; Disconnect-OerLive; return }
 $Untyped = Read-S91 -Uri "v1.0/groups/$Gid/members"
 $UntypedIds = @($Untyped.Rows | ForEach-Object { [string]$_.id })
 Write-OerLiveStep "READ v1.0 members (untyped): ok $($Untyped.Ok); count $($Untyped.Rows.Count)$(if (-not $Untyped.Ok) { "; $($Untyped.Error)" })"
@@ -289,7 +290,7 @@ function Read-S91 {
     param([string]$Uri, [switch]$One)
     try {
         $R = & (Get-Module Omnicit.EntraRBAC) { param($U, $O) if ($O) { Invoke-OERGraphRequest -Uri $U -ErrorAction Stop } else { Invoke-OERGraphRequest -Uri $U -All -ErrorAction Stop } } $Uri $One.IsPresent
-        $Rows = if ($One) { @($R) } else { @(@($R.value) | Where-Object { $null -ne $_ }) }
+        $Rows = @(if ($One) { $R } else { @($R.value) | Where-Object { $null -ne $_ } })
         [PSCustomObject]@{ Ok = $true; Rows = $Rows; Error = '' }
     } catch {
         $E = "$($PSItem.FullyQualifiedErrorId) -- $($PSItem.Exception.Message)"
@@ -300,6 +301,7 @@ function Read-S91 {
 $Gid = [string](Read-S91 -Uri ("v1.0/groups?`$filter={0}&`$select=id" -f [uri]::EscapeDataString("displayName eq 'oer-s91-grp'"))).Rows[0].id
 $Sid = [string](Read-S91 -One -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $Cfg.NoPermAppId)).Rows[0].id
 Write-OerLiveStep "oer-s91-grp is $Gid; the service principal oer-live-cc-noperm is $Sid"
+if (-not $Gid -or -not $Sid) { Write-OerLiveStep 'STOP: an id lookup returned nothing, so nothing below would measure anything.'; Disconnect-OerLive; return }
 $Untyped = Read-S91 -Uri "v1.0/groups/$Gid/owners"
 $UntypedIds = @($Untyped.Rows | ForEach-Object { [string]$_.id })
 Write-OerLiveStep "READ v1.0 owners (untyped): ok $($Untyped.Ok); count $($Untyped.Rows.Count)$(if (-not $Untyped.Ok) { "; $($Untyped.Error)" })"
@@ -339,7 +341,7 @@ function Read-S91 {
     param([string]$Uri, [switch]$One)
     try {
         $R = & (Get-Module Omnicit.EntraRBAC) { param($U, $O) if ($O) { Invoke-OERGraphRequest -Uri $U -ErrorAction Stop } else { Invoke-OERGraphRequest -Uri $U -All -ErrorAction Stop } } $Uri $One.IsPresent
-        $Rows = if ($One) { @($R) } else { @(@($R.value) | Where-Object { $null -ne $_ }) }
+        $Rows = @(if ($One) { $R } else { @($R.value) | Where-Object { $null -ne $_ } })
         [PSCustomObject]@{ Ok = $true; Rows = $Rows; Error = '' }
     } catch {
         $E = "$($PSItem.FullyQualifiedErrorId) -- $($PSItem.Exception.Message)"
@@ -350,6 +352,7 @@ function Read-S91 {
 $Gid = [string](Read-S91 -Uri ("v1.0/groups?`$filter={0}&`$select=id" -f [uri]::EscapeDataString("displayName eq 'oer-s91-grp'"))).Rows[0].id
 $Sid = [string](Read-S91 -One -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $Cfg.NoPermAppId)).Rows[0].id
 Write-OerLiveStep "oer-s91-grp is $Gid; the service principal oer-live-cc-noperm is $Sid"
+if (-not $Gid -or -not $Sid) { Write-OerLiveStep 'STOP: an id lookup returned nothing, so nothing below would measure anything.'; Disconnect-OerLive; return }
 foreach ($Rel in 'memberOf', 'ownedObjects') {
     $R = Read-S91 -Uri "v1.0/servicePrincipals/$Sid/$Rel"
     Write-OerLiveStep "READ v1.0 servicePrincipals/{id}/$($Rel): ok $($R.Ok); count $($R.Rows.Count); names oer-s91-grp: $(@($R.Rows | ForEach-Object { [string]$_.id }) -contains $Gid)$(if (-not $R.Ok) { "; $($R.Error)" })"
