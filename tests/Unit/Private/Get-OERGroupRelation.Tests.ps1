@@ -97,11 +97,107 @@ Describe 'Get-OERGroupRelation' {
         InModuleScope Omnicit.EntraRBAC {
             Mock Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
             Mock Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
-            $Err = $null
-            $R = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members -ErrorAction Stop -ErrorVariable Err)
+            # -ErrorAction Stop: an error record written by the call would throw here and fail the
+            # test, so reaching the next line is the proof that none was written. (An unfiltered
+            # -ErrorVariable count is not: newer Pester lets its own bookkeeping leak into it.)
+            $R = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members -ErrorAction Stop)
             $R.Count | Should -Be 0
-            @($Err).Count | Should -Be 0
             Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+        }
+    }
+
+    Context 'a failed read leaves the collection unread' {
+        # A collection is read whole or not at all (A5): a failure of either read propagates to the
+        # caller, and nothing was emitted before it. The failure is a thrown ErrorRecord, exactly how
+        # Invoke-OERGraphRequest raises.
+        It 'throws, and the collection never completes, when the typed members read fails after the untyped read succeeded' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest { @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+                Mock Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+                $Collected = 'unset'
+                $Caught = $null
+                try {
+                    $Collected = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members)
+                } catch {
+                    $Caught = $PSItem
+                }
+                # The catch was reached, by the typed read's own record.
+                $null -ne $Caught | Should -BeTrue
+                $Caught.Exception.Message | Should -Be 'Forbidden: denied'
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+                # The assignment never completed: the untyped member was not handed out on its own.
+                $Collected | Should -Be 'unset'
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+            }
+        }
+
+        It 'throws, and the collection never completes, when the typed owners read fails after the untyped read succeeded' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest { @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+                Mock Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+                $Collected = 'unset'
+                $Caught = $null
+                try {
+                    $Collected = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation owners)
+                } catch {
+                    $Caught = $PSItem
+                }
+                $null -ne $Caught | Should -BeTrue
+                $Caught.Exception.Message | Should -Be 'Forbidden: denied'
+                $Caught.FullyQualifiedErrorId | Should -BeLike 'Forbidden*'
+                $Collected | Should -Be 'unset'
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+                Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
+            }
+        }
+
+        It 'throws, and never sends the typed members read, when the untyped members read fails' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+                # Answered, so that a typed read that IS sent shows up as the -Times 0 failure below
+                # and not as a "no mock matched" error the catch would also swallow.
+                Mock Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+                $Collected = 'unset'
+                $Caught = $null
+                try {
+                    $Collected = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members)
+                } catch {
+                    $Caught = $PSItem
+                }
+                $null -ne $Caught | Should -BeTrue
+                $Caught.Exception.Message | Should -Be 'Forbidden: denied'
+                $Collected | Should -Be 'unset'
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+            }
+        }
+
+        It 'throws, and never sends the typed owners read, when the untyped owners read fails' {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+                Mock Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+                $Collected = 'unset'
+                $Caught = $null
+                try {
+                    $Collected = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation owners)
+                } catch {
+                    $Caught = $PSItem
+                }
+                $null -ne $Caught | Should -BeTrue
+                $Caught.Exception.Message | Should -Be 'Forbidden: denied'
+                $Collected | Should -Be 'unset'
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+            }
         }
     }
 }

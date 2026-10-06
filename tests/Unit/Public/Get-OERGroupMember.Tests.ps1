@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -255,5 +256,150 @@ Describe 'Get-OERGroupMember' {
                 $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' -and $All
             }
         }
+    }
+
+    Context 'a failed typed read leaves the collection unread' {
+        # The typed service principal read fails AFTER the untyped read succeeded and listed a
+        # member. A collection is read whole or not at all: nothing is emitted (no partial list a
+        # pipeline could act on) and the transport's own record is written as itself.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/members/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' }
+        }
+
+        It 'emits nothing and writes the transport''s own record when the typed members read fails' {
+            $Out = @(Get-OERGroupMember -Group 'role_sec_x' -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            # The catch was reached, by the typed read: it was sent, and the written record is the
+            # transport's own (the cmdlet-qualified id, as in the Graph-call failure test above).
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/members/microsoft.graph.servicePrincipal' -and $All
+            }
+            $Written = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERGroupMember' })
+            $Written.Count | Should -Be 1
+            $Written[0].Exception.Message | Should -Be 'Forbidden: denied'
+        }
+
+        It 'scrubs the typed members read failure before it is reported' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            $Out = @(Get-OERGroupMember -Group 'role_sec_x' -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERGroupMember' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -like '*Forbidden*'
+            }
+        }
+
+        It 'emits nothing and writes the transport''s own record when the typed owners read fails, with -Owners' {
+            $Out = @(Get-OERGroupMember -Group 'role_sec_x' -Owners -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+            $Written = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERGroupMember' })
+            $Written.Count | Should -Be 1
+            $Written[0].Exception.Message | Should -Be 'Forbidden: denied'
+        }
+
+        It 'emits nothing and writes the transport''s own record when the typed owners read fails, with -AccessType owner' {
+            $Out = @(Get-OERGroupMember -Group 'role_sec_x' -AccessType owner -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/g1/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERGroupMember' }).Count | Should -Be 1
+        }
+
+        It 'scrubs the typed owners read failure before it is reported' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            $Out = @(Get-OERGroupMember -Group 'role_sec_x' -Owners -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'Forbidden,Get-OERGroupMember' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -like '*Forbidden*'
+            }
+        }
+    }
+}
+
+Describe 'Get-OERGroupMember and Get-OERGroup with a failed typed read, in a script with no try' {
+    # Pester's It runs inside a try, and a try hides what a caller does outside one: a caller carries
+    # on past a nested advanced function's terminating error, and a plain uncaught throw ends the
+    # whole script. So the same two guards run here in a runspace whose script has NO try of its own
+    # (Invoke-OERWithConfirmAnswer), with every dependency of the module stubbed in ITS copy of the
+    # module scope. The script ends with a sentinel line, so one that died early cannot pass, and its
+    # stub of the transport throws a thrown ErrorRecord exactly as the real wrapper does.
+    BeforeAll {
+        $script:NewNoTryScenario = {
+            param([string]$TypedRead)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        [CmdletBinding()]
+        param([string]$Uri, [switch]$All)
+        $GroupUri = 'v1.0/groups/22222222-2222-2222-2222-222222222222'
+        if ($Uri -eq $GroupUri) {
+            return @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+        }
+        if ($Uri -eq "$GroupUri/members") {
+            return @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
+        }
+        if ($Uri -eq "$GroupUri/members/microsoft.graph.servicePrincipal") {
+            #TYPEDREAD#
+        }
+        throw "unexpected request: $Uri"
+    }
+}
+$M = @(Get-OERGroupMember -Group '22222222-2222-2222-2222-222222222222')
+"MEMBERS:$($M.Count)"
+$G = Get-OERGroup -Group '22222222-2222-2222-2222-222222222222' -IncludeMembers
+"HASMEMBERS:$($null -ne $G.PSObject.Properties['Members']);ID:$($G.Id)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Invoke-OERGraphRequest
+    "STUBS:$(@('Initialize-OERAuth', 'Remove-OERErrorRecord', 'Invoke-OERGraphRequest' | Where-Object { Get-Command -Name $PSItem -CommandType Function -ErrorAction Ignore }).Count)"
+}
+'END'
+'@).Replace('#TYPEDREAD#', $TypedRead))
+        }
+        $script:TypedReadFails = "throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', `$null)"
+        $script:TypedReadAnswers = "return @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }"
+    }
+
+    It 'lists nothing and omits Members, with both errors, when the typed members read fails' {
+        $Scenario = & $script:NewNoTryScenario -TypedRead $script:TypedReadFails
+        $Result = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        # One line per statement, in order, ending in the sentinel: a script that died early, or that
+        # emitted a partial list into the pipeline, reads differently.
+        ($Result.Output -join '|') | Should -Be 'MEMBERS:0|HASMEMBERS:False;ID:22222222-2222-2222-2222-222222222222|STUBS:0|END'
+        # Get-OERGroupMember writes the transport's own record; Get-OERGroup writes its own.
+        @($Result.Errors | Where-Object { $_ -eq 'Forbidden: denied' }).Count | Should -Be 1
+        @($Result.Errors | Where-Object { $_ -like 'Could not read members for group 22222222-2222-2222-2222-222222222222: Forbidden: denied*' }).Count | Should -Be 1
+        $Result.Errors.Count | Should -Be 2
+    }
+
+    It 'lists the service principal and keeps Members, with no error, when the typed members read succeeds' {
+        # The control: the same scenario with the typed read answered. Without it the zero above could
+        # come from a stub that never listed anything.
+        $Scenario = & $script:NewNoTryScenario -TypedRead $script:TypedReadAnswers
+        $Result = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Result.Output -join '|') | Should -Be 'MEMBERS:2|HASMEMBERS:True;ID:22222222-2222-2222-2222-222222222222|STUBS:0|END'
+        $Result.Errors.Count | Should -Be 0
     }
 }

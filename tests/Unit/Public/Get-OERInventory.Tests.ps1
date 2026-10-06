@@ -6568,5 +6568,65 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
                 $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
             }
         }
+
+        Context 'a failed typed read leaves the collection unread' {
+            # The typed read fails AFTER the untyped read succeeded. The group is exported with the
+            # collection stated as unread, never as the half the untyped read listed: a members key
+            # is an explicit null (which the apply engine reads as leave untouched), an owners key
+            # is omitted (which it never reconciles), and InventoryPartial names the collection.
+            # The mocks carry the same exact-URI filter as the BeforeEach's; defined later, they win.
+            It 'exports members as an explicit null and names groups/role_sec_team/members as unread when the typed members read fails' {
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+
+                $Err = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+                # Positive identity first: the group was exported, and the typed read was reached.
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 1
+                $Groups[0].displayName | Should -Be 'role_sec_team'
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+                }
+                # Present as a key, with the value null: not omitted, not an empty or half list.
+                $Groups[0].PSObject.Properties.Name -contains 'members' | Should -BeTrue
+                $null -eq $Groups[0].members | Should -BeTrue
+                # The owners were read whole and are exported.
+                (@($Groups[0].owners) -join ',') | Should -Be 'sp-1'
+
+                $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+                $Partial.Count | Should -Be 1
+                $Partial[0].Exception.Message | Should -BeLike '*Unread: groups/role_sec_team/members. A section*'
+            }
+
+            It 'omits owners and names groups/role_sec_team/owners as unread when the typed owners read fails' {
+                # A user owner the untyped read lists: were the half exported, owners would hold it.
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+
+                $Err = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 1
+                $Groups[0].displayName | Should -Be 'role_sec_team'
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+                }
+                $Groups[0].PSObject.Properties.Name -contains 'owners' | Should -BeFalse
+                # The members were read whole and are exported.
+                (@($Groups[0].members) -join ',') | Should -Be 'g-nested,sp-1'
+
+                $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+                $Partial.Count | Should -Be 1
+                $Partial[0].Exception.Message | Should -BeLike '*Unread: groups/role_sec_team/owners. A section*'
+            }
+        }
     }
 }

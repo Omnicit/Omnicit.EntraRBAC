@@ -5992,15 +5992,18 @@ Describe 'Sync-OERStructureGroup' {
             # Runs one item through the handler in module scope and hands back its rows, so the
             # assertions below run OUTSIDE InModuleScope against the -ModuleName mocks.
             function Invoke-SpSync {
-                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf)
-                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf } {
-                    param($Item, $PruneRun, $WhatIfRun)
+                param([PSCustomObject]$Item, [switch]$Prune, [switch]$WhatIf, [switch]$NoConfirm)
+                InModuleScope $script:moduleName -Parameters @{ Item = $Item; PruneRun = [bool]$Prune; WhatIfRun = [bool]$WhatIf; NoConfirmRun = [bool]$NoConfirm } {
+                    param($Item, $PruneRun, $WhatIfRun, $NoConfirmRun)
                     function Invoke-SyncGroupViaCaller {
                         [CmdletBinding(SupportsShouldProcess)]
                         param([PSCustomObject]$Item, [switch]$Prune)
                         Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -Prune:$Prune
                     }
-                    @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun `
+                    # -Confirm:$false only where asked: a real removal must never wait on a prompt.
+                    $Confirmation = @{}
+                    if ($NoConfirmRun) { $Confirmation.Confirm = $false }
+                    @(Invoke-SyncGroupViaCaller -Item $Item -Prune:$PruneRun -WhatIf:$WhatIfRun @Confirmation `
                             -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
                 }
             }
@@ -6081,6 +6084,54 @@ Describe 'Sync-OERStructureGroup' {
             $Extra.Count | Should -Be 1
             $Extra[0].Detail | Should -BeExactly "undeclared owner 'sp-1' (use -Prune to remove)"
             Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0
+        }
+
+        Context 'and the typed read then fails' {
+            # The typed read fails AFTER the untyped read succeeded. The handler reads the live group
+            # with -ErrorAction Stop, so a collection read half is a Failed row and no change at all:
+            # were the half taken for the whole, the declared member below would be added and the
+            # live one pruned. The mocks carry the same exact-URI filter as the BeforeEach's; defined
+            # later, they win.
+            It 'reports one Failed row and neither adds nor removes a member, even with -Prune, when the typed members read fails' {
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+
+                # u-new is not live (an add) and g-nested is live but undeclared (a prune): a handler
+                # that reconciled against the half read would call both mocks.
+                $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; members = @('u-new') }) -Prune -NoConfirm
+
+                # Positive identity first: the one row is the group's Failed row, from the failed read.
+                $Rows.Count | Should -Be 1
+                $Rows[0].Section | Should -BeExactly 'groups'
+                $Rows[0].Item | Should -BeExactly 'role_sec_x'
+                $Rows[0].Action | Should -BeExactly 'Failed'
+                $Rows[0].Detail | Should -BeLike "failed to read the current state of group 'role_sec_x': Could not read members for group 22222222-2222-2222-2222-222222222222: Forbidden: denied*"
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+                }
+                Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            }
+
+            It 'reports one Failed row and neither adds nor removes an owner, even with -Prune, when the typed owners read fails' {
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+
+                $Rows = Invoke-SpSync -Item ([PSCustomObject]@{ displayName = 'role_sec_x'; owners = @('u-new') }) -Prune -NoConfirm
+
+                $Rows.Count | Should -Be 1
+                $Rows[0].Section | Should -BeExactly 'groups'
+                $Rows[0].Item | Should -BeExactly 'role_sec_x'
+                $Rows[0].Action | Should -BeExactly 'Failed'
+                $Rows[0].Detail | Should -BeLike "failed to read the current state of group 'role_sec_x': Could not read owners for group 22222222-2222-2222-2222-222222222222: Forbidden: denied*"
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+                }
+                Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Exactly
+                Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+            }
         }
     }
 }

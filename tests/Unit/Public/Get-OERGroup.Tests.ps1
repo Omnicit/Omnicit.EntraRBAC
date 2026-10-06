@@ -16,8 +16,11 @@ Describe 'Get-OERGroup' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         # -IncludeMembers and -IncludeOwners also send the typed service principal read
         # (Get-OERGroupRelation). Answered empty here for every test written before that read
-        # existed; a test that needs a service principal mocks the typed read itself, and its mock,
-        # defined later, wins.
+        # existed. A test that needs a service principal, or a failing typed read, mocks the typed
+        # read itself WITH ITS OWN -ParameterFilter (an exact URI) and that mock overrides this
+        # answer. An UNFILTERED mock does not: Pester tries every filtered mock before any
+        # unfiltered one, whatever order they were defined in, so it would lose to this answer and
+        # the test would pass for the wrong reason.
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter {
             $Uri -like 'v1.0/groups/*/microsoft.graph.servicePrincipal'
         }
@@ -591,6 +594,97 @@ Describe 'Get-OERGroup' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
                 $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
             }
+        }
+    }
+
+    Context 'a failed typed read leaves the collection unread' {
+        # The typed service principal read fails AFTER the untyped read succeeded. A collection is
+        # read whole or not at all: the group is still emitted, the property is ABSENT (never a
+        # half-list that a later -Prune would act on), and the existing error is the only report.
+        # The typed mocks below carry an exact-URI -ParameterFilter, the only kind that overrides
+        # the empty answer the Describe's BeforeEach gives every typed read.
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true; isAssignableToRole = $false; groupTypes = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+        }
+
+        It 'emits the group without Members, and writes GroupMemberReadFailed once, when the typed members read fails' {
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeMembers -ErrorAction SilentlyContinue -ErrorVariable ReadErr
+            # Positive identity first: an absent-property read on a $null result would also pass.
+            $Group | Should -Not -BeNullOrEmpty
+            $Group.Id | Should -Be '22222222-2222-2222-2222-222222222222'
+            $Group.PSObject.Properties.Name -contains 'Members' | Should -BeFalse
+            # The catch was reached: the typed read was sent, and one record carries the existing id.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+            }
+            $Failed = @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Exception.Message | Should -BeLike '*Could not read members for group 22222222-2222-2222-2222-222222222222: Forbidden: denied*'
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupOwnerReadFailed*' }).Count | Should -Be 0
+        }
+
+        It 'scrubs the typed members read failure before it is reported' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeMembers -ErrorAction SilentlyContinue -ErrorVariable ReadErr
+            # The catch was reached (the record is written), so the scrub assertion is not vacuous.
+            $Group.Id | Should -Be '22222222-2222-2222-2222-222222222222'
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -like '*Forbidden*'
+            }
+        }
+
+        It 'emits the group without Owners, and writes GroupOwnerReadFailed once, when the typed owners read fails' {
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeOwners -ErrorAction SilentlyContinue -ErrorVariable ReadErr
+            $Group | Should -Not -BeNullOrEmpty
+            $Group.Id | Should -Be '22222222-2222-2222-2222-222222222222'
+            $Group.PSObject.Properties.Name -contains 'Owners' | Should -BeFalse
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+            $Failed = @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupOwnerReadFailed*' })
+            $Failed.Count | Should -Be 1
+            $Failed[0].Exception.Message | Should -BeLike '*Could not read owners for group 22222222-2222-2222-2222-222222222222: Forbidden: denied*'
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' }).Count | Should -Be 0
+        }
+
+        It 'scrubs the typed owners read failure before it is reported' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeOwners -ErrorAction SilentlyContinue -ErrorVariable ReadErr
+            $Group.Id | Should -Be '22222222-2222-2222-2222-222222222222'
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupOwnerReadFailed*' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -like '*Forbidden*'
+            }
+        }
+
+        It 'reads each collection on its own: a failed typed members read does not hide the owners' {
+            # The owners typed read is answered here, so the one failure is the members one.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+            $Group = Get-OERGroup -Id '22222222-2222-2222-2222-222222222222' -IncludeMembers -IncludeOwners -ErrorAction SilentlyContinue -ErrorVariable ReadErr
+            $Group.Id | Should -Be '22222222-2222-2222-2222-222222222222'
+            $Group.PSObject.Properties.Name -contains 'Members' | Should -BeFalse
+            $Group.PSObject.Properties.Name -contains 'Owners' | Should -BeTrue
+            @($Group.Owners).Count | Should -Be 2
+            @($Group.Owners)[1].PrincipalId | Should -Be 'sp-1'
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupMemberReadFailed*' }).Count | Should -Be 1
+            @($ReadErr | Where-Object { $_.FullyQualifiedErrorId -like 'GroupOwnerReadFailed*' }).Count | Should -Be 0
         }
     }
 }
