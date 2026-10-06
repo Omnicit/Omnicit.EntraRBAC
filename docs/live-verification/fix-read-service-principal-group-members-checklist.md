@@ -1090,7 +1090,7 @@ round 0 results: A9 changes no read, and 3.2 and 4.1 declare the service princip
 
 ### R1.0. The module loads from the build with the A9 guard, in the round's own worktree
 
-- [ ] **R1.0** The worktree's build carries the single reader and the A9 guard, and the main clone is still on `main`.
+- [x] **R1.0** The worktree's build carries the single reader and the A9 guard, and the main clone is still on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1115,11 +1115,21 @@ tracked changes; `carries the single reader: True; the A9 guard: True`, and a bu
 commit.
 **Failure looks like:** any `False` -- build the worktree first, never while the gate runs.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the round's own worktree, not the main clone; the main clone on main, never switched; the worktree on its local branch s9-steg1-r1 (pushed as fix/read-service-principal-group-members) at 0cbd6ec with 0 tracked changes; the build (1.1.3, 11:12 UTC) was made from 01487e8, the A9 commit, and 0cbd6ec changes only this checklist; it carries the single reader and the A9 guard.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] The module loads from a worktree that is not the main clone: True; main clone on: main
+[oer-s91] Worktree: branch s9-steg1-r1; HEAD 0cbd6ec docs: add round 1 of the service principal checklist for decision A9; tracked changes: 0
+[oer-s91] The worktree's build (1.1.3, built 2026-10-06 11:12 UTC) carries the single reader: True; the A9 guard: True
+```
 
 ### R1.S. The redaction map continues this file's numbering
 
-- [ ] **R1.S** Before anything is printed in round 1, the step's redaction map gives the service principal the placeholder it has in round 0 (`...04`) and numbers every new id from `...07` on.
+- [x] **R1.S** Before anything is printed in round 1, the step's redaction map gives the service principal the placeholder it has in round 0 (`...04`) and numbers every new id from `...07` on.
 
 Round 0's map was deleted after its write-up, so a new one would start again at `...01`: the service
 principal would get a second placeholder in this file, and new objects would get numbers round 0
@@ -1155,11 +1165,27 @@ first block that prints the service principal's id (R1.3) shows it as `...04`.
 **Failure looks like:** a refusal line -- read the map that exists before replacing it; the service
 principal printed as anything but `...04` in R1.3 -- stop and renumber before writing any result.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. No map existed before the block; the identity check passed; the service principal of the noperm app id is named oer-live-cc-noperm; the map holds 1 id, the service principal at number 4 (its round 0 placeholder), and new ids start at 7. R1.3 prints the service principal as ...04.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] A map existed before this block: False; the service principal is named oer-live-cc-noperm: True; the map holds 1 id(s), the service principal at number 4; the next new id gets number 7
+```
 
 ### R1.1. The prerequisite script's plan, round 1
 
-- [ ] **R1.1** `-WhatIf` plans only `oer-s91-` targets in the tenant.
+- [x] **R1.1** `-WhatIf` plans only `oer-s91-` targets in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1183,11 +1209,45 @@ with `oer-s91-`; nothing written; exit code `0`.
 **Failure looks like:** a tenant target without the prefix -- STOP; a refusal line or a sweep line
 `UNREAD` -- STOP.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; the noperm service principal is named oer-live-cc-noperm; the sweep read all six collections and found no oer-s91- object; no baseline yet (round 0's raw\s91\ was deleted), so it is planned before the first write (groups 97, as in round 0; the service principal a member of 0 groups and owner of 0 objects); 7 What-if targets: 2 local files and 5 in the tenant (the two groups and the three links), every tenant target with the prefix; the service principal is only linked into the prefixed group, never changed itself; nothing written; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s91\prereq-20261006-113230Z.log".
+[oer-s91] Mode: CREATE or complete. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] Found: oer-s91-grp exists: False; oer-s91-nested exists: False.
+[oer-s91] No baseline yet: it is written now, before the first write to the tenant (groups 97; oer-live-cc-noperm a member of 0 group(s), owner of 0 object(s)).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s91\baseline-s91.json".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s91-grp".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member)" on target "oer-s91-nested".
+What if: Performing the operation "Add the group as a member (Graph v1.0 POST groups/members/$ref)" on target "oer-s91-grp: member oer-s91-nested".
+What if: Performing the operation "Add the service principal as a member (Graph v1.0 POST groups/members/$ref; the service principal itself is not changed)" on target "oer-s91-grp: member oer-live-cc-noperm (service principal)".
+What if: Performing the operation "Add the service principal as an owner (Graph v1.0 POST groups/owners/$ref; the service principal itself is not changed)" on target "oer-s91-grp: owner oer-live-cc-noperm (service principal)".
+[oer-s91] Summary: oer-s91-grp absent; oer-s91-nested absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s91] WhatIf: nothing was created, removed or written.
+[oer-s91] Done.
+[oer-s91] What-if targets: 7; in the tenant: 5; every tenant target starts with oer-s91-: True; exit code: 0
+```
 
 ### R1.2. The prerequisite script for real, round 1
 
-- [ ] **R1.2** The test objects exist again: the two groups, the group and the service principal as members, the service principal as owner.
+- [x] **R1.2** The test objects exist again: the two groups, the group and the service principal as members, the service principal as owner.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1207,11 +1267,54 @@ code `0`.
 **Failure looks like:** a stop line, or an exit code other than 0: run R1.2 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The baseline written and read back before the first write (groups 97; oer-live-cc-noperm a member of 0 groups and owner of 0 objects); both groups created (201) and resolvable after 1 and 2 reads; the three links added (204; the service principal's member link after one 404 Request_ResourceNotFound, the new group's replication, retried after 5 s) and listed from the other side after 1 to 2 reads; both groups present; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\prereq-20261006-113247Z.log; OerLive 1.0.2.
+[oer-s91] Mode: CREATE or complete. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] Found: oer-s91-grp exists: False; oer-s91-nested exists: False.
+[oer-s91] No baseline yet: it is written now, before the first write to the tenant (groups 97; oer-live-cc-noperm a member of 0 group(s), owner of 0 object(s)).
+[oer-s91] Wrote the baseline raw\s91\baseline-s91.json and read it back.
+[oer-s91] Created group oer-s91-grp: 201.
+[oer-s91] oer-s91-grp resolves by its display name: converged after 1 read(s), 0.1 s.
+[oer-s91] Created group oer-s91-nested: 201.
+[oer-s91] oer-s91-nested resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-s91-nested resolves by its display name: converged after 2 read(s), 2.2 s.
+[oer-s91] Added oer-s91-nested as a member of oer-s91-grp: 204 after 1 attempt(s).
+[oer-s91] oer-s91-nested as a member of oer-s91-grp is listed: converged after 1 read(s), 0.1 s.
+[oer-s91] Adding oer-live-cc-noperm as a member of oer-s91-grp answered 404 Request_ResourceNotFound (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s91] Added oer-live-cc-noperm as a member of oer-s91-grp: 204 after 2 attempt(s).
+[oer-s91] oer-live-cc-noperm as a member of oer-s91-grp is listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-live-cc-noperm as a member of oer-s91-grp is listed: converged after 2 read(s), 2.2 s.
+[oer-s91] Added oer-live-cc-noperm as an owner of oer-s91-grp: 204 after 1 attempt(s).
+[oer-s91] oer-live-cc-noperm as an owner of oer-s91-grp is listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-live-cc-noperm as an owner of oer-s91-grp is listed: converged after 2 read(s), 2.2 s.
+[oer-s91] Summary: oer-s91-grp present; oer-s91-nested present; written to the tenant: True.
+[oer-s91] Done.
+[oer-s91] Exit code: 0
+```
 
 ### R1.3. The export of round 1, and the apply document for 4.2 to 4.4
 
-- [ ] **R1.3** The export of the `oer-s91-` groups writes the service principal's id in `oer-s91-grp`'s `members` and `owners`, reports nothing unread, and gives the apply document.
+- [x] **R1.3** The export of the `oer-s91-` groups writes the service principal's id in `oer-s91-grp`'s `members` and `owners`, reports nothing unread, and gives the apply document.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1245,11 +1348,33 @@ numbers from `...07` on.
 **Failure looks like:** the service principal printed as anything but `...04` -- stop before writing
 any result (R1.S); otherwise as 3.1.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The service principal prints as ...04, its round 0 placeholder (R1.S); the new oer-s91-nested is ...10. The export writes oer-s91-grp with members holding oer-s91-nested's and the service principal's ids and an owners key holding the service principal's id, once each; InventoryPartial records 0; no error. The apply document for 4.2 to 4.4 was cut from it (version 1.0, oer-s91-grp only).
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] Export oer-s91-grp: members [00000000-0000-0000-0000-000000000010; 00000000-0000-0000-0000-000000000004]; owners present True [00000000-0000-0000-0000-000000000004]
+[oer-s91] The service principal in members: 1 time(s); in owners: 1 time(s)
+[oer-s91] InventoryPartial records: 0
+[oer-s91] The apply document for 4.2 to 4.4 (oer-s91-grp only, cut from this export, version 1.0) is raw\s91\doc-s91-grp.json
+```
 
 ### 4.2. The same document without the service principal, -Prune -WhatIf: the prune is withheld
 
-- [ ] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` withholds its prune as a member and as an owner (A9): `Skipped` with the reason, no planned removal, no warning. No write. (Round 1; round 0 planned its removal as a member.)
+- [x] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` withholds its prune as a member and as an owner (A9): `Skipped` with the reason, no planned removal, no warning. No write. (Round 1; round 0 planned its removal as a member.)
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1301,14 +1426,14 @@ removal here, which is the outcome A9 decided against.
 **Failure looks like:** a `would remove` row or a prune warning naming the service principal -- the
 build does not carry A9; a `Removed` row -- `-WhatIf` did not hold (the fence would refuse it).
 
-Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
 
 ```text
-Verdict: PASS. With the service principal taken out of members and owners, the -Prune -WhatIf plan: Unchanged for the group's properties and for oer-s91-nested; Skipped 'would remove undeclared member' naming the service principal, with the prune warning; for the owner, Skipped 'did not remove owner ...: it is the last remaining owner' (the engine's own guard). No Removed, no Failed; fence 8 requests, 0 not a GET, refused 0. The engine sees the service principal now; before the fix it could not.
+Verdict: PASS (round 1, A9). With the service principal taken out of members and owners, the -Prune -WhatIf plan: Unchanged for the group's properties and for oer-s91-nested; for the service principal, Skipped 'prune withheld: undeclared member ... is a service principal' and Skipped 'prune withheld: undeclared owner ... is a service principal' -- no 'would remove', and not the last-owner guard either; no warning; no What if: line; no Removed, no Failed; fence 8 requests, 0 not a GET, refused 0. Round 0 planned the member's removal here.
 
 [OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
 [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
-[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
@@ -1318,20 +1443,18 @@ Verdict: PASS. With the service principal taken out of members and owners, the -
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
 [oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
-[oer-s91] The document without 00000000-0000-0000-0000-000000000004: members [00000000-0000-0000-0000-000000000006]; owners []
-What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s91-grp".
-[oer-s91] Plan: rows 4 [Skipped 2, Unchanged 2]; warnings 1; errors 0
+[oer-s91] The document without 00000000-0000-0000-0000-000000000004: members [00000000-0000-0000-0000-000000000010]; owners []
+[oer-s91] Plan: rows 4 [Skipped 2, Unchanged 2]; warnings 0; errors 0
 [oer-s91]   Unchanged oer-s91-grp: group properties match
-[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
-[oer-s91]   Skipped oer-s91-grp: would remove undeclared member '00000000-0000-0000-0000-000000000004'
-[oer-s91]   Skipped oer-s91-grp: did not remove owner '00000000-0000-0000-0000-000000000004': it is the last remaining owner of group 'oer-s91-grp', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph's documented restriction names a USER owner specifically, so if this is a service principal it may in fact be removable; this guard is deliberately conservative pending live verification.
-[oer-s91]   Warning: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s91-grp'.
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000010' already present
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared member '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared owner '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
 [oer-s91] Fence: requests 8, not a GET 0, refused 0
 ```
 
 ### 4.3. The same document, -Prune for real, twice: the service principal stays
 
-- [ ] **4.3** With the service principal still taken out of `members` and `owners`, `Invoke-OERStructure -Prune -Confirm:$false` for real removes nothing and reports the service principal `Skipped` as member and as owner, two runs in a row (G8); the read-back still lists it as a member and an owner.
+- [x] **4.3** With the service principal still taken out of `members` and `owners`, `Invoke-OERStructure -Prune -Confirm:$false` for real removes nothing and reports the service principal `Skipped` as member and as owner, two runs in a row (G8); the read-back still lists it as a member and an owner.
 
 The read-only fence stays in front of the module's Graph transport: under A9 a correct run attempts
 no write, and a write it did attempt -- a removal of the service principal -- is refused and shows
@@ -1390,11 +1513,41 @@ time(s)`.
 **Failure looks like:** a `Removed` row, a `Failed` row or `refused` above 0 -- the guard did not hold,
 and the fence kept the service principal; STOP and read it.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, two real runs with -Prune (no -WhatIf, -Confirm:false), behind the read-only fence (G8). Each run: 4 rows -- Unchanged for the group's properties and for oer-s91-nested, Skipped 'prune withheld' for the service principal as a member and as an owner; Removed 0, no warning, no error; fence 15 requests, 0 not a GET, refused 0 -- no write was attempted. Read-back: members 2, the service principal listed once; owners 1, the service principal.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The document (4.2's, without 00000000-0000-0000-0000-000000000004): members [00000000-0000-0000-0000-000000000010]; owners []
+[oer-s91] Run 1 (real, -Prune): rows 4 [Skipped 2, Unchanged 2]; Removed 0; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000010' already present
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared member '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared owner '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91] Run 2 (real, -Prune): rows 4 [Skipped 2, Unchanged 2]; Removed 0; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000010' already present
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared member '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared owner '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91] Fence: requests 15, not a GET 0, refused 0
+[oer-s91] Read-back: members 2, the service principal listed 1 time(s); owners 1, the service principal listed 1 time(s)
+```
 
 ### 4.4. A document that also leaves out oer-s91-nested, -Prune for real, twice: only the group member goes
 
-- [ ] **4.4** With `oer-s91-nested` taken out of `members` too, the real `-Prune` removes `oer-s91-nested` as a member and leaves the service principal as member and owner; a second run removes nothing (G8).
+- [x] **4.4** With `oer-s91-nested` taken out of `members` too, the real `-Prune` removes `oer-s91-nested` as a member and leaves the service principal as member and owner; a second run removes nothing (G8).
 
 This shows that the guard is about service principals only: in the same run, a member of another
 type is pruned as before. A fence stays in front of the transport and lets exactly one write
@@ -1479,7 +1632,43 @@ rows -- `Unchanged` for the properties and the two `Skipped` rows for the servic
 not hold, and the fence kept it: STOP and read it; `oer-s91-nested` not removed -- the prune of other
 types is broken; a `Failed` row in run 2 -- the removal had not replicated.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, two real runs with -Prune (G8). The document holds no member and no owner. Run 1: Unchanged for the properties; Removed 'removed undeclared member' for oer-s91-nested, with its prune warning and no other warning; Skipped 'prune withheld' for the service principal as a member and as an owner; Removed 1, no error. The members read stopped listing oer-s91-nested after 4 reads (14.9 s, replication). Run 2: 3 rows -- Unchanged and the two Skipped rows -- Removed 0, no warning, no error. The fence let exactly one write through, the DELETE of oer-s91-nested's membership of oer-s91-grp, and refused 0. Read-back: members 1 and owners 1, both the service principal (servicePrincipal). The guard is about service principals only: in the same run a group member is pruned as before.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000009; oer-s91-nested is 00000000-0000-0000-0000-000000000010; the service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] The document without 00000000-0000-0000-0000-000000000004 and without 00000000-0000-0000-0000-000000000010: members []; owners []
+[oer-s91] Run 1 (real, -Prune): rows 4 [Removed 1, Skipped 2, Unchanged 1]; Removed 1; warnings 1; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Removed oer-s91-grp: removed undeclared member '00000000-0000-0000-0000-000000000010'
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared member '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared owner '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Warning: Sync-OERStructureGroup: removing undeclared member '00000000-0000-0000-0000-000000000010' from group 'oer-s91-grp'.
+[oer-s91] oer-s91-nested is no longer listed as a member of oer-s91-grp: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-s91-nested is no longer listed as a member of oer-s91-grp: not yet (read 2, 2.5 s, likely replication delay) -- reading again in 4 s.
+[oer-s91] oer-s91-nested is no longer listed as a member of oer-s91-grp: not yet (read 3, 6.7 s, likely replication delay) -- reading again in 8 s.
+[oer-s91] oer-s91-nested is no longer listed as a member of oer-s91-grp: converged after 4 read(s), 14.9 s.
+[oer-s91] Run 2 (real, -Prune): rows 3 [Skipped 2, Unchanged 1]; Removed 0; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared member '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91]   Skipped oer-s91-grp: prune withheld: undeclared owner '00000000-0000-0000-0000-000000000004' is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.
+[oer-s91] Fence: requests 27, writes let through 1, refused 0
+[oer-s91]   Let through: DELETE v1.0/groups/00000000-0000-0000-0000-000000000009/members/00000000-0000-0000-0000-000000000010/$ref
+[oer-s91] Read-back: members 1 [servicePrincipal 00000000-0000-0000-0000-000000000004]; owners 1 [servicePrincipal 00000000-0000-0000-0000-000000000004]
+```
 
 ### 5. The 403 checks, as oer-live-cc-noperm
 
@@ -1838,7 +2027,7 @@ Verdict: PASS. Three minutes after the teardown: no oer-s91- object of any kind 
 
 ### R1.T1. The teardown's plan, round 1
 
-- [ ] **R1.T1** `-Teardown -WhatIf` plans only `oer-s91-` targets: the two groups, and the links still in `oer-s91-grp`.
+- [x] **R1.T1** `-Teardown -WhatIf` plans only `oer-s91-` targets: the two groups, and the links still in `oer-s91-grp`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1861,11 +2050,46 @@ member and owner links); step 5 plans the two groups; every tenant target starts
 nothing removed; exit code `0`.
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The sweep finds the two groups and nothing else; 5 What-if targets, 1 local (the transcript) and 4 in the tenant, every one starting with oer-s91-: step 2 plans an adminRemove for the two links still in oer-s91-grp (the service principal's owner and member links, read as Direct PIM for Groups assignments; T.1 saw three, and 4.4 removed oer-s91-nested's), step 5 the two groups. Nothing removed; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s91\teardown-20261006-113455Z.log".
+[oer-s91] Mode: REMOVE. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] Teardown of 'oer-s91-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s91] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s91] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s91-grp: PIM for Groups owner assignment of a principal".
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s91-grp: PIM for Groups member assignment of a principal".
+[oer-s91] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s91] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s91] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s91-grp".
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s91-nested".
+[oer-s91] Teardown 6/6: the prefixed users.
+[oer-s91] Teardown of 'oer-s91-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s91] WhatIf: nothing was created, removed or written.
+[oer-s91] Done.
+[oer-s91] What-if targets: 5; in the tenant: 4; every tenant target starts with oer-s91-: True; exit code: 0
+```
 
 ### R1.T2. The teardown, round 1
 
-- [ ] **R1.T2** Both groups deleted; the service principal goes back to its baseline (R1.T3 reads it).
+- [x] **R1.T2** Both groups deleted; the service principal goes back to its baseline (R1.T3 reads it).
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1885,11 +2109,52 @@ deleted groups (replication), and R1.T3 reads again; exit code `0`.
 **Failure looks like:** a residue line or exit code `3` -- the row stays in `raw\residue.json` and the
 next prereq run retries it; a `False` on the service principal's lines after R1.T3 -- STOP (G11.5).
 
-Result:
+Result: 2026-10-06 11:36 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS after R1.T3's read-back. The teardown removed 4, residue 0, exit code 0: in step 2 the two links by adminRemove (201 each), in step 5 both groups (204 each). The sweep and the comparison seconds later still saw the deleted groups (groups 99 against 97; the service principal's memberOf 1 and ownedObjects 1): the replication lag after a group's 204, as in T.2; R1.T3 reads again minutes later.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\teardown-20261006-113521Z.log; OerLive 1.0.2.
+[oer-s91] Mode: REMOVE. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] Teardown of 'oer-s91-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s91] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s91] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s91] Removed: oer-s91-grp: PIM for Groups owner assignment of a principal (201).
+[oer-s91] Removed: oer-s91-grp: PIM for Groups member assignment of a principal (201).
+[oer-s91] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s91] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s91] Teardown 5/6: the prefixed groups.
+[oer-s91] Deleted: group oer-s91-grp (204).
+[oer-s91] Deleted: group oer-s91-nested (204).
+[oer-s91] Teardown 6/6: the prefixed users.
+[oer-s91] Teardown of 'oer-s91-': removed 4, residue 0, unreadable 0.
+[oer-s91] Sweep: group 'oer-s91-grp' (00000000-0000-0000-0000-000000000009) carries the prefix.
+[oer-s91] Sweep: group 'oer-s91-nested' (00000000-0000-0000-0000-000000000010) carries the prefix.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Counts: groups now 99, at the baseline 97; equal: False
+[oer-s91] oer-live-cc-noperm memberOf: now 1, at the baseline 0; the same objects: False
+[oer-s91] oer-live-cc-noperm ownedObjects: now 1, at the baseline 0; the same objects: False
+[oer-s91] Done.
+[oer-s91] Exit code: 0
+```
 
 ### R1.T3. Read back, and clean up, round 1
 
-- [ ] **R1.T3** Minutes later: no `oer-s91-` object left, round 1's baseline holds, no residue row, the main clone still on `main`.
+- [x] **R1.T3** Minutes later: no `oer-s91-` object left, round 1's baseline holds, no residue row, the main clone still on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1912,4 +2177,31 @@ step's `raw\s91\` folder is deleted once the results are copied in, and the reda
 `Clear-OerLiveRedactionMap`.
 **Failure looks like:** a prefixed object still listed after minutes, or a `False` -- STOP (G11.5).
 
-Result:
+Result: 2026-10-06 11:39 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. About three and a half minutes after the teardown: no oer-s91- object of any kind left; groups 97, equal to round 1's baseline (and to round 0's); oer-live-cc-noperm a member of 0 groups and owner of 0 objects, the same objects as at the baseline (the service principal itself was never changed); unread collections 0; residue rows 0; exit code 0; the main clone on main, never switched.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\readback-20261006-113855Z.log; OerLive 1.0.2.
+[oer-s91] Mode: READ BACK. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1-r1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s91] oer-live-cc-noperm memberOf: now 0, at the baseline 0; the same objects: True
+[oer-s91] oer-live-cc-noperm ownedObjects: now 0, at the baseline 0; the same objects: True
+[oer-s91] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s91] Done.
+[oer-s91] Exit code: 0; the main clone is on: main
+```
