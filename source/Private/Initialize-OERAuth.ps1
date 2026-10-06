@@ -45,9 +45,10 @@ function Initialize-OERAuth {
     the GUID as given, or the one a domain resolved to -- a terminating TenantMismatch error is
     raised before the token is wired into Connect-MgGraph or cached for Azure Resource Manager, so a
     token minted for another tenant never becomes a usable session, whether the tenant was named by
-    GUID or by domain. 'organizations' names no tenant and is not compared with one; its Azure
-    Resource Manager token is compared with the session's Microsoft Graph token instead, and refused
-    with TenantMismatch when the two report different tenant IDs.
+    GUID or by domain. 'organizations' names no tenant and is not compared with one; an Azure
+    Resource Manager token the sign-in acquires under it is compared with the session's Microsoft
+    Graph token instead, and refused with TenantMismatch when the two report different tenant IDs,
+    while one carried over a Microsoft Graph-only renewal is not compared again.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the

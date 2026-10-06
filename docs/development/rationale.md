@@ -2918,8 +2918,9 @@ today, and it stays against a future change that stops that helper throwing. Gat
 **The finding (BL-89).** A sign-in that fails or is refused usually leaves the module's session as it
 was: the previous tenant's, or none. The exception is a refusal at the Azure Resource Manager step --
 `ArmTokenAcquisitionFailed`, or `TenantMismatch` on the ARM token -- which comes after the Microsoft
-Graph half has already connected and rebuilt the state for the tenant the sign-in named, so the
-session is then that tenant's, without an ARM token. The latch covers the command whose sign-in it
+Graph half has already connected and rebuilt the state for the tenant the sign-in named (or, when it
+named none, the tenant the Graph token came from), so the session is then that tenant's, without an
+ARM token from this sign-in. The latch covers the command whose sign-in it
 was, for as long as that command runs, and a command that finishes is on no call stack, so the next
 statement in a script is a new command the latch knows nothing about. Outside any `try` the script
 carries on to it, and when that command names no tenant it inherits the session the refused sign-in
