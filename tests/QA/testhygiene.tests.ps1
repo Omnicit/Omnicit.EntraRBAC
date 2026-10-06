@@ -4,16 +4,17 @@ BeforeAll {
     # =====================================================================================
     # THE TRANSPORT TRIPWIRE, HELD BY PRESENCE.
     #
-    # tests/Unit/TestHelpers/OERTransportTripwire.ps1 replaces the five commands through which
+    # tests/Unit/TestHelpers/OERTransportTripwire.ps1 replaces the six commands through which
     # module code reaches a tenant or the network (Get-AzToken, Connect-MgGraph, Disconnect-MgGraph,
-    # Invoke-MgGraphRequest, Invoke-WebRequest) with global functions that record the call and
-    # throw. It only works in a file that installs it: a unit test file that forgets would run with
-    # nothing between an unmocked module call and the real transport, and stay green. This gate
-    # reads every unit test file statically -- it imports nothing and runs no module code -- and
-    # requires, in each, a root BeforeAll that calls Install-OERTransportTripwire AFTER the module
-    # import, and a root AfterAll whose try calls Assert-OERTransportTripwire and whose finally calls
-    # Uninstall-OERTransportTripwire -- a try with no catch, since a catch would swallow the
-    # assert's throw and leave the file green. Why: docs/development/rationale.md#bearer-scrub-tests
+    # Invoke-MgGraphRequest, Invoke-WebRequest, Invoke-RestMethod) with global functions that record
+    # the call and throw. It only works in a file that installs it: a unit test file that forgets
+    # would run with nothing between an unmocked module call and the real transport, and stay
+    # green. This gate reads every unit test file statically -- it imports nothing and runs no
+    # module code -- and requires, in each, a root BeforeAll that calls Install-OERTransportTripwire
+    # AFTER the module import, and a root AfterAll whose try calls Assert-OERTransportTripwire and
+    # whose finally calls Uninstall-OERTransportTripwire -- a try with no catch, since a catch would
+    # swallow the assert's throw and leave the file green.
+    # Why: docs/development/rationale.md#bearer-scrub-tests
     #
     # The QA gate files are outside it on purpose: they call help, the analyzer and pure maps only.
     # =====================================================================================

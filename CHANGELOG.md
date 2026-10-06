@@ -22,6 +22,13 @@ block they begin only when it runs: name `-TenantId` there. When a command's sig
 cmdlets it calls are now refused at their own sign-in too (`SignInRefused`), before any token
 request or prompt.
 
+A tenant named by domain is now looked up at the cloud's Microsoft Entra ID authority before any
+token is requested, and each token is checked against it as for a tenant ID: one from another tenant
+is refused with `TenantMismatch`, and a domain that names no tenant, or `common`, with the new
+`TenantResolutionFailed`. The warning after such a sign-in is gone. After a sign-in fails or is
+refused, a command that names no tenant sends nothing (`SignInRefused`) until a sign-in naming its
+tenant, `Connect-OER` or `Disconnect-OER` succeeds.
+
 ## [1.1.2] - 2026-10-06
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope, ignoring
