@@ -330,10 +330,22 @@ Result:
 - [ ] **1.2** The same `Invoke-OERStructure -Path <doc> -Confirm:$false` again: every row `Unchanged`, no write.
 
 ```powershell
+# Graph's replicas can answer a read by id with the old description for a while after the PATCH:
+# the first run of this check, started seconds after 1.1, read it and reported Updated again, while
+# 1.3 a few seconds later found every row Unchanged. Wait until three reads in a row, 5 s apart,
+# return the document's description, then run the same document again.
+$Steady = 0; $Waited = 0
+while ($Steady -lt 3 -and $Waited -lt 120) {
+    Start-Sleep -Seconds 5; $Waited += 5
+    $Now = [string](Invoke-OerLiveGraph -Uri "v1.0/groups/$($GroupId)?`$select=description").Body['description']
+    if ($Now -ceq 'Omnicit.EntraRBAC live verification (oer-s92-): applied') { $Steady++ } else { $Steady = 0 }
+}
+Write-OerLiveStep "1.2: three reads in a row return the document's description: $($Steady -ge 3) (after $Waited s)"
 $null = Invoke-S92 -Label '1.2 the same document again, without -TenantId' -Call { Invoke-OERStructure -Path $Doc -Confirm:$false }
 ```
 
-**Expect:** `errors: none`; every row `Unchanged`; `writes: 0`; `ARM requests: 0`.
+**Expect:** `three reads in a row return the document's description: True`; `errors: none`; every row
+`Unchanged`; `writes: 0`; `ARM requests: 0`.
 **Failure looks like:** an `Updated` or a member row that adds again -- the first run did not converge
 (wait and run again before judging); `SignInSuperseded` -- a false refusal.
 
