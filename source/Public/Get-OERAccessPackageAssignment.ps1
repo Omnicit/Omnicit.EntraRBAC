@@ -83,6 +83,7 @@ function Get-OERAccessPackageAssignment {
         # tab-completion list without changing a single byte sent over the wire.
         [ValidateSet('delivering', 'partiallyDelivered', 'delivered', 'expired', 'deliveryFailed')]
         [string]$State,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

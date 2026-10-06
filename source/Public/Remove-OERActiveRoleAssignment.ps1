@@ -85,6 +85,7 @@ function Remove-OERActiveRoleAssignment {
         [string]$ResourceName,
 
         [string]$Justification,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

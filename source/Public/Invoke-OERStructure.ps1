@@ -234,6 +234,7 @@ function Invoke-OERStructure {
         [switch]$Prune,
         [ValidateSet('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies')]
         [string[]]$Include = @('Groups', 'AdministrativeUnits', 'Catalogs', 'AccessPackages', 'AccessReviews', 'DirectoryRoleManagementPolicies', 'DirectoryRoleAssignments', 'RoleAssignments', 'RoleManagementPolicies'),
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
         [switch]$IncludeARM
     )

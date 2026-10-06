@@ -49,6 +49,7 @@ function Get-OERSubscription {
         [Alias('ManagementGroupName')]
         [string]$ManagementGroup,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

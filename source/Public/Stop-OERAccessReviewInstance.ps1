@@ -42,6 +42,7 @@ function Stop-OERAccessReviewInstance {
         [Alias('AccessReviewInstanceId', 'InstanceId')]
         [string]$Instance,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

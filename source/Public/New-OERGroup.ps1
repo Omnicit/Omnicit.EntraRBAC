@@ -108,6 +108,7 @@ function New-OERGroup {
         [string]$Description,
         [string]$MailNickname,
         [string]$AdministrativeUnit,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

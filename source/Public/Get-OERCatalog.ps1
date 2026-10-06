@@ -52,6 +52,7 @@ function Get-OERCatalog {
         [string]$Filter,
 
         [switch]$IncludeResources,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

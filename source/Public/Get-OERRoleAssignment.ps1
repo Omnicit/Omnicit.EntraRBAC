@@ -111,6 +111,7 @@ function Get-OERRoleAssignment {
         [string]$ServicePrincipal,
         [switch]$AtScope,
         [switch]$ResolveNames,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

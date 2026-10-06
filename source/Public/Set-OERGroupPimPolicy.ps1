@@ -259,6 +259,7 @@ function Set-OERGroupPimPolicy {
 
         [switch]$AllowPermanentActive,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

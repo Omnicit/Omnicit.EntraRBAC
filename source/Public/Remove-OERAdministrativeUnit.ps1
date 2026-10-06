@@ -35,6 +35,7 @@ function Remove-OERAdministrativeUnit {
         [Alias('AdministrativeUnitId', 'Id', 'DisplayName')]
         [string]$AdministrativeUnit,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

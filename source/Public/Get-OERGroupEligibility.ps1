@@ -40,6 +40,7 @@ function Get-OERGroupEligibility {
         [Alias('GroupId', 'Id', 'DisplayName')]
         [string]$Group,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

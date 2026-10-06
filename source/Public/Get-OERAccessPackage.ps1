@@ -93,6 +93,7 @@ function Get-OERAccessPackage {
 
         [switch]$IncludeResourceRoles,
         [switch]$IncludePolicies,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -59,6 +59,7 @@ function New-OERCatalog {
 
         [string]$Description,
         [switch]$ExternallyVisible,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

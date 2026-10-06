@@ -71,17 +71,17 @@ function Connect-OER {
     request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
     tenant with one identity, so run such commands as separate statements. And after a sign-in that
     failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
-    as an unknown or empty -TenantAlias -- the module's session may still belong to the tenant before
-    it, so a later OER command that names no tenant sends nothing: its sign-in is refused with a
-    SignInRefused error that says so. A command that names its tenant with -TenantId, a successful
-    Connect-OER, or Disconnect-OER makes the module send again.
+    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may still belong
+    to the tenant before it, so a later OER command that names no tenant sends nothing: its sign-in is
+    refused with a SignInRefused error that says so. A command that names its tenant with -TenantId, a
+    successful Connect-OER, or Disconnect-OER makes the module send again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
-    -TenantAlias. An empty -TenantId names no tenant: Connect-OER then signs in to the current
-    session's tenant, or to 'organizations' when there is no session, and, when that succeeds,
-    makes the module send again after a refused sign-in, so a script that takes the tenant from data
-    must check the value before it passes it.
+    -TenantAlias. An empty, whitespace or $null -TenantId -- typed, or read from data such as an empty
+    CSV cell -- is rejected with an InvalidTenantId error rather than read as no tenant, and leaves the
+    session uncertain like any other refused sign-in. Omit -TenantId and -TenantAlias altogether to
+    sign in to the current session's tenant.
 
     .PARAMETER TenantAlias
     The alias of a stored Tenant Profile from which the tenant id is resolved. Combines with any
@@ -269,10 +269,31 @@ function Connect-OER {
     )
     process {
         # SEC (A10, BL-89): mark the session uncertain first thing. Connect-OER's own refusals before the
-        # sign-in -- AmbiguousTenant, InvalidTenantAlias, TenantAliasNotFound -- leave the session an
-        # earlier sign-in left in place, and outside any try the script carries on, so they leave the
-        # session uncertain too; a successful sign-in clears it (Initialize-OERAuth).
+        # sign-in -- InvalidTenantId, AmbiguousTenant, InvalidTenantAlias, TenantAliasNotFound -- leave the
+        # session an earlier sign-in left in place, and outside any try the script carries on, so they leave
+        # the session uncertain too; a successful sign-in clears it (Initialize-OERAuth).
         $null = Set-OERSessionUncertain -Value $true
+
+        # SEC (A12, BL-94): BOUND, not truthy, as for -TenantAlias below. An empty, whitespace or $null
+        # -TenantId -- typed, or read from a CSV cell -- used to name no tenant: Connect-OER signed in to the
+        # current session's tenant and, as Connect-OER's sign-in, cleared the session-uncertain marker, so in
+        # a loop over tenants the next command that named no tenant applied its row's document in the
+        # previous row's tenant. Refused here, after the marker is set, and not with
+        # [ValidateNotNullOrEmpty()] as on every other public cmdlet: a parameter binding error never reaches
+        # this block, so it would leave the marker as the previous sign-in left it. Connect-OER with neither
+        # -TenantId nor -TenantAlias bound still names no tenant, as before.
+        if ($PSBoundParameters.ContainsKey('TenantId') -and [string]::IsNullOrWhiteSpace($TenantId)) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "The tenant ID is empty. Name the tenant to sign in to with its tenant ID (a GUID) or a " +
+                    "verified domain, or use -TenantAlias: an empty -TenantId is refused rather than read as no " +
+                    "tenant, which would sign in to the current session's tenant.")) `
+                -ErrorId 'InvalidTenantId' `
+                -Category InvalidArgument `
+                -TargetObject $TenantId `
+                -Cmdlet $PSCmdlet
+            return
+        }
 
         if ($TenantId -and $TenantAlias) {
             Write-CmdletError `
@@ -292,8 +313,7 @@ function Connect-OER {
         # so Connect-OER named no tenant: it signed in to the current session's tenant and, as Connect-OER's
         # sign-in, cleared the session-uncertain marker, and in a loop over tenant profiles the next command
         # that named no tenant applied its row's document in the previous row's tenant. A bound alias always
-        # reaches the check below, which refuses a blank one. An explicitly empty -TenantId still names no
-        # tenant: that is documented, not refused here (see .PARAMETER TenantId).
+        # reaches the check below, which refuses a blank one, as a blank -TenantId is refused above (A12).
         if ($PSBoundParameters.ContainsKey('TenantAlias')) {
             if (-not (Test-OERTenantAlias -Value $TenantAlias)) {
                 [string]$AliasProblem = if ([string]::IsNullOrWhiteSpace($TenantAlias)) {

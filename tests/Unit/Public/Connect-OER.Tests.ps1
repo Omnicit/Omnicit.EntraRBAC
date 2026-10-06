@@ -204,6 +204,65 @@ Describe 'Connect-OER' {
             Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
             InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
         }
+
+        # A12 (BL-94): a -TenantId that is BOUND but empty, whitespace or $null -- typed, or read from a
+        # CSV cell or a profile list in a loop -- used to name no tenant: Connect-OER signed in to the
+        # current session's tenant and, as Connect-OER's sign-in, cleared the marker, so the loop's next
+        # command that named no tenant applied its row's document in the previous row's tenant. Bound,
+        # not truthy, decides; the refusal stands in the process block, after the marker is set, since a
+        # parameter binding error would skip the function and leave the marker as it was.
+        It 'refuses a bound <Name> -TenantId with InvalidTenantId before any profile read or sign-in, and leaves the session uncertain' -ForEach @(
+            @{ Name = 'empty'; Parameters = @{ TenantId = '' } }
+            @{ Name = 'whitespace'; Parameters = @{ TenantId = " `t " } }
+            @{ Name = 'null'; Parameters = @{ TenantId = $null } }
+            @{ Name = 'empty, with a -TenantAlias beside it,'; Parameters = @{ TenantId = ''; TenantAlias = 'corp' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-a12-not-a-file.pfx' -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the tenant ID check was reached and refused the value, not some other check.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantId,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Err[0].Exception.Message | Should -Match 'tenant ID is empty'
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'refuses an empty -TenantId with InvalidTenantId on the <Set> parameter set too' -ForEach @(
+            @{ Set = 'Interactive'; Parameters = @{ Interactive = $true } }
+            @{ Set = 'DeviceCode'; Parameters = @{ DeviceCode = $true } }
+            @{ Set = 'ManagedIdentity'; Parameters = @{ ManagedIdentity = $true } }
+            @{ Set = 'ClientSecret'; Parameters = @{ ClientId = 'cid'; ClientSecret = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-a12' -AsPlainText -Force) } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            $Err = $null
+
+            Connect-OER -TenantId '' @Parameters -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantId,Connect-OER' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'still signs in to the current session''s tenant when neither -TenantId nor -TenantAlias is bound' {
+            # The unchanged half of A12: only a BOUND blank -TenantId is refused. A Connect-OER that names
+            # no tenant at all passes an empty tenant on, which Initialize-OERAuth reads as the current
+            # session's tenant, or 'organizations' with no session.
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            $Err = $null
+
+            Connect-OER -Interactive -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+                $TenantId -eq '' -and $ReclaimGraphSession
+            }
+        }
     }
 
     It 'binds -TenantAlias from the pipeline by property name (Get-OERConfiguration | Connect-OER)' {

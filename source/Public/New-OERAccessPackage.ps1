@@ -75,6 +75,7 @@ function New-OERAccessPackage {
 
         [string]$Description,
         [switch]$Hidden,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

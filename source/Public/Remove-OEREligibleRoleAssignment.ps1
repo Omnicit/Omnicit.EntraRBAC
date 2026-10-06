@@ -86,6 +86,7 @@ function Remove-OEREligibleRoleAssignment {
         [string]$ResourceName,
 
         [string]$Justification,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

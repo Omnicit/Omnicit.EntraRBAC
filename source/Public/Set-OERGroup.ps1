@@ -78,6 +78,7 @@ function Set-OERGroup {
         [ValidateSet('On', 'Paused')]
         [string]$MembershipRuleProcessingState,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

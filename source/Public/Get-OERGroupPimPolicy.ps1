@@ -55,6 +55,7 @@ function Get-OERGroupPimPolicy {
         [ValidateSet('member', 'owner')]
         [string]$AccessType = 'member',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -57,6 +57,7 @@ function Get-OERResourceGroup {
 
         [switch]$IncludeRoleAssignments,
         [switch]$ResolveNames,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

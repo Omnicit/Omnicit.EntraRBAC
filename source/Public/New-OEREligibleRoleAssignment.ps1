@@ -131,6 +131,7 @@ function New-OEREligibleRoleAssignment {
         # ships a 3.0, add it to this list.
         [ValidateSet('2.0')]
         [string]$ConditionVersion,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

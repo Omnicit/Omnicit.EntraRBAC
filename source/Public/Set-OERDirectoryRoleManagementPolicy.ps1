@@ -222,6 +222,7 @@ function Set-OERDirectoryRoleManagementPolicy {
         [bool]$RequireJustificationOnActiveAssignment,
         [pscustomobject[]]$NotificationRule,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

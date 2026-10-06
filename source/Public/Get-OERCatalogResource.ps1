@@ -40,6 +40,7 @@ function Get-OERCatalogResource {
         [string]$Catalog,
 
         [switch]$IncludeRoles,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -99,6 +99,7 @@ function Get-OERDirectoryRoleManagementPolicy {
         [Parameter(ParameterSetName = 'All', Mandatory)]
         [switch]$All,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

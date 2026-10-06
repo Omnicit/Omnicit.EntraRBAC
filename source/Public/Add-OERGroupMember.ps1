@@ -90,6 +90,7 @@ function Add-OERGroupMember {
         [ValidateSet('member', 'owner')]
         [string]$AccessType = 'member',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

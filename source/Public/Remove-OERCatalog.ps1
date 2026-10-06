@@ -35,6 +35,7 @@ function Remove-OERCatalog {
         [Parameter(ParameterSetName = 'ByName', Mandatory)]
         [string]$DisplayName,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

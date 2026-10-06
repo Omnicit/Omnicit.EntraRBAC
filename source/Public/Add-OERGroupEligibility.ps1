@@ -134,6 +134,7 @@ function Add-OERGroupEligibility {
 
         [string]$Justification = 'Omnicit.EntraRBAC: PIM-for-groups eligible assignment',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

@@ -107,6 +107,7 @@ function Remove-OEREligibleDirectoryRoleAssignment {
         [string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -184,6 +184,7 @@ function New-OERAccessReviewDefinition {
         [ValidateSet('None', 'Approve', 'Deny', 'Recommendation')]
         [string]$DefaultDecision = 'None',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

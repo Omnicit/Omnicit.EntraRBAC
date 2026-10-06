@@ -62,6 +62,7 @@ function Invoke-OERAccessReviewInstanceDecision {
         [Parameter(ParameterSetName = 'Reset', Mandatory)]
         [switch]$Reset,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

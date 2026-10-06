@@ -87,6 +87,7 @@ function New-OERAdministrativeUnit {
         [string]$MembershipRuleProcessingState = 'On',
 
         [switch]$HiddenMembership,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

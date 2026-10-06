@@ -106,6 +106,7 @@ function New-OERAccessPackageRequestorScope {
         [Parameter(ParameterSetName = 'AdminOnly', Mandatory)]
         [switch]$AdminAssignmentOnly,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

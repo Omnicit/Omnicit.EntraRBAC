@@ -270,6 +270,7 @@ function Get-OERInventory {
         [switch]$AllDirectoryRolePolicies,
         [switch]$IncludeId,
         [switch]$IncludeARM,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

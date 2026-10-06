@@ -67,6 +67,7 @@ function Set-OERAccessPackage {
         [string]$NewDisplayName,
         [string]$Description,
         [switch]$Hidden,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

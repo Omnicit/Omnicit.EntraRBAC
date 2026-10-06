@@ -41,6 +41,7 @@ function Get-OERAccessPackageAssignmentPolicy {
         [Alias('DisplayName', 'AccessPackageId')]
         [string]$AccessPackage,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

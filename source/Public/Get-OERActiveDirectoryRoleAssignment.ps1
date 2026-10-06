@@ -73,6 +73,7 @@ function Get-OERActiveDirectoryRoleAssignment {
         [string]$ServicePrincipal,
         [string]$PrincipalId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

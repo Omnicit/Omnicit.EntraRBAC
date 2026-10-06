@@ -119,6 +119,7 @@ function New-OERAccessPackageApprovalStage {
         [ValidateSet('Default', 'Visible', 'NotVisible')]
         [string]$ApproverInfoVisibility = 'Default',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared last (after every pre-existing parameter) so positional binding for existing

@@ -135,6 +135,7 @@ function New-OERActiveDirectoryRoleAssignment {
         [ValidateSet('adminAssign', 'adminUpdate')]
         [string]$Action = 'adminAssign',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         [Parameter(ValueFromPipelineByPropertyName)]

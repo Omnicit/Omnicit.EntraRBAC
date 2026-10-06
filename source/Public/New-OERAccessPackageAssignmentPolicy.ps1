@@ -112,6 +112,7 @@ function New-OERAccessPackageAssignmentPolicy {
 
         [switch]$DisableAssignmentNotifications,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

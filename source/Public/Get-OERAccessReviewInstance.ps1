@@ -66,6 +66,7 @@ function Get-OERAccessReviewInstance {
 
         [switch]$IncludeStages,
         [switch]$IncludeDecisions,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {
