@@ -2166,9 +2166,9 @@ counted from the source on 2026-10-06, 84 of the 86 public `Initialize-OERAuth` 
 a `begin` block, and the other two, in `Invoke-OERStructure` and `Connect-OER`, in `process`. So
 the first command's `process` block acts under the session a LATER command's sign-in switched to:
 `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B` created the group in B, with no
-error. MEASURED in plain PowerShell 7, with no module code: two
-functions that each sign in in their `begin` block, piped one into the other, report "creates grp
-under session B (named A)". The rest was read in the code.
+error. MEASURED in plain PowerShell 7, with no module code: two functions that each sign in in their
+`begin` block, piped one into the other, report "creates grp under session B (named A)". The rest
+was read in the code.
 
 **Why neither round 1 gate sees it.** Both sign-ins succeed. The latch holds a command only while
 its sign-in is refused, and each of the two commands released its own entry at its own success. The
@@ -2245,13 +2245,34 @@ and any later request `Get-OERGroup` makes is refused too: the next group's memb
 `-IncludeMembers`, for example. Its listing itself goes out under A, since `Get-OERGroup` reads
 every page of a `-Filter` or `-All` listing before it emits the first group (read in the code).
 That is the any-frame rule working as decided, and it is the rule the user-facing texts state: one
-pipeline works in one tenant with one identity. A cross-tenant copy is two statements, each of
-which signs in and finishes before the next one starts: `$Groups = @(Get-OERGroup -TenantId A ...)`,
-then
+pipeline works in one tenant with one identity. A cross-tenant copy is two statements, each of which
+signs in and finishes before the next one starts: `$Groups = @(Get-OERGroup -TenantId A ...)`, then
 `foreach ($Group in $Groups) { New-OERGroup -TenantId B ... }`. (`$Groups | New-OERGroup ...` is not
 the shape, since `New-OERGroup` binds nothing from the pipeline.) The same pipeline naming the same
 tenant and identity twice sends every request, and so do two separate statements naming different
 tenants.
+
+Two shapes that worked before this round are refused now, both on the safe side. The first is a
+copy of a whole structure: `Get-OERInventory -TenantId A ... | Invoke-OERStructure -TenantId B`
+(`-InputObject` binds the inventory from the pipeline, under its alias `Inventory`).
+`Invoke-OERStructure` signs in to B in its `process` block, inside `Get-OERInventory`'s output,
+while `Get-OERInventory`'s frame still remembers A, so every request of the apply is refused, the
+refusal naming `Get-OERInventory` (read in the code, by the same rule as the measured
+`Up | Down`). The working form is two statements:
+`$Inventory = Get-OERInventory -TenantId A ...`, then
+`Invoke-OERStructure -InputObject $Inventory -TenantId B ...`. The second is one tenant named two
+ways. The identity's tenant term is the tenant as the caller NAMED it, the value `TenantId` holds in
+the state -- the same key the cache predicates compare -- and not the tenant the token was issued
+for, so a GUID on one command and a domain on another are two identities, and so is no tenant named
+at all before the module holds a state, which records it as `organizations`. MEASURED by the final
+review of this round, with stand-ins of the cmdlets' shape and the module's own sign-in:
+`'x' | Up -TenantId <guid> | Down -TenantId <its domain>`, one tenant, sent nothing and
+reported `SignInSuperseded` for both commands; so did a pipeline after `Connect-OER` by GUID where
+only the downstream command named the domain. That is a false refusal, not a wrong-tenant write,
+and the texts answer it with the existing rule to name the tenant explicitly and consistently (the
+README's Sovereign Clouds section, the about topic's SOVEREIGN CLOUDS). Comparing the granted tenant
+(`TokenTenantId`) instead would end it, and is left to the architect as a recommendation: it changes
+what an identity is.
 
 **What the operator sees.** A public cmdlet catches the transport's refusal the way it catches any
 failed request: it writes it as an error record -- or the apply engine as a `Failed` row -- and
@@ -2288,6 +2309,21 @@ working, not a limit to work around: work in another tenant belongs in a stateme
   nothing, so no command downstream of it runs per object. The any-frame rule covers both
   directions, and the user-facing texts therefore speak of the command whose sign-in another one
   replaced, which is usually, not always, the first. Read in the code, not measured.
+- OPEN, and older than this round: `Invoke-OERStructure` WITHOUT `-TenantId` upstream of a command
+  that names another tenant. Its sign-in in `process` names no tenant, so it inherits the state the
+  downstream command's `begin` block already switched to B, remembers B, and nothing differs: its
+  document, `-Prune` deletions included, is applied to B with no error. MEASURED by the final review
+  of this round with a stand-in of `Invoke-OERStructure`'s shape (a sign-in with no tenant in
+  `process`, then a DELETE): after a sign-in to A, `'doc' | <stand-in> | Down -TenantId B` sent the
+  stand-in's DELETE under B, with no error. The same review measured that a downstream command's
+  `begin` block runs before the upstream `process` block even when the downstream command takes no
+  pipeline input, so `Invoke-OERStructure -Path x.json -Prune | <any OER cmdlet> -TenantId B`
+  applies the document in B as well (inferred from those two measurements). This round does not
+  make it worse -- before it, the same pipeline did the same -- and does not close it. The idea for
+  a later fix, not built: capture the effective tenant in `begin`, before any downstream `begin`
+  block can switch the state, and name it in the `process` block's sign-in. Until then the
+  user-facing texts tell the operator to name `-TenantId` on `Invoke-OERStructure` or to run it as a
+  statement of its own, and `CLAUDE.md` never to pipe it into a command that names another tenant.
 - A command that signs in again inside its own `process` block, to another tenant, replaces its own
   memory, and nothing compares that second sign-in with its first: it is the same command's own
   choice.
@@ -2300,10 +2336,16 @@ another one replaced sends nothing more, every request made while it runs refuse
 `SignInSuperseded`, the requests of a command handling its output included; most cmdlets sign in
 before any command in the pipeline processes input, so that is usually the first command; a cmdlet
 that reports a failed lookup under an error of its own, `New-OERGroup`'s `GroupResolveFailed` for
-one, carries the refusal's message in that error instead; the commands run as separate statements,
-with objects collected in a variable first to move them between tenants. Both give the
-two-statement example, the `ForEach-Object` pipeline it replaces commented out, and a pointer to
-the limits per sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
+one, carries the refusal's message in that error instead; a tenant counts by the name given, so its
+GUID, its domain and none named before the module holds a session (`organizations`) are three
+sign-ins and a pipeline naming one tenant two ways is refused, with a pointer to "Name the tenant
+explicitly and consistently"; `Invoke-OERStructure` signs in when it processes its document, so
+without `-TenantId` it takes whatever tenant a later command in the pipeline may already have
+switched to, and nothing refuses that -- name `-TenantId` on it, or run it as a statement of its
+own; the commands run as separate statements, with objects collected in a variable first to move
+them between tenants. Both give the two-statement examples -- groups read and created, and an
+inventory read and applied -- the two pipelines they replace commented out, and a pointer to the
+limits per sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
 `Connect-OER`'s help carries the same rule in two sentences, beside the general case of a refused
 sign-in.
 
@@ -2319,7 +2361,13 @@ both transports over stubbed token, connect and send calls, in a runspace with n
 pipeline: P1 two commands naming different tenants, P1b the F-E pipeline itself with the real
 `New-OERGroup` and `Add-OERGroupMember` (nothing is created), P2 the nested case, P5 the
 `ForEach-Object` shape and P6 a sign-in that was a cached return, with P3 and P4 as the positive
-controls. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
+controls. P7 to P9 are the positive controls for a NEW sign-in that keeps the identity while a
+remembering command runs, in a one-tenant pipeline on a user-assigned managed identity: P7 the Graph
+wrapper's forced refresh after a rejected token, P8 the ARM wrapper's after a 401, P9 a downstream
+command's sign-in while the first command's tokens are within five minutes of expiry. Each request
+goes out, the retry included. Mutation-proved: a refresh that stops forwarding the client id turns
+P7 or P8 red, and an identity that also carried the Graph token's exact expiry turns all three red,
+and none of P1 to P6. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
 their order, the pairing of each memory write with its latch release, and the helpers' owners in
 place.
 

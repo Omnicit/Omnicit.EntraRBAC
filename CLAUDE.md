@@ -555,11 +555,21 @@ transports ask `Get-OERSignInSupersession` before every request and refuse it wi
 the call stack remembers another identity than the state now carries. So an outer command whose
 nested cmdlets inherited the switched state is refused too, and so is a downstream command's request
 made inside the upstream command's output call, where the upstream frame is still on the stack.
-`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, so downstream of them it
-is the downstream command that is refused. The order is fixed: in the Graph wrapper the session
-gate, then the latch gate, then the supersession gate; in the ARM wrapper the latch gate, then the
-supersession gate. A command with no memory is not compared. A pipeline must not span tenants or
-identities: run the commands as separate statements, for example collecting into a variable first.
+`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, and a downstream
+command's `begin` runs first, even when it takes no pipeline input. When they name a tenant, their
+own sign-in switches the state back to it, so downstream of them it is the downstream command that
+is refused. WITHOUT `-TenantId`, `Invoke-OERStructure` inherits the state the downstream command's
+`begin` left, remembers that, and nothing is refused: its document, `-Prune` included, applies to
+the downstream command's tenant. That is a known gap, older than A20 and open (final review of A20,
+measured with a stand-in of its shape), so never pipe `Invoke-OERStructure` into a command that
+names another tenant. The identity's tenant term is the tenant as NAMED, so one tenant named by
+GUID on one command and by domain on another -- or not named at all before the module holds a
+session, which is recorded as `organizations` -- is two identities, and that pipeline is refused
+(fail-safe; README's "Name the tenant explicitly and consistently", the about topic's equivalent
+under SOVEREIGN CLOUDS). The order is fixed: in the Graph wrapper the session gate, then the latch
+gate, then the supersession gate; in the ARM wrapper the latch gate, then the supersession gate. A
+command with no memory is not compared. A pipeline must not span tenants or identities: run the
+commands as separate statements, for example collecting into a variable first.
 Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after
 an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
 transports.

@@ -190,8 +190,16 @@ every request made while it runs is refused with `SignInSuperseded`, including t
 command that handles its output, a `ForEach-Object` script block among them. Most OER cmdlets sign
 in before any command in the pipeline processes input, so that is usually the first command. A
 cmdlet that reports a failed lookup under an error of its own carries the refusal's message in that
-error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one. Run the commands as separate
-statements; to move objects between tenants, collect them in a variable first:
+error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one. A tenant counts by the name you
+give it: its GUID, its domain, and no `-TenantId` at all before the module holds a session (which
+it records as `organizations`) are three different sign-ins. A pipeline that names one tenant two
+ways is therefore refused too; name it the same way on every command, as
+**Name the tenant explicitly and consistently** under [Sovereign Clouds](#sovereign-clouds) says.
+`Invoke-OERStructure` signs in when it processes its document, not before: without `-TenantId` it
+takes whatever tenant the session holds at that moment, which a later command in the same pipeline
+may already have switched, and nothing refuses that. Name `-TenantId` on it, or run it as a
+statement of its own. Run the commands as separate statements; to move objects between tenants,
+collect them in a variable first:
 
 ```powershell
 # Read in one tenant, then write in another, as two statements
@@ -201,10 +209,17 @@ foreach ($Group in $Groups) {
     New-OERGroup -TenantId $TenantB -DisplayName $Group.DisplayName
 }
 
+# Copy a structure the same way: read it, then apply it
+$Inventory = Get-OERInventory -TenantId $TenantA -Include Groups
+Invoke-OERStructure -InputObject $Inventory -TenantId $TenantB -WhatIf
+
 # Not as one pipeline: New-OERGroup would run inside Get-OERGroup's
-# output and send nothing
+# output and send nothing, and so would Invoke-OERStructure inside
+# Get-OERInventory's
 # Get-OERGroup -TenantId $TenantA ... |
 #     ForEach-Object { New-OERGroup -TenantId $TenantB ... }
+# Get-OERInventory -TenantId $TenantA ... |
+#     Invoke-OERStructure -TenantId $TenantB ...
 ```
 
 The second statement switches tenant in the same PowerShell process, so whether it reaches the
