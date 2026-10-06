@@ -4371,7 +4371,9 @@ Describe 'A command whose sign-in a later command in the pipeline replaced sends
         #   Get-AzToken answers a token for exactly the tenant it was asked for (-Tenant, as
         #     Initialize-OERAuth passes it), so neither TenantMismatch check refuses it, for Microsoft
         #     Graph or Azure Resource Manager by the resource named, and records 'graph <tenant>' or
-        #     'arm <tenant>'. Never a real token. Each token lasts the minutes the scenario queued in
+        #     'arm <tenant>'. A tenant the scenario maps in $global:OERA20GrantedTenants is answered
+        #     with the token of the tenant it maps to instead, as a tenant named by domain is. Never a
+        #     real token. Each token lasts the minutes the scenario queued in
         #     $global:OERA20TokenMinutes, in the order of the token calls, and an hour once the queue
         #     is empty.
         #   Connect-MgGraph records a session naming the tenant of the last Graph token, and
@@ -4404,6 +4406,7 @@ $global:OERA20TokenCalls = [System.Collections.Generic.List[string]]::new()
 $global:OERA20GraphRequests = [System.Collections.Generic.List[string]]::new()
 $global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
 $global:OERA20TokenMinutes = [System.Collections.Generic.Queue[int]]::new()
+$global:OERA20GrantedTenants = @{}
 $global:OERA20GraphRejections = 0
 $global:OERA20ArmRejections = 0
 & (Get-Module Omnicit.EntraRBAC) {
@@ -4414,13 +4417,14 @@ $global:OERA20ArmRejections = 0
         if ($global:OERA20TokenCalls.Count -ge 10) { exit }
         $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
         $global:OERA20TokenCalls.Add(('{0} {1}' -f $Kind, $Tenant))
-        if ($Kind -eq 'graph') { $global:OERA20GraphTenant = $Tenant }
+        $Granted = if ($global:OERA20GrantedTenants.ContainsKey([string]$Tenant)) { $global:OERA20GrantedTenants[[string]$Tenant] } else { $Tenant }
+        if ($Kind -eq 'graph') { $global:OERA20GraphTenant = $Granted }
         $Minutes = if ($global:OERA20TokenMinutes.Count -gt 0) { $global:OERA20TokenMinutes.Dequeue() } else { 60 }
         [pscustomobject]@{
             Token     = 'NOT-A-REAL-TOKEN-' + $Kind
             ExpiresOn = [System.DateTimeOffset]::UtcNow.AddMinutes($Minutes)
             Identity  = 'oer-a20-probe'
-            TenantId  = $Tenant
+            TenantId  = $Granted
         }
     }
     function script:Connect-MgGraph {
@@ -5048,6 +5052,87 @@ $RecordLines
         Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -Be @(
             'UserNotFound,New-OERAccessReviewStage | person1@example.com | User ''person1@example.com'' not found.')
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    # P18 is BL-77's end-to-end proof. The identity a sign-in remembers takes its tenant term from the
+    # tenant the Microsoft Graph token was issued for, so one tenant named by its tenant ID on the
+    # first command of a pipeline and by its domain on the second is one identity: the second
+    # command's sign-in does not supersede the first's. Before BL-77 the two names were two identities
+    # and the first command's requests were refused with SignInSuperseded. The domain is resolved by a
+    # MODULE-scope stub of Resolve-OERTenantDomain, defined in the scenario, that stands between the
+    # module and Invoke-RestMethod, so no lookup is sent; it replaces the module's own function in this
+    # runspace's copy of the module, which ends with the runspace, and it exits past five calls.
+    It 'P18: two commands in one pipeline naming one tenant, the first by its tenant ID and the second by its domain, both send (BL-77)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            $global:OERA20ResolveCalls = 0
+            function script:Resolve-OERTenantDomain {
+                [CmdletBinding()]
+                param([string]$Domain, [string]$Environment)
+                $global:OERA20ResolveCalls++
+                if ($global:OERA20ResolveCalls -gt 5) { exit }
+                '44444444-4444-4444-4444-444444444444'
+            }
+            # The tokens requested for the domain are issued for the tenant it resolves to.
+            $global:OERA20GrantedTenants['contoso.onmicrosoft.com'] = '44444444-4444-4444-4444-444444444444'
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' | Invoke-SecondProbe -TenantId 'contoso.onmicrosoft.com'
+            Write-Warning ('RESOLVER CALLS: {0}' -f $global:OERA20ResolveCalls)
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The positive proof that the domain was looked up and signed in: one lookup, and a new pair of
+        # tokens requested for the domain as named, each answered for tenant A.
+        $R.Warnings | Should -Contain 'RESOLVER CALLS: 1'
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph contoso.onmicrosoft.com', 'arm contoso.onmicrosoft.com')
+        # The second sign-in switched the state's TenantId to the domain before the first command's
+        # process block ran, and both tokens were issued for tenant A: every request goes out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeSuperseded -Probe $R | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P18b: the same pipeline whose token for the domain comes back from another tenant is refused with TenantMismatch, and nothing is replaced silently (BL-77 control)' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            $global:OERA20ResolveCalls = 0
+            function script:Resolve-OERTenantDomain {
+                [CmdletBinding()]
+                param([string]$Domain, [string]$Environment)
+                $global:OERA20ResolveCalls++
+                if ($global:OERA20ResolveCalls -gt 5) { exit }
+                '44444444-4444-4444-4444-444444444444'
+            }
+            # The domain resolves to tenant A, but the token requested for it is issued by tenant B.
+            $global:OERA20GrantedTenants['contoso.onmicrosoft.com'] = '77777777-7777-7777-7777-777777777777'
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' | Invoke-SecondProbe -TenantId 'contoso.onmicrosoft.com'
+            Write-Warning ('RESOLVER CALLS: {0}' -f $global:OERA20ResolveCalls)
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The positive proof that the second sign-in got as far as the Graph token: one lookup, and a
+        # Graph token requested for the domain, which was refused before any ARM token was requested.
+        $R.Warnings | Should -Contain 'RESOLVER CALLS: 1'
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph contoso.onmicrosoft.com')
+        # The refused sign-in left the first command's session as it was: only the first command's
+        # requests went out, and the second command's were refused as the refused command's.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @('https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe')
+        Get-PipelineProbeSuperseded -Probe $R | Should -BeNullOrEmpty
+        $Ids = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | ForEach-Object { ($_ -split ',')[0] })
+        $Ids | Should -Be @('TenantMismatch', 'SignInRefused', 'SignInRefused')
+        (Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')[0] | Should -BeLike '*issued for tenant ''77777777-7777-7777-7777-777777777777'', not for the requested tenant ''contoso.onmicrosoft.com'' (tenant ID ''44444444-4444-4444-4444-444444444444'')*'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
