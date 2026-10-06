@@ -209,7 +209,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Eight cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Nine cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -228,6 +228,11 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
   the piped parent unit.
+- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
+  declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, except `Connect-OER`, whose
+  `-TenantId` must carry no validation so its own `InvalidTenantId` refusal runs after the
+  session-uncertain marker is set (A12, BL-94); it also drives the binding refusal for the cmdlets
+  the live checklist uses. It imports the module, so it installs the transport tripwire.
 - `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
@@ -651,11 +656,15 @@ the variable anywhere else, never call the helper outside `Initialize-OERAuth`, 
 as naming a tenant. A command that names its tenant is never refused by the marker; a parameter
 binding error of `Connect-OER` never reaches it (known limit). `Connect-OER` sends every BOUND
 `-TenantAlias` to its alias check, so an empty, whitespace or `$null` alias is refused with
-`InvalidTenantAlias` and leaves the marker set; never test the alias for truthiness there, and never
-use `[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. An explicitly empty `-TenantId`
-still names no tenant -- `Connect-OER` signs in to the current session's tenant and, when that
-succeeds, clears the marker -- and is documented, not refused: refusing it needs a new error id
-(known limit).
+`InvalidTenantAlias` and leaves the marker set, and every BOUND `-TenantId` that is empty, whitespace
+or `$null` is refused the same way, in `process` after the marker is set, with `InvalidTenantId`
+(A12, BL-94); never test either for truthiness there, and never give either
+`[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. Every OTHER public cmdlet that
+declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty value stops that
+command at parameter binding and it sends nothing, instead of acting on the current session's tenant
+as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with
+`Connect-OER` the one named exception; a new public `-TenantId` takes the attribute. An internal call
+passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -694,9 +703,13 @@ not become a session, within two limits: a token whose tenant AzAuth does not re
 without a `tid` claim) is not compared, and `organizations` names no tenant, so its tokens are
 compared with no requested tenant -- an ARM token a sign-in acquires under it is compared with the
 session's Graph token (`TokenTenantId`) instead, when both are GUIDs, and refused with the same
-`TenantMismatch` when they differ, while an ARM token carried over a renewal of the Graph token alone
-is not compared again (known limit, older than that check)
-(`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
+`TenantMismatch` when they differ. A state rebuild -- a renewal of the Graph token, or a transport's
+refresh -- carries the cached ARM token into the new state only when, besides the unchanged tenant
+label, identity and cloud (`$ArmIdentityUnchanged`), its `ArmTokenTenantId` equals the new Graph
+token's tenant, both GUIDs (`$ArmTokenKept`, A13, BL-95); otherwise it is dropped, the ARM step of
+that same call runs under `-IncludeARM`, and the new ARM token is compared as above. Never carry it
+on the label alone: `organizations` stays `organizations` when a renewal is answered from another
+tenant (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
 call it only
 warns, for a client secret switch it can predict will not take effect (a
 `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
@@ -1260,6 +1273,8 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
    - A `Get-OERRequiredScopeMap` row naming the LEAST-privilege scope the new cmdlet needs, gated by
      `requiredscope.tests.ps1` -- a new Graph path may also need a new endpoint rule there.
    - A `Set-OER*` cmdlet joins `NothingToUpdate.Cohort.Tests.ps1`.
+   - A `-TenantId` parameter carries `[ValidateNotNullOrEmpty()]`, which
+     `TenantIdNotEmpty.Cohort.Tests.ps1` holds, and its count of carriers moves by one.
    - A public call site of an ambiguity-refusing `Resolve-OER*Id` helper joins
      `AmbiguousName.Guard.Tests.ps1`.
    - A new `Sync-OERStructure*` handler, or a `Resolve-*Change` helper taking a `-Declared` document

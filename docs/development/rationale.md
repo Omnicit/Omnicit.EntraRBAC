@@ -1419,8 +1419,8 @@ describes: the ARM step comes after the Microsoft Graph half has connected and r
 answered from the cache), so the session then holds that Graph token -- for the tenant the sign-in
 named or, when it named none (Ruling F3, below), for the tenant the Graph token came from -- and no
 ARM token from this sign-in. The state is not cleared of an older one: on an ARM-only top-up, or a
-rebuild that carried the state forward for the same identity, the previous ARM token of that
-identity can stay in it.
+rebuild that carried the state forward for the same identity and the Graph token's own tenant (A13,
+below), the previous ARM token of that identity and tenant can stay in it.
 
 **Both values compared are GUIDs, whether the tenant was named by GUID or by domain** (BL-12, since
 Sprint 9 step 3). The requested side is the tenant ID the request named or, for a tenant named by
@@ -1447,18 +1447,39 @@ ARM token's tenant is compared with `$script:_OERAuthState.TokenTenantId` -- the
 call acquired, or the cached one an ARM-only acquisition runs beside -- when both are GUIDs, and a
 difference is the existing terminating `TenantMismatch`, raised before the ARM token is cached; its
 message names both tenants and says that the two tokens of one session were compared. A named
-tenant's ARM token is compared only with the tenant ID it names, as before. Two limits. The GUID
-one: a token whose tenant AzAuth does not report as a GUID, on either side, leaves nothing to
-compare. And the comparison runs only where an ARM token is ACQUIRED: when only the Graph token of a
-session that names no tenant is renewed, `$ArmIdentityUnchanged` carries the old ARM token into the
-rebuilt state and `$ArmCached` skips the ARM branch, so the carried token is not compared with the
-new Graph token. MEASURED by the scoped re-review of the final fixes, with mocked tokens: Graph and ARM
-tokens from one tenant, then the Graph token renewed from another, left the state's Graph and ARM
-tenants different with no `TenantMismatch`. The gap is older than this branch -- before F3 an
-`organizations` session's ARM token was compared with nothing at all -- and stays open. No new error
-id; every term of the condition stands on its own line and is mutation-proved
+tenant's ARM token is compared only with the tenant ID it names, as before. The limit: a token whose
+tenant AzAuth does not report as a GUID, on either side, leaves nothing to compare. No new error id;
+every term of the condition stands on its own line and is mutation-proved
 (see the proof under
 [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain)).
+
+**A renewal carries the ARM token only for the renewed Graph token's tenant** (Sprint 9 step 3
+round 1, decision A13, BL-95). The comparison above runs only where an ARM token is ACQUIRED. When
+only the Graph token of a session that names no tenant was renewed -- near its expiry, or by a
+transport's refresh -- `$ArmIdentityUnchanged` carried the old ARM token into the rebuilt state and
+`$ArmCached`, decided on the state at entry, skipped the ARM branch, so the carried token was never
+compared with the new Graph token. MEASURED by the scoped re-review of step 3's final fixes, with
+mocked tokens: Graph and ARM tokens from one tenant, then the Graph token renewed from another, left
+the state's Graph and ARM tenants different with no `TenantMismatch`. On an interactive
+`organizations` session that is one human error away -- the renewal's prompt answered with another
+tenant's account -- and the session then held tenant B's Graph token beside tenant A's ARM token
+under one sign-in identity (BL-77 takes the identity's tenant from the Graph token), so a later
+`Invoke-OERStructure -Prune` without `-TenantId` planned against tenant B and removed Azure role
+assignments in tenant A. `$ArmIdentityUnchanged` compares the tenant LABEL, and `organizations` is the
+label before and after. The rebuild therefore carries the ARM token only when, besides those terms,
+the state's `ArmTokenTenantId` equals the new Graph token's tenant and both are GUIDs
+(`$ArmTokenKept`, each term on its own line). Otherwise all four ARM fields are dropped, and the ARM
+step reads `$ArmTokenKept` beside `$ArmCached`, so the same call acquires a new ARM token under
+`-IncludeARM`, compared with the new Graph token (F3, above); without `-IncludeARM` the next call
+that needs one acquires it. The direction is the safe one: the cost is an ARM token acquired again --
+a second prompt on an interactive session -- where the carry was refused, including for a token whose
+tenant AzAuth did not report as a GUID. A named tenant changes nothing in practice, since both tokens
+of such a session were compared with the tenant ID it names. The proof is the Describe
+`Initialize-OERAuth carries an ARM token over a renewal only for the renewed Graph token's tenant (A13, BL-95)`
+in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, whose header names the mutation each It
+catches, and H12 in `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`: with no `try` anywhere,
+a Graph-only renewal answered from tenant B drops tenant A's ARM token, and the Azure cmdlet after it
+acquires a new one, which is refused against the renewed Graph token, and sends no ARM request.
 
 HISTORY: until Sprint 9 step 3 the comparison was gated on BOTH values being canonical GUIDs. The
 requested tenant is very often a verified domain (`contoso.onmicrosoft.com`) while a token always
@@ -1841,9 +1862,9 @@ any tenant ID; the lookup does not refuse it. The ruling expected both to be ref
 measurement shows the lookup refuses only `common`. Whether a sign-in naming `consumers` then gets a
 token whose tenant compares equal is NOT measured. `organizations` stays exempt, unlooked-up and
 compared with no requested tenant: it is the module's own value for a sign-in that names no tenant.
-An ARM token a sign-in acquires under it is compared with the session's Graph token instead; one
-carried over a renewal of the Graph token alone is not compared again, a known limit (Ruling F3,
-under [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)).
+An ARM token a sign-in acquires under it is compared with the session's Graph token instead (Ruling
+F3), and a renewal of the Graph token carries the cached one only for the renewed Graph token's
+tenant (A13), both under [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant).
 
 **Known limits of the lookup.**
 
@@ -2569,8 +2590,9 @@ R15): the tenant term is `TokenTenantId` when it is a GUID, `TenantId` otherwise
 `ArmTokenTenantId`, since the ARM token is not always acquired and the identity must not change when
 it is. That left the ARM token of a sign-in naming no tenant compared with nothing, and so able to
 come from another tenant than the identity's; since the final review of Sprint 9 step 3 (Ruling F3)
-an ARM token such a sign-in acquires is compared with the Graph token instead, while one carried
-over a renewal of the Graph token alone is not compared again -- a known limit, under
+an ARM token such a sign-in acquires is compared with the Graph token instead, and since round 1 of
+that step (A13) a renewal of the Graph token carries the cached ARM token only for the renewed Graph
+token's tenant -- both under
 [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant). One tenant named by GUID
 on one command and by domain on another, or not named at all, is then ONE identity to the
 supersession gate and to the snapshot, and P18 below pins the measured pipeline sending. What did not
@@ -2994,6 +3016,44 @@ CSV row applied its document, `-Prune` included, in the previous row's tenant (m
 reviewer with a scratch probe; H10 below runs it end to end). `[ValidateNotNullOrEmpty()]` was
 rejected for this: a binding error never runs `process`, so it would mark nothing.
 
+**An empty `-TenantId` is refused, not read as no tenant** (Sprint 9 step 3 round 1, decision A12,
+BL-94). Every public cmdlet read an empty `-TenantId` the way it reads an omitted one: each passes the
+value on only when it is truthy (`if ($TenantId) { $AuthParams.TenantId = $TenantId }`), and
+`Initialize-OERAuth` reads emptiness, not presence. So a loop such as
+`Invoke-OERStructure -TenantId $Row.TenantId -Path $Row.Path -Prune`, over rows with an empty cell,
+applied that row's document in the tenant of the current session, refused sign-in or not, and
+`Connect-OER -TenantId ''` signed in to the current session's tenant and, as `Connect-OER`'s sign-in,
+cleared the marker. The two halves of the rule split on where the refusal must stand:
+
+- `Connect-OER` refuses a BOUND `-TenantId` that is empty, whitespace or `$null` with the new
+  `InvalidTenantId` (category `InvalidArgument`, pre-decided in A7), in `process` directly after it
+  sets the marker and before `AmbiguousTenant`, so the refusal leaves the session uncertain like its
+  other refusals; a blank `-TenantId` beside an alias is therefore `InvalidTenantId`, not
+  `AmbiguousTenant`. It decides on `$PSBoundParameters.ContainsKey('TenantId')`, never on
+  truthiness, and its `-TenantId` carries no validation attribute, since a binding error would skip
+  `process` and leave the marker as the previous sign-in left it. `Connect-OER` with neither
+  `-TenantId` nor `-TenantAlias` bound still names no tenant, as before.
+- Every other public cmdlet that declares `-TenantId` -- ninety, `New-OERConfiguration` and
+  `Set-OERConfiguration` among them, whose `-TenantId` is stored rather than signed in to -- carries
+  `[ValidateNotNullOrEmpty()]`. Its binding error stops that one command before its `begin` block,
+  so it signs in nowhere and sends nothing, and the next statement of a script runs as usual; there is
+  no marker to set, since nothing was attempted. `Set-OERConfiguration -TenantId ''` used to reach the
+  cmdlet's own checks, which refuse, as `TenantProfileMalformed`, a write that would leave an existing
+  profile without a tenant; it is now refused at binding instead, before anything is read, and
+  nothing is written either way.
+- No internal call passes an empty value on: every one forwards `-TenantId` only when it is set (the
+  ninety cmdlets, `Invoke-OERStructure`, the three builders and the two access review cmdlets through
+  `Resolve-OERReviewerScope`, and the three private resolvers that sign in), and the configuration
+  cmdlets hand a validated or profile-checked value to `ConvertTo-OERTenantConfiguration`.
+
+`tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds the rule from the source: it reads every
+`source/Public/*.ps1` with the AST, pins the count of `-TenantId` carriers at 91, requires the
+attribute on every one but `Connect-OER`, requires `Connect-OER`'s to carry no `Validate*` or
+`Allow*` attribute and not to be mandatory, and drives the binding refusal for `Get-OERGroup`,
+`Invoke-OERStructure`, `Get-OERSubscription` and the two configuration cmdlets with every sign-in and
+transport mocked and counted at zero. `OER_COHORT_SOURCE_ROOT` points the scan at a scratch copy for
+a mutation proof.
+
 **Why a transport's refresh does not clear it.** The claims-challenge step-up and the token-rejected
 retry of `Invoke-OERGraphRequest`, and the 401 retry of `Invoke-OERArmRequest`, call
 `Initialize-OERAuth` with the session's own `TenantId` and `-ClaimsChallenge` or `-ForceRefresh`, on
@@ -3020,11 +3080,10 @@ nothing more.
 - A `Connect-OER` whose parameters cannot be bound -- a mandatory parameter bound to an empty string,
   for example -- is refused by PowerShell before its `process` block runs, so it marks nothing, and a
   no-tenant command after it inherits the previous session as before.
-- An explicitly empty `-TenantId` on `Connect-OER` names no tenant (final review I1, Ruling F1):
-  `Connect-OER` then signs in to the current session's tenant and, when that succeeds, clears the
-  marker as `Connect-OER`'s sign-in, so a script that takes the tenant from data must check the
-  value. Refusing it would need a new error id, which this step does not add; `Connect-OER`'s help,
-  the README and the about topic say so. An empty `-TenantAlias` is refused instead (above).
+- A `-TenantId` of spaces on any cmdlet but `Connect-OER` passes `[ValidateNotNullOrEmpty()]` (A12,
+  below) and is looked up like any value that is not a tenant ID; it is refused with
+  `TenantResolutionFailed` when the authority resolves it to no tenant. PowerShell 7.4's
+  `[ValidateNotNullOrWhiteSpace()]` would refuse it at binding, but the module supports 7.2.
 - A no-tenant command after a refusal is refused even when the operator meant the previous tenant, and
   even when the module holds no session at all and the command would have signed in to
   `organizations`. Both are on the safe side; `-TenantId`, `Connect-OER` or `Disconnect-OER` sends
@@ -3051,10 +3110,12 @@ or `Disconnect-OER` sends again; and what the loop above did before this version
 the example. The second: `Invoke-OERStructure` without `-TenantId` refuses every document piped to
 it after one whose sign-in was refused; a `Connect-OER` whose parameters cannot be bound never runs,
 so it leaves nothing behind; an empty `-TenantAlias`, typed or piped, is refused with
-`InvalidTenantAlias`; and an empty `-TenantId` names no tenant, so `Connect-OER` signs in to the
-current session's tenant and, when that succeeds, sends again -- a script that takes the tenant from
-data must check the value. `Connect-OER`'s and `Disconnect-OER`'s help carry the rule for their own
-side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the two empty values.
+`InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`, both
+counting as a refused sign-in; every other cmdlet refuses an empty or `$null` `-TenantId` at
+parameter binding, so that command never runs and sends nothing; and a `-TenantId` of spaces is
+looked up like any value that is not a tenant ID. `Connect-OER`'s and `Disconnect-OER`'s help carry
+the rule for their own side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the
+two empty values.
 
 **The proof.** `tests/Unit/Private/Set-OERSessionUncertain.Tests.ps1` pins the owner: setting and
 clearing return the previous value, and `$null` reads as clear. In
@@ -3072,7 +3133,14 @@ names the tenant; H4, extended -- the A19 retry under `-TenantId` unchanged unde
 loop above, a refused `Connect-OER` and then an `Invoke-OERStructure` without `-TenantId` that
 requests no token and sends nothing, and that sends after `Disconnect-OER` and a successful
 `Connect-OER`. Gate 10 of [#static-source-gates](#static-source-gates) holds the owner, the variable
-and the marker's three places in `Initialize-OERAuth`.
+and the marker's three places in `Initialize-OERAuth`. For A12, the Context
+`the session-uncertain marker (A10, BL-89)` in `tests/Unit/Public/Connect-OER.Tests.ps1` pins
+`InvalidTenantId` for an empty, whitespace and `$null` `-TenantId`, beside an alias too, on every
+credential set, with no profile read, no sign-in and the marker set, and `Connect-OER` with no tenant
+at all still signing in; H11 runs the loop with a blank cell end to end, with no `try`: a refused
+`Connect-OER -TenantId` and the `Invoke-OERStructure` after it, and an
+`Invoke-OERStructure -TenantId` refused at binding, request no token and send nothing, and a row
+naming the tenant then sends; and `TenantIdNotEmpty.Cohort.Tests.ps1` (above) holds the attribute.
 
 Mutation-proved on copies of `source/` (the gate from a scratch project root), one exact edit per
 mutant. Deleting the A10 refusal turns sixteen tests red: the A10 Describe's test after

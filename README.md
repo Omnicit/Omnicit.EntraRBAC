@@ -204,9 +204,12 @@ foreach ($Alias in $Aliases) {
 `Invoke-OERStructure` without `-TenantId` likewise refuses every document piped to it after one whose
 sign-in was refused. A `Connect-OER` whose parameters PowerShell cannot bind never runs, so it leaves
 nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, is refused with
-`InvalidTenantAlias` and counts as a refused sign-in. An empty `-TenantId`, however, names no tenant:
-`Connect-OER` then signs in to the current session's tenant and, when that succeeds, makes the module
-send again, so a script that takes the tenant from data must check the value before it passes it.
+`InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`; both
+count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
+PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
+loop over tenants no longer stands for the current session's tenant. A `-TenantId` of spaces is
+looked up like any value that is not a tenant ID, and refused with `TenantResolutionFailed` when it
+names no tenant.
 
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
 different tenants or identities, a command whose sign-in another one replaced sends nothing more:
@@ -292,8 +295,10 @@ domain: any other value is looked up the same way and refused when it names no t
 them. `organizations`, which the module uses when no tenant is named and there is no session, names
 no tenant and is not checked against one. When a sign-in under it acquires an Azure Resource Manager
 token, that token must come from the same tenant as the session's Microsoft Graph token, or it is
-refused with `TenantMismatch`; an Azure Resource Manager token the session keeps while only its
-Microsoft Graph token is renewed is not checked again.
+refused with `TenantMismatch`. When only the Microsoft Graph token is renewed, the session keeps its
+Azure Resource Manager token only if the renewed Microsoft Graph token comes from the same tenant;
+otherwise it drops it and, as soon as a command needs Azure Resource Manager, acquires a new one,
+checked the same way.
 
 The module also warns before a client secret sign-in for the same application when the tenant you
 name differs from the one the credential AzAuth is currently holding for that application was built
