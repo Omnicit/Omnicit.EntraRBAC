@@ -8,7 +8,8 @@ AfterAll {
     try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire }
 }
 
-# The helper makes the module's one unauthenticated network call: an OpenID discovery GET that turns a
+# The helper makes the module's one network call outside the Microsoft Graph and Azure Resource Manager
+# transports, and its one deliberately unauthenticated call: an OpenID discovery GET that turns a
 # tenant named by domain into its tenant ID. Every test mocks Invoke-RestMethod at the module boundary
 # (the transport tripwire refuses the real one), so no request is ever sent.
 Describe 'Resolve-OERTenantDomain' {

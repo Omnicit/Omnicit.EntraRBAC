@@ -163,6 +163,47 @@ Describe 'Connect-OER' {
             # Set before the sign-in, which is the one that clears it when it succeeds.
             $script:MarkerAtSignIn | Should -BeTrue
         }
+
+        # Final review I1 (Ruling F1): an alias that is BOUND but empty -- typed, or read from a profile
+        # list or a CSV row -- used to skip the alias block, so Connect-OER signed in to the current
+        # session's tenant and, as Connect-OER's sign-in, cleared the marker. In the loop over tenant
+        # profiles the next Invoke-OERStructure then applied its document, prune included, in the
+        # previous row's tenant. A bound alias now always reaches the alias check, whatever its value.
+        It 'refuses a bound <Name> -TenantAlias with InvalidTenantAlias before any profile read or sign-in, and leaves the session uncertain' -ForEach @(
+            @{ Name = 'empty'; Parameters = @{ TenantAlias = '' } }
+            @{ Name = 'whitespace'; Parameters = @{ TenantAlias = '  ' } }
+            @{ Name = 'null'; Parameters = @{ TenantAlias = $null } }
+            @{ Name = 'empty, with a -TenantId beside it,'; Parameters = @{ TenantId = '44444444-4444-4444-4444-444444444444'; TenantAlias = '' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-f1-not-a-file.pfx' -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the alias check was reached and refused the value, not some other check.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantAlias,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Err[0].Exception.Message | Should -Match 'empty'
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'refuses an empty TenantAlias read from a piped object with InvalidTenantAlias, and leaves the session uncertain' {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            [pscustomobject]@{ TenantAlias = '' } | Connect-OER -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantAlias,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
     }
 
     It 'binds -TenantAlias from the pipeline by property name (Get-OERConfiguration | Connect-OER)' {

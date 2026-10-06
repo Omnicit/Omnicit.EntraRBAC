@@ -4605,6 +4605,188 @@ Describe 'A command whose sign-in was refused sends nothing through either trans
         @($R.Output | Where-Object { "$_" -like 'AFTER ROW: groups | *' -and "$_" -match 'would create' }).Count | Should -Be 1
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'every request is answered by a module-scope stub, and the refused command sends nothing'
     }
+
+    It 'H10: after a Connect-OER whose -TenantAlias is bound but empty, Invoke-OERStructure without -TenantId, outside any try, requests no token and sends no Graph or ARM request (A10, BL-89, final review I1)' {
+        # The loop of H8 over rows whose alias may be blank -- a profile list or a CSV with an empty cell.
+        # A bound empty alias used to skip Connect-OER's alias block, so Connect-OER named no tenant:
+        # it signed in to the current session's tenant (here a cached return of tenant A's app-only
+        # session, the same app the loop uses for every row), and as Connect-OER's sign-in it cleared the
+        # session-uncertain marker. The Invoke-OERStructure after it then planned the row's document in
+        # tenant A. Nothing up the stack catches anything.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-OERWithConfirmAnswer -Answer '&No' -Script {
+            Import-Module Omnicit.EntraRBAC
+            $Own = [pscustomobject]@{
+                AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+            }
+            # Tenant A's app-only certificate session for the loop's application, with a cached ARM token
+            # for tenant A, as the previous row's successful Connect-OER left it. No sign-in was refused
+            # before, so the marker is clear.
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($C)
+                $script:_OERAuthState = @{
+                    TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientCertificate'
+                    ClientId = '33333333-3333-3333-3333-333333333333'; Environment = 'Global'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    TokenTenantId = '44444444-4444-4444-4444-444444444444'
+                    GraphSessionFingerprint = Get-OERGraphSessionFingerprint -Context $C
+                    ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-tenant-A' -AsPlainText -Force
+                    ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                    ArmResourceUrl = 'https://management.azure.com/'
+                    ArmTokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            } $Own
+            # As in H8: the process holds the module's own session throughout, so the A18 session gate
+            # passes.
+            function global:Get-MgContext {
+                [pscustomobject]@{
+                    AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+                    ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+                    Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+                }
+            }
+            $global:OERF1TokenCalls = 0
+            $global:OERF1ConnectCalls = 0
+            $global:OERF1LookupCalls = 0
+            $global:OERF1GraphRequests = [System.Collections.Generic.List[string]]::new()
+            $global:OERF1ArmRequests = [System.Collections.Generic.List[string]]::new()
+            # MODULE-scope stubs for every transport the scenario could reach, as in H8, removed again
+            # below, unqualified from the module scope. No step is expected to request a token, connect or
+            # look a tenant up -- tenant A's session answers from the cache -- so each of those stubs only
+            # counts. Resolve-OERTenantDomain stands between the module and Invoke-RestMethod, so no lookup
+            # is sent. Hang guards: exit past a bound no step reaches.
+            & (Get-Module Omnicit.EntraRBAC) {
+                function script:Get-AzToken {
+                    [CmdletBinding()]
+                    param([string]$Tenant, [string]$Resource, [string[]]$Scope, [string]$ClientId, [string]$Claim,
+                        [switch]$Interactive, [switch]$DeviceCode, [switch]$ManagedIdentity, [switch]$Force,
+                        [string]$ClientCertificatePath)
+                    $global:OERF1TokenCalls++
+                    if ($global:OERF1TokenCalls -gt 5) { exit }
+                    [pscustomobject]@{
+                        Token     = 'NOT-A-REAL-TOKEN-h10'
+                        ExpiresOn = [System.DateTimeOffset]::UtcNow.AddHours(1)
+                        Identity  = 'oer-f1-probe'
+                        TenantId  = $Tenant
+                    }
+                }
+                function script:Connect-MgGraph {
+                    [CmdletBinding()]
+                    param($AccessToken, [switch]$NoWelcome, $Environment)
+                    $global:OERF1ConnectCalls++
+                    if ($global:OERF1ConnectCalls -gt 5) { exit }
+                }
+                function script:Invoke-MgGraphRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Body)
+                    if ($global:OERF1GraphRequests.Count -ge 10) { exit }
+                    $global:OERF1GraphRequests.Add([string]$Uri)
+                    @{ value = @() }
+                }
+                function script:Invoke-WebRequest {
+                    [CmdletBinding()]
+                    param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+                    if ($global:OERF1ArmRequests.Count -ge 10) { exit }
+                    $global:OERF1ArmRequests.Add([string]$Uri)
+                    [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
+                }
+                function script:Resolve-OERTenantDomain {
+                    [CmdletBinding()]
+                    param([string]$Domain, [string]$Environment)
+                    $global:OERF1LookupCalls++
+                    if ($global:OERF1LookupCalls -gt 5) { exit }
+                    throw [System.InvalidOperationException]::new('oer-f1-probe: no lookup is expected in this scenario.')
+                }
+            }
+            # H1's document: one group, read by the handler itself through Graph, and one role assignment,
+            # read by a nested Get-OERRoleAssignment through ARM.
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-f1-h10-{0}.json' -f [guid]::NewGuid().ToString('N'))
+            Set-Content -Path $Doc -Encoding utf8 -Value (
+                '{ "version": "1.0", "groups": [ { "displayName": "oer-a19-probe-group" } ], ' +
+                '"roleAssignments": [ { "scope": "/subscriptions/88888888-8888-8888-8888-888888888888", ' +
+                '"role": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "principal": "99999999-9999-9999-9999-999999999999" } ] }')
+            # One turn of the loop with a blank alias, as at a prompt: no try anywhere up the stack.
+            $Error.Clear()
+            Connect-OER -TenantAlias '' -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-f1-h10-not-a-file.pfx'
+            $ConnectRecords = @($Error)
+            $Error.Clear()
+            $Rows = @(Invoke-OERStructure -Path $Doc -WhatIf)
+            $RefusedTokenCalls = $global:OERF1TokenCalls
+            $RefusedConnectCalls = $global:OERF1ConnectCalls
+            $RefusedGraphRequests = $global:OERF1GraphRequests.Count
+            $RefusedArmRequests = $global:OERF1ArmRequests.Count
+            $RefusedRecords = @($Error)
+            [array]::Reverse($RefusedRecords)
+            # The control: the loop's next row names tenant A by its GUID with the same application, a
+            # cached return that clears the marker, and the same document is then planned in tenant A --
+            # so the stubs above do answer, and the zeros before are the refusal's.
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444' -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-f1-h10-not-a-file.pfx'
+            $AfterRows = @(Invoke-OERStructure -Path $Doc -WhatIf)
+            Remove-Item -Path $Doc
+            'DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc))
+            # Unqualified, from the module scope: removes the nearest definition, which is the stub.
+            & (Get-Module Omnicit.EntraRBAC) {
+                Remove-Item -Path function:Get-AzToken
+                Remove-Item -Path function:Connect-MgGraph
+                Remove-Item -Path function:Invoke-MgGraphRequest
+                Remove-Item -Path function:Invoke-WebRequest
+            }
+            $Restored = foreach ($Name in 'Get-AzToken', 'Connect-MgGraph', 'Invoke-MgGraphRequest', 'Invoke-WebRequest') {
+                $Resolved = & (Get-Module Omnicit.EntraRBAC) { param($N) Get-Command -Name $N -CommandType Function -ErrorAction Ignore } $Name
+                [bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE')
+            }
+            'TRIPWIRE RESTORED: {0}' -f (@($Restored) -notcontains $false)
+            foreach ($Record in $ConnectRecords) {
+                'CONNECT ERROR: {0} | {1}' -f [string]$Record.FullyQualifiedErrorId, [string]$Record.CategoryInfo.Category
+            }
+            'REFUSED TOKEN CALLS: {0}' -f $RefusedTokenCalls
+            'REFUSED CONNECT CALLS: {0}' -f $RefusedConnectCalls
+            'REFUSED GRAPH CALLS: {0}' -f $RefusedGraphRequests
+            'REFUSED ARM CALLS: {0}' -f $RefusedArmRequests
+            foreach ($Record in $RefusedRecords) {
+                'REFUSED ERROR: {0} | {1} | {2}' -f [string]$Record.FullyQualifiedErrorId, [string]$Record.TargetObject, [string]$Record.Exception.Message
+            }
+            foreach ($Row in $Rows) { 'ROW: {0} | {1} | {2}' -f $Row.Section, $Row.Action, $Row.Detail }
+            'LOOKUP CALLS: {0}' -f $global:OERF1LookupCalls
+            'TOKEN CALLS: {0}' -f $global:OERF1TokenCalls
+            'CONNECT CALLS: {0}' -f $global:OERF1ConnectCalls
+            'GRAPH CALLS: {0}' -f $global:OERF1GraphRequests.Count
+            'ARM CALLS: {0}' -f $global:OERF1ArmRequests.Count
+            foreach ($Row in $AfterRows) { 'AFTER ROW: {0} | {1} | {2}' -f $Row.Section, $Row.Action, $Row.Detail }
+            'END OF SCRIPT REACHED'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'DOCUMENT REMOVED: True'
+        # The blank alias was refused by Connect-OER itself, before any sign-in.
+        @($R.Output | Where-Object { "$_".StartsWith('CONNECT ERROR: ') }) | Should -Be @('CONNECT ERROR: InvalidTenantAlias,Connect-OER | InvalidArgument')
+        # The next statement, Invoke-OERStructure naming no tenant, made no token request and no
+        # connection, and sent no Graph and no ARM request.
+        $R.Output | Should -Contain 'REFUSED TOKEN CALLS: 0'
+        $R.Output | Should -Contain 'REFUSED CONNECT CALLS: 0'
+        $R.Output | Should -Contain 'REFUSED GRAPH CALLS: 0'
+        $R.Output | Should -Contain 'REFUSED ARM CALLS: 0'
+        # Its own sign-in was refused for the uncertain session, naming it.
+        @($R.Output | Where-Object { $_ -like 'REFUSED ERROR: SignInRefused,Initialize-OERAuth | Invoke-OERStructure | An earlier sign-in *' }).Count |
+            Should -Be 1
+        $Rows = @($R.Output | Where-Object { "$_" -like 'ROW: *' })
+        # Both sections answered, and neither was planned: a refused read is not an absent object.
+        @($Rows | Where-Object { $_ -like 'ROW: groups | *' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_ -like 'ROW: roleAssignments | *' }).Count | Should -BeGreaterThan 0
+        @($Rows | Where-Object { $_ -match '^ROW: [^|]+ \| (Created|Updated|Removed) \|' }) | Should -BeNullOrEmpty
+        @($Rows | Where-Object { $_ -match 'would create' }) | Should -BeNullOrEmpty
+        # The control: no lookup and no token anywhere, and after the row naming tenant A the document's
+        # group read and role assignment read went out and the group was planned.
+        $R.Output | Should -Contain 'LOOKUP CALLS: 0'
+        $R.Output | Should -Contain 'TOKEN CALLS: 0'
+        $R.Output | Should -Contain 'CONNECT CALLS: 0'
+        @($R.Output | Where-Object { "$_" -like 'GRAPH CALLS: *' })[0] | Should -Not -Be 'GRAPH CALLS: 0'
+        @($R.Output | Where-Object { "$_" -like 'ARM CALLS: *' })[0] | Should -Not -Be 'ARM CALLS: 0'
+        @($R.Output | Where-Object { "$_" -like 'AFTER ROW: groups | *' -and "$_" -match 'would create' }).Count | Should -Be 1
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0 -Because 'every request is answered by a module-scope stub, and the refused command sends nothing'
+    }
 }
 
 Describe 'A command whose sign-in a later command in the pipeline replaced sends nothing (A20, F-E)' {

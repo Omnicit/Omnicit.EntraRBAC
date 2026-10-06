@@ -203,7 +203,10 @@ foreach ($Alias in $Aliases) {
 
 `Invoke-OERStructure` without `-TenantId` likewise refuses every document piped to it after one whose
 sign-in was refused. A `Connect-OER` whose parameters PowerShell cannot bind never runs, so it leaves
-nothing behind for the module to see.
+nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, is refused with
+`InvalidTenantAlias` and counts as a refused sign-in. An empty `-TenantId`, however, names no tenant:
+`Connect-OER` then signs in to the current session's tenant and, when that succeeds, makes the module
+send again, so a script that takes the tenant from data must check the value before it passes it.
 
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
 different tenants or identities, a command whose sign-in another one replaced sends nothing more:
@@ -287,7 +290,8 @@ and asked again at the next sign-in if it fails. A domain the authority does not
 is refused with `TenantResolutionFailed`, and no token is requested. A tenant is a GUID or a verified
 domain: any other value is looked up the same way and refused when it names no tenant, `common` among
 them. `organizations`, which the module uses when no tenant is named and there is no session, names
-no tenant and is not checked.
+no tenant and is not checked against one; its Azure Resource Manager token must still come from the
+tenant its Microsoft Graph token came from, or it is refused with `TenantMismatch`.
 
 The module also warns before a client secret sign-in for the same application when the tenant you
 name differs from the one the credential AzAuth is currently holding for that application was built

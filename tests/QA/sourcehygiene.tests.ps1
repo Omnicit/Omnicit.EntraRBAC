@@ -1422,8 +1422,9 @@ BeforeAll {
         the drift this rule exists to stop. Checkpoint-OERSignIn's own callers get no row: the
         snapshot is a value a command keeps in its own variable, never a gate in front of a
         request. Invoke-MgGraphRequest and Invoke-WebRequest are called only by their wrapper.
-        Invoke-RestMethod, the module's one unauthenticated call (the tenant lookup of a tenant named
-        by domain), is called only by Resolve-OERTenantDomain, and Resolve-OERTenantDomain only by
+        Invoke-RestMethod, which sends the module's one network call outside the two transports and
+        its one deliberately unauthenticated call (the tenant lookup of a tenant named by domain), is
+        called only by Resolve-OERTenantDomain, and Resolve-OERTenantDomain only by
         Initialize-OERAuth, which compares the tenant ID it returns with the tenant each token was
         issued for. The lookup carries no credential of any kind: a second sender could add one, or
         send a secret to a request that needs none, so the call's own parameters are held as well.
@@ -1434,6 +1435,16 @@ BeforeAll {
         sign-in was refused, and a command that names no tenant would then act on the previous tenant.
         The marker's variable, $script:_OERSessionUncertain, is read and written in no file but the
         helper's own.
+
+        WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
+        is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the
+        session-uncertain refusal (A10), and the one key that clears the marker without a tenant. No
+        command is called to pass it, so it is held as a NAME: ReclaimGraphSession appears under source/
+        only in Connect-OER.ps1, which passes it, and Initialize-OERAuth.ps1, which declares and reads
+        it, and both must really name it. A parameter of that name on any command, a prefix of it on an
+        Initialize-OERAuth call (PowerShell binds -R to it), a variable or parameter declaration in any
+        scope, and a string constant or expandable string holding it -- a member name, a hashtable key,
+        an index -- each count; comments do not, since the AST never sees them.
 
         THE MARKER IS SET WHERE THE LATCH IS SET, AND PUT BACK WHERE IT IS RELEASED. In
         Initialize-OERAuth exactly three Set-OERSessionUncertain calls stand, each a statement of its own
@@ -1478,7 +1489,10 @@ BeforeAll {
         time (a call through a variable) is invisible to GetCommandName(), the same limit the Az
         context gate records. The ownership scan resolves a module-qualified name, the three
         Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else. A bearer read
-        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker.
+        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker. The
+        reclaim rule cannot see a name built at run time ('Reclaim' + 'GraphSession'), an abbreviated
+        key in a hashtable splatted into Initialize-OERAuth (@{ Recl = $true }, which binds), or a
+        call of Connect-OER itself from another source file, which passes the switch on its own.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -2341,6 +2355,111 @@ BeforeAll {
         $Got = @(Find-OERSessionUncertainVariable -Ast $CaseAst).Count
         if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
             $script:sessionUncertainVariableKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # --- The session reclaim (final review I2, Ruling F2; see WHO MAY NAME THE RECLAIM in the Pass 9
+    # comment). ---
+    # Every place a tree names ReclaimGraphSession: a variable or a parameter declaration, in any scope
+    # and letter case; a command parameter of that name on any command, or a shorter prefix of it on a
+    # call of Initialize-OERAuth, which PowerShell binds to the same switch (-R is enough); and a string
+    # constant or an expandable string whose text holds the name -- a member name, a hashtable key, an
+    # index, a quoted or a bareword string. A comment is a token, never an AST node, so help text and
+    # comments naming the switch are not references.
+    function Find-OERReclaimGraphSessionName {
+        param($Ast)
+
+        $Ast.FindAll({
+                $Node = $args[0]
+                if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    return (($Node.VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq 'ReclaimGraphSession')
+                }
+                if ($Node -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    if ($Node.ParameterName -eq 'ReclaimGraphSession') { return $true }
+                    return ($Node.ParameterName.Length -gt 0 -and
+                        $Node.Parent -is [System.Management.Automation.Language.CommandAst] -and
+                        (Resolve-OERTransportCommandName -Name $Node.Parent.GetCommandName()) -eq 'Initialize-OERAuth' -and
+                        'ReclaimGraphSession'.StartsWith($Node.ParameterName, [System.StringComparison]::OrdinalIgnoreCase))
+                }
+                if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                    $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+                    return ($Node.Value -match 'ReclaimGraphSession')
+                }
+                return $false
+            }, $true)
+    }
+
+    # A file whose text names ReclaimGraphSession is parsed again and searched whole. Any other file can
+    # bind the switch only through an abbreviated parameter on an Initialize-OERAuth call, so only the
+    # call nodes Pass 1 kept for the sign-in call-site rule are searched there.
+    $script:reclaimOwnerPaths = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1')
+    $script:reclaimOwnerSites = @{}
+    foreach ($Owner in $script:reclaimOwnerPaths) { $script:reclaimOwnerSites[$Owner] = 0 }
+    $script:reclaimViolations = [System.Collections.Generic.List[string]]::new()
+    $script:reclaimFilesSearched = 0
+    $ReclaimUnits = @{}
+    foreach ($Unit in $script:sourceUnits) { $ReclaimUnits[$Unit.RelativePath] = $Unit }
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -notmatch '^source[\\/]') { continue }
+        if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
+        $Relative = $File.RelativePath -replace '/', '\'
+        $References = @()
+        if ($File.Text -match 'ReclaimGraphSession') {
+            $script:reclaimFilesSearched++
+            $ReclaimTokens = $null
+            $ReclaimErrors = $null
+            $ReclaimAst = [System.Management.Automation.Language.Parser]::ParseInput(
+                $File.Text, $File.Path, [ref]$ReclaimTokens, [ref]$ReclaimErrors)
+            if ($ReclaimErrors.Count -gt 0) {
+                $script:reclaimViolations.Add(('{0} -- names ReclaimGraphSession and does not parse, so its references cannot be placed' -f $Relative))
+                continue
+            }
+            $References = @(Find-OERReclaimGraphSessionName -Ast $ReclaimAst)
+        } elseif ($ReclaimUnits.ContainsKey($Relative)) {
+            $References = @(foreach ($Call in $ReclaimUnits[$Relative].SignInCalls) { Find-OERReclaimGraphSessionName -Ast $Call })
+        }
+        foreach ($Reference in $References) {
+            if ($script:reclaimOwnerSites.ContainsKey($Relative)) {
+                $script:reclaimOwnerSites[$Relative]++
+            } else {
+                $script:reclaimViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+            }
+        }
+    }
+    $script:reclaimStale = [System.Collections.Generic.List[string]]::new()
+    foreach ($Owner in $script:reclaimOwnerPaths) {
+        if ($script:reclaimOwnerSites[$Owner] -gt 0) { continue }
+        $script:reclaimStale.Add(('{0} -- listed as an owner of ReclaimGraphSession, but names it nowhere (or is not among the scanned files)' -f $Owner))
+    }
+
+    # Known answers for the reclaim scan: the number of references each miniature must report.
+    $script:reclaimKnownAnswers = @(
+        @{ Case = 'the switch on an Initialize-OERAuth call'; Expect = 1; Text = 'Initialize-OERAuth -TenantId $T -ReclaimGraphSession' }
+        @{ Case = 'the switch with a value, on another command'; Expect = 1; Text = 'Connect-Something -ReclaimGraphSession:$true' }
+        @{ Case = 'an abbreviated switch on an Initialize-OERAuth call'; Expect = 1; Text = 'Initialize-OERAuth -IncludeARM -Reclaim' }
+        @{ Case = 'a one-letter switch in lower case on a module-qualified call'; Expect = 1; Text = 'Omnicit.EntraRBAC\Initialize-OERAuth -r' }
+        @{ Case = 'a member assignment'; Expect = 1; Text = '$AuthParams.ReclaimGraphSession = $true' }
+        @{ Case = 'a hashtable key'; Expect = 1; Text = '$P = @{ ReclaimGraphSession = $true }' }
+        @{ Case = 'a quoted hashtable key in another letter case'; Expect = 1; Text = '$P = @{ ''reclaimgraphsession'' = $true }' }
+        @{ Case = 'an index string'; Expect = 1; Text = '$P[''ReclaimGraphSession''] = $true' }
+        @{ Case = 'a parameter declaration'; Expect = 1; Text = 'function F { param([switch]$ReclaimGraphSession) }' }
+        @{ Case = 'a scope-qualified variable'; Expect = 1; Text = 'if ($script:ReclaimGraphSession) { }' }
+        @{ Case = 'an expandable string'; Expect = 1; Text = '$Line = "-ReclaimGraphSession:$Value"' }
+        @{ Case = 'a comment'; Expect = 0; Text = "# Initialize-OERAuth -ReclaimGraphSession`n`$X = 1" }
+        @{ Case = 'help text'; Expect = 0; Text = "function F {`n<#`n.PARAMETER ReclaimGraphSession`nNot code.`n#>`nparam() }" }
+        @{ Case = 'an abbreviation on another command'; Expect = 0; Text = 'Get-ChildItem -R' }
+        @{ Case = 'another switch of Initialize-OERAuth'; Expect = 0; Text = 'Initialize-OERAuth -IncludeARM -ForceRefresh' }
+        @{ Case = 'a longer variable name'; Expect = 0; Text = '$ReclaimGraphSessionAfter = 1' }
+    )
+    $script:reclaimKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:reclaimKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:reclaimKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
                     $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
         }
     }
@@ -3553,6 +3672,27 @@ call back as a statement of its own in one of those three places.
             'each of the two Register-OERSignInIdentity statements, one per success end, is followed directly by the statement that puts the marker back')
     }
 
+    It 'names ReclaimGraphSession only in Connect-OER.ps1 and Initialize-OERAuth.ps1' {
+        $script:reclaimKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the reclaim scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
+        @($script:reclaimKnownAnswers).Count | Should -Be 16 -Because (
+            'the known-answer table holds sixteen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:reclaimStale -join "`n" | Should -BeNullOrEmpty -Because (
+            'Connect-OER, which passes the switch, and Initialize-OERAuth, which declares and reads it, must each really name it; an owner listed here that names it nowhere is a stale rule, not a pass')
+        $script:reclaimFilesSearched | Should -BeGreaterThan 1 -Because (
+            'at least the two owner files name ReclaimGraphSession in their text; fewer files searched means the scan lost them')
+        $script:reclaimViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+-ReclaimGraphSession is the one way past two of Initialize-OERAuth's refusals: the Graph SDK session gate
+(A18), which refuses a session another Connect-MgGraph started, and the session-uncertain refusal (A10,
+BL-89), which refuses a sign-in that names no tenant after a refused one. It is also the one key that
+clears the session-uncertain marker without naming a tenant. Connect-OER passes it, as the operator's
+explicit instruction to sign in, and Initialize-OERAuth declares and reads it. A third file that names
+it -- passing it, abbreviating it on an Initialize-OERAuth call, setting it in a splat or forwarding it --
+lets a command that names no tenant take another session back, or act on the previous tenant after a
+refused sign-in, with every other gate green. Pass it only from Connect-OER.
+'@
+    }
+
     It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers and in Initialize-OERAuth' {
         $script:transportOwnerStale['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because (
             'both transport wrappers must really call Get-OERSignInRefusal for their latch gates, and Initialize-OERAuth for its BL-74 check; an owner listed here that calls it nowhere is a stale rule, not a pass')
@@ -3619,7 +3759,8 @@ wrapper.
         $script:transportOwnerStale['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because (
             'Resolve-OERTenantDomain must really call Invoke-RestMethod; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because @'
-Resolve-OERTenantDomain is the single owner of the module's one unauthenticated network call: the OpenID
+Resolve-OERTenantDomain is the single owner of the module's one network call outside the Microsoft Graph
+and Azure Resource Manager transports, and its one deliberately unauthenticated call: the OpenID
 discovery GET that turns a tenant named by domain into its tenant ID. Every other request goes through
 Invoke-OERGraphRequest or Invoke-OERArmRequest, where the gates, the bearer scrub and the retry logic
 live, so an Invoke-RestMethod anywhere else is a second sender no check stands in front of -- and one a

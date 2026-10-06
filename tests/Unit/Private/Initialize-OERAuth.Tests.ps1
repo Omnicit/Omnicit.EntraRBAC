@@ -2301,6 +2301,217 @@ Describe 'Initialize-OERAuth granted-tenant guard' {
         }
     }
 
+    # Final review M1 (Ruling F3): with no tenant named there is no tenant ID to compare the ARM token
+    # with, and since BL-77 the sign-in identity's tenant term is the Graph token's tenant. An interactive
+    # sign-in that names no tenant can be answered by two accounts -- the Graph prompt by one tenant's,
+    # the ARM prompt by another's -- and the session would then act on two tenants under one identity,
+    # with no supersession to see it. So the ARM token is compared with the Graph token of the same
+    # session (TokenTenantId) when both are GUIDs. (a) and (c) fail with the comparison deleted; (b) and
+    # the 'organizations' It above fail with it forced always-true; (d) states the limit.
+    It 'F3 (a): refuses an ARM token issued for another tenant than the Graph token of the same sign-in, when no tenant is named' {
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $Granted = if ($Resource -match 'management') {
+                '22222222-2222-2222-2222-222222222222'
+            }
+            else {
+                '11111111-1111-1111-1111-111111111111'
+            }
+            [pscustomobject]@{
+                Token     = 'fake-token'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Granted
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            $Caught = $null
+            try {
+                Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty -Because 'an ARM token from another tenant than the Graph token must terminate rather than be cached'
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
+            $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $Caught.TargetObject | Should -BeExactly 'organizations'
+            $Caught.Exception.Message | Should -Match ([regex]::Escape(
+                "The Azure Resource Manager token was issued for tenant '22222222-2222-2222-2222-222222222222'"))
+            $Caught.Exception.Message | Should -Match ([regex]::Escape(
+                "the Microsoft Graph token of the same session was issued for tenant '11111111-1111-1111-1111-111111111111'"))
+
+            # The refused ARM token is never cached, so Invoke-OERArmRequest has nothing to send.
+            $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeNullOrEmpty
+            # The Graph half of the session, which went the whole way, is kept.
+            $script:_OERAuthState.TenantId | Should -BeExactly 'organizations'
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'F3 (b): accepts an ARM token issued for the tenant of the Graph token of the same sign-in, when no tenant is named' {
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            [pscustomobject]@{
+                Token     = 'fake-token'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = '11111111-1111-1111-1111-111111111111'
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+
+            $script:_OERAuthState.TenantId | Should -BeExactly 'organizations'
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+            $script:_OERAuthState.ArmToken | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It 'F3 (c): refuses an ARM-only acquisition on an organizations session whose cached Graph token is from another tenant' {
+        # The ARM branch runs ALONE here: the Graph token is cached from the first call, so the
+        # comparison reads the session's recorded Graph tenant, not a token acquired in the same call.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $Granted = if ($Resource -match 'management') {
+                '22222222-2222-2222-2222-222222222222'
+            }
+            else {
+                '11111111-1111-1111-1111-111111111111'
+            }
+            [pscustomobject]@{
+                Token     = 'fake-token'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Granted
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            Initialize-OERAuth -AuthMethod 'Interactive'
+            $script:_OERAuthState.TenantId | Should -BeExactly 'organizations'
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+
+            $Caught = $null
+            try {
+                Initialize-OERAuth -IncludeARM
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty -Because 'an ARM token from another tenant than the cached Graph token must terminate rather than be cached'
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantMismatch,Initialize-OERAuth'
+            $Caught.Exception.Message | Should -Match ([regex]::Escape(
+                "the Microsoft Graph token of the same session was issued for tenant '11111111-1111-1111-1111-111111111111'"))
+            $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeNullOrEmpty
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        # One Graph token, from the first call, and the ARM-only acquisition's one ARM token.
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'F3 (d): does not compare the two tokens when the <Side> token reports no GUID tenant and no tenant is named (the stated limit)' -ForEach @(
+        @{ Side = 'Microsoft Graph'; GraphTenant = $null; ArmTenant = '22222222-2222-2222-2222-222222222222' }
+        @{ Side = 'Azure Resource Manager'; GraphTenant = '11111111-1111-1111-1111-111111111111'; ArmTenant = $null }
+    ) {
+        # The limit, stated rather than implied: a token whose tenant AzAuth does not report as a GUID
+        # (one without a tid claim) leaves nothing to compare, so the ARM token is accepted, exactly as a
+        # named tenant's token without a GUID tenant is not compared.
+        $script:F3GraphTenant = $GraphTenant
+        $script:F3ArmTenant = $ArmTenant
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $Granted = if ($Resource -match 'management') { $script:F3ArmTenant } else { $script:F3GraphTenant }
+            [pscustomobject]@{
+                Token     = 'fake-token'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = $Granted
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName -Parameters @{ GraphTenant = $GraphTenant; ArmTenant = $ArmTenant } {
+            param($GraphTenant, $ArmTenant)
+            Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM
+
+            $script:_OERAuthState.TokenTenantId | Should -Be $GraphTenant
+            $script:_OERAuthState.ArmToken | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -Be $ArmTenant
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+    }
+
+    It 'F3 (e): compares a named tenant''s ARM token with the tenant named, never with the session''s Graph token' {
+        # The new comparison's own scope: it applies only when no tenant is named. A state built by hand
+        # whose Graph tenant differs from the tenant it names -- a shape no sign-in builds, since the Graph
+        # token was compared with that tenant ID when the state was built -- isolates that term: with it
+        # deleted, the ARM token below, issued for the tenant named, would be refused.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            [pscustomobject]@{
+                Token     = 'fake-token'
+                ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1)
+                Identity  = 'admin@contoso.com'
+                TenantId  = '11111111-1111-1111-1111-111111111111'
+            }
+        }
+        Mock -ModuleName $script:moduleName Connect-MgGraph { }
+
+        InModuleScope $script:moduleName {
+            # No GraphSessionFingerprint key: a state this function did not build, compared with no
+            # Graph SDK session, so the Graph token is a cache hit and the ARM branch runs alone.
+            $script:_OERAuthState = @{
+                TenantId         = '11111111-1111-1111-1111-111111111111'
+                AuthMethod       = 'Interactive'
+                ClientId         = ''
+                Environment      = 'Global'
+                GraphTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                TokenTenantId    = '33333333-3333-3333-3333-333333333333'
+            }
+
+            Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -IncludeARM
+
+            $script:_OERAuthState.ArmToken | Should -Not -BeNullOrEmpty
+            $script:_OERAuthState.ArmTokenTenantId | Should -BeExactly '11111111-1111-1111-1111-111111111111'
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+            $Resource -match 'management'
+        }
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0
+    }
+
     It 'drops a carried-forward ArmTokenTenantId when the tenant changes' {
         # The evidence field is carried on the SAME condition as the ARM token it describes. If it
         # outlived that token it would report the previous customer's tenant against a state that no

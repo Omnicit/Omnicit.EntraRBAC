@@ -45,7 +45,9 @@ function Initialize-OERAuth {
     the GUID as given, or the one a domain resolved to -- a terminating TenantMismatch error is
     raised before the token is wired into Connect-MgGraph or cached for Azure Resource Manager, so a
     token minted for another tenant never becomes a usable session, whether the tenant was named by
-    GUID or by domain. 'organizations' names no tenant and is not compared.
+    GUID or by domain. 'organizations' names no tenant and is not compared with one; its Azure
+    Resource Manager token is compared with the session's Microsoft Graph token instead, and refused
+    with TenantMismatch when the two report different tenant IDs.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the
@@ -680,7 +682,8 @@ function Initialize-OERAuth {
 
     # SEC (BL-12, decided by Philip 2026-10-06, P-2): a tenant named by domain is resolved to its tenant
     # ID before any token is requested, through the cloud authority's OpenID discovery document
-    # (Resolve-OERTenantDomain, the module's one unauthenticated network call), and every token is then
+    # (Resolve-OERTenantDomain, the one network call outside the Microsoft Graph and Azure Resource
+    # Manager transports, and the one deliberately unauthenticated call), and every token is then
     # compared with that ID (TenantMismatch, below): a token carries its tenant as a GUID, so a domain
     # is compared through the GUID it resolves to, and a device code, managed identity or reused client
     # secret sign-in that comes back from another tenant is refused. A GUID needs no lookup;
@@ -1260,6 +1263,40 @@ function Initialize-OERAuth {
                         "token whose tenant does not match the session's: every later Azure call would act " +
                         "on '$GrantedArmTenant' while reporting '$EffectiveTenant'. Sign in again with an " +
                         "account that belongs to '$EffectiveTenant'.")) `
+                    -ErrorId 'TenantMismatch' `
+                    -Category AuthenticationError `
+                    -TargetObject $EffectiveTenant `
+                    -Cmdlet $PSCmdlet `
+                    -Terminating
+            }
+
+            # SEC (BL-77; final review M1, Ruling F3): with no tenant named there is no tenant ID to
+            # compare with -- $ExpectedTenantId is $null for 'organizations' -- so the ARM token is
+            # compared with the Graph token of the same session instead: $script:_OERAuthState.TokenTenantId,
+            # from the Graph token this call acquired or the cached one an ARM-only acquisition runs beside.
+            # The sign-in identity's tenant term is that Graph tenant (BL-77), so without this an
+            # interactive sign-in naming no tenant whose Graph prompt one account answered and whose ARM
+            # prompt another account answered would hold two tenants under one identity: no supersession
+            # sees it, and in X -TenantId <GUID> | Y -TenantId organizations, X's Azure calls would go out
+            # with the other tenant's ARM token. Compared only when both values are GUIDs, so a Graph token
+            # without a GUID tenant leaves nothing to compare with (the same limit as the check above).
+            # Terminating, above the assignments below, for the reason the check above gives. Every term on
+            # its own line and independently deletable, so each stays mutation-provable.
+            $SessionGraphTenant = $script:_OERAuthState.TokenTenantId
+            if (-not $ExpectedTenantId -and
+                (Test-OERGuid -Value $GrantedArmTenant) -and
+                (Test-OERGuid -Value $SessionGraphTenant) -and
+                $GrantedArmTenant -ne $SessionGraphTenant) {
+                Write-CmdletError `
+                    -Message ([System.Exception]::new(
+                        "The Azure Resource Manager token was issued for tenant '$GrantedArmTenant', but the " +
+                        "Microsoft Graph token of the same session was issued for tenant '$SessionGraphTenant'. " +
+                        "The sign-in named no tenant ('$EffectiveTenant'), so the two tokens are compared with " +
+                        "each other, and Omnicit.EntraRBAC refuses to cache an Azure Resource Manager token " +
+                        "for another tenant than the session's Microsoft Graph token: every later Azure call " +
+                        "would act on '$GrantedArmTenant' while every Microsoft Graph call acts on " +
+                        "'$SessionGraphTenant'. Sign in again with one account for both, or name the tenant " +
+                        "with -TenantId.")) `
                     -ErrorId 'TenantMismatch' `
                     -Category AuthenticationError `
                     -TargetObject $EffectiveTenant `

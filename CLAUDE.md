@@ -517,7 +517,9 @@ included, and so does `Invoke-OERGraphRequest` before every Graph call; a sessio
 `Connect-MgGraph` started is refused with `GraphSessionChanged`. Only `Connect-OER` passes
 `-ReclaimGraphSession`, which takes the session back. Never add a second reclaim caller, and never
 make the module switch the session back by itself: either one moves the other session's Graph calls
-to this module's tenant.
+to this module's tenant. Since A10 the switch also gets past the session-uncertain refusal and clears
+that marker without a tenant, so gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds the NAME
+`ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 `Why: docs/development/rationale.md#auth-state`
 
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
@@ -647,7 +649,13 @@ its `ShouldProcess`.
 the variable anywhere else, never call the helper outside `Initialize-OERAuth`, `Connect-OER` and
 `Disconnect-OER`, never let a transport's refresh clear the marker, and never count `organizations`
 as naming a tenant. A command that names its tenant is never refused by the marker; a parameter
-binding error of `Connect-OER` never reaches it (known limit).
+binding error of `Connect-OER` never reaches it (known limit). `Connect-OER` sends every BOUND
+`-TenantAlias` to its alias check, so an empty, whitespace or `$null` alias is refused with
+`InvalidTenantAlias` and leaves the marker set; never test the alias for truthiness there, and never
+use `[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. An explicitly empty `-TenantId`
+still names no tenant -- `Connect-OER` signs in to the current session's tenant and, when that
+succeeds, clears the marker -- and is documented, not refused: refusing it needs a new error id
+(known limit).
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -683,8 +691,11 @@ tenant; measured).
 `Initialize-OERAuth` refuses, with `TenantMismatch`, a token issued for another tenant than the one
 named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect does
 not become a session, within two limits: a token whose tenant AzAuth does not report as a GUID (one
-without a `tid` claim) is not compared, and `organizations` names no tenant and is not compared
-(`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the call it only
+without a `tid` claim) is not compared, and `organizations` names no tenant, so its tokens are
+compared with no requested tenant -- its ARM token is compared with the session's Graph token
+(`TokenTenantId`) instead, when both are GUIDs, and refused with the same `TenantMismatch` when
+they differ (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
+call it only
 warns, for a client secret switch it can predict will not take effect (a
 `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
 any token request). The post-call warning that compared granted tenants is
@@ -1136,7 +1147,9 @@ bug.
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
-  the statement directly after each `Register-OERSignInIdentity`; every
+  the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
+  (a parameter, a prefix of it on an `Initialize-OERAuth` call, a variable, a member, a hashtable key
+  or any string) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it; every
   `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
   same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
   a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
