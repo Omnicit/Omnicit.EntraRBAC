@@ -50,7 +50,20 @@ and the members half was measured with this identity on 2026-09-29
 owner. The export, which reads through `Get-OERGroup`, therefore wrote a group's members and owners
 without its service principals, and a later `Invoke-OERStructure -Prune` run by any identity whose
 read DOES list them would remove every such membership and ownership as undeclared. The read
-succeeded, so the guard for unread collections never fired.
+succeeded, so the guard for unread collections never fired. (Review corrected the premise of that
+last chain: Microsoft Learn documents both omissions for every caller of `v1.0`, so no earlier
+version's read listed a group's service principals, and no earlier version pruned one. The defect
+was an incomplete export, and a `Failed` row for a declared service principal.)
+
+**Round 1, decision A9.** Making the reads whole would, on its own, have turned every document
+written before them -- none lists a group's service principals -- into a removal of them under
+`-Prune`, more than any earlier version removed. Decision A9 keeps the reads and the export whole
+and withholds that prune instead: an undeclared service principal member or owner is `Extra`
+without `-Prune`, with a hint that `-Prune` leaves it in place, and `Skipped` with `-Prune`, with a
+Detail starting `prune withheld: ... is a service principal`, with no warning and no removal; every
+other type is pruned as before. Round 1 is the section R1 below, 4.2 run again with A9's
+expectation, the new 4.3 and 4.4, and the teardown R1.T1 to R1.T3. Every other result in this file
+is round 0's and stands.
 
 Section 1 of this file measures the reads BEFORE the fix, on the unchanged build, and decides which
 object types the fix has to read typed (the step's scope, point 3). Sections 2 to 5, written once the
@@ -1067,9 +1080,176 @@ Verdict: PASS, two real runs with -Prune (no -WhatIf, -Confirm:false), behind th
 [oer-s91] Fence: requests 14, not a GET 0, refused 0
 ```
 
-### 4.2. The same document without the service principal, -Prune -WhatIf: the removal is planned
+### R1. Round 1 (A9): the objects again, on the build that withholds the prune
 
-- [x] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` plans its removal as a member, and the last-owner guard keeps it as the owner. No write.
+Round 1 runs after review decision A9: the group prune never removes a service principal. These
+checks set the objects up again on the build of the commit `fix: never prune a service principal
+from a group`, and cut a new apply document from a new export; 4.2 then runs again with A9's
+expectation, 4.3 and 4.4 are new, and R1.T1 to R1.T3 tear down. S.1 to 4.1 and section 5 keep their
+round 0 results: A9 changes no read, and 3.2 and 4.1 declare the service principal.
+
+### R1.0. The module loads from the build with the A9 guard, in the round's own worktree
+
+- [ ] **R1.0** The worktree's build carries the single reader and the A9 guard, and the main clone is still on `main`.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainPath = [System.IO.Path]::GetFullPath(($List[0] -replace '^worktree ', '')).TrimEnd('\', '/')
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "The module loads from a worktree that is not the main clone: $([System.IO.Path]::GetFullPath($Cfg.Repo).TrimEnd('\', '/') -ne $MainPath); main clone on: $MainBranch"
+Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
+$Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$Fix = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch 'function Get-OERGroupRelation' -Quiet)
+$A9 = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch '-Prune never removes a service principal from a group' -Quiet)
+Write-OerLiveStep "The worktree's build ($(Split-Path -Leaf $Psm1.DirectoryName), built $($Psm1.LastWriteTimeUtc.ToString("yyyy-MM-dd HH:mm 'UTC'", [cultureinfo]::InvariantCulture))) carries the single reader: $Fix; the A9 guard: $A9"
+```
+
+**Expect:** `The module loads from a worktree that is not the main clone: True`, the main clone on
+`main`; the round's worktree on its own local branch at the head that carries the A9 commit, with 0
+tracked changes; `carries the single reader: True; the A9 guard: True`, and a build time after that
+commit.
+**Failure looks like:** any `False` -- build the worktree first, never while the gate runs.
+
+Result:
+
+### R1.S. The redaction map continues this file's numbering
+
+- [ ] **R1.S** Before anything is printed in round 1, the step's redaction map gives the service principal the placeholder it has in round 0 (`...04`) and numbers every new id from `...07` on.
+
+Round 0's map was deleted after its write-up, so a new one would start again at `...01`: the service
+principal would get a second placeholder in this file, and new objects would get numbers round 0
+already used. This block writes the map before the first id of round 1 is printed. It reads the
+service principal's id and writes it only to the map file in the user's temp folder, which OerLive
+keeps outside the clone and the vault; nothing in the block prints an id.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$MapFile = Join-Path ([System.IO.Path]::GetTempPath()) 'OerLive\s91\redaction-map.json'
+$Before = Test-Path -LiteralPath $MapFile
+Connect-OerLive -Graph
+$R = Invoke-OerLiveGraph -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id,displayName" -f $Cfg.NoPermAppId)
+Assert-OerLiveOk -Response $R -Activity 'Reading the service principal of oer-live-cc-noperm' | Out-Null
+$Named = [string]$R.Body['displayName'] -ceq 'oer-live-cc-noperm'
+Disconnect-OerLive
+if ($Before) { throw 'Refusing to write: a redaction map for s91 exists already; read it before replacing it.' }
+if (-not $Named) { throw 'Refusing to write: the service principal of the noperm app id is not named oer-live-cc-noperm.' }
+$Map = [ordered]@{ guids = @{ ([string]$R.Body['id']).ToLowerInvariant() = 4 }; emails = @{}; nextGuid = 7; nextEmail = 1 }
+$null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $MapFile)
+[System.IO.File]::WriteAllText($MapFile, (ConvertTo-Json -InputObject $Map -Depth 5), [System.Text.UTF8Encoding]::new($false))
+$Check = Get-Content -LiteralPath $MapFile -Raw | ConvertFrom-Json -AsHashtable
+Write-OerLiveStep "A map existed before this block: $Before; the service principal is named oer-live-cc-noperm: $Named; the map holds $($Check['guids'].Count) id(s), the service principal at number $(@($Check['guids'].Values)[0]); the next new id gets number $($Check['nextGuid'])"
+```
+
+**Expect:** `A map existed before this block: False`, the identity check passed, `named
+oer-live-cc-noperm: True`, `the map holds 1 id(s), the service principal at number 4; the next new id gets number 7`. The
+first block that prints the service principal's id (R1.3) shows it as `...04`.
+**Failure looks like:** a refusal line -- read the map that exists before replacing it; the service
+principal printed as anything but `...04` in R1.3 -- stop and renumber before writing any result.
+
+Result:
+
+### R1.1. The prerequisite script's plan, round 1
+
+- [ ] **R1.1** `-WhatIf` plans only `oer-s91-` targets in the tenant.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS91Prereq.ps1') -WhatIf 2>&1 | ForEach-Object { "$_" })
+$Code = $LASTEXITCODE
+Write-OerLiveRaw -InputObject ($Out -join "`n")
+$Targets = @($Out | ForEach-Object { if ($_ -match '^What if: Performing the operation ".*" on target "(.*)"\.$') { $Matches[1] } })
+$Tenant = @($Targets | Where-Object { $_ -notmatch '^raw\\s91\\' })
+Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.Count); every tenant target starts with oer-s91-: $(@($Tenant | Where-Object { -not $_.StartsWith('oer-s91-') }).Count -eq 0); exit code: $Code"
+```
+
+**Expect:** as 0.3: the identity check passes; the noperm service principal named
+`oer-live-cc-noperm: True`; the sweep reads all six collections and finds no `oer-s91-` object (round
+0's teardown removed them); no baseline yet, since round 0's `raw\s91\` was deleted, so it is planned
+before the first write; five tenant targets, the two groups and the three links, every one starting
+with `oer-s91-`; nothing written; exit code `0`.
+**Failure looks like:** a tenant target without the prefix -- STOP; a refusal line or a sweep line
+`UNREAD` -- STOP.
+
+Result:
+
+### R1.2. The prerequisite script for real, round 1
+
+- [ ] **R1.2** The test objects exist again: the two groups, the group and the service principal as members, the service principal as owner.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS91Prereq.ps1') -Unattended 2>&1 | ForEach-Object { "$_" })
+$Code = $LASTEXITCODE
+Write-OerLiveRaw -InputObject ($Out -join "`n")
+Write-OerLiveStep "Exit code: $Code"
+```
+
+**Expect:** as 0.4: the baseline written and read back before the first write; both groups created
+and resolvable; the three links added and listed from the other side; both groups `present`; exit
+code `0`.
+**Failure looks like:** a stop line, or an exit code other than 0: run R1.2 again (the script
+completes an earlier run) or tear down; never sign in another way.
+
+Result:
+
+### R1.3. The export of round 1, and the apply document for 4.2 to 4.4
+
+- [ ] **R1.3** The export of the `oer-s91-` groups writes the service principal's id in `oer-s91-grp`'s `members` and `owners`, reports nothing unread, and gives the apply document.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Sid = [string](& (Get-Module Omnicit.EntraRBAC) { param($A) Invoke-OERGraphRequest -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $A) } $Cfg.NoPermAppId).id
+Write-OerLiveStep "The service principal oer-live-cc-noperm is $Sid"
+$Inv = Get-OERInventory -Include Groups -GroupFilter "startswith(displayName,'oer-s91-')" -ErrorAction SilentlyContinue -ErrorVariable E4 -WarningAction SilentlyContinue
+$Entry = @($Inv.groups) | Where-Object { $_.displayName -eq 'oer-s91-grp' }
+Write-OerLiveStep "Export oer-s91-grp: members [$(@($Entry.members) -join '; ')]; owners present $($null -ne $Entry.PSObject.Properties['owners']) [$(@($Entry.owners) -join '; ')]"
+Write-OerLiveStep "The service principal in members: $(@(@($Entry.members) | Where-Object { $_ -eq $Sid }).Count) time(s); in owners: $(@(@($Entry.owners) | Where-Object { $_ -eq $Sid }).Count) time(s)"
+$Partial = @(@($E4) | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+Write-OerLiveStep "InventoryPartial records: $($Partial.Count)"
+foreach ($E in @(@($E4) | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
+$Doc = $Inv | ConvertTo-Json -Depth 50 | ConvertFrom-Json
+$Doc.groups = @($Doc.groups | Where-Object { $_.displayName -eq 'oer-s91-grp' })
+$null = New-Item -ItemType Directory -Force -Path $Raw
+$DocPath = Join-Path $Raw 'doc-s91-grp.json'
+[System.IO.File]::WriteAllText($DocPath, ($Doc | ConvertTo-Json -Depth 50), [System.Text.UTF8Encoding]::new($false))
+Write-OerLiveStep "The apply document for 4.2 to 4.4 (oer-s91-grp only, cut from this export, version $($Doc.version)) is raw\s91\doc-s91-grp.json"
+Disconnect-OerLive
+```
+
+**Expect:** the service principal is `00000000-0000-0000-0000-000000000004`, as in round 0 (R1.S);
+`members` holds the ids of the new `oer-s91-nested` and the service principal, `owners` holds the
+service principal's id, once each; `InventoryPartial records: 0`; no error. The new groups carry
+numbers from `...07` on.
+**Failure looks like:** the service principal printed as anything but `...04` -- stop before writing
+any result (R1.S); otherwise as 3.1.
+
+Result:
+
+### 4.2. The same document without the service principal, -Prune -WhatIf: the prune is withheld
+
+- [ ] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` withholds its prune as a member and as an owner (A9): `Skipped` with the reason, no planned removal, no warning. No write. (Round 1; round 0 planned its removal as a member.)
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -1112,14 +1292,14 @@ Disconnect-OerLive
 ```
 
 **Expect:** `members` without the service principal and `owners` empty; the plan: `Unchanged` for
-`oer-s91-nested`; a `Skipped` row `would remove undeclared member '...'` naming the service
-principal, with the warning `would remove undeclared member`; for the owner, an empty declared
-`owners` reconciles the live owner set, and the only live owner is the service principal, so the
-last-owner guard answers with a `Skipped` row `did not remove owner '...': it is the last remaining
-owner`; no `Removed`, no `Failed`; the fence refused `0`. The engine now sees the service principal:
-that is the step's point, and the plan for an undeclared member is the right outcome.
-**Failure looks like:** no planned removal of the service principal -- the engine still does not
-see it; a `Removed` row -- `-WhatIf` did not hold (the fence would refuse it).
+the group's properties and for `oer-s91-nested`; for the service principal (`...04`), as a member AND
+as an owner, a `Skipped` row starting `prune withheld: undeclared member '...' is a service
+principal` and `prune withheld: undeclared owner '...' is a service principal` -- not `would remove`,
+and not the last-owner guard's `did not remove owner` either, since A9 is asked first; no warning;
+no `What if:` line; no `Removed`, no `Failed`; the fence refused `0`. Round 0 planned the member's
+removal here, which is the outcome A9 decided against.
+**Failure looks like:** a `would remove` row or a prune warning naming the service principal -- the
+build does not carry A9; a `Removed` row -- `-WhatIf` did not hold (the fence would refuse it).
 
 Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
 
@@ -1148,6 +1328,158 @@ What if: Performing the operation "Remove undeclared member '00000000-0000-0000-
 [oer-s91]   Warning: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s91-grp'.
 [oer-s91] Fence: requests 8, not a GET 0, refused 0
 ```
+
+### 4.3. The same document, -Prune for real, twice: the service principal stays
+
+- [ ] **4.3** With the service principal still taken out of `members` and `owners`, `Invoke-OERStructure -Prune -Confirm:$false` for real removes nothing and reports the service principal `Skipped` as member and as owner, two runs in a row (G8); the read-back still lists it as a member and an owner.
+
+The read-only fence stays in front of the module's Graph transport: under A9 a correct run attempts
+no write, and a write it did attempt -- a removal of the service principal -- is refused and shows
+as `Failed` instead of reaching the tenant.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+& (Get-Module Omnicit.EntraRBAC) {
+    $script:S91Seen = [System.Collections.Generic.List[string]]::new()
+    $script:S91Refused = [System.Collections.Generic.List[string]]::new()
+    if (-not $script:S91Transport) { $script:S91Transport = ${function:Invoke-OERGraphRequest} }
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $Path = ($Uri -replace '^https://[^/]+/', '') -replace '\?.*$', ''
+        $script:S91Seen.Add("$($Method.ToUpperInvariant()) $Path")
+        if ($Method -ne 'GET' -and $Path -notmatch '^v1\.0/directoryObjects/(getByIds|[^/]+/getMemberGroups)$') {
+            $script:S91Refused.Add("$($Method.ToUpperInvariant()) $Path")
+            throw "S91 read-only fence: refused $($Method.ToUpperInvariant()) $Path"
+        }
+        & $script:S91Transport @PSBoundParameters
+    }
+}
+$Sid = [string](& (Get-Module Omnicit.EntraRBAC) { param($A) Invoke-OERGraphRequest -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $A) } $Cfg.NoPermAppId).id
+$DocPath = Join-Path $Raw 'doc-s91-grp-without-sp.json'
+$Doc = Get-Content -LiteralPath $DocPath -Raw | ConvertFrom-Json
+Write-OerLiveStep "The document (4.2's, without $($Sid)): members [$(@($Doc.groups[0].members) -join '; ')]; owners [$(@($Doc.groups[0].owners) -join '; ')]"
+foreach ($Run in 1, 2) {
+    $Rows = @(Invoke-OERStructure -Path $DocPath -Include Groups -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue -WarningVariable ApplyWarn)
+    $ByAction = ($Rows | Group-Object Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '
+    Write-OerLiveStep "Run $($Run) (real, -Prune): rows $($Rows.Count) [$ByAction]; Removed $(@($Rows | Where-Object Action -eq 'Removed').Count); warnings $(@($ApplyWarn).Count); errors $(@($ApplyErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count)"
+    foreach ($R in $Rows) { Write-OerLiveStep "  $($R.Action) $($R.Item): $($R.Detail)" }
+    foreach ($W in @($ApplyWarn)) { Write-OerLiveStep "  Warning: $W" }
+}
+$Fence = & (Get-Module Omnicit.EntraRBAC) { [PSCustomObject]@{ Seen = $script:S91Seen.Count; NotGet = @($script:S91Seen | Where-Object { $_ -notlike 'GET *' }).Count; Refused = @($script:S91Refused) } }
+Write-OerLiveStep "Fence: requests $($Fence.Seen), not a GET $($Fence.NotGet), refused $($Fence.Refused.Count)"
+foreach ($F in $Fence.Refused) { Write-OerLiveStep "  Refused: $F" }
+$Members = @(Get-OERGroupMember -Group 'oer-s91-grp' -ErrorAction SilentlyContinue -ErrorVariable E1)
+$Owners = @(Get-OERGroupMember -Group 'oer-s91-grp' -Owners -ErrorAction SilentlyContinue -ErrorVariable E2)
+Write-OerLiveStep "Read-back: members $($Members.Count), the service principal listed $(@($Members | Where-Object { [string]$_.PrincipalId -eq $Sid }).Count) time(s); owners $($Owners.Count), the service principal listed $(@($Owners | Where-Object { [string]$_.PrincipalId -eq $Sid }).Count) time(s)"
+foreach ($E in @(@($E1) + @($E2) | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
+Disconnect-OerLive
+```
+
+**Expect:** each run: 4 rows -- `Unchanged` for the group's properties and for `oer-s91-nested`, and
+`Skipped` with `prune withheld: undeclared member '...' is a service principal` and `prune withheld:
+undeclared owner '...' is a service principal` for the service principal (`...04`); `Removed 0`; no
+warning; no error; the fence: not a GET `0`, refused `0` -- nothing was attempted. The read-back:
+members `2`, the service principal listed `1 time(s)`; owners `1`, the service principal listed `1
+time(s)`.
+**Failure looks like:** a `Removed` row, a `Failed` row or `refused` above 0 -- the guard did not hold,
+and the fence kept the service principal; STOP and read it.
+
+Result:
+
+### 4.4. A document that also leaves out oer-s91-nested, -Prune for real, twice: only the group member goes
+
+- [ ] **4.4** With `oer-s91-nested` taken out of `members` too, the real `-Prune` removes `oer-s91-nested` as a member and leaves the service principal as member and owner; a second run removes nothing (G8).
+
+This shows that the guard is about service principals only: in the same run, a member of another
+type is pruned as before. A fence stays in front of the transport and lets exactly one write
+through, the removal of `oer-s91-nested`'s membership of `oer-s91-grp`; any other write, a removal
+of the service principal included, is refused and shows as `Failed`. Between the two runs the block
+waits until the members read no longer lists `oer-s91-nested`, so the second run does not meet the
+removal's replication.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Gid = [string](Get-OERGroup -Group 'oer-s91-grp' -ErrorAction Stop).Id
+$Nid = [string](Get-OERGroup -Group 'oer-s91-nested' -ErrorAction Stop).Id
+$Sid = [string](& (Get-Module Omnicit.EntraRBAC) { param($A) Invoke-OERGraphRequest -Uri ("v1.0/servicePrincipals(appId='{0}')?`$select=id" -f $A) } $Cfg.NoPermAppId).id
+Write-OerLiveStep "oer-s91-grp is $Gid; oer-s91-nested is $Nid; the service principal oer-live-cc-noperm is $Sid"
+& (Get-Module Omnicit.EntraRBAC) {
+    param($Allowed)
+    $script:S91Allowed = $Allowed
+    $script:S91Seen = [System.Collections.Generic.List[string]]::new()
+    $script:S91Refused = [System.Collections.Generic.List[string]]::new()
+    $script:S91Passed = [System.Collections.Generic.List[string]]::new()
+    if (-not $script:S91Transport) { $script:S91Transport = ${function:Invoke-OERGraphRequest} }
+    function script:Invoke-OERGraphRequest {
+        [CmdletBinding()]
+        param([string]$Method = 'GET', [Parameter(Mandatory)][string]$Uri, [hashtable]$Body, [switch]$All, [string[]]$ExpectedErrorCode)
+        $Path = ($Uri -replace '^https://[^/]+/', '') -replace '\?.*$', ''
+        $script:S91Seen.Add("$($Method.ToUpperInvariant()) $Path")
+        $Read = $Method -eq 'GET' -or $Path -match '^v1\.0/directoryObjects/(getByIds|[^/]+/getMemberGroups)$'
+        if (-not $Read) {
+            if ($Method -eq 'DELETE' -and $Path -eq $script:S91Allowed) { $script:S91Passed.Add("DELETE $Path") }
+            else {
+                $script:S91Refused.Add("$($Method.ToUpperInvariant()) $Path")
+                throw "S91 fence: refused $($Method.ToUpperInvariant()) $Path"
+            }
+        }
+        & $script:S91Transport @PSBoundParameters
+    }
+} ("v1.0/groups/{0}/members/{1}/`$ref" -f $Gid, $Nid)
+$Doc = Get-Content -LiteralPath (Join-Path $Raw 'doc-s91-grp-without-sp.json') -Raw | ConvertFrom-Json
+$Doc.groups[0].members = @(@($Doc.groups[0].members) | Where-Object { $_ -ne $Nid })
+$DocPath = Join-Path $Raw 'doc-s91-grp-without-sp-and-nested.json'
+[System.IO.File]::WriteAllText($DocPath, ($Doc | ConvertTo-Json -Depth 50), [System.Text.UTF8Encoding]::new($false))
+Write-OerLiveStep "The document without $Sid and without $($Nid): members [$(@($Doc.groups[0].members) -join '; ')]; owners [$(@($Doc.groups[0].owners) -join '; ')]"
+foreach ($Run in 1, 2) {
+    $Rows = @(Invoke-OERStructure -Path $DocPath -Include Groups -Prune -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable ApplyErr -WarningAction SilentlyContinue -WarningVariable ApplyWarn)
+    $ByAction = ($Rows | Group-Object Action | Sort-Object Name | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', '
+    Write-OerLiveStep "Run $($Run) (real, -Prune): rows $($Rows.Count) [$ByAction]; Removed $(@($Rows | Where-Object Action -eq 'Removed').Count); warnings $(@($ApplyWarn).Count); errors $(@($ApplyErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }).Count)"
+    foreach ($R in $Rows) { Write-OerLiveStep "  $($R.Action) $($R.Item): $($R.Detail)" }
+    foreach ($W in @($ApplyWarn)) { Write-OerLiveStep "  Warning: $W" }
+    foreach ($E in @($ApplyErr | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "  Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
+    if ($Run -eq 1) {
+        $null = Wait-OerLiveConverged -Activity 'oer-s91-nested is no longer listed as a member of oer-s91-grp' -Read {
+            , @(Get-OERGroupMember -Group 'oer-s91-grp' -ErrorAction Stop | ForEach-Object { [string]$_.PrincipalId })
+        } -Test { @($args[0]) -notcontains $Nid }
+    }
+}
+$Fence = & (Get-Module Omnicit.EntraRBAC) { [PSCustomObject]@{ Seen = $script:S91Seen.Count; Passed = @($script:S91Passed); Refused = @($script:S91Refused) } }
+Write-OerLiveStep "Fence: requests $($Fence.Seen), writes let through $($Fence.Passed.Count), refused $($Fence.Refused.Count)"
+foreach ($F in $Fence.Passed) { Write-OerLiveStep "  Let through: $F" }
+foreach ($F in $Fence.Refused) { Write-OerLiveStep "  Refused: $F" }
+$Members = @(Get-OERGroupMember -Group 'oer-s91-grp' -ErrorAction SilentlyContinue -ErrorVariable E1)
+$Owners = @(Get-OERGroupMember -Group 'oer-s91-grp' -Owners -ErrorAction SilentlyContinue -ErrorVariable E2)
+Write-OerLiveStep "Read-back: members $($Members.Count) [$((@($Members) | ForEach-Object { "$($_.ObjectType) $($_.PrincipalId)" }) -join '; ')]; owners $($Owners.Count) [$((@($Owners) | ForEach-Object { "$($_.ObjectType) $($_.PrincipalId)" }) -join '; ')]"
+foreach ($E in @(@($E1) + @($E2) | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-OerLiveStep "Error: $($E.FullyQualifiedErrorId) -- $($E.Exception.Message)" }
+Disconnect-OerLive
+```
+
+**Expect:** the document's `members` and `owners` both empty. Run 1: `Unchanged` for the group's
+properties; `Removed` `removed undeclared member '...'` for `oer-s91-nested`, with the warning
+`removing undeclared member '...'` naming it and no other; `Skipped` `prune withheld: undeclared
+member '...' is a service principal` and `prune withheld: undeclared owner '...' is a service
+principal` for the service principal (`...04`); `Removed 1`; no error. The wait converges. Run 2: 3
+rows -- `Unchanged` for the properties and the two `Skipped` rows for the service principal --
+`Removed 0`, no warning, no error. The fence let exactly 1 write through, the removal of
+`oer-s91-nested`'s membership, and refused 0. The read-back: members `1`, the service principal
+(`servicePrincipal`); owners `1`, the service principal.
+**Failure looks like:** the service principal in a `Removed` row or a refused write -- the guard did
+not hold, and the fence kept it: STOP and read it; `oer-s91-nested` not removed -- the prune of other
+types is broken; a `Failed` row in run 2 -- the removal had not replicated.
+
+Result:
 
 ### 5. The 403 checks, as oer-live-cc-noperm
 
@@ -1503,3 +1835,81 @@ Verdict: PASS. Three minutes after the teardown: no oer-s91- object of any kind 
 [oer-s91] Done.
 [oer-s91] Exit code: 0; the main clone is on: main
 ```
+
+### R1.T1. The teardown's plan, round 1
+
+- [ ] **R1.T1** `-Teardown -WhatIf` plans only `oer-s91-` targets: the two groups, and the links still in `oer-s91-grp`.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS91Prereq.ps1') -Teardown -WhatIf 2>&1 | ForEach-Object { "$_" })
+$Code = $LASTEXITCODE
+Write-OerLiveRaw -InputObject ($Out -join "`n")
+$Targets = @($Out | ForEach-Object { if ($_ -match '^What if: Performing the operation ".*" on target "(.*)"\.$') { $Matches[1] } })
+$Tenant = @($Targets | Where-Object { $_ -notmatch '^raw\\s91\\' })
+Write-OerLiveStep "What-if targets: $($Targets.Count); in the tenant: $($Tenant.Count); every tenant target starts with oer-s91-: $(@($Tenant | Where-Object { -not $_.StartsWith('oer-s91-') }).Count -eq 0); exit code: $Code"
+```
+
+**Expect:** the sweep finds `oer-s91-grp` and `oer-s91-nested` and nothing else; step 2 plans an
+`adminRemove` for each link still in `oer-s91-grp`, read as a Direct PIM for Groups assignment (T.1
+saw three; after 4.4 removed `oer-s91-nested`'s membership, two are left: the service principal's
+member and owner links); step 5 plans the two groups; every tenant target starts with `oer-s91-`;
+nothing removed; exit code `0`.
+**Failure looks like:** a target without the prefix -- STOP.
+
+Result:
+
+### R1.T2. The teardown, round 1
+
+- [ ] **R1.T2** Both groups deleted; the service principal goes back to its baseline (R1.T3 reads it).
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS91Prereq.ps1') -Teardown -Unattended 2>&1 | ForEach-Object { "$_" })
+$Code = $LASTEXITCODE
+Write-OerLiveRaw -InputObject ($Out -join "`n")
+Write-OerLiveStep "Exit code: $Code"
+```
+
+**Expect:** the links of R1.T1 removed, `Deleted: group oer-s91-grp (204)` and `Deleted: group
+oer-s91-nested (204)`; `residue 0`; the sweep and the comparison seconds later may still see the
+deleted groups (replication), and R1.T3 reads again; exit code `0`.
+**Failure looks like:** a residue line or exit code `3` -- the row stays in `raw\residue.json` and the
+next prereq run retries it; a `False` on the service principal's lines after R1.T3 -- STOP (G11.5).
+
+Result:
+
+### R1.T3. Read back, and clean up, round 1
+
+- [ ] **R1.T3** Minutes later: no `oer-s91-` object left, round 1's baseline holds, no residue row, the main clone still on `main`.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s91-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s91'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$Out = @(pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS91Prereq.ps1') -ReadBack 2>&1 | ForEach-Object { "$_" })
+$Code = $LASTEXITCODE
+Write-OerLiveRaw -InputObject ($Out -join "`n")
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Exit code: $Code; the main clone is on: $MainBranch"
+```
+
+**Expect:** as T.3: no `oer-s91-` object left; the group count equal to round 1's baseline and both
+service principal lines `True` (a member of no group and owner of nothing it did not own at the
+baseline); `residue rows: 0`; exit code `0`; the main clone on `main`. Then, outside this file: the
+step's `raw\s91\` folder is deleted once the results are copied in, and the redaction map with
+`Clear-OerLiveRedactionMap`.
+**Failure looks like:** a prefixed object still listed after minutes, or a `False` -- STOP (G11.5).
+
+Result:
