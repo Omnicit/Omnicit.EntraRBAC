@@ -76,7 +76,7 @@ fix is built, verify it against the same objects.
 
 ### S.1. The module loads from the build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -101,13 +101,24 @@ changes; the build's version and time.
 **Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` is unset or names the main
 clone, and the run would load whatever the main clone last built.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on fix/read-service-principal-group-members at f2cee8a with 0 tracked changes; the build is 1.1.3 of the unchanged branch (built 07:57 UTC from dd7bb8a, before any source change), which is what section 1 measures.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] The module loads from a worktree that is not the main clone: True
+[oer-s91] Main clone: branch main; HEAD 6817b33
+[oer-s91] Worktree: branch fix/read-service-principal-group-members; HEAD f2cee8a docs: read the measurement's ids as lists and stop when a lookup is empty; tracked changes: 0
+[oer-s91] The worktree's build: version 1.1.3, built 2026-10-06 07:57 UTC
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is the worktree's build.
+- [x] **0.1** The module session passes the identity check, and the module is the worktree's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -129,11 +140,29 @@ tenant and is Enabled), `identity check passed: True`, and `The module is the wo
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not
 enabled for this run; never sign in another way.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Every identity line True for the module session (app-only certificate session with the identity's app id, app name oer-live-cc, test tenant, the service principal named oer-live-cc and the token's signed-in object; organization name, verified domain, organization id; ARM token from the certificate; the test subscription belongs to the test tenant and is Enabled); identity check passed; the module is the worktree's build (1.1.3).
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The module is the worktree's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm, the module session
 
-- [ ] **0.2** The no-permission identity signs in to a module session.
+- [x] **0.2** The no-permission identity signs in to a module session.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -152,11 +181,26 @@ session is `oer-live-cc-noperm`: `True`, the test tenant `True`, the ARM token f
 `True`, `identity check passed: True`, and `The module is the worktree's build: True`.
 **Failure looks like:** any `False` -- STOP; sections 1 and 5 need this session.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. oer-live-cc-noperm: app-only with its app id, app name oer-live-cc-noperm, test tenant, ARM token from the certificate: all True; identity check passed; the module is the worktree's build.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s91] The module is the worktree's build: True
+```
 
 ### 0.3. The prerequisite script's plan
 
-- [ ] **0.3** `-WhatIf` plans only `oer-s91-` targets in the tenant.
+- [x] **0.3** `-WhatIf` plans only `oer-s91-` targets in the tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -183,11 +227,45 @@ oer-live-cc-noperm (service principal)` -- five tenant targets, every one starti
 tenant holds something this script did not create; a sweep line `UNREAD` -- STOP (a missing
 permission).
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Identity check passed; the noperm service principal is named oer-live-cc-noperm; the sweep read all six collections and found no oer-s91- object; 7 What-if targets: 2 local files under raw\s91\ (the transcript and the baseline) and 5 in the tenant (oer-s91-grp, oer-s91-nested, and the three links in oer-s91-grp: member oer-s91-nested, member oer-live-cc-noperm, owner oer-live-cc-noperm), every tenant target with the prefix; the service principal is only linked into the prefixed group, never changed itself; nothing written; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s91\prereq-20261006-080723Z.log".
+[oer-s91] Mode: CREATE or complete. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] Found: oer-s91-grp exists: False; oer-s91-nested exists: False.
+[oer-s91] No baseline yet: it is written now, before the first write to the tenant (groups 97; oer-live-cc-noperm a member of 0 group(s), owner of 0 object(s)).
+What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s91\baseline-s91.json".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s91-grp".
+What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, no member)" on target "oer-s91-nested".
+What if: Performing the operation "Add the group as a member (Graph v1.0 POST groups/members/$ref)" on target "oer-s91-grp: member oer-s91-nested".
+What if: Performing the operation "Add the service principal as a member (Graph v1.0 POST groups/members/$ref; the service principal itself is not changed)" on target "oer-s91-grp: member oer-live-cc-noperm (service principal)".
+What if: Performing the operation "Add the service principal as an owner (Graph v1.0 POST groups/owners/$ref; the service principal itself is not changed)" on target "oer-s91-grp: owner oer-live-cc-noperm (service principal)".
+[oer-s91] Summary: oer-s91-grp absent; oer-s91-nested absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s91] WhatIf: nothing was created, removed or written.
+[oer-s91] Done.
+[oer-s91] What-if targets: 7; in the tenant: 5; every tenant target starts with oer-s91-: True; exit code: 0
+```
 
 ### 0.4. The prerequisite script, for real
 
-- [ ] **0.4** The test objects exist: the two groups, the group and the service principal as members, the service principal as owner.
+- [x] **0.4** The test objects exist: the two groups, the group and the service principal as members, the service principal as owner.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -210,7 +288,54 @@ expected, and is not a failure.
 **Failure looks like:** a stop line, or an exit code other than 0: run 0.4 again (the script
 completes an earlier run) or tear down; never sign in another way.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The baseline written and read back before the first write (groups 97; oer-live-cc-noperm a member of 0 groups and owner of 0 objects); both groups created (201) and resolvable by name after 3 reads (about 6 s each); the three links added (204, first attempt each) and listed from the other side (the nested group's memberOf, the service principal's memberOf and ownedObjects) after 2 to 3 reads; both groups present; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\prereq-20261006-080736Z.log; OerLive 1.0.2.
+[oer-s91] Mode: CREATE or complete. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] Found: oer-s91-grp exists: False; oer-s91-nested exists: False.
+[oer-s91] No baseline yet: it is written now, before the first write to the tenant (groups 97; oer-live-cc-noperm a member of 0 group(s), owner of 0 object(s)).
+[oer-s91] Wrote the baseline raw\s91\baseline-s91.json and read it back.
+[oer-s91] Created group oer-s91-grp: 201.
+[oer-s91] oer-s91-grp resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-s91-grp resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s91] oer-s91-grp resolves by its display name: converged after 3 read(s), 6.3 s.
+[oer-s91] Created group oer-s91-nested: 201.
+[oer-s91] oer-s91-nested resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-s91-nested resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s91] oer-s91-nested resolves by its display name: converged after 3 read(s), 6.2 s.
+[oer-s91] Added oer-s91-nested as a member of oer-s91-grp: 204 after 1 attempt(s).
+[oer-s91] oer-s91-nested as a member of oer-s91-grp is listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-s91-nested as a member of oer-s91-grp is listed: converged after 2 read(s), 2.2 s.
+[oer-s91] Added oer-live-cc-noperm as a member of oer-s91-grp: 204 after 1 attempt(s).
+[oer-s91] oer-live-cc-noperm as a member of oer-s91-grp is listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-live-cc-noperm as a member of oer-s91-grp is listed: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s91] oer-live-cc-noperm as a member of oer-s91-grp is listed: converged after 3 read(s), 6.3 s.
+[oer-s91] Added oer-live-cc-noperm as an owner of oer-s91-grp: 204 after 1 attempt(s).
+[oer-s91] oer-live-cc-noperm as an owner of oer-s91-grp is listed: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s91] oer-live-cc-noperm as an owner of oer-s91-grp is listed: converged after 2 read(s), 2.2 s.
+[oer-s91] Summary: oer-s91-grp present; oer-s91-nested present; written to the tenant: True.
+[oer-s91] Done.
+[oer-s91] Exit code: 0
+```
 
 ### 1. The reads before the fix, measured on the unchanged build
 
@@ -223,7 +348,7 @@ step's scope (which object types the fix reads typed) is decided from it.
 
 ### 1.1. Members: the untyped read against each typed read
 
-- [ ] **1.1** The untyped `members` read, the typed reads for service principal, user, group, device and organizational contact, and the `beta` untyped read for the record.
+- [x] **1.1** The untyped `members` read, the typed reads for service principal, user, group, device and organizational contact, and the `beta` untyped read for the record.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -273,11 +398,41 @@ the measurement: write it down as it is.
 **Failure looks like:** a read that is not `ok` with a 401/403 -- STOP (a missing permission on the
 app path, G6/G11); a typed read refused as unsupported (400) is a measurement, not a stop.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: MEASURED (the second run; the first, at 08:08 UTC, measured nothing: the block's id lookups unrolled a one-element read and came back empty -- a defect of this checklist, fixed in f2cee8a, with no effect on the tenant). The untyped v1.0 members read lists 1 object, oer-s91-nested (#microsoft.graph.group), and leaves out the service principal oer-live-cc-noperm. The typed service principal read lists it (count 1), with in the untyped read: False, and WITHOUT an @odata.type annotation (empty). The typed group read lists oer-s91-nested (in the untyped read: True), also without an annotation. The typed user, device and organizational contact reads are accepted (200) and list nothing: the test group has no such member, so whether the untyped read omits those types is not observable here. The beta untyped read lists both, each with its @odata.type.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005; oer-s91-nested is 00000000-0000-0000-0000-000000000006; the service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] READ v1.0 members (untyped): ok True; count 1
+[oer-s91]   untyped: #microsoft.graph.group 00000000-0000-0000-0000-000000000006
+[oer-s91] READ v1.0 members/microsoft.graph.servicePrincipal: ok True; count 1
+[oer-s91]   typed servicePrincipal: '' 00000000-0000-0000-0000-000000000004; in the untyped read: False
+[oer-s91] READ v1.0 members/microsoft.graph.user: ok True; count 0
+[oer-s91] READ v1.0 members/microsoft.graph.group: ok True; count 1
+[oer-s91]   typed group: '' 00000000-0000-0000-0000-000000000006; in the untyped read: True
+[oer-s91] READ v1.0 members/microsoft.graph.device: ok True; count 0
+[oer-s91] READ v1.0 members/microsoft.graph.orgContact: ok True; count 0
+[oer-s91] READ beta members (untyped, for the record): ok True; count 2
+[oer-s91]   beta: #microsoft.graph.servicePrincipal 00000000-0000-0000-0000-000000000004
+[oer-s91]   beta: #microsoft.graph.group 00000000-0000-0000-0000-000000000006
+```
 
 ### 1.2. Owners: the untyped read against the typed service principal read
 
-- [ ] **1.2** The untyped `owners` read and the typed service principal and user `owners` reads.
+- [x] **1.2** The untyped `owners` read and the typed service principal and user `owners` reads.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -324,11 +479,35 @@ the untyped read lists nothing, and the typed service principal read lists `oer-
 and an app-only create adds no owner of its own). Whatever comes back is the measurement.
 **Failure looks like:** a 401/403 -- STOP.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: MEASURED (the second run, as for 1.1). The owners half, measured here for the first time: the untyped v1.0 owners read lists NOTHING (count 0) although oer-live-cc-noperm is an owner; the typed service principal owners read lists it (count 1, in the untyped read: False, no @odata.type annotation); the typed user owners read lists nothing; the beta untyped owners read lists it with its @odata.type. Microsoft Learn's note on List group owners holds on this tenant.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005; the service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] READ v1.0 owners (untyped): ok True; count 0
+[oer-s91] READ v1.0 owners/microsoft.graph.servicePrincipal: ok True; count 1
+[oer-s91]   typed servicePrincipal: '' 00000000-0000-0000-0000-000000000004; in the untyped read: False
+[oer-s91] READ v1.0 owners/microsoft.graph.user: ok True; count 0
+[oer-s91] READ beta owners (untyped, for the record): ok True; count 1
+[oer-s91]   beta: #microsoft.graph.servicePrincipal 00000000-0000-0000-0000-000000000004
+```
 
 ### 1.3. The service principal's own side
 
-- [ ] **1.3** `servicePrincipals/{id}/memberOf` and `ownedObjects` for `oer-live-cc-noperm` name `oer-s91-grp`.
+- [x] **1.3** `servicePrincipals/{id}/memberOf` and `ownedObjects` for `oer-live-cc-noperm` name `oer-s91-grp`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -365,11 +544,31 @@ Disconnect-OerLive
 **Failure looks like:** `False` on either -- the link does not exist, so 1.1 and 1.2 measure nothing;
 run 0.4 again.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Both reads ok; the service principal's memberOf (count 1) and ownedObjects (count 1) both name oer-s91-grp: the membership and the ownership the untyped reads in 1.1 and 1.2 leave out exist.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005; the service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] READ v1.0 servicePrincipals/{id}/memberOf: ok True; count 1; names oer-s91-grp: True
+[oer-s91] READ v1.0 servicePrincipals/{id}/ownedObjects: ok True; count 1; names oer-s91-grp: True
+```
 
 ### 1.4. The module's own reads before the fix
 
-- [ ] **1.4** `Get-OERGroupMember`, `Get-OERGroupMember -Owners`, `Get-OERGroup -IncludeMembers -IncludeOwners` and the export, on the unchanged build.
+- [x] **1.4** `Get-OERGroupMember`, `Get-OERGroupMember -Owners`, `Get-OERGroup -IncludeMembers -IncludeOwners` and the export, on the unchanged build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -404,11 +603,37 @@ and no `owners` key if the owner read is empty. No error.
 **Failure looks like:** the service principal listed here -- then the unchanged build already sees
 it, and the defect does not reproduce on this tenant; write that down as it is.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: THE DEFECT, REPRODUCED on the unchanged build. Get-OERGroupMember lists 1 member (oer-s91-nested, ObjectType group), the service principal listed: False; Get-OERGroupMember -Owners lists 0, the service principal listed: False; Get-OERGroup -IncludeMembers -IncludeOwners carries both properties (the reads succeeded) with the same content: Members 1 without the service principal, Owners 0. The export writes oer-s91-grp with members holding only oer-s91-nested's id and NO owners key at all. No error anywhere: a successful read, so nothing marks the collection as partial.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] Get-OERGroupMember: count 1; the service principal listed: False
+[oer-s91]   Member 'oer-s91-nested' ObjectType 'group' 00000000-0000-0000-0000-000000000006
+[oer-s91] Get-OERGroupMember -Owners: count 0; the service principal listed: False
+[oer-s91] Get-OERGroup: Members present True; Owners present True
+[oer-s91] Get-OERGroup Members: count 1; the service principal listed: False
+[oer-s91]   Member 'oer-s91-nested' ObjectType 'group' 00000000-0000-0000-0000-000000000006
+[oer-s91] Get-OERGroup Owners: count 0; the service principal listed: False
+[oer-s91] Export oer-s91-grp: members [00000000-0000-0000-0000-000000000006]; owners present False []; the service principal in members: False; in owners: False
+```
 
 ### 1.5. What the no-permission identity can read of the group
 
-- [ ] **1.5** As `oer-live-cc-noperm`: the group itself, its members (untyped and typed) and its owners -- the input for section 5.
+- [x] **1.5** As `oer-live-cc-noperm`: the group itself, its members (untyped and typed) and its owners -- the input for section 5.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -438,7 +663,36 @@ so, `Get-OERGroup -IncludeMembers` as this identity stops at the group read, and
 reach `GroupMemberReadFailed` without answering the group read from a recording (decided there).
 **Failure looks like:** a read that succeeds -- write it down: section 5 is then designed on it.
 
-Result:
+Result: 2026-10-06 08:10 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: MEASURED, and not as expected. As oer-live-cc-noperm the group read SUCCEEDS (one object); the untyped members read is refused (Authorization_RequestDenied); the typed service principal members read SUCCEEDS with count 1; the untyped owners read and the typed service principal owners read are both refused. So Get-OERGroup -IncludeMembers as this identity gets past the group read and reaches the member read: section 5 can reach GroupMemberReadFailed and GroupOwnerReadFailed live, with no recording. Why an identity with no permission reads the group and its own typed membership is not established here (it is the group's member and owner); it is recorded, not relied on.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005 (read as oer-live-cc)
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s91] READ as noperm v1.0/groups/{id}: ok; count one object
+[oer-s91] READ as noperm v1.0/groups/{id}/members: refused -- Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91] READ as noperm v1.0/groups/{id}/members/microsoft.graph.servicePrincipal: ok; count 1
+[oer-s91] READ as noperm v1.0/groups/{id}/owners: refused -- Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91] READ as noperm v1.0/groups/{id}/owners/microsoft.graph.servicePrincipal: refused -- Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+```
 
 ### 2. The module's reads after the fix
 
@@ -447,7 +701,7 @@ build` from the branch head named in 2.0.
 
 ### 2.0. The module loads from the fix's build in the step's own worktree
 
-- [ ] **2.0** The worktree's build carries the fix, and the main clone is still on `main`.
+- [x] **2.0** The worktree's build carries the fix, and the main clone is still on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -471,11 +725,21 @@ Write-OerLiveStep "The worktree's build ($(Split-Path -Leaf $Psm1.DirectoryName)
 the typed read: True`, and a build time after the head commit.
 **Failure looks like:** any `False` -- build the worktree first, never while the gate runs.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The session's Repo is the step's worktree, not the main clone; the main clone on main; the worktree at the PR head 9a142e2 with 0 tracked changes; the build (1.1.3, 09:58 UTC, made by the full gate on 9a142e2) carries the single reader and the typed read.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] The module loads from a worktree that is not the main clone: True; main clone on: main
+[oer-s91] Worktree: branch fix/read-service-principal-group-members; HEAD 9a142e2 test: hold the member reader's callers to a try; tracked changes: 0
+[oer-s91] The worktree's build (1.1.3, built 2026-10-06 09:58 UTC) carries the single reader: True; the typed read: True
+```
 
 ### 2.1. Get-OERGroupMember: the service principal is a member and an owner
 
-- [ ] **2.1** `Get-OERGroupMember -Group oer-s91-grp` lists the service principal with `ObjectType` `servicePrincipal`, and so does `-Owners`.
+- [x] **2.1** `Get-OERGroupMember -Group oer-s91-grp` lists the service principal with `ObjectType` `servicePrincipal`, and so does `-Owners`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -501,11 +765,34 @@ with `ObjectType 'group'` and `oer-live-cc-noperm` with `ObjectType 'servicePrin
 `ObjectType 'servicePrincipal'`. No error. Before the fix (1.4) the counts were 1 and 0.
 **Failure looks like:** the service principal missing, listed twice, or with an empty `ObjectType`.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Get-OERGroupMember lists 2 members, oer-s91-nested (ObjectType group) and oer-live-cc-noperm (ObjectType servicePrincipal), the service principal once; -Owners lists 1 owner, the service principal (Owner, ObjectType servicePrincipal). No error. Before the fix (1.4): 1 member and 0 owners, the service principal in neither.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] Get-OERGroupMember: count 2; the service principal listed: 1 time(s)
+[oer-s91]   Member 'oer-s91-nested' ObjectType 'group' 00000000-0000-0000-0000-000000000006
+[oer-s91]   Member 'oer-live-cc-noperm' ObjectType 'servicePrincipal' 00000000-0000-0000-0000-000000000004
+[oer-s91] Get-OERGroupMember -Owners: count 1; the service principal listed: 1 time(s)
+[oer-s91]   Owner 'oer-live-cc-noperm' ObjectType 'servicePrincipal' 00000000-0000-0000-0000-000000000004
+```
 
 ### 2.2. Get-OERGroup -IncludeMembers -IncludeOwners
 
-- [ ] **2.2** `Get-OERGroup` carries the service principal in `Members` and in `Owners`, with `ObjectType` `servicePrincipal`.
+- [x] **2.2** `Get-OERGroup` carries the service principal in `Members` and in `Owners`, with `ObjectType` `servicePrincipal`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -531,13 +818,37 @@ Disconnect-OerLive
 with `ObjectType 'servicePrincipal'`; `Owners: count 1`, the same. No error.
 **Failure looks like:** as in 2.1.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Get-OERGroup carries both properties: Members 2 (the service principal once, ObjectType servicePrincipal), Owners 1 (the service principal, ObjectType servicePrincipal). No error. Before the fix (1.4): Members 1, Owners 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] Get-OERGroup: Members present True; Owners present True
+[oer-s91] Get-OERGroup Members: count 2; the service principal listed: 1 time(s)
+[oer-s91]   Member 'oer-s91-nested' ObjectType 'group' 00000000-0000-0000-0000-000000000006
+[oer-s91]   Member 'oer-live-cc-noperm' ObjectType 'servicePrincipal' 00000000-0000-0000-0000-000000000004
+[oer-s91] Get-OERGroup Owners: count 1; the service principal listed: 1 time(s)
+[oer-s91]   Owner 'oer-live-cc-noperm' ObjectType 'servicePrincipal' 00000000-0000-0000-0000-000000000004
+```
 
 ### 3. The export
 
 ### 3.1. Get-OERInventory: the service principal's id in members and owners
 
-- [ ] **3.1** The export of the `oer-s91-` groups writes the service principal's id in `oer-s91-grp`'s `members` and `owners`, and reports nothing unread.
+- [x] **3.1** The export of the `oer-s91-` groups writes the service principal's id in `oer-s91-grp`'s `members` and `owners`, and reports nothing unread.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -571,11 +882,33 @@ no `owners` key at all.
 **Failure looks like:** the service principal missing, or an `InventoryPartial` naming
 `groups/oer-s91-grp/members` or `/owners` -- a read the fix made unread.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. The export writes oer-s91-grp with members holding oer-s91-nested's and the service principal's ids and an owners key holding the service principal's id, the service principal once in each; InventoryPartial records 0; no error. Before the fix (1.4): no service principal and no owners key at all. The apply document for 3.2 and 4 was cut from this export (version 1.0, oer-s91-grp only).
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The service principal oer-live-cc-noperm is 00000000-0000-0000-0000-000000000004
+[oer-s91] Export oer-s91-grp: members [00000000-0000-0000-0000-000000000006; 00000000-0000-0000-0000-000000000004]; owners present True [00000000-0000-0000-0000-000000000004]
+[oer-s91] The service principal in members: 1 time(s); in owners: 1 time(s)
+[oer-s91] InventoryPartial records: 0
+[oer-s91] The apply document for 3.2 and 4 (oer-s91-grp only, cut from this export, version 1.0) is raw\s91\doc-s91-grp.json
+```
 
 ### 3.2. The export's entry applied with -Prune -WhatIf, twice: only Unchanged
 
-- [ ] **3.2** `Invoke-OERStructure -Prune -WhatIf` of `oer-s91-grp`'s exported entry plans no change and no removal, two runs in a row (G8), behind a read-only fence.
+- [x] **3.2** `Invoke-OERStructure -Prune -WhatIf` of `oer-s91-grp`'s exported entry plans no change and no removal, two runs in a row (G8), behind a read-only fence.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -620,13 +953,41 @@ service principal could never be `already present`: the engine did not see it.
 **Failure looks like:** a planned removal or an `Updated` row -- the export and the engine disagree
 about the group; `refused` above 0.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, two runs (G8). Each: 4 rows, all Unchanged (group properties match; both members and the service principal owner already present), no warning, no error; the read-only fence saw 14 requests, 0 not a GET, refused 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Run 1: rows 4 [Unchanged 4]; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000004' already present
+[oer-s91]   Unchanged oer-s91-grp: owner '00000000-0000-0000-0000-000000000004' already present
+[oer-s91] Run 2: rows 4 [Unchanged 4]; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000004' already present
+[oer-s91]   Unchanged oer-s91-grp: owner '00000000-0000-0000-0000-000000000004' already present
+[oer-s91] Fence: requests 14, not a GET 0, refused 0
+```
 
 ### 4. Apply with -Prune for real, oer-s91- only
 
 ### 4.1. The document declaring both members and the owner: Unchanged and 0 Removed, twice
 
-- [ ] **4.1** `Invoke-OERStructure -Prune` for real (no `-WhatIf`) on the `oer-s91-grp` document gives only `Unchanged` and removes nothing, two runs in a row (G8).
+- [x] **4.1** `Invoke-OERStructure -Prune` for real (no `-WhatIf`) on the `oer-s91-grp` document gives only `Unchanged` and removes nothing, two runs in a row (G8).
 
 The read-only fence stays in front of the module's Graph transport for this real run as well: the
 run makes no `-WhatIf` plan, so every gate is passed for real, but a write -- which a correct run
@@ -675,11 +1036,40 @@ refused `0`.
 **Failure looks like:** a `Removed`, `Updated` or `Failed` row, or `refused` above 0 -- STOP and read
 it; never run 4.1 without the fence.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, two real runs with -Prune (no -WhatIf, -Confirm:false), behind the read-only fence (G8). The document holds only oer-s91-grp, with both members and the service principal as owner. Each run: 4 rows, all Unchanged, Removed 0, no warning, no error; fence 14 requests, 0 not a GET, refused 0 -- nothing was written to the tenant, and nothing was attempted.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The document: groups 1 (oer-s91-grp); members [00000000-0000-0000-0000-000000000006; 00000000-0000-0000-0000-000000000004]; owners [00000000-0000-0000-0000-000000000004]
+[oer-s91] Run 1 (real, -Prune): rows 4 [Unchanged 4]; Removed 0; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000004' already present
+[oer-s91]   Unchanged oer-s91-grp: owner '00000000-0000-0000-0000-000000000004' already present
+[oer-s91] Run 2 (real, -Prune): rows 4 [Unchanged 4]; Removed 0; warnings 0; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000004' already present
+[oer-s91]   Unchanged oer-s91-grp: owner '00000000-0000-0000-0000-000000000004' already present
+[oer-s91] Fence: requests 14, not a GET 0, refused 0
+```
 
 ### 4.2. The same document without the service principal, -Prune -WhatIf: the removal is planned
 
-- [ ] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` plans its removal as a member, and the last-owner guard keeps it as the owner. No write.
+- [x] **4.2** With the service principal taken out of `members` and `owners`, `-Prune -WhatIf` plans its removal as a member, and the last-owner guard keeps it as the owner. No write.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -731,7 +1121,33 @@ that is the step's point, and the plan for an undeclared member is the right out
 **Failure looks like:** no planned removal of the service principal -- the engine still does not
 see it; a `Removed` row -- `-WhatIf` did not hold (the fence would refuse it).
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. With the service principal taken out of members and owners, the -Prune -WhatIf plan: Unchanged for the group's properties and for oer-s91-nested; Skipped 'would remove undeclared member' naming the service principal, with the prune warning; for the owner, Skipped 'did not remove owner ...: it is the last remaining owner' (the engine's own guard). No Removed, no Failed; fence 8 requests, 0 not a GET, refused 0. The engine sees the service principal now; before the fix it could not.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] The document without 00000000-0000-0000-0000-000000000004: members [00000000-0000-0000-0000-000000000006]; owners []
+What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000004'" on target "oer-s91-grp".
+[oer-s91] Plan: rows 4 [Skipped 2, Unchanged 2]; warnings 1; errors 0
+[oer-s91]   Unchanged oer-s91-grp: group properties match
+[oer-s91]   Unchanged oer-s91-grp: member '00000000-0000-0000-0000-000000000006' already present
+[oer-s91]   Skipped oer-s91-grp: would remove undeclared member '00000000-0000-0000-0000-000000000004'
+[oer-s91]   Skipped oer-s91-grp: did not remove owner '00000000-0000-0000-0000-000000000004': it is the last remaining owner of group 'oer-s91-grp', and this pass refuses to remove it (this is our own guard, not a Graph rejection). Microsoft Graph's documented restriction names a USER owner specifically, so if this is a service principal it may in fact be removable; this guard is deliberately conservative pending live verification.
+[oer-s91]   Warning: Sync-OERStructureGroup: would remove undeclared member '00000000-0000-0000-0000-000000000004' from group 'oer-s91-grp'.
+[oer-s91] Fence: requests 8, not a GET 0, refused 0
+```
 
 ### 5. The 403 checks, as oer-live-cc-noperm
 
@@ -741,7 +1157,7 @@ with no recording.
 
 ### 5.1. Get-OERGroupMember: the error and nothing else
 
-- [ ] **5.1** As `oer-live-cc-noperm`, `Get-OERGroupMember -Group` (by id) and `-Owners` each write the refusal as itself and return nothing.
+- [x] **5.1** As `oer-live-cc-noperm`, `Get-OERGroupMember -Group` (by id) and `-Owners` each write the refusal as itself and return nothing.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -768,11 +1184,61 @@ Disconnect-OerLive
 `Authorization_RequestDenied` (the refusal as itself, never `GroupNotFound`); nothing else written.
 **Failure looks like:** any output -- a partial list from a collection that was not read whole.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS on what the check is for. As oer-live-cc-noperm, Get-OERGroupMember (by id) and -Owners each emit nothing (output 0) and publish the refusal as itself, Authorization_RequestDenied,Get-OERGroupMember -- never GroupNotFound, never a partial list. The Expect line's 'nothing else written' was imprecise: -ErrorVariable also collects 11 records raised inside the nested transport calls (the engine re-deposits them; rationale #writeerror-deposit, and the comment in Get-OERGroup on -ErrorVariable). The cmdlet published exactly one; this step changed neither the transport nor that collection.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005 (read as oer-live-cc)
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s91] Get-OERGroupMember: output 0; error records 12
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied,Get-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91] Get-OERGroupMember -Owners: output 0; error records 12
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied,Get-OERGroupMember -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+```
 
 ### 5.2. Get-OERGroup -IncludeMembers -IncludeOwners: no Members, no Owners, both errors
 
-- [ ] **5.2** As `oer-live-cc-noperm`, `Get-OERGroup` returns the group without `Members` and `Owners`, and writes `GroupMemberReadFailed` and `GroupOwnerReadFailed`.
+- [x] **5.2** As `oer-live-cc-noperm`, `Get-OERGroup` returns the group without `Members` and `Owners`, and writes `GroupMemberReadFailed` and `GroupOwnerReadFailed`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -799,13 +1265,64 @@ Disconnect-OerLive
 **Failure looks like:** a `Members` or `Owners` property (an unread collection presented as a fact),
 or no group object at all -- then the group read itself was refused, unlike 1.5.
 
-Result:
+Result: 2026-10-06 10:18 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. As oer-live-cc-noperm, Get-OERGroup returns the group object (its id), Members present False, Owners present False; GroupMemberReadFailed 1 and GroupOwnerReadFailed 1, each naming Authorization_RequestDenied and saying the property is omitted rather than reported as empty. Reached live with no recording, as 1.5 measured (the group read succeeds for this identity). The other records in -ErrorVariable are the nested ones described under 5.1.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s91] oer-s91-grp is 00000000-0000-0000-0000-000000000005 (read as oer-live-cc)
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s91] Azure Resource Manager sign-in as oer-live-cc-noperm: identity check passed: True
+[oer-s91] Get-OERGroup: object True (id 00000000-0000-0000-0000-000000000005); Members present False; Owners present False
+[oer-s91] GroupMemberReadFailed: 1
+[oer-s91] GroupOwnerReadFailed: 1
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: GroupMemberReadFailed,Get-OERGroup -- Could not read members for group 00000000-0000-0000-0000-000000000005: Authorization_RequestDenied: Insufficient privileges to complete the operation.. The Members property is omitted rather than reported as empty.
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: InvokeGraphHttpResponseException,Microsoft.Graph.PowerShell.Authentication.Cmdlets.InvokeMgGraphRequest -- Response status code does not indicate success: Forbidden (Forbidden).
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: Authorization_RequestDenied -- Authorization_RequestDenied: Insufficient privileges to complete the operation.
+[oer-s91]   Error: GroupOwnerReadFailed,Get-OERGroup -- Could not read owners for group 00000000-0000-0000-0000-000000000005: Authorization_RequestDenied: Insufficient privileges to complete the operation.. The Owners property is omitted rather than reported as empty.
+```
 
 ## Teardown
 
 ### T.1. The teardown's plan
 
-- [ ] **T.1** `-Teardown -WhatIf` plans only the two `oer-s91-` groups.
+- [x] **T.1** `-Teardown -WhatIf` plans only the two `oer-s91-` groups.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -827,11 +1344,47 @@ role-assignable, so step 4 removes no member); two tenant targets, both with the
 removed; exit code `0`.
 **Failure looks like:** a target without the prefix -- STOP.
 
-Result:
+Result: 2026-10-06 10:19 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS, with one deviation from the Expect line. The sweep finds the two groups and nothing else; 6 What-if targets, 1 local (the transcript) and 5 in the tenant, every one starting with oer-s91-. Not foreseen: step 2 (PIM for Groups) reads oer-s91-grp's assignment schedules and lists the three links the prerequisite script created -- the owner link and the two member links, which Graph models as Direct assignments -- and plans an adminRemove for each, before step 5 deletes both groups. They are the step's own links in its own prefixed group; the service principal itself is not a target. Nothing removed; exit code 0.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+What if: Performing the operation "Start the redacted transcript" on target "raw\s91\teardown-20261006-101859Z.log".
+[oer-s91] Mode: REMOVE. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] Teardown of 'oer-s91-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s91] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s91] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s91-grp: PIM for Groups owner assignment of a principal".
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s91-grp: PIM for Groups member assignment of a principal".
+What if: Performing the operation "Remove (Graph beta schedule request, adminRemove)" on target "oer-s91-grp: PIM for Groups member assignment of a principal".
+[oer-s91] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s91] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s91] Teardown 5/6: the prefixed groups.
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s91-grp".
+What if: Performing the operation "Delete the group (Graph v1.0 DELETE groups)" on target "oer-s91-nested".
+[oer-s91] Teardown 6/6: the prefixed users.
+[oer-s91] Teardown of 'oer-s91-': removed 0, residue 0, unreadable 0 (WhatIf: nothing was removed).
+[oer-s91] WhatIf: nothing was created, removed or written.
+[oer-s91] Done.
+[oer-s91] What-if targets: 6; in the tenant: 5; every tenant target starts with oer-s91-: True; exit code: 0
+```
 
 ### T.2. The teardown
 
-- [ ] **T.2** Both groups deleted; the service principal is back at its baseline (a member of no `oer-s91-` group, owner of nothing it did not own before).
+- [x] **T.2** Both groups deleted; the service principal is back at its baseline (a member of no `oer-s91-` group, owner of nothing it did not own before).
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -854,11 +1407,53 @@ baseline 0; the same objects: True` and the same for `ownedObjects`; exit code `
 next prereq run retries it; a `False` on the service principal's lines after T.3's read-back -- STOP
 (G11.5).
 
-Result:
+Result: 2026-10-06 10:23 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS after T.3's read-back. The teardown removed 5, residue 0, exit code 0: in step 2 the three links (the owner link and the two member links, read as Direct PIM for Groups assignments) by adminRemove (201 each), in step 5 both groups (204 each). The sweep and the comparison run seconds later still saw the deleted groups (groups 99 against 97, the service principal's memberOf 1 and ownedObjects 1): the replication lag a 204 on a group is known for; T.3, three minutes later, reads the baseline.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\teardown-20261006-101934Z.log; OerLive 1.0.2.
+[oer-s91] Mode: REMOVE. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s91] Residue: raw\residue.json holds no rows.
+[oer-s91] Teardown of 'oer-s91-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s91] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s91] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s91] Removed: oer-s91-grp: PIM for Groups owner assignment of a principal (201).
+[oer-s91] Removed: oer-s91-grp: PIM for Groups member assignment of a principal (201).
+[oer-s91] Removed: oer-s91-grp: PIM for Groups member assignment of a principal (201).
+[oer-s91] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s91] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s91] Teardown 5/6: the prefixed groups.
+[oer-s91] Deleted: group oer-s91-grp (204).
+[oer-s91] Deleted: group oer-s91-nested (204).
+[oer-s91] Teardown 6/6: the prefixed users.
+[oer-s91] Teardown of 'oer-s91-': removed 5, residue 0, unreadable 0.
+[oer-s91] Sweep: group 'oer-s91-grp' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s91] Sweep: group 'oer-s91-nested' (00000000-0000-0000-0000-000000000006) carries the prefix.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Counts: groups now 99, at the baseline 97; equal: False
+[oer-s91] oer-live-cc-noperm memberOf: now 1, at the baseline 0; the same objects: False
+[oer-s91] oer-live-cc-noperm ownedObjects: now 1, at the baseline 0; the same objects: False
+[oer-s91] Done.
+[oer-s91] Exit code: 0
+```
 
 ### T.3. Read back, and clean up
 
-- [ ] **T.3** Minutes later: no `oer-s91-` object left, the baseline holds, no residue row, the main clone still on `main`.
+- [x] **T.3** Minutes later: no `oer-s91-` object left, the baseline holds, no residue row, the main clone still on `main`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -880,4 +1475,31 @@ starting with 'oer-s91-' is left`; the counts and both service principal lines `
 deleted once the results are copied in, and the redaction map with `Clear-OerLiveRedactionMap`.
 **Failure looks like:** a prefixed object still listed after minutes, or a `False` -- STOP (G11.5).
 
-Result:
+Result: 2026-10-06 10:23 UTC, written by Write-OerLiveResult (OerLive 1.0.2).
+
+```text
+Verdict: PASS. Three minutes after the teardown: no oer-s91- object of any kind left; groups 97, equal to the baseline; oer-live-cc-noperm a member of 0 groups and owner of 0 objects, the same objects as at the baseline (the service principal itself was never changed); unread collections 0; residue rows 0; exit code 0; the main clone on main, never switched.
+
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[OerLive] OerLive 1.0.2; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s91] Transcript (redacted): raw\s91\readback-20261006-102302Z.log; OerLive 1.0.2.
+[oer-s91] Mode: READ BACK. Prefix 'oer-s91-'. Objects (fixed): oer-s91-grp; oer-s91-nested, a member of it; oer-live-cc-noperm (service principal, never changed itself) a member and an owner of oer-s91-grp. OerLive 1.0.2.
+[oer-s91] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg1\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s91] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s91] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s91-' is left.
+[oer-s91] The service principal of the noperm app id is named oer-live-cc-noperm: True
+[oer-s91] Counts: groups now 97, at the baseline 97; equal: True
+[oer-s91] oer-live-cc-noperm memberOf: now 0, at the baseline 0; the same objects: True
+[oer-s91] oer-live-cc-noperm ownedObjects: now 0, at the baseline 0; the same objects: True
+[oer-s91] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s91] Done.
+[oer-s91] Exit code: 0; the main clone is on: main
+```
