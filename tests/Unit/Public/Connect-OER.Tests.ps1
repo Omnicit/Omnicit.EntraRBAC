@@ -353,6 +353,10 @@ Describe 'Connect-OER' {
                 $script:_OERLastTokenRequest = $null
                 $script:_OERLastIssuedSession = $null
             }
+            # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any
+            # token is requested. The tokens in this Context carry no tenant, so the mocked lookup
+            # answers with any tenant ID.
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
         }
 
         It 'reuses the cached tenant-A session from cache instead of resetting to organizations' {

@@ -46,6 +46,10 @@ Describe 'Initialize-OERAuth' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # -- Existing test 1: interactive flow acquires graph token ------------------------------------
@@ -482,6 +486,10 @@ Describe 'Initialize-OERAuth ARM cache isolation' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # SEC-arm-token-survives-tenant-switch: without a tenant/identity term on the ARM predicate, a
@@ -614,6 +622,10 @@ Describe 'Initialize-OERAuth error hygiene' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # Initialize-OERAuth re-throws via Write-CmdletError -Terminating, NOT a converted exception,
@@ -717,6 +729,10 @@ Describe 'Initialize-OERAuth session inheritance' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # SEC-auth-tenant-defaults-to-organizations: when the caller omits -TenantId, $EffectiveTenant
@@ -1015,6 +1031,10 @@ Describe 'Initialize-OERAuth sovereign clouds' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # The whole point of the sprint: a session that names no cloud must behave exactly as it did
@@ -1290,6 +1310,10 @@ Describe 'Initialize-OERAuth AZURE_AUTHORITY_HOST restore' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # AZURE_AUTHORITY_HOST is process-wide. A terminating Write-CmdletError unwinds straight out of
@@ -1400,6 +1424,10 @@ Describe 'Initialize-OERAuth sovereign cloud -Force scoping' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # The authority-move -Force is consumed by the GRAPH call: AzAuth clears its static credential
@@ -1530,6 +1558,10 @@ Describe 'Initialize-OERAuth authority tracking across a failed acquisition' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
     }
 
     # Get-AzToken constructs the credential and THEN requests the token, so a sovereign attempt that
@@ -1613,6 +1645,10 @@ Describe 'Initialize-OERAuth ambient AZURE_AUTHORITY_HOST warning' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
         Mock -ModuleName $script:moduleName Get-AzToken {
             [pscustomobject]@{ Token = 'fake'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'a@b.c' }
         }
@@ -1704,6 +1740,10 @@ Describe 'Initialize-OERAuth device-code instruction visibility' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The tokens in this Describe carry no GUID tenant, so the mocked lookup answers
+        # with any tenant ID.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
         Mock -ModuleName $script:moduleName Connect-MgGraph { }
     }
 
@@ -1974,6 +2014,9 @@ Describe 'Initialize-OERAuth granted-tenant guard' {
             }
         }
         Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        # BL-12: the domain is looked up before the token is requested; the mocked lookup answers with
+        # the tenant the token above carries.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '22222222-2222-2222-2222-222222222222' }
 
         InModuleScope $script:moduleName {
             Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive'
@@ -2086,6 +2129,9 @@ Describe 'Initialize-OERAuth granted-tenant guard' {
             }
         }
         Mock -ModuleName $script:moduleName Connect-MgGraph { }
+        # BL-12: the domain is looked up before the token is requested; the mocked lookup answers with
+        # the tenant the token above carries.
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
 
         InModuleScope $script:moduleName {
             Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -AuthMethod 'Interactive' -IncludeARM
@@ -2147,6 +2193,10 @@ Describe 'Initialize-OERAuth tenant-switch warnings' {
             $script:_OERLastTokenRequest = $null
             $script:_OERLastIssuedSession = $null
         }
+        # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any token
+        # is requested. The mocked lookup answers with the tenant ID the tokens below carry (the tokens
+        # of the P Its carry none).
+        Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
         Mock -ModuleName $script:moduleName Connect-MgGraph { }
     }
 
@@ -4274,6 +4324,277 @@ Describe 'Initialize-OERAuth sign-in memory (A20)' {
                 $Value | Should -Not -Match 'fake-arm-token'
             }
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 3 -Exactly
+        }
+    }
+}
+
+Describe 'Initialize-OERAuth tenant named by domain (BL-12)' {
+    # A tenant named by anything but a GUID or 'organizations' is resolved to its tenant ID through
+    # Resolve-OERTenantDomain before any token is requested, and a failed lookup refuses the sign-in with
+    # a terminating TenantResolutionFailed. Every Context mocks the resolver: no lookup leaves the process.
+    BeforeAll {
+        # Calls Initialize-OERAuth from one script block and reads the latch from that same script
+        # block, the shape of Invoke-LatchProbe in the A19 tests. Returns the record it raised (if any)
+        # and the refusal.
+        function script:Invoke-DomainProbe {
+            param([hashtable]$Parameters = @{})
+            InModuleScope $script:moduleName -Parameters @{ P = $Parameters } {
+                param($P)
+                $Caught = $null
+                try { Initialize-OERAuth @P } catch { $Caught = $PSItem }
+                $Refusal = Get-OERSignInRefusal
+                @{ Caught = $Caught; Refusal = $Refusal }
+            }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERLastIssuedSession = $null
+            $script:_OERTenantDomainCache = $null
+        }
+        $script:ResolverCalls = 0
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '11111111-1111-1111-1111-111111111111'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        # Every token is issued for the tenant the resolver mocks below answer with.
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            param($ClientId, $ClientSecret, $Resource, $Tenant, $ErrorAction, $Interactive,
+                  $DeviceCode, $ManagedIdentity, $ClientCertificate, $ClientCertificatePath,
+                  $Scope, $Force, $Claim)
+            $Token = if ($Resource -match 'management') { 'fake-arm-token-NOT-A-REAL-TOKEN' } else { 'fake-graph-token-NOT-A-REAL-TOKEN' }
+            [pscustomobject]@{ Token = $Token; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '11111111-1111-1111-1111-111111111111' }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own.
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+    }
+
+    Context 'a domain that does not resolve' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain {
+                throw [System.InvalidOperationException]::new('did not resolve')
+            }
+        }
+
+        It 'refuses with TenantResolutionFailed before any token is requested, and builds no AzAuth credential' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $R.Caught.TargetObject | Should -BeExactly 'contoso.onmicrosoft.com'
+            $R.Caught.Exception.Message | Should -Match ([regex]::Escape("'contoso.onmicrosoft.com'"))
+            $R.Caught.Exception.Message | Should -Match 'did not resolve'
+            $R.Caught.Exception.InnerException | Should -BeOfType ([System.InvalidOperationException])
+            # The positive proof that the lookup was reached, then nothing after it.
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState | Should -BeNullOrEmpty
+                # No AzAuth credential was built: the credential-build tracker never moved.
+                $script:_OERLastTokenRequest | Should -BeNullOrEmpty
+                # Seeded with the commercial authority at entry, before the lookup, and not moved since.
+                $script:_OERLastAuthorityHost | Should -BeExactly (Get-OERCloudEndpoint -Environment 'Global').AuthorityHost
+            }
+        }
+
+        It 'leaves the authority tracker on the commercial authority when a sovereign-cloud lookup fails' {
+            # Not vacuous: the sovereign authority differs from the one the entry seeds.
+            InModuleScope $script:moduleName {
+                (Get-OERCloudEndpoint -Environment 'USGov').AuthorityHost |
+                    Should -Not -Be (Get-OERCloudEndpoint -Environment 'Global').AuthorityHost
+            }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive'; Environment = 'USGov' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0
+            InModuleScope $script:moduleName {
+                $script:_OERLastTokenRequest | Should -BeNullOrEmpty
+                $script:_OERLastAuthorityHost | Should -BeExactly (Get-OERCloudEndpoint -Environment 'Global').AuthorityHost
+            }
+        }
+
+        It 'leaves a cached session for another tenant describing that tenant' {
+            Mock -ModuleName $script:moduleName Get-AzToken {
+                [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'admin@contoso.com'; TenantId = '44444444-4444-4444-4444-444444444444' }
+            }
+            $Before = InModuleScope $script:moduleName {
+                Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'Interactive'
+                $script:_OERAuthState.Clone()
+            }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $After = InModuleScope $script:moduleName { $script:_OERAuthState }
+            $Before.TenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+            $After.TenantId | Should -BeExactly $Before.TenantId
+            $After.TokenTenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+            $After.AuthMethod | Should -BeExactly $Before.AuthMethod
+            $After.GraphTokenExpiry | Should -Be $Before.GraphTokenExpiry
+            $After.GraphSessionFingerprint | Should -BeExactly $Before.GraphSessionFingerprint
+            # The one token and the one connect are tenant A's.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'scrubs the lookup failure from the error list before it reports it' {
+            Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'did not resolve'
+            }
+        }
+
+        It 'leaves the calling command latched' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    Context 'a domain that resolves' {
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain {
+                $script:ResolverCalls++
+                '11111111-1111-1111-1111-111111111111'
+            }
+        }
+
+        It 'asks the resolver for the domain in the commercial cloud, and still names the domain in the token request' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly -ParameterFilter {
+                $Domain -ceq 'contoso.onmicrosoft.com' -and $Environment -ceq 'Global'
+            }
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter {
+                $Tenant -ceq 'contoso.onmicrosoft.com'
+            }
+        }
+
+        It 'asks the resolver in the sovereign cloud the sign-in names' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive'; Environment = 'USGov' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly -ParameterFilter {
+                $Domain -ceq 'contoso.onmicrosoft.com' -and $Environment -ceq 'USGov'
+            }
+        }
+
+        It 'asks the resolver for any other label that is not a GUID, ''common'' included' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'common'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly -ParameterFilter {
+                $Domain -ceq 'common' -and $Environment -ceq 'Global'
+            }
+        }
+
+        It 'releases the latch when the domain resolves and the sign-in succeeds' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            $R.Refusal | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 1 -Exactly
+        }
+
+        It 'makes no lookup for a tenant named by its GUID' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = '11111111-1111-1111-1111-111111111111'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0
+            # Not vacuous: the sign-in went past the place of the lookup to its token call.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        }
+
+        It 'makes no lookup when no tenant is named and there is no session (organizations)' {
+            $R = Invoke-DomainProbe -Parameters @{ AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { -not $Tenant }
+            InModuleScope $script:moduleName { $script:_OERAuthState.TenantId | Should -BeExactly 'organizations' }
+        }
+
+        It 'makes no lookup for -TenantId organizations' {
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'organizations'; AuthMethod = 'Interactive' }
+
+            $R.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 0
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly -ParameterFilter { -not $Tenant }
+        }
+
+        It 'makes no lookup on a cached return' {
+            InModuleScope $script:moduleName { Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive' }
+            $AfterFirst = $script:ResolverCalls
+
+            InModuleScope $script:moduleName { Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive' }
+
+            # Not vacuous: the first, new, sign-in made one lookup.
+            $AfterFirst | Should -Be 1
+            # The second, identical, sign-in made none.
+            ($script:ResolverCalls - $AfterFirst) | Should -Be 0
+            # And it was the cached return: the one token is the first sign-in's.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+    }
+
+    Context 'an Azure Resource Manager token added to a cached Microsoft Graph session' {
+        # The Microsoft Graph token is cached and only the ARM token is acquired: the sign-in goes past
+        # the cached return, so the lookup runs for it too, and a failed lookup stops the ARM token.
+        It 'asks the resolver again when only the Azure Resource Manager token is acquired' {
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
+
+            InModuleScope $script:moduleName { Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive' }
+            InModuleScope $script:moduleName { Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive' -IncludeARM }
+
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERTenantDomain -Times 2 -Exactly -ParameterFilter {
+                $Domain -ceq 'contoso.onmicrosoft.com' -and $Environment -ceq 'Global'
+            }
+            # One Microsoft Graph token and one ARM token; the Graph session was connected once.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+            InModuleScope $script:moduleName { $script:_OERAuthState.ArmToken | Should -Not -BeNullOrEmpty }
+        }
+
+        It 'refuses an ARM-only acquisition with TenantResolutionFailed when its lookup fails, and requests no token' {
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain {
+                $script:ResolverCalls++
+                if ($script:ResolverCalls -ge 2) { throw [System.InvalidOperationException]::new('did not resolve') }
+                '11111111-1111-1111-1111-111111111111'
+            }
+            InModuleScope $script:moduleName { Initialize-OERAuth -TenantId 'contoso.onmicrosoft.com' -AuthMethod 'Interactive' }
+
+            $R = Invoke-DomainProbe -Parameters @{ TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'Interactive'; IncludeARM = $true }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'TenantResolutionFailed,Initialize-OERAuth'
+            $R.Refusal | Should -Not -BeNullOrEmpty
+            $script:ResolverCalls | Should -Be 2
+            # The one token is the first sign-in's Microsoft Graph token: the refused call requested none.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -ParameterFilter { $Resource -match 'management' }
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState.TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
+                $script:_OERAuthState.ArmToken | Should -BeNullOrEmpty
+            }
         }
     }
 }

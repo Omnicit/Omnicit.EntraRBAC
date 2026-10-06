@@ -39,9 +39,13 @@ function Initialize-OERAuth {
     is what the cache-key predicates compare. When the requested tenant is a canonical GUID and the
     token names a different one, a terminating TenantMismatch error is raised before the token is
     wired into Connect-MgGraph or cached for Azure Resource Manager, so a token minted for another
-    tenant never becomes a usable session. A requested tenant given as a verified domain cannot be
-    compared against the GUID a token carries, so no mismatch is inferred there -- the granted value
-    is recorded and left to speak for itself.
+    tenant never becomes a usable session. A requested tenant that is neither a GUID nor
+    'organizations' -- a verified domain, for example -- is first resolved to its tenant ID through the
+    cloud authority's OpenID discovery document (Resolve-OERTenantDomain), after the cached return and
+    before any token is requested. A lookup that fails raises a terminating TenantResolutionFailed
+    error, and no token is requested and no AzAuth credential is built. The token request still names
+    the tenant as given, and the tenant a token for a domain was issued for is recorded and left to
+    speak for itself.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the
@@ -626,6 +630,47 @@ function Initialize-OERAuth {
                     -Terminating
             }
         }
+    }
+
+    # SEC (BL-12, decided by Philip 2026-10-06, P-2): a tenant named by domain is resolved to its tenant
+    # ID before any token is requested, through the cloud authority's OpenID discovery document
+    # (Resolve-OERTenantDomain, the module's one unauthenticated network call), and every token is then
+    # compared with that ID (TenantMismatch, below). Until this, a domain could not be compared with
+    # the GUID a token carries, so a device code, managed identity or reused client secret sign-in that
+    # came back from another tenant was at most warned about. A GUID needs no lookup; 'organizations'
+    # names no tenant and is not compared. Placed after the cached return -- a session that needs no new
+    # token was verified when it was established -- and after the credential checks, but before the
+    # trackers below move and before any token call, so a refused lookup builds no AzAuth credential and
+    # requests nothing. A failed lookup is raised after the try statement, not inside its catch: a
+    # terminating error suppressed inside a catch resumes after the whole try statement.
+    $ExpectedTenantId = $null
+    $TenantResolutionError = $null
+    if (Test-OERGuid -Value $EffectiveTenant) {
+        $ExpectedTenantId = $EffectiveTenant
+    }
+    elseif ($EffectiveTenant -ne 'organizations') {
+        try {
+            $ExpectedTenantId = Resolve-OERTenantDomain -Domain $EffectiveTenant -Environment $EffectiveEnvironment
+        } catch {
+            Remove-OERErrorRecord -Record $PSItem
+            $TenantResolutionError = $PSItem
+        }
+    }
+    if ($null -ne $TenantResolutionError) {
+        Write-CmdletError `
+            -Message ([System.Exception]::new(
+                "Could not resolve tenant '$EffectiveTenant' to its tenant ID: " +
+                "$($TenantResolutionError.Exception.Message) Omnicit.EntraRBAC checks the tenant every token " +
+                "is issued for, and a tenant named by domain is checked through its tenant ID, so no token " +
+                "was requested. Check the domain and the cloud (-Environment), or name the tenant by its " +
+                "tenant ID (a GUID).")) `
+            -InnerException $TenantResolutionError.Exception `
+            -ErrorId 'TenantResolutionFailed' `
+            -Category AuthenticationError `
+            -TargetObject $EffectiveTenant `
+            -Cmdlet $PSCmdlet `
+            -Terminating
+        return
     }
 
     # -- The ONLY two Get-AzToken call sites in this module route through here --
