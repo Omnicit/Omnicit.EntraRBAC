@@ -36,16 +36,16 @@ function Initialize-OERAuth {
 
     The tenant each acquired token was actually ISSUED for is recorded beside the requested one, as
     TokenTenantId and ArmTokenTenantId. TenantId keeps naming what the caller asked for, since that
-    is what the cache-key predicates compare. When the requested tenant is a canonical GUID and the
-    token names a different one, a terminating TenantMismatch error is raised before the token is
-    wired into Connect-MgGraph or cached for Azure Resource Manager, so a token minted for another
-    tenant never becomes a usable session. A requested tenant that is neither a GUID nor
+    is what the cache-key predicates compare. A requested tenant that is neither a GUID nor
     'organizations' -- a verified domain, for example -- is first resolved to its tenant ID through the
     cloud authority's OpenID discovery document (Resolve-OERTenantDomain), after the cached return and
     before any token is requested. A lookup that fails raises a terminating TenantResolutionFailed
     error, and no token is requested and no AzAuth credential is built. The token request still names
-    the tenant as given, and the tenant a token for a domain was issued for is recorded and left to
-    speak for itself.
+    the tenant as given. When a token was issued for another tenant than the requested tenant ID --
+    the GUID as given, or the one a domain resolved to -- a terminating TenantMismatch error is
+    raised before the token is wired into Connect-MgGraph or cached for Azure Resource Manager, so a
+    token minted for another tenant never becomes a usable session, whether the tenant was named by
+    GUID or by domain. 'organizations' names no tenant and is not compared.
 
     The module's Microsoft Graph calls go out under whichever Microsoft Graph PowerShell SDK session the
     process holds, so every entry, the cached return included, first compares that session with the
@@ -95,17 +95,10 @@ function Initialize-OERAuth {
     same application but a different tenant, and no Force is on the call (neither -ForceRefresh nor
     the one this function adds for a cloud switch). AzAuth keeps the credential it built for that
     tenant for the whole process and reuses it for that application, so the new tenant is not
-    reached. After a Microsoft Graph token is acquired for a tenant named by domain, a warning is
-    written when the last session established in this PowerShell process named a different tenant --
-    any tenant, 'organizations' included -- and that session's token was issued by the same tenant as
-    this one; Disconnect-OER does not reset that comparison. Unless the domain is a name of the
-    issuing tenant, the sign-in did not switch tenants, and naming the tenant by its GUID turns the
-    same situation into the TenantMismatch refusal instead. A sign-in that names no tenant is not
-    checked, and neither is the first sign-in in a process or the first after Omnicit.EntraRBAC is
-    re-imported. Neither warning refuses the sign-in, but a caller running with -WarningAction Stop
-    or $WarningPreference = 'Stop' is stopped at the warning: the first one before its token request
-    is made, the second one before Connect-MgGraph is called and before the session state is
-    rebuilt.
+    reached. The warning does not refuse the sign-in, but a caller running with -WarningAction Stop
+    or $WarningPreference = 'Stop' is stopped at it, before its token request is made. A sign-in
+    whose token comes back from another tenant than the one it names is refused with TenantMismatch,
+    as above, whether the tenant was named by GUID or by domain.
 
     On the DeviceCode flow the sign-in instruction that carries the user code is re-emitted on the
     INFORMATION stream instead of being left on the warning stream where AzAuth writes it. It is the
@@ -130,9 +123,13 @@ function Initialize-OERAuth {
     AzAuth drop that cached credential and construct a new one at the new authority.
 
     .PARAMETER TenantId
-    The Entra ID tenant GUID or verified domain. When omitted, the tenant of the current session is
-    used; when there is no session, 'organizations' is used. A value naming a different tenant than
-    the session inherits nothing else from it.
+    The Entra ID tenant: a tenant ID (GUID) or a verified domain. A domain is looked up in the cloud's
+    OpenID discovery document before any token is requested, and every token must then be issued for
+    the tenant ID it resolves to. Any other value than a GUID or 'organizations' -- 'common', for
+    example -- is looked up too, and is refused with TenantResolutionFailed when it names no tenant.
+    When omitted, the tenant of the current session is used; when there is no session,
+    'organizations' is used. A value naming a different tenant than the session inherits nothing
+    else from it.
 
     .PARAMETER AuthMethod
     The credential type used by Get-AzToken: Interactive, DeviceCode, ManagedIdentity, ClientSecret,
@@ -848,8 +845,9 @@ function Initialize-OERAuth {
         # without. Client certificate and interactive credentials are rebuilt on every call
         # (decompiled), so no earlier tenant survives into them. And when the record names any other
         # type, the credential AzAuth last built is not a client-secret credential, so the next client
-        # secret request replaces it. The post-call check after the Graph token observes what
-        # this one cannot predict.
+        # secret request replaces it. The TenantMismatch check after each token observes what this one
+        # cannot predict: the tenant the token was issued for, compared with the tenant ID the request
+        # named or its domain resolved to.
         #
         # Every term on its own line and independently deletable, so each stays mutation-provable.
         [bool]$ClientSecretTenantSwitchWithoutForce = $EffectiveMethod -eq 'ClientSecret' -and
@@ -984,17 +982,46 @@ function Initialize-OERAuth {
             # exist, the operator completed the tenant-independent verification page with a real
             # account, and all three returned a working session.
             #
-            # Compared ONLY when BOTH values are canonical GUIDs, and that restriction is the whole
-            # difficulty here. $EffectiveTenant is very often a verified DOMAIN
-            # ('contoso.onmicrosoft.com') while the granted value is a GUID, so an unconditional
-            # string comparison would reject almost every real sign-in. Test-OERGuid is the module's
-            # single GUID predicate -- never re-implement its regex -- and it is also what excludes
-            # 'organizations' and the empty string structurally, since neither is a GUID; a separate
-            # term for either would be one no input could falsify, and an unfalsifiable term cannot
-            # be mutation-proved. When the request named a domain the mismatch is not detectable
-            # from the token alone, so nothing is guessed: TokenTenantId below records the granted
-            # value and lets it speak for itself. -ne on strings is case-insensitive in PowerShell,
-            # so a GUID typed in upper case still compares equal to the lower-case one Entra returns.
+            # Both values compared are GUIDs. The requested side is $ExpectedTenantId, set before any
+            # token was requested (SEC (BL-12) above): the tenant ID as named, or the one a domain
+            # resolved to through the cloud authority's OpenID discovery document. A tenant named by
+            # domain is therefore compared exactly like one named by GUID, while the token request
+            # itself still names the tenant as given. 'organizations' names no tenant: $ExpectedTenantId
+            # is $null for it, and that term is what excludes it -- a term an input falsifies, so it
+            # stays on its own and mutation-provable. A granted value that is not a GUID (AzAuth
+            # returned no tenant at all) is not compared either; TokenTenantId below records it as it
+            # is. Test-OERGuid is the module's single GUID predicate -- never re-implement its regex.
+            # -ne on strings is case-insensitive in PowerShell, so a GUID typed in upper case still
+            # compares equal to the lower-case one Entra returns. The message names the tenant as the
+            # caller gave it and, for a domain, the tenant ID it resolved to.
+            #
+            # Why a token can come back from another tenant than the one named. Measured offline, with
+            # the network blocked: every device-code request went to 'organizations' whatever -Tenant
+            # said, -Force included; a managed identity request was byte-identical for any tenant; and
+            # a client secret credential reused under AZURE_IDENTITY_DISABLE_MULTITENANTAUTH sent its
+            # token request to the PREVIOUS tenant (the pre-call warning above predicts that one).
+            # Inferred, not executed: a device-code token is issued for the tenant of the account that
+            # signs in, and a managed identity token for the identity's own tenant. The DEVICE-CODE
+            # half of that inference is weakened, not withdrawn, by a RECORDED OBSERVATION from the
+            # 2026-09-15/16 live run, in which every device-code sign-in that NAMED a tenant came back
+            # issued by that tenant. Still DECOMPILED: a device-code credential reused after a
+            # SUCCESSFUL sign-in first attempts silent reacquisition for the requested tenant.
+            # CONTRADICTED BY MEASUREMENT, 2026-09-16, twice on a healthy connection: when such a
+            # credential names another tenant without -Force there is no fall-back to a new device
+            # code -- the call never returns, and -Force cured it every time.
+            #
+            # MEASURED live, 2026-09-15/16, against real tokens: AzToken.TenantId carries the acquired
+            # token's own tid claim, not an echo of the requested value (checklist 4.1, 4.2 and 4.3a,
+            # corroborated by 2.7b). DECOMPILED and still NOT measured: the property falls back to
+            # echoing the REQUESTED tenant when the token carries no tid claim at all -- a domain then,
+            # which is not a GUID and is not compared, or the requested GUID, which compares equal.
+            #
+            # The tenant-switch warning that used to follow this check, comparing the granted tenant with
+            # the previous session's, is retired: it existed because a domain could not be compared here,
+            # and after the lookup it could only fire for a domain that names the very tenant its token
+            # came from -- a correct sign-in. docs/development/rationale.md#switching-tenants-in-one-process
+            # is the record that governs this check and the evidence above; do not grow a second copy of
+            # it here.
             #
             # Placement, on the same two-sided reasoning the app-only check above spells out:
             #   - BELOW the cached return, so a session that needs no new token is never rejected.
@@ -1007,12 +1034,17 @@ function Initialize-OERAuth {
             # string, and TokenTenantId is an evidence field -- an absent value must stay absent
             # rather than read as a tenant named ''.
             $GrantedTenant = $GraphToken.TenantId
-            if ((Test-OERGuid -Value $EffectiveTenant) -and (Test-OERGuid -Value $GrantedTenant) -and
-                $GrantedTenant -ne $EffectiveTenant) {
+            if ($ExpectedTenantId -and (Test-OERGuid -Value $GrantedTenant) -and
+                $GrantedTenant -ne $ExpectedTenantId) {
+                [string]$RequestedLabel = if ($ExpectedTenantId -ne $EffectiveTenant) {
+                    "'$EffectiveTenant' (tenant ID '$ExpectedTenantId')"
+                } else {
+                    "'$EffectiveTenant'"
+                }
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
                         "The Microsoft Graph token was issued for tenant '$GrantedTenant', not for the " +
-                        "requested tenant '$EffectiveTenant'. Omnicit.EntraRBAC refuses a session whose " +
+                        "requested tenant $RequestedLabel. Omnicit.EntraRBAC refuses a session whose " +
                         "cached tenant does not describe the token beneath it: every later call would act " +
                         "on '$GrantedTenant' while reporting '$EffectiveTenant'. Sign in again with an " +
                         "account that belongs to '$EffectiveTenant'.")) `
@@ -1021,146 +1053,6 @@ function Initialize-OERAuth {
                     -TargetObject $EffectiveTenant `
                     -Cmdlet $PSCmdlet `
                     -Terminating
-            }
-
-            # SEC: a tenant switch that did not take effect, observed rather than predicted. Evaluated
-            # HERE -- after the TenantMismatch guard, so a refused token never warns, and before the
-            # tracker write that follows the state rebuild below, while $script:_OERLastIssuedSession
-            # still describes the last session established in this PowerShell process. Deliberately
-            # that tracker and not $script:_OERAuthState: Disconnect-OER clears the state, and
-            # disconnecting before connecting to the next customer is the most natural way to switch,
-            # so a check that read the state went silent on exactly that switch. The tracker survives
-            # Disconnect-OER, for the reasons given where it is written.
-            #
-            # It compares GRANTED tenants, since for a request named by domain that is the only signal
-            # there is: TenantMismatch above cannot compare a domain with the GUID a token carries.
-            # Measured offline, with the network blocked: every device-code request went to
-            # 'organizations' whatever -Tenant said, -Force included; a managed identity request was
-            # byte-identical for any tenant; and a client secret credential reused under
-            # AZURE_IDENTITY_DISABLE_MULTITENANTAUTH sent its token request to the PREVIOUS tenant.
-            # Inferred, not executed, since no token can be issued offline: a device-code token is
-            # therefore issued for the tenant of the account that signs in, and a managed identity token
-            # for the identity's own tenant, so a switch made with either -- or with that reused client
-            # secret credential -- comes back issued by the SAME tenant as before, under the new label,
-            # which is the shape tested here. The DEVICE-CODE half of that inference is weakened, not
-            # withdrawn: a RECORDED OBSERVATION from the 2026-09-15/16 live run has every device-code
-            # sign-in that NAMED a tenant coming back issued by that tenant, which the offline spike
-            # could not observe at all -- it measured the REQUEST going to 'organizations' and never got
-            # as far as a token. An observation and not a rule, since which account completed each
-            # device-code page was not recorded. The table, and the reading that reconciles it with the
-            # earlier nonexistent-tenant finding -- the named tenant reaches the token when the account
-            # can obtain one there, and falls back to the account's own tenant when it cannot, which is
-            # exactly the shape this check exists to catch -- are in
-            # docs/development/rationale.md#switching-tenants-in-one-process. That section governs; do
-            # not grow a second copy of it here.
-            #
-            # A second inference used to sit here, and the live run split it in two. Still DECOMPILED,
-            # from AzAuth and Azure.Identity: a device-code credential reused after a SUCCESSFUL sign-in
-            # first attempts silent reacquisition for the REQUESTED tenant. CONTRADICTED BY MEASUREMENT,
-            # 2026-09-16, twice independently and on a healthy connection -- through this module
-            # (checklist 3.5) and against raw Get-AzToken outside it (4.2): there is no fall-back to a
-            # new device code. The call never returns at all, printing no device code and raising no
-            # error; in 3.5 the harness function returned $null, never reaching its own return
-            # expression. -Force cured it every time it was used. So the reassurance once drawn from
-            # that fall-back -- that such a switch may reach the new tenant after all, and this check
-            # then stays silent by design -- does not follow, and is withdrawn.
-            #
-            # MEASURED live, 2026-09-15/16, against real tokens, where this was recorded as decompiled
-            # only: AzToken.TenantId carries the acquired token's own tid claim. Checklist 4.1 (a first
-            # device-code token), 4.2 (a switched one, taken with -Force) and 4.3a (a client secret
-            # token) each decoded the token's own payload segment in memory and found the property equal
-            # to tid and NOT an echo of the requested value, and 2.7b corroborates it a fourth time.
-            # DECOMPILED and still NOT measured, since no live token exercised it: the property falls
-            # back to echoing the REQUESTED tenant when the token carries no tid claim at all.
-            #
-            # A GUID request is excluded: TenantMismatch has already verified it and refuses a token
-            # issued for any other tenant, and a session named by domain followed by the same tenant's
-            # GUID is a correct sign-in that would otherwise warn. The previous TokenTenantId must
-            # itself be a GUID, or an absent or unrecognisable tenant on both tokens would compare equal
-            # and read as evidence.
-            #
-            # A request that names NO tenant is excluded as well: it asks for no particular tenant, so
-            # there is no switch that could have failed to take effect. While this check read
-            # $script:_OERAuthState that case could not arise -- a request with no tenant and a live
-            # session inherits the session's tenant -- but through the tracker it can, right after
-            # Disconnect-OER. It is NOT the previous-label 'organizations' shape below, where the
-            # PREVIOUS session named no tenant and this one names a domain; that one still warns, on
-            # purpose.
-            #
-            # TWO benign shapes also satisfy every term, and the message answers both with its sentence
-            # "If '<new>' is a name of tenant '<granted>', this is expected":
-            #   - two names for the same tenant, such as a verified domain and its onmicrosoft.com name;
-            #   - a previous session that named no tenant, recorded as 'organizations', followed by a
-            #     sign-in naming that same tenant's own domain: Connect-OER -Interactive (or
-            #     -ManagedIdentity), then the same again with -TenantId <that tenant's domain>.
-            # 'organizations' is deliberately NOT excluded as a previous label, since the failure this
-            # check exists for has that very shape: a device-code sign-in naming no tenant, then
-            # -TenantId <a customer's domain>, still issued by the operator's home tenant (the inferred
-            # device-code behaviour above). Excluding it would silence exactly that. Telling a benign
-            # shape from the failure needs the domain resolved to its tenant ID, which is a network call
-            # on every sign-in -- which is also why this is a warning and not a refusal, by the
-            # operator's decision.
-            #
-            # Still unchecked: the first sign-in in a process, which has no earlier session to compare
-            # with, and the first sign-in after Omnicit.EntraRBAC is re-imported, which resets this
-            # module's scope and the tracker with it.
-            #
-            # The message names Azure Resource Manager as well as Microsoft Graph, although the check
-            # itself reads only the Graph token -- and for a module whose job is Azure RBAC, the ARM half
-            # is the one that WRITES role assignments. MEASURED live, 2026-09-16, a managed identity
-            # sign-in with -IncludeARM: on a switch that did not take effect the ARM token's granted
-            # tenant equalled the Graph token's. The text is worded for the token a session of this shape
-            # acquires, not for one it is known to hold: the warning fires whether or not the caller
-            # passed -IncludeARM.
-            #
-            # It names ARM as AFFECTED and claims no MECHANISM tying the two tokens together, which it
-            # must not: Graph and ARM share AzAuth's process-wide credential only where the client ids
-            # match, and that is ManagedIdentity and ClientSecret alone. The comment above
-            # Invoke-AzTokenCall carries the measurement -- the delegated Graph call passes a client id
-            # and the ARM call passes none, so a DeviceCode Graph call followed by a DeviceCode ARM call
-            # BUILT A NEW credential instance for the ARM one (measured offline) -- and the decompiled
-            # TokenManager constructs a brand-new credential on every Interactive and ClientCertificate
-            # call regardless. On those three the ARM acquisition is a SEPARATE sign-in whose tenant this
-            # check never observes: it may reach the requested tenant, repeat the granted one, or land on
-            # a third. So the ARM half's AGREEMENT with the Graph half is MEASURED for managed identity
-            # and assumed nowhere else, and the message says only that the ARM calls are in this, not
-            # that they cannot diverge from Graph.
-            #
-            # ONE warning and not two. This check runs BEFORE the ARM token is acquired below, so it
-            # cannot read that token's tenant at all; and a second warning after the acquisition would
-            # tell the same operator the same fact about the same credential a second time. The ARM half
-            # is therefore carried by this message's wording rather than by a warning of its own.
-            #
-            # The limitation that stays: the ARM half's own tenant check is the GUID-only TenantMismatch
-            # on the ARM token further below, the mirror of the Graph one above, and it is equally blind
-            # to a request that names a domain. Resolving the named domain to its tenant ID through the
-            # cloud authority's OpenID discovery document before the call -- proposed on this branch and
-            # deliberately not built here, since it is a new network call on every sign-in -- would close
-            # both at once.
-            #
-            # Every term on its own line and independently deletable, so each stays mutation-provable.
-            $PreviousSession = $script:_OERLastIssuedSession
-            [bool]$TenantSwitchNotTakenEffect = [bool]$PreviousSession -and
-                $PreviousSession.TenantId -ne $EffectiveTenant -and
-                $EffectiveTenant -ne 'organizations' -and
-                -not (Test-OERGuid -Value $EffectiveTenant) -and
-                (Test-OERGuid -Value $PreviousSession.TokenTenantId) -and
-                $GrantedTenant -eq $PreviousSession.TokenTenantId
-
-            if ($TenantSwitchNotTakenEffect) {
-                Write-Warning (
-                    "The Microsoft Graph token for tenant '$EffectiveTenant' was issued by tenant " +
-                    "'$GrantedTenant', the same tenant that issued the token for the previous session, " +
-                    "which named '$($PreviousSession.TenantId)'. If '$EffectiveTenant' is a name of tenant " +
-                    "'$GrantedTenant', this is expected. Otherwise this sign-in did not switch tenants, and " +
-                    "every call in this session acts on '$GrantedTenant' while reporting '$EffectiveTenant' -- " +
-                    "Azure Resource Manager calls, including the ones that write role assignments, as well as " +
-                    "Microsoft Graph calls. " +
-                    "AzAuth does not send the named tenant with a new device code sign-in or with a managed " +
-                    "identity request, so those tokens normally come from the signed-in account's or the " +
-                    "identity's own tenant, and a client secret sign-in for the same application needs " +
-                    "Connect-OER -Force to move to another tenant. Name the tenant by its tenant ID (a GUID) " +
-                    "and Omnicit.EntraRBAC refuses a token issued for any other tenant instead of warning.")
             }
 
             # The authority-move -Force has now done its job: AzAuth cleared its static credential
@@ -1226,8 +1118,9 @@ function Initialize-OERAuth {
                 # never in place of it. TenantId is what the caller asked for and is what the cache-key
                 # predicates ($GraphCached, $ArmCached, $ArmIdentityUnchanged) compare, so repointing it
                 # at the granted value would silently change session-reuse semantics module-wide. This
-                # field is evidence, not a key: where the request named a domain the guard above cannot
-                # compare, and this is then the only record of which tenant actually answered.
+                # field is evidence, not a key: the guard above has compared it with the tenant ID the
+                # request named or its domain resolved to, and for a domain this is the session's record
+                # of that tenant ID.
                 TokenTenantId    = $GrantedTenant
                 # The signed-in identity's own object id, from the Graph token's oid claim -- the
                 # user on a delegated sign-in, the service principal on an app-only one. Read by
@@ -1253,31 +1146,6 @@ function Initialize-OERAuth {
                 ArmTokenTenantId = if ($ArmIdentityUnchanged) { $script:_OERAuthState.ArmTokenTenantId } else { $null }
                 ClaimsSatisfied  = [bool]$ClaimsChallenge
             }
-
-            # The last session ESTABLISHED in this PowerShell process, for the post-call check above to
-            # compare the next sign-in with. Written here, right after the state rebuild, so only a
-            # session that was actually established is ever recorded -- never a token refused by
-            # TenantMismatch, a failed token call or a failed Connect-MgGraph, each of which terminates
-            # above before reaching this line.
-            #
-            # A tracker, not $script:_OERAuthState, since Disconnect-OER clears the state while what
-            # decides the next token survives it. Measured offline: AzAuth's credential is process-wide
-            # and nothing Disconnect-OER can reach clears it -- a second runspace reused it, and
-            # Clear-AzTokenCache, with or without -Force, left it in place. Inferred from the decompiled
-            # Azure.Identity, not executed: a device-code credential that has already signed in keeps
-            # that account's authentication record on the instance AzAuth reuses, so the signed-in
-            # account survives the disconnect too. Disconnecting before connecting to the next customer
-            # is the natural way to switch, and it is the way Connect-OER's own help recommended before
-            # this check existed ("To sign in as a different account or tenant, run Disconnect-OER
-            # first"). Disconnect-OER must therefore NOT clear this tracker, exactly as it leaves
-            # $script:_OERLastAuthorityHost and $script:_OERLastTokenRequest alone.
-            #
-            # Remaining limit: re-importing Omnicit.EntraRBAC resets this module's scope and this tracker
-            # with it, so the first sign-in after such a re-import is not checked, while AzAuth's own
-            # credential lives on -- measured: removing and re-importing AzAuth left the same credential
-            # instance in place. That a re-import of Omnicit.EntraRBAC resets the tracker is inferred
-            # from PowerShell module scoping, not executed.
-            $script:_OERLastIssuedSession = @{ TenantId = $EffectiveTenant; TokenTenantId = $GrantedTenant }
 
             # M5: clear plaintext-bearing token variable to reduce its in-memory lifetime.
             $GraphToken = $null
@@ -1306,23 +1174,39 @@ function Initialize-OERAuth {
                 return
             }
 
-            # SEC: the same granted-tenant check on the ARM token, and it is not redundant with the
-            # Graph one. AzAuth returns the same PipeHow.AzAuth.AzToken type here, so the tenant is
-            # exposed identically; and when the Graph token was already cached this branch runs
-            # ALONE, which makes it the only place a wrong-tenant ARM token could ever be caught.
+            # SEC: the same granted-tenant check on the ARM token, against the same $ExpectedTenantId --
+            # the tenant ID as named, or the one a domain resolved to, so both values compared are GUIDs
+            # and 'organizations', for which it is $null, is not compared -- and it is not redundant with
+            # the Graph one. AzAuth returns the same PipeHow.AzAuth.AzToken type here, so the tenant is
+            # exposed identically; and when the Graph token was already cached this branch runs ALONE --
+            # after a lookup of its own, since an ARM-only acquisition also gets past the cached return --
+            # which makes it the only place a wrong-tenant ARM token could ever be caught. The ARM
+            # acquisition can also be a sign-in of its own. On DeviceCode the delegated Graph call passes
+            # a client id and this one passes none, so AzAuth builds a separate credential for it
+            # (measured offline, see the comment above Invoke-AzTokenCall); on Interactive and
+            # ClientCertificate AzAuth builds a new credential on every call (decompiled). On those
+            # three its token may come back from another tenant than the Graph token's. MEASURED live,
+            # 2026-09-16, for a managed identity sign-in with -IncludeARM only: on a switch that did not
+            # take effect the ARM token's tenant equalled the Graph token's.
+            # docs/development/rationale.md#switching-tenants-in-one-process governs.
             #
-            # ABOVE the three assignments below, so a refused token is never cached for
+            # ABOVE the assignments below, so a refused token is never cached for
             # Invoke-OERArmRequest to send. Deliberately TERMINATING, unlike the acquisition failure
             # just above which writes and returns: a token that could not be acquired leaves no ARM
             # token behind at all, whereas a token for the wrong tenant would become a usable one --
             # the caller must not be able to -ErrorAction SilentlyContinue past it and then call ARM.
             $GrantedArmTenant = $ArmToken.TenantId
-            if ((Test-OERGuid -Value $EffectiveTenant) -and (Test-OERGuid -Value $GrantedArmTenant) -and
-                $GrantedArmTenant -ne $EffectiveTenant) {
+            if ($ExpectedTenantId -and (Test-OERGuid -Value $GrantedArmTenant) -and
+                $GrantedArmTenant -ne $ExpectedTenantId) {
+                [string]$RequestedLabel = if ($ExpectedTenantId -ne $EffectiveTenant) {
+                    "'$EffectiveTenant' (tenant ID '$ExpectedTenantId')"
+                } else {
+                    "'$EffectiveTenant'"
+                }
                 Write-CmdletError `
                     -Message ([System.Exception]::new(
                         "The Azure Resource Manager token was issued for tenant '$GrantedArmTenant', not " +
-                        "for the requested tenant '$EffectiveTenant'. Omnicit.EntraRBAC refuses to cache a " +
+                        "for the requested tenant $RequestedLabel. Omnicit.EntraRBAC refuses to cache a " +
                         "token whose tenant does not match the session's: every later Azure call would act " +
                         "on '$GrantedArmTenant' while reporting '$EffectiveTenant'. Sign in again with an " +
                         "account that belongs to '$EffectiveTenant'.")) `

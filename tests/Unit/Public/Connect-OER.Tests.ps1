@@ -351,7 +351,6 @@ Describe 'Connect-OER' {
                 $script:_OERAuthState = $null
                 $script:_OERLastAuthorityHost = $null
                 $script:_OERLastTokenRequest = $null
-                $script:_OERLastIssuedSession = $null
             }
             # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any
             # token is requested. The tokens in this Context carry no tenant, so the mocked lookup
@@ -681,7 +680,6 @@ Describe 'Connect-OER over the Graph SDK session (A18)' {
             $script:_OERAuthState = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
-            $script:_OERLastIssuedSession = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{
