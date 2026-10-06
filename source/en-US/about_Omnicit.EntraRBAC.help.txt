@@ -301,10 +301,10 @@ GRAPH SDK SESSION
     gets GraphSessionChanged; run each tenant in its own process instead, with
     Start-Job or a separate PowerShell process.
 
-    A sign-in that fails or is refused leaves the module's session as it was
-    -- the previous tenant's, or none -- and a script carries on past the
-    error. From then on the module sends nothing for a command that names no
-    tenant: such a command (no -TenantId, or -TenantId organizations) is
+    A sign-in that fails or is refused usually leaves the module's session as
+    it was -- the previous tenant's, or none -- and a script carries on past
+    the error. From then on the module sends nothing for a command that names
+    no tenant: such a command (no -TenantId, or -TenantId organizations) is
     refused with SignInRefused before it requests a token, and so are its
     requests and the sign-ins of the cmdlets it calls. A command that names
     its tenant signs in as usual. A successful sign-in by a command that names

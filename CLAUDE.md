@@ -597,10 +597,11 @@ applies to the downstream command's tenant, and a builder looks its names up the
 older than BL-76. So never call `Invoke-OERStructure` or a name-looking builder without `-TenantId`
 inside a script block or function in a pipeline that signs in to another tenant or identity. The
 identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when that is a
-GUID, and the tenant as NAMED otherwise, never the ARM token's (BL-77): since every named tenant is
-checked against that token, one tenant named by GUID on one command and by domain on another -- or
-not named at all -- is ONE identity, to the snapshot as to the memory. Never key the identity on the
-name again, and never on the ARM tenant, which is not always acquired. The session CACHE is still
+GUID, and the tenant as NAMED otherwise, never the ARM token's (BL-77): since a named tenant is
+checked against that token (within `TenantMismatch`'s limits, below), one tenant named by GUID on one
+command and by domain on another -- or not named at all -- is ONE identity, to the snapshot as to the
+memory, whenever the token reports a GUID tenant. Never key the identity on the name again, and never
+on the ARM tenant, which is not always acquired. The session CACHE is still
 keyed on the tenant as named, so a command naming its tenant differently from the session inherits
 nothing and signs in again -- interactively when it names no credential, a browser prompt on an
 app-only session and an identity that differs in method -- which is why README's "Name the tenant
@@ -619,7 +620,8 @@ transports.
 (BL-12).** `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor
 `organizations` through `Resolve-OERTenantDomain` -- after the cached return and the credential
 checks, before the AzAuth trackers move and before any token call -- and both `TenantMismatch`
-checks, Graph and ARM, compare the granted tenant with the tenant ID it returns. A failed lookup
+checks, Graph and ARM, compare the granted tenant with the tenant ID it returns (a granted tenant
+that is not a GUID is not compared, the limit below). A failed lookup
 refuses the sign-in with `TenantResolutionFailed` (raised after the lookup's `try`, never inside its
 `catch`), and no token is requested; `common` names no tenant and is refused the same way. The token
 request still names the tenant as given. `organizations` is never looked up or compared. Never call
@@ -678,11 +680,14 @@ credential reused after a successful sign-in passing it on for a silent re-acqui
 (inferred), and a client secret credential refuses a different tenant until `-Force` rebuilds it
 (or, with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, silently requests the token from the previous
 tenant; measured).
-`Initialize-OERAuth` refuses, with `TenantMismatch`, any token issued for another tenant than the one
-named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect never
-becomes a session. Before the call it only warns, for a client secret switch it can predict will not
-take effect (a `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that
-`Write-Warning`, before any token request). The post-call warning that compared granted tenants is
+`Initialize-OERAuth` refuses, with `TenantMismatch`, a token issued for another tenant than the one
+named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect does
+not become a session, within two limits: a token whose tenant AzAuth does not report as a GUID (one
+without a `tid` claim) is not compared, and `organizations` names no tenant and is not compared
+(`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the call it only
+warns, for a client secret switch it can predict will not take effect (a
+`-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
+any token request). The post-call warning that compared granted tenants is
 retired with its tracker; do not bring it back. `Connect-OER -Force` is the only public lever that
 makes a switch take effect. Never "fix" a switch by
 adding an automatic `-Force` without a new decision -- and weigh one knowing that, measured, a
@@ -888,9 +893,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
   documented, not yet measured live, and misses a group used only through PIM active assignments.
   `Why: docs/development/rationale.md#pim-in-use-criterion`
-- **`Resolve-OERTenantDomain` is the single owner of the module's one unauthenticated network
-  call** -- the OpenID discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID
-  authority, the host read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
+- **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
+  Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
+  discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
+  read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
   The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
   header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
   lower-cased domain for the process and never caches a failure.

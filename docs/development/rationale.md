@@ -1556,10 +1556,11 @@ every live check in the operator's own hands.
 ClientSecret can be PREDICTED before the call: DECOMPILED, AzAuth's reuse predicate (same
 credential type and a matching client id) is knowable from the module's own inputs before
 `Get-AzToken` is ever invoked, so the module can warn ahead of the call instead of only
-interpreting its result afterward -- prediction works because the predicate is known, not because
-the refusal is fast. Separately, MEASURED: the refusal itself then happens in about 0.01 seconds
-with zero network requests sent, which confirms the reused credential is never given a chance to
-reach the wire; it is corroborating evidence, not the reason prediction is possible. DeviceCode and
+interpreting its result afterward (as the retired post-call warning did) -- prediction works
+because the predicate is known, not because the refusal is fast. Separately, MEASURED: the refusal
+itself then happens in about 0.01 seconds with zero network requests sent, which confirms the reused
+credential is never given a chance to reach the wire; it is corroborating evidence, not the reason
+prediction is possible. DeviceCode and
 ManagedIdentity credentials never carry a tenant at all (MEASURED), so telling either caller to
 pass `-Force` would be false advice -- MEASURED, `-Force` changes neither type's request. The pre-call
 warning is therefore ClientSecret-only at the predicate level, not merely untested for the other
@@ -1694,12 +1695,13 @@ is process-wide (MEASURED) whatever `Disconnect-OER` clears. Its known shapes we
 - It could not check the first sign-in in a process, nor the first after the module was re-imported,
   since it needed a previous entry to compare with.
 
-The lookup makes it obsolete (Ruling R6). After it, a sign-in that names its tenant by domain is
-either checked against that tenant's ID or refused before any token is requested, so a token from
-another tenant is refused with `TenantMismatch` -- including on the first sign-in in a process, which
-the warning could never check. What the warning could still see is only a domain naming the very
-tenant its token came from: a correct sign-in. The warning and `$script:_OERLastIssuedSession` are
-removed; the pre-call warning and its record, `$script:_OERLastTokenRequest`, stay.
+The lookup makes it obsolete (Sprint 9 step 3, Ruling R6). After it, a sign-in that names its tenant
+by domain is either checked against that tenant's ID or refused before any token is requested, so a
+token from another tenant is refused with `TenantMismatch` -- including on the first sign-in in a
+process, which the warning could never check. What the warning could still see is only a domain
+naming the very tenant its token came from: a correct sign-in. The warning and
+`$script:_OERLastIssuedSession` are removed; the pre-call warning and its record,
+`$script:_OERLastTokenRequest`, stay.
 
 **Why `Connect-OER -Force` exists.** A public lever was required, not optional: in this module,
 `Connect-OER -Force` is the only PUBLIC lever that clears AzAuth's static credential, and in AzAuth
@@ -1730,22 +1732,25 @@ on the first sign-in in a process and the first after a module re-import, the ca
 warning could not compare. The decision of 2026-10-06 builds it.
 
 `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor `organizations`
-through `Resolve-OERTenantDomain`, the single owner of the module's one unauthenticated network
+through `Resolve-OERTenantDomain`, the single owner of the module's one network call outside the
+Microsoft Graph and Azure Resource Manager transports, and its one deliberately unauthenticated
 call. It sends one GET of `{AuthorityHost}{domain}/v2.0/.well-known/openid-configuration` to the
 cloud's Microsoft Entra ID authority, the host read from `Get-OERCloudEndpoint`, through
 `Invoke-RestMethod` with `-Uri`, `-Method Get`, `-TimeoutSec 30` and `-ErrorAction Stop` and nothing
 else: no `Authorization` header and no credential of any kind. It reads the tenant ID from the first
 path segment of the document's `issuer`. The lookup runs after the cached return -- a session that
-needs no new token was checked when it was established (Ruling R3) -- and after the credential checks
-(`AppOnlySessionCredentialUnavailable`, `MissingClientSecret`, `MissingClientCertificate`), and before
-the AzAuth trackers move and before any token call, so a refused lookup builds no AzAuth credential
-and requests nothing. The token request still names the tenant as given (Ruling R4); only the two
-`TenantMismatch` checks use the tenant ID.
+needs no new token was checked when it was established (Sprint 9 step 3, Ruling R3) -- and after the
+credential checks (`AppOnlySessionCredentialUnavailable`, `MissingClientSecret`,
+`MissingClientCertificate`), and before the AzAuth trackers move and before any token call, so a
+refused lookup builds no AzAuth credential and requests nothing. The token request still names the
+tenant as given (Sprint 9 step 3, Ruling R4); only the two `TenantMismatch` checks use the tenant ID.
 
-**Measured first (Sprint 9 step 3, Task 1, 2026-10-06).** By hand, outside the module: unauthenticated,
-no sign-in, the commercial cloud's authority host as `Get-OERCloudEndpoint -Environment Global`
-returns it, GET of the path above, no `Authorization` header sent (checked on the request message).
-The test tenant's domain and GUID are deliberately not written here.
+**Measured first (Sprint 9 step 3, the step's first measurement, 2026-10-06).** By hand, outside the
+module: unauthenticated, no sign-in, the commercial cloud's authority host as
+`Get-OERCloudEndpoint -Environment Global` returns it, GET of the path above, no `Authorization`
+header sent (checked on the request message). The `consumers` row was measured the same way later
+the same day, during the step's review. The test tenant's domain and GUID, and the consumer tenant's
+tenant ID, are deliberately not written here.
 
 | Tenant asked for | Status | Issuer | Issuer holds the test tenant's GUID |
 |---|---|---|---|
@@ -1755,12 +1760,14 @@ The test tenant's domain and GUID are deliberately not written here.
 | a made-up domain: label `oer-s93-doesnotexist` under `onmicrosoft.com` | 400, `invalid_tenant` (AADSTS90002) | none | no |
 | `organizations` | 200 | the template `{tenantid}` | no |
 | `common` | 200 | the template `{tenantid}` | no |
+| `consumers` | 200 | the authority, then the fixed tenant ID of the Microsoft account (consumer) tenant | no |
 
 **The cache.** A tenant ID found is kept for the rest of the process, per cloud and per domain in
 lower case, so a domain costs one request per cloud however often, and in whatever letter case, it is
-named. A failure is not cached: the next sign-in asks again (Ruling R7). Re-importing the module
-empties the cache; `Disconnect-OER` does not. The accepted cost: a domain moved to another tenant
-during one process is not seen until the module is re-imported.
+named. A failure is not cached: the next sign-in asks again (Sprint 9 step 3, Ruling R7).
+Re-importing the module empties the cache (INFERRED from module scoping, not tested);
+`Disconnect-OER` does not. The accepted cost: a domain moved to another tenant during one process is
+not seen until the module is re-imported.
 
 **The cost.** One unauthenticated request per domain and cloud per process, before the first token
 request for that domain, and up to the 30-second bound when the authority does not answer. A tenant
@@ -1777,19 +1784,24 @@ other transport failure. No token is requested and no credential is built. It is
 sign-in latch like every other, so the command sends nothing, and the session is left uncertain
 ([A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain)).
 
-**`common` (Ruling R5).** Every requested tenant that is neither a GUID nor `organizations` is looked
-up, so `common` is too, and its discovery issuer is the template `{tenantid}` (MEASURED above), which
-names no tenant: `-TenantId common` is refused with `TenantResolutionFailed`, where it used to reach
-`Get-AzToken` and build a session that named no tenant `TenantMismatch` could check. `consumers` is
-looked up the same way; what its discovery document answers was NOT measured. `organizations` stays
-exempt, unlooked-up and uncompared: it is the module's own value for a sign-in that names no tenant.
+**`common` and `consumers` (Sprint 9 step 3, Ruling R5).** Every requested tenant that is neither a
+GUID nor `organizations` is looked up, `common` and `consumers` included, and the issuer decides.
+`common`'s discovery issuer is the template `{tenantid}` (MEASURED above), which names no tenant:
+`-TenantId common` is refused with `TenantResolutionFailed`, where it used to reach `Get-AzToken` and
+build a session that named no tenant `TenantMismatch` could check. `consumers` does not share that
+fate: its issuer carries the fixed tenant ID of the Microsoft account (consumer) tenant (MEASURED
+above), so `-TenantId consumers` RESOLVES to that tenant ID and every token is compared with it like
+any tenant ID; the lookup does not refuse it. The ruling expected both to be refused; the
+measurement shows the lookup refuses only `common`. Whether a sign-in naming `consumers` then gets a
+token whose tenant compares equal is NOT measured. `organizations` stays exempt, unlooked-up and
+uncompared: it is the module's own value for a sign-in that names no tenant.
 
 **Known limits of the lookup.**
 
-- PowerShell 7.4 and later bind `-TimeoutSec` to `ConnectionTimeoutSeconds` (MEASURED on 7.6.6 in
-  Task 2: the cmdlet resolves the name to that parameter), so there the 30-second bound covers
-  establishing the connection. Whether a response that stalls after the connection is bounded is NOT
-  measured.
+- PowerShell 7.4 and later bind `-TimeoutSec` to `ConnectionTimeoutSeconds` (MEASURED on 7.6.6 for
+  the lookup helper's commit: the cmdlet resolves the name to that parameter), so there the 30-second
+  bound covers establishing the connection. Whether a response that stalls after the connection is
+  bounded is NOT measured.
 - A token without a `tid` claim is compared neither for a GUID nor for a domain (DECOMPILED, under
   [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)).
 - A domain named under the wrong cloud is looked up at that cloud's authority. Whether the commercial
@@ -2499,9 +2511,10 @@ only the downstream command named the domain. That was a false refusal, not a wr
 comparing the granted tenant was recommended to the architect.
 
 Since the tenant lookup checks every named tenant against the Graph token (BL-12), the granted tenant
-is the one the session acts on, and `Get-OERSignInIdentity` now uses it (Ruling R15): the tenant term
-is `TokenTenantId` when it is a GUID, `TenantId` otherwise, never `ArmTokenTenantId`, since the ARM
-token is not always acquired and the identity must not change when it is. One tenant named by GUID
+is the one the session acts on, and `Get-OERSignInIdentity` now uses it (Sprint 9 step 3, Ruling
+R15): the tenant term is `TokenTenantId` when it is a GUID, `TenantId` otherwise, never
+`ArmTokenTenantId`, since the ARM token is not always acquired and the identity must not change when
+it is. One tenant named by GUID
 on one command and by domain on another, or not named at all, is then ONE identity to the
 supersession gate and to the snapshot, and P18 below pins the measured pipeline sending. What did not
 change is the session cache, still keyed on the tenant as named: a command that names its tenant
@@ -2845,12 +2858,15 @@ today, and it stays against a future change that stops that helper throwing. Gat
 
 ### A refused sign-in leaves the session uncertain
 
-**The finding (BL-89).** A sign-in that fails or is refused leaves the module's session as it was:
-the previous tenant's, or none. The latch covers the command whose sign-in it was, for as long as
-that command runs, and a command that finishes is on no call stack, so the next statement in a
-script is a new command the latch knows nothing about. Outside any `try` the script carries on to
-it, and when that command names no tenant it inherits the session the refused sign-in left in place.
-The shape is a loop over tenant profiles:
+**The finding (BL-89).** A sign-in that fails or is refused usually leaves the module's session as it
+was: the previous tenant's, or none. The exception is a refusal at the Azure Resource Manager step --
+`ArmTokenAcquisitionFailed`, or `TenantMismatch` on the ARM token -- which comes after the Microsoft
+Graph half has already connected and rebuilt the state for the tenant the sign-in named, so the
+session is then that tenant's, without an ARM token. The latch covers the command whose sign-in it
+was, for as long as that command runs, and a command that finishes is on no call stack, so the next
+statement in a script is a new command the latch knows nothing about. Outside any `try` the script
+carries on to it, and when that command names no tenant it inherits the session the refused sign-in
+left in place. The shape is a loop over tenant profiles:
 
 ```powershell
 foreach ($Alias in $Aliases) {
@@ -2871,7 +2887,7 @@ sets or clears the marker and returns what it was, and `$null` reads as clear. I
 and nothing about the sign-in that set it -- no tenant, account or token. Only three files call it:
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`.
 
-**The rule, in `Initialize-OERAuth`** (Rulings R9, R10 and R13).
+**The rule, in `Initialize-OERAuth`** (Sprint 9 step 3, Rulings R9, R10 and R13).
 
 - Directly after `Lock-OERSignIn` it sets the marker, keeping the value it found. So every refusal,
   terminating error and early return after that point leaves the session uncertain,
@@ -2903,10 +2919,11 @@ tenant cannot, since it is refused before it signs in.
 **Why `Connect-OER` is exempt, and marks first.** An explicit `Connect-OER` is the operator's
 instruction to sign in, as it is for taking back a changed Graph SDK session, so the marker never
 refuses it, and its success clears the marker even without a tenant: the operator has just said
-which session to use. It sets the marker as the first statement of its `process` block (Ruling R11),
-so its own refusals before any sign-in -- `AmbiguousTenant`, `InvalidTenantAlias`,
-`TenantAliasNotFound` -- leave the session uncertain too. In the loop above a misspelt alias would
-otherwise leave the previous tenant's session certain, and the document would be applied there.
+which session to use. It sets the marker as the first statement of its `process` block (Sprint 9
+step 3, Ruling R11), so its own refusals before any sign-in -- `AmbiguousTenant`,
+`InvalidTenantAlias`, `TenantAliasNotFound` -- leave the session uncertain too. In the loop above a
+misspelt alias would otherwise leave the previous tenant's session certain, and the document would
+be applied there.
 
 **Why a transport's refresh does not clear it.** The claims-challenge step-up and the token-rejected
 retry of `Invoke-OERGraphRequest`, and the 401 retry of `Invoke-OERArmRequest`, call
@@ -2923,10 +2940,11 @@ sign-in that did not go the whole way leaves the session uncertain, as it leaves
 cost is a later no-tenant command refused where only an Azure token failed, or where another
 `Connect-MgGraph` replaced the session; naming the tenant, or `Connect-OER`, sends again.
 
-**`Invoke-OERStructure`, piped several documents** (Ruling R14). With `-TenantId`, every document's
-sign-in names the tenant, so A19's same-frame retry is unchanged: after one document's sign-in failed,
-the next one signs in again, and a success clears the marker. Without `-TenantId`, every document
-after one whose sign-in was refused is refused too, and the batch sends nothing more.
+**`Invoke-OERStructure`, piped several documents** (Sprint 9 step 3, Ruling R14). With `-TenantId`,
+every document's sign-in names the tenant, so A19's same-frame retry is unchanged: after one
+document's sign-in failed, the next one signs in again, and a success clears the marker. Without
+`-TenantId`, every document after one whose sign-in was refused is refused too, and the batch sends
+nothing more.
 
 **Known limits.**
 
@@ -2949,12 +2967,12 @@ after one whose sign-in was refused is refused too, and the batch sends nothing 
   state).
 
 **The user-facing texts.** The README's `### Disconnect` section and the about topic's
-`GRAPH SDK SESSION` each carry one paragraph, outside `SWITCHING TENANTS`: a sign-in that fails or is
-refused leaves the session uncertain; until a sign-in that names its tenant, a successful
-`Connect-OER` or `Disconnect-OER`, a command that names no tenant sends nothing and is refused with
-`SignInRefused`; `-TenantId organizations` names no tenant; with the loop above as the example, and
-what it did before this version. `Connect-OER`'s and `Disconnect-OER`'s help carry the rule for their
-own side.
+`GRAPH SDK SESSION` each carry two paragraphs and the loop example, outside `SWITCHING TENANTS`: a
+sign-in that fails or is refused usually leaves the session as it was and leaves it uncertain; until
+a sign-in that names its tenant, a successful `Connect-OER` or `Disconnect-OER`, a command that names
+no tenant sends nothing and is refused with `SignInRefused`; `-TenantId organizations` names no
+tenant; with the loop above as the example, and what it did before this version. `Connect-OER`'s and
+`Disconnect-OER`'s help carry the rule for their own side.
 
 **The proof.** `tests/Unit/Private/Set-OERSessionUncertain.Tests.ps1` pins the owner: setting and
 clearing return the previous value, and `$null` reads as clear. In
