@@ -289,11 +289,12 @@ Describe 'Get-OERGroupRelation' {
             }
             $SourceRoot = (Resolve-Path -Path $SourceRoot).Path
 
-            # A Graph read of a group's members or owners collection: the Graph path ends at the
-            # collection (the {1} of the helper's own format string included). A write (the /$ref
-            # suffix), an administrative unit read and the export's unread-collection label
+            # A Graph read of a group's members or owners collection: the collection itself (the {1}
+            # of the helper's own format string included), a typed cast of it (microsoft.graph.<type>,
+            # or the helper's {2}) or its $count, each with or without a query string. A write (the
+            # /$ref suffix), an administrative unit read and the export's unread-collection label
             # (groups/<name>/members, no v1.0 prefix) are no read of this collection.
-            $CollectionPattern = '^(v1\.0|beta)/groups/[^/]+/(members|owners|\{1\})$'
+            $CollectionPattern = '^(v1\.0|beta)/groups/[^/]+/(members|owners|\{1\})(/microsoft\.graph\.(\w+|\{2\})|/\$count)?(\?.*)?$'
 
             # Every string literal of the tree the AST holds, single quoted and expandable alike,
             # that matches the pattern.
@@ -325,10 +326,11 @@ Describe 'Get-OERGroupRelation' {
             $Outside | Should -BeNullOrEmpty -Because 'a second reader of a group collection would leave out the service principals again'
         }
 
-        It 'does find the helper''s own read, so the scan is not vacuous' {
+        It 'does find both of the helper''s own reads, the untyped and the typed, so the scan is not vacuous' {
             $Own = @($Reads | Where-Object { $_.Path -eq 'Private/Get-OERGroupRelation.ps1' })
-            $Own.Count | Should -BeGreaterOrEqual 1
+            $Own.Count | Should -BeGreaterOrEqual 2
             $Own.Value | Should -Contain 'v1.0/groups/{0}/{1}'
+            $Own.Value | Should -Contain 'v1.0/groups/{0}/{1}/microsoft.graph.{2}'
         }
 
         It 'reads a double quoted literal as well as a single quoted one' {
@@ -340,11 +342,32 @@ Describe 'Get-OERGroupRelation' {
             $Found.Value | Should -Contain 'v1.0/groups/{0}/owners'
         }
 
-        It 'matches the shapes of a group collection read and not the writes, an administrative unit read or the export label' {
-            foreach ($Shape in @('v1.0/groups/{0}/members', 'v1.0/groups/{0}/owners', 'v1.0/groups/{0}/{1}', 'beta/groups/{0}/members')) {
+        It 'matches the shapes of a read of a group collection, typed, counted or with a query, and not the writes, an administrative unit read or the export label' {
+            $ReadShapes = @(
+                'v1.0/groups/{0}/members'
+                'v1.0/groups/{0}/owners'
+                'v1.0/groups/{0}/{1}'
+                'beta/groups/{0}/members'
+                'v1.0/groups/{0}/{1}/microsoft.graph.{2}'
+                'v1.0/groups/{0}/members/microsoft.graph.servicePrincipal'
+                'v1.0/groups/$Id/owners/microsoft.graph.user'
+                'v1.0/groups/{0}/members?$select=id'
+                'v1.0/groups/{0}/members/$count'
+            )
+            foreach ($Shape in $ReadShapes) {
                 $Shape | Should -Match $CollectionPattern
             }
-            foreach ($Shape in @('v1.0/groups/{0}/{1}/$ref', 'v1.0/directory/administrativeUnits/{0}/members', 'groups/role_sec_x/members')) {
+            $NotReadShapes = @(
+                'v1.0/groups/{0}/{1}/$ref'
+                'v1.0/groups/{0}/{1}/{2}/$ref'
+                'v1.0/groups/{0}/members/$ref'
+                'v1.0/directory/administrativeUnits/{0}/members'
+                'v1.0/directory/administrativeUnits/{0}/members/microsoft.graph.user'
+                'groups/role_sec_x/members'
+                'groups/role_sec_x/members/microsoft.graph.x'
+                'v1.0/groups/{0}/memberOf'
+            )
+            foreach ($Shape in $NotReadShapes) {
                 $Shape | Should -Not -Match $CollectionPattern
             }
         }
