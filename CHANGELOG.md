@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.1.2. A preview published from this point differs from 1.1.2 only
+in documentation, tests or the build.
+
+## [1.1.2] - 2026-10-06
+
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope, ignoring
 case: entries spelling one subscription or management group scope differently no longer remove
 each other's assignments on every `-Prune` run. A role given by GUID matches the live assignment at
