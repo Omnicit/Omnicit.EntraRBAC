@@ -1356,7 +1356,11 @@ BeforeAll {
         by one function (Get-OERAssignedGateStart) given the reader and the error factory, so the
         two cannot drift apart: the reader's result assigned to a variable and an if whose
         condition reads that variable, the gate starting at the assignment -- or an if whose
-        condition calls the reader itself, starting at the if.
+        condition calls the reader itself, starting at the if. The assignment must be the
+        statement DIRECTLY before its if, in the same block (as Get-OERAssignedGateStart reads
+        it): with any statement between the two, or the assignment in another block, the if is no
+        gate, since a statement there could reassign the variable, or sign in again, before the if
+        reads it.
 
         WHAT A GATED STATEMENT IS. A transport statement is the try whose BODY holds a call that
         reaches the wire: Invoke-MgGraphRequest outside the nested helper Invoke-GraphAttempt (the
@@ -2329,11 +2333,11 @@ BeforeAll {
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Supersede $FixtureSupersede -Between $FixturePlainByMember) }
         [PSCustomObject]@{ Name = 'the bearer token read by index after both gates'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 0
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Supersede $FixtureSupersede -Between $FixturePlainByIndex) }
-        [PSCustomObject]@{ Name = 'the bearer token read by single-quoted index ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+        [PSCustomObject]@{ Name = 'the bearer token read by single-quoted index ahead of the last gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Supersede $FixtureSupersede -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState[''ArmToken'']') }
-        [PSCustomObject]@{ Name = 'the bearer token read by double-quoted index ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+        [PSCustomObject]@{ Name = 'the bearer token read by double-quoted index ahead of the last gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Supersede $FixtureSupersede -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState["ArmToken"]') }
-        [PSCustomObject]@{ Name = 'the bearer token read by member ahead of the latch gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
+        [PSCustomObject]@{ Name = 'the bearer token read by member ahead of the last gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 1
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Supersede $FixtureSupersede -Between $FixturePlainByMember -Early '$Early = $script:_OERAuthState.ArmToken') }
         [PSCustomObject]@{ Name = 'the bearer token materialized between the latch and the supersession gate'; Statements = 1; Violations = 0; Session = $false; Counts = $CountsWeb; Bearer = 2
             Text = (New-OERGateFixtureText -Lines $FixtureArmBearer -Session '' -Latch $FixtureLatch -Gap $FixturePlainByMember -Supersede $FixtureSupersede) }

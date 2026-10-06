@@ -1368,7 +1368,7 @@ foreach ($Record in $Records) { 'ERROR: {0}' -f $Record }
         }
     }
 
-    It 'B1: refuses a request made for a command whose remembered identity differs from the state with SignInSuperseded, sending nothing' {
+    It 'B1: refuses a request made while a command runs whose remembered identity differs from the state, with SignInSuperseded, sending nothing' {
         Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
 
         $Caught = InModuleScope Omnicit.EntraRBAC {

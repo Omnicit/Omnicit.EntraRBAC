@@ -3211,7 +3211,7 @@ foreach ($Record in $Records) { 'ERROR: {0}' -f $Record }
         }
     }
 
-    It 'S1: refuses a call made for a command whose remembered identity differs from the state with SignInSuperseded, sending nothing' {
+    It 'S1: refuses a call made while a command runs whose remembered identity differs from the state, with SignInSuperseded, sending nothing' {
         Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { @{ value = @() } }
 
         $Caught = InModuleScope $script:moduleName {
@@ -3807,9 +3807,10 @@ Describe 'A command whose sign-in a later command in the pipeline replaced sends
     #
     # The stand-ins handle a refused request the way the public cmdlets do (Get-OERGroup, for one):
     # each request in a try of its own, the record scrubbed and written as a non-terminating error, so
-    # the command carries on to its next request. Measured: the gate's throw, caught nowhere, ends the
-    # whole statement -- with stand-ins that did not catch, the first refusal ended the runspace's
-    # script. Nothing else wraps the pipeline, the sign-ins or the stand-ins.
+    # the command carries on to its next request. Measured: the gate's throw is a plain throw, and
+    # caught nowhere it ends the whole script it runs in -- with stand-ins that did not catch, the
+    # first refusal ended the runspace's script. Nothing else wraps the pipeline, the sign-ins or the
+    # stand-ins.
     BeforeAll {
         # Runs one scenario in a runspace with no try, against the real Initialize-OERAuth. Every
         # transport it and the two wrappers reach is a MODULE-scope stub, so no call reaches the
@@ -3819,18 +3820,24 @@ Describe 'A command whose sign-in a later command in the pipeline replaced sends
         #   Get-AzToken answers a token for exactly the tenant it was asked for (-Tenant, as
         #     Initialize-OERAuth passes it), so neither TenantMismatch check refuses it, for Microsoft
         #     Graph or Azure Resource Manager by the resource named, and records 'graph <tenant>' or
-        #     'arm <tenant>'. Never a real token.
+        #     'arm <tenant>'. Never a real token. Each token lasts the minutes the scenario queued in
+        #     $global:OERA20TokenMinutes, in the order of the token calls, and an hour once the queue
+        #     is empty.
         #   Connect-MgGraph records a session naming the tenant of the last Graph token, and
         #     Get-MgContext returns it, so after each sign-in the A18 session gate finds the module's
         #     own session: only the supersession gate can refuse.
         #   Invoke-MgGraphRequest and Invoke-WebRequest record the request's URI only (never a header)
-        #     and answer an empty list.
+        #     and answer an empty list -- except that the first $global:OERA20GraphRejections Graph
+        #     requests are answered as a rejected token (InvalidAuthenticationToken) and the first
+        #     $global:OERA20ArmRejections ARM requests with a 401, which a scenario sets before its
+        #     pipeline. Both start at 0.
         # -Scenario runs in the module scope, in the same block that defines the stand-ins, so they
         # can call private functions; with -AtTopLevel it runs at the top of the script instead, as a
         # prompt would run it. The stand-ins have the shape of almost every public cmdlet:
         # Initialize-OERAuth called directly in the command's own begin block, the requests in its
-        # process block, each caught and written as an error. The tenants are invented: A is
-        # 4444..., B is 7777....
+        # process block, each caught and written as an error. Invoke-FirstProbe also forwards
+        # -AuthMethod and -ClientId when they are given, as Connect-OER does. The tenants are
+        # invented: A is 4444..., B is 7777....
         function script:Invoke-SupersessionPipelineProbe {
             param(
                 [Parameter(Mandatory)][scriptblock]$Scenario,
@@ -3845,6 +3852,9 @@ $global:OERA20ContextCalls = 0
 $global:OERA20TokenCalls = [System.Collections.Generic.List[string]]::new()
 $global:OERA20GraphRequests = [System.Collections.Generic.List[string]]::new()
 $global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
+$global:OERA20TokenMinutes = [System.Collections.Generic.Queue[int]]::new()
+$global:OERA20GraphRejections = 0
+$global:OERA20ArmRejections = 0
 & (Get-Module Omnicit.EntraRBAC) {
     function script:Get-AzToken {
         [CmdletBinding()]
@@ -3854,9 +3864,10 @@ $global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
         $Kind = if ($Resource -like '*graph*') { 'graph' } else { 'arm' }
         $global:OERA20TokenCalls.Add(('{0} {1}' -f $Kind, $Tenant))
         if ($Kind -eq 'graph') { $global:OERA20GraphTenant = $Tenant }
+        $Minutes = if ($global:OERA20TokenMinutes.Count -gt 0) { $global:OERA20TokenMinutes.Dequeue() } else { 60 }
         [pscustomobject]@{
             Token     = 'NOT-A-REAL-TOKEN-' + $Kind
-            ExpiresOn = [System.DateTimeOffset]::UtcNow.AddHours(1)
+            ExpiresOn = [System.DateTimeOffset]::UtcNow.AddMinutes($Minutes)
             Identity  = 'oer-a20-probe'
             TenantId  = $Tenant
         }
@@ -3882,6 +3893,10 @@ $global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
         param($Method, $Uri, $Body)
         if ($global:OERA20GraphRequests.Count -ge 10) { exit }
         $global:OERA20GraphRequests.Add([string]$Uri)
+        if ($global:OERA20GraphRejections -gt 0) {
+            $global:OERA20GraphRejections--
+            throw [System.Exception]::new('InvalidAuthenticationToken: token is expired')
+        }
         @{ value = @() }
     }
     function script:Invoke-WebRequest {
@@ -3889,6 +3904,10 @@ $global:OERA20ArmRequests = [System.Collections.Generic.List[string]]::new()
         param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
         if ($global:OERA20ArmRequests.Count -ge 10) { exit }
         $global:OERA20ArmRequests.Add([string]$Uri)
+        if ($global:OERA20ArmRejections -gt 0) {
+            $global:OERA20ArmRejections--
+            return [pscustomobject]@{ StatusCode = 401; Content = ''; Headers = @{} }
+        }
         [pscustomobject]@{ StatusCode = 200; Content = '{"value":[]}'; Headers = @{} }
     }
 }
@@ -3896,8 +3915,13 @@ $Error.Clear()
 $Output = @(& (Get-Module Omnicit.EntraRBAC) {
     function Invoke-FirstProbe {
         [CmdletBinding()]
-        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId)
-        begin { Initialize-OERAuth -TenantId $TenantId -IncludeARM }
+        param([Parameter(ValueFromPipeline)]$InputObject, [string]$TenantId, [string]$AuthMethod, [string]$ClientId)
+        begin {
+            $AuthParams = @{ TenantId = $TenantId; IncludeARM = $true }
+            if ($AuthMethod) { $AuthParams.AuthMethod = $AuthMethod }
+            if ($ClientId) { $AuthParams.ClientId = $ClientId }
+            Initialize-OERAuth @AuthParams
+        }
         process {
             try { $null = Invoke-OERGraphRequest -Method GET -Uri 'v1.0/groups?probe=Invoke-FirstProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
             try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe' } catch { Remove-OERErrorRecord -Record $PSItem; $PSCmdlet.WriteError($PSItem) }
@@ -4157,6 +4181,90 @@ $RecordLines
         Get-PipelineProbeSuperseded -Probe $R | Should -Be @(
             'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-FirstProbe | Invoke-FirstProbe'
             'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe', 'SignInSuperseded,Invoke-SecondProbe | Invoke-FirstProbe')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    # P7-P9 are the positive controls for a sign-in that is NEW but keeps the identity: the forced
+    # refresh of a rejected token, in each transport, and a token close to expiry. Each signs in again
+    # while a remembering command runs, so the gate compares, and the request goes out. The session is
+    # a user-assigned managed identity: an interactive-class session, whose refresh the wrappers
+    # allow, and one whose identity carries a client, which a refresh keeps only by forwarding it.
+    It 'P7: a Graph request rejected inside a one-tenant pipeline is retried after the forced refresh signs in again as the same identity' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            $global:OERA20GraphRejections = 1
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' |
+                Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The second command's sign-in was a cached return; the third Graph token is the forced
+        # refresh's, a new connection made while Invoke-FirstProbe runs.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 44444444-4444-4444-4444-444444444444')
+        # The rejected request, its retry, then the second command's: the retry went out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @(
+            'v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P8: an ARM request rejected with a 401 inside a one-tenant pipeline is retried after the forced refresh signs in again as the same identity' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            $global:OERA20ArmRejections = 1
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' |
+                Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # The ARM refresh signs in for both resources again: a new connection made while
+        # Invoke-FirstProbe runs.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444')
+        # The rejected request, its retry, then the second command's: the retry went out.
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'P9: a command that signs in while the first command''s tokens are within five minutes of expiry connects again as the same identity, and the first command sends' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            # The first command's Graph and ARM tokens last three minutes, inside the five-minute
+            # margin of Initialize-OERAuth's cache.
+            $global:OERA20TokenMinutes.Enqueue(3)
+            $global:OERA20TokenMinutes.Enqueue(3)
+            'item' | Invoke-FirstProbe -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod ManagedIdentity -ClientId 'cccccccc-cccc-cccc-cccc-cccccccccccc' |
+                Invoke-SecondProbe -TenantId '44444444-4444-4444-4444-444444444444'
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        # Not a cached return: the second command's begin block connected again, for both resources,
+        # before the first command's process block ran.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @(
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444'
+            'graph 44444444-4444-4444-4444-444444444444', 'arm 44444444-4444-4444-4444-444444444444')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -Be @('v1.0/groups?probe=Invoke-FirstProbe', 'v1.0/groups?probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -Be @(
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-FirstProbe'
+            'https://management.azure.com/subscriptions?api-version=2022-12-01&probe=Invoke-SecondProbe')
+        Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ' | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 1'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
