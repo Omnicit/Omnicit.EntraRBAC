@@ -664,7 +664,9 @@ declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty val
 command at parameter binding and it sends nothing, instead of acting on the current session's tenant
 as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with
 `Connect-OER` the one named exception; a new public `-TenantId` takes the attribute. An internal call
-passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value.
+passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value -- except
+`Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither `-TenantId` nor
+`-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |

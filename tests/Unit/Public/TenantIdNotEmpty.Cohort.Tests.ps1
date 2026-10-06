@@ -116,7 +116,10 @@ Describe 'A public cmdlet given an empty -TenantId sends nothing (A12, BL-94)' {
         }
 
         $Caught | Should -Not -BeNullOrEmpty
-        $Caught.FullyQualifiedErrorId | Should -BeLike "ParameterArgumentValidationError*,$Name"
+        # Exactly the attribute's id: a Mandatory [string] refuses '' on its own, as
+        # ParameterArgumentValidationErrorEmptyStringNotAllowed, so a wildcard would keep the
+        # New-OERConfiguration row green with the attribute removed.
+        $Caught.FullyQualifiedErrorId | Should -BeExactly "ParameterArgumentValidationError,$Name"
         $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0 -Scope It
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Scope It

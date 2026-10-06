@@ -624,8 +624,8 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
     #
     # A mutation set: (a), (d), (e) and (f) fail with the old carry condition ($ArmIdentityUnchanged
     # alone); (a), (d) and (e) with the equality term deleted; (d) and (e) when the ARM step reads
-    # $ArmCached alone; (b) and (c) when the token is never carried; and (f)'s third case with the GUID
-    # term deleted, since two absent tenants compare equal.
+    # $ArmCached alone; (b) and (c) when the token is never carried; and (f)'s last two cases with the
+    # GUID term deleted, since two absent tenants, or two copies of one domain, compare equal.
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
@@ -777,10 +777,13 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
         @{ Case = 'the cached ARM token reports no GUID tenant'; FirstGraph = '11111111-1111-1111-1111-111111111111'; FirstArm = $null; RenewGraph = '11111111-1111-1111-1111-111111111111' }
         @{ Case = 'the renewed Graph token reports no GUID tenant'; FirstGraph = '11111111-1111-1111-1111-111111111111'; FirstArm = '11111111-1111-1111-1111-111111111111'; RenewGraph = $null }
         @{ Case = 'neither token reports a tenant, so the two compare equal'; FirstGraph = $null; FirstArm = $null; RenewGraph = $null }
+        @{ Case = 'both tokens report the same tenant that is not a GUID'; FirstGraph = 'contoso.onmicrosoft.com'; FirstArm = 'contoso.onmicrosoft.com'; RenewGraph = 'contoso.onmicrosoft.com' }
     ) {
         # Nothing proves that such a token belongs with the renewed Graph token, so it is acquired again
-        # when a call next needs one rather than carried. The third case is the GUID term's own: two
-        # absent tenants are equal, so only that term refuses to carry the token.
+        # when a call next needs one rather than carried. The last two cases are the GUID term's own: two
+        # absent tenants, or two copies of the same domain (AzAuth's decompiled fallback echoes the
+        # requested tenant when a token carries no tid claim), are equal, so only that term refuses to
+        # carry the token.
         $script:BL95GraphTenant = $FirstGraph
         $script:BL95ArmTenant = $FirstArm
         InModuleScope $script:moduleName {

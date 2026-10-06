@@ -207,9 +207,9 @@ nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, i
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`; both
 count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
-loop over tenants no longer stands for the current session's tenant. A `-TenantId` of spaces is
-looked up like any value that is not a tenant ID, and refused with `TenantResolutionFailed` when it
-names no tenant.
+loop over tenants no longer stands for the current session's tenant. On any other cmdlet, a
+`-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
+`TenantResolutionFailed` when it names no tenant.
 
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
 different tenants or identities, a command whose sign-in another one replaced sends nothing more:

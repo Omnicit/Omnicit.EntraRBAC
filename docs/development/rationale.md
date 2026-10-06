@@ -3037,14 +3037,22 @@ cleared the marker. The two halves of the rule split on where the refusal must s
   `Set-OERConfiguration` among them, whose `-TenantId` is stored rather than signed in to -- carries
   `[ValidateNotNullOrEmpty()]`. Its binding error stops that one command before its `begin` block,
   so it signs in nowhere and sends nothing, and the next statement of a script runs as usual; there is
-  no marker to set, since nothing was attempted. `Set-OERConfiguration -TenantId ''` used to reach the
+  no marker to set, since nothing was attempted. `Set-OERConfiguration` is the one that binds
+  `-TenantId` from the pipeline: there an empty value is refused per input object, after `begin`,
+  and the next object is still processed (measured by the round's final review); it signs in to
+  nothing either way. `Set-OERConfiguration -TenantId ''` used to reach the
   cmdlet's own checks, which refuse, as `TenantProfileMalformed`, a write that would leave an existing
   profile without a tenant; it is now refused at binding instead, before anything is read, and
   nothing is written either way.
-- No internal call passes an empty value on: every one forwards `-TenantId` only when it is set (the
-  ninety cmdlets, `Invoke-OERStructure`, the three builders and the two access review cmdlets through
-  `Resolve-OERReviewerScope`, and the three private resolvers that sign in), and the configuration
-  cmdlets hand a validated or profile-checked value to `ConvertTo-OERTenantConfiguration`.
+- No internal call passes an empty value on to a public cmdlet: every one forwards `-TenantId` only
+  when it is set (the ninety cmdlets, `Invoke-OERStructure`, the three builders and the two access
+  review cmdlets through `Resolve-OERReviewerScope`, and the three private resolvers that sign in),
+  and the configuration cmdlets hand a validated or profile-checked value to
+  `ConvertTo-OERTenantConfiguration`. The one deliberate exception is `Connect-OER`, which always
+  passes `TenantId` to `Initialize-OERAuth`, as `''` when neither `-TenantId` nor `-TenantAlias` is
+  bound: `Initialize-OERAuth` reads emptiness, not presence, as "no tenant named", and that is the
+  case A12 leaves as it was. Nothing machine-checks the forwarding; the cohort below holds the
+  attribute, which fails closed at binding whatever a caller forwards.
 
 `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds the rule from the source: it reads every
 `source/Public/*.ps1` with the AST, pins the count of `-TenantId` carriers at 91, requires the
@@ -3081,9 +3089,14 @@ nothing more.
   for example -- is refused by PowerShell before its `process` block runs, so it marks nothing, and a
   no-tenant command after it inherits the previous session as before.
 - A `-TenantId` of spaces on any cmdlet but `Connect-OER` passes `[ValidateNotNullOrEmpty()]` (A12,
-  below) and is looked up like any value that is not a tenant ID; it is refused with
-  `TenantResolutionFailed` when the authority resolves it to no tenant. PowerShell 7.4's
-  `[ValidateNotNullOrWhiteSpace()]` would refuse it at binding, but the module supports 7.2.
+  above). On a cmdlet that signs in it names a tenant that is not the session's and is looked up like
+  any value that is not a tenant ID, and refused with `TenantResolutionFailed` when the authority
+  resolves it to no tenant; `New-OERConfiguration` and `Set-OERConfiguration` store it, and a later
+  `Connect-OER -TenantAlias` with that profile is refused the same way at its lookup. Every path ends
+  in a refusal, so decision A12's attribute stands as decided: PowerShell 7.4's
+  `[ValidateNotNullOrWhiteSpace()]` does not exist on 7.2, which the module supports, and a
+  `[ValidatePattern()]` or `[ValidateScript()]` that refused spaces at binding on 7.2 would replace
+  the attribute A12 names on ninety cmdlets for a value that is already refused.
 - A no-tenant command after a refusal is refused even when the operator meant the previous tenant, and
   even when the module holds no session at all and the command would have signed in to
   `organizations`. Both are on the safe side; `-TenantId`, `Connect-OER` or `Disconnect-OER` sends
@@ -3112,8 +3125,9 @@ it after one whose sign-in was refused; a `Connect-OER` whose parameters cannot 
 so it leaves nothing behind; an empty `-TenantAlias`, typed or piped, is refused with
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`, both
 counting as a refused sign-in; every other cmdlet refuses an empty or `$null` `-TenantId` at
-parameter binding, so that command never runs and sends nothing; and a `-TenantId` of spaces is
-looked up like any value that is not a tenant ID. `Connect-OER`'s and `Disconnect-OER`'s help carry
+parameter binding, so that command never runs and sends nothing; and on any other cmdlet a
+`-TenantId` of spaces is looked up like any value that is not a tenant ID. `Connect-OER`'s and
+`Disconnect-OER`'s help carry
 the rule for their own side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the
 two empty values.
 
