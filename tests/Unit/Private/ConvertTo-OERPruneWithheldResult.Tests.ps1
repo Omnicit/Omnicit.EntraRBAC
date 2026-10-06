@@ -183,4 +183,76 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
     }
+
+    # A fourth kind (A9, Sprint 9 step 1 round 1): a LIVE group member or owner that is a service
+    # principal. No version before the typed read saw one, so no earlier document lists one, and the
+    # group prune never removes one. The helper owns that rule (which object type is withheld) and
+    # both of its texts: under -Prune the Skipped record, without it the Extra record, whose hint
+    # must not tell the reader that -Prune removes it. It returns nothing for any other type, so the
+    # caller carries on exactly as before.
+    Context 'with the live object type of a group member or owner (-ObjectType)' {
+        It 'returns one Skipped StructureResult for a service principal under -Prune, with the exact reason' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -ObjectType 'servicePrincipal' -Candidate "undeclared member 'sp-1'" -Prune)
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'role_sec_x'
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Detail | Should -BeExactly ("prune withheld: undeclared member 'sp-1' is a service principal, and -Prune never removes a service principal from a group; " +
+                    'it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go.')
+            }
+        }
+
+        It 'returns one Extra StructureResult for a service principal without -Prune, whose hint says -Prune leaves it' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -ObjectType 'servicePrincipal' -Candidate "undeclared member 'sp-1'")
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'groups'
+                $R[0].Item | Should -BeExactly 'role_sec_x'
+                $R[0].Action | Should -BeExactly 'Extra'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Detail | Should -BeExactly "undeclared member 'sp-1' (a service principal, which -Prune leaves in place)"
+            }
+        }
+
+        It 'names an owner candidate the same way, with and without -Prune' {
+            InModuleScope $script:moduleName {
+                $R = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -ObjectType 'servicePrincipal' -Candidate "undeclared owner 'sp-9'" -Prune
+                $R.Detail | Should -BeLike "prune withheld: undeclared owner 'sp-9' is a service principal, and -Prune never removes a service principal from a group; *"
+                $R = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -ObjectType 'servicePrincipal' -Candidate "undeclared owner 'sp-9'"
+                $R.Detail | Should -BeExactly "undeclared owner 'sp-9' (a service principal, which -Prune leaves in place)"
+            }
+        }
+
+        It 'matches the type the way the handler compares strings, ignoring case' {
+            InModuleScope $script:moduleName {
+                @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -ObjectType 'ServicePrincipal' -Candidate "undeclared member 'sp-1'" -Prune).Count | Should -Be 1
+            }
+        }
+
+        It 'returns nothing for a <Label>, with or without -Prune, so the caller reports or prunes it as before' -ForEach @(
+            @{ Label = 'user'; Type = 'user' }
+            @{ Label = 'group'; Type = 'group' }
+            @{ Label = 'device'; Type = 'device' }
+            @{ Label = 'type that only starts like one'; Type = 'servicePrincipalX' }
+            @{ Label = 'blank type'; Type = '' }
+            @{ Label = 'missing type'; Type = $null }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Type = $Type } {
+                param($Type)
+                @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -ObjectType $Type -Candidate "undeclared member 'u-1'" -Prune).Count | Should -Be 0
+                @(ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -ObjectType $Type -Candidate "undeclared member 'u-1'").Count | Should -Be 0
+            }
+        }
+
+        It 'refuses a call that mixes -ObjectType with -Unresolved' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'g1' -Unresolved @('x') -ObjectType 'servicePrincipal' `
+                        -Candidate 'c' -ErrorAction Stop } | Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            }
+        }
+    }
 }

@@ -38,9 +38,10 @@ function Invoke-OERStructure {
     deletes a top-level object (a group, catalog, etc.) that is absent from the document. A declared
     entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
     in it is reported Skipped with a Detail starting "prune withheld:", with or without -Prune,
-    instead of being removed or reported Extra. An OMITTED
-    members, scopedRoles, resources or resourceRoles key still prunes, so before the first write the
-    engine lists every such key in one warning (see -Prune).
+    instead of being removed or reported Extra. A group's service principal, as a member or an
+    owner, is never removed (see -Prune). An OMITTED members, scopedRoles, resources or
+    resourceRoles key still prunes, so before the first write the engine lists every such key in one
+    warning (see -Prune).
 
     WhatIf plan mode (-WhatIf): handlers receive the engine's $PSCmdlet as -Caller and read
     ShouldProcess from it. Under -WhatIf all writes return Skipped results; reads (diff queries)
@@ -122,6 +123,14 @@ function Invoke-OERStructure {
     Extra when -Prune is not set), while the unresolved entry keeps its own Failed record. Fix or
     remove the unresolved entry to reconcile the collection.
 
+    A service principal that is a member or an owner of a group is never removed. Microsoft Graph's
+    v1.0 member and owner lists leave service principals out, so no earlier version of this module
+    saw one in a group or pruned one, and no document an earlier version exported lists one. An
+    undeclared service principal is therefore reported Extra without -Prune, and Skipped with a
+    Detail starting "prune withheld:" with -Prune, with no warning and no ShouldProcess prompt; every
+    other member and owner is pruned as described here. Remove one with Remove-OERGroupMember when
+    it is meant to go.
+
     A roleAssignments entry whose SCOPE cannot be resolved withholds the prune of the whole
     roleAssignments section, not only of one scope: it may be another spelling of any scope in the
     section, so every undeclared live assignment at every scope is reported Skipped (with or without
@@ -146,8 +155,9 @@ function Invoke-OERStructure {
     fails is reported Failed, and nothing in it is removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
-    so -Prune removes every live entry in them: groups[].members, administrativeUnits[].members,
-    administrativeUnits[].scopedRoles, catalogs[].resources and accessPackages[].resourceRoles. When
+    so -Prune removes every live entry in them (a group's service principals excepted, as above):
+    groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
+    catalogs[].resources and accessPackages[].resourceRoles. When
     -Prune is set, one warning lists every such omitted key in a section selected by -Include before
     anything is written, under -WhatIf too. Declare the key (an empty array removes the entries
     deliberately), or set it to null to leave that collection untouched. The members key of a group

@@ -11,10 +11,13 @@ function Get-OERGroup {
     With -IncludeMembers the group's direct members are attached as a Members property;
     with -IncludeOwners the group's owners are attached as an Owners property; with
     -IncludePimEligibility the group's PIM-for-groups eligibility schedule instances are attached
-    as a PimEligibility property. A named group that does not exist produces a non-terminating
-    GroupNotFound error. For each of those three collections, the property is attached only when its
-    read succeeds; a failed read omits the property entirely and raises a non-terminating error
-    instead, so an empty array in the result always means the group genuinely has none.
+    as a PimEligibility property. Members and Owners include service principals, which Microsoft
+    Graph's v1.0 member and owner lists leave out: each of those two reads also asks for the group's
+    service principals through the typed servicePrincipal collection. A named group that does not
+    exist produces a non-terminating GroupNotFound error. For each of those three collections, the
+    property is attached only when its read succeeds (for members and owners, when both requests
+    succeed); a failed read omits the property entirely and raises a non-terminating error instead,
+    so an empty array in the result always means the group genuinely has none.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same
@@ -35,15 +38,19 @@ function Get-OERGroup {
 
     .PARAMETER IncludeMembers
     When set, attaches the group's direct members as a Members property on the returned object, as
-    tagged Omnicit.EntraRBAC.GroupMember objects. The property is present only when the read
-    succeeds; a failed read is reported as a non-terminating GroupMemberReadFailed error and the
-    Members property is omitted, so a returned empty array always means the group has no members.
+    tagged Omnicit.EntraRBAC.GroupMember objects, service principals included (read through the
+    typed servicePrincipal collection as well). The property is present only when the read succeeds,
+    which takes both requests; a failed read is reported as a non-terminating GroupMemberReadFailed
+    error and the Members property is omitted, so a returned empty array always means the group has
+    no members.
 
     .PARAMETER IncludeOwners
     When set, attaches the group's owners as an Owners property on the returned object, as tagged
-    Omnicit.EntraRBAC.GroupMember objects (MemberType Owner). The property is present only when the
-    read succeeds; a failed read is reported as a non-terminating GroupOwnerReadFailed error and the
-    Owners property is omitted, so a returned empty array always means the group has no owners.
+    Omnicit.EntraRBAC.GroupMember objects (MemberType Owner), service principals included (read
+    through the typed servicePrincipal collection as well). The property is present only when the
+    read succeeds, which takes both requests; a failed read is reported as a non-terminating
+    GroupOwnerReadFailed error and the Owners property is omitted, so a returned empty array always
+    means the group has no owners.
 
     .PARAMETER IncludePimEligibility
     When set, attaches the group's PIM-for-groups eligibility schedule instances as a
@@ -159,13 +166,12 @@ function Get-OERGroup {
                 $Members = $null
                 $MembersRead = $true
                 try {
-                    $Members = @((Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/members" -f $GroupObj.Id) -All).value)
-                    # Tag each member through the shared converter, exactly as Get-OERAdministrativeUnit
-                    # does with ConvertTo-OERAdministrativeUnitMember, so Members carries formatted
+                    # Get-OERGroupRelation is the single reader of a group's members: the untyped
+                    # v1.0 read leaves service principals out, so it adds the typed read, and it
+                    # emits nothing unless both reads succeed. It also tags each member through the
+                    # shared ConvertTo-OERGroupMember, so Members carries formatted
                     # Omnicit.EntraRBAC.GroupMember objects instead of raw Graph dictionaries.
-                    $Members = @($Members | Where-Object { $_ } | ForEach-Object {
-                            ConvertTo-OERGroupMember -InputObject $_ -GroupId $GroupObj.Id -MemberType 'Member'
-                        })
+                    $Members = @(Get-OERGroupRelation -GroupId $GroupObj.Id -Relation members)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $MembersRead = $false
@@ -187,13 +193,10 @@ function Get-OERGroup {
                 $Owners = $null
                 $OwnersRead = $true
                 try {
-                    $Owners = @((Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/owners" -f $GroupObj.Id) -All).value)
-                    # Tag each owner through the shared converter, exactly as the -IncludeMembers block
-                    # above does, so Owners carries formatted Omnicit.EntraRBAC.GroupMember objects
-                    # instead of raw Graph dictionaries.
-                    $Owners = @($Owners | Where-Object { $_ } | ForEach-Object {
-                            ConvertTo-OERGroupMember -InputObject $_ -GroupId $GroupObj.Id -MemberType 'Owner'
-                        })
+                    # The same single reader as the -IncludeMembers block above: the untyped owners
+                    # read leaves service principals out too, so the helper adds the typed read,
+                    # tags each owner (MemberType Owner), and emits nothing unless both succeed.
+                    $Owners = @(Get-OERGroupRelation -GroupId $GroupObj.Id -Relation owners)
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
                     $OwnersRead = $false

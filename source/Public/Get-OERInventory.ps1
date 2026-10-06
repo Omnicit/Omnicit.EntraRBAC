@@ -25,7 +25,10 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. The Groups pimPolicy projection is emitted only for a group found to use
+    has at least one owner. A group's members and owners include its service principals, written by
+    object id. A document exported by an earlier version lacks them: Invoke-OERStructure reports them
+    Extra, and -Prune leaves them in place, since the group prune never removes a service principal.
+    The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
     every group, including one never used with PIM for Groups, and applying a changed pimPolicy to
@@ -49,7 +52,8 @@ function Get-OERInventory {
     affected section/displayName/key, so a caller using -ErrorAction Stop or a try/catch finds out
     instead of treating a document with holes in it as a full tenant snapshot. Do not hand-edit
     such a null to an empty array -- that turns "unknown" into "declared empty", which
-    Invoke-OERStructure -Prune acts on by deleting every live member, binding or resource. The
+    Invoke-OERStructure -Prune acts on by deleting every live member (a group's service principals
+    excepted), binding or resource. The
     catalog list itself, the resource names an access package's bindings are written under, a
     catalog's access packages and their assignment policies are reported through the same
     InventoryPartial error when their read fails, and are written as far as they were read: a

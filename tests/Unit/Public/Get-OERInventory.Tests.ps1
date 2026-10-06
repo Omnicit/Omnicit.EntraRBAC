@@ -6503,3 +6503,130 @@ Describe 'an application binding with no readable name round-trips by its object
         }
     }
 }
+
+Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
+    # A SEPARATE top-level Describe: the 'Get-OERInventory' Describe mocks Get-OERGroup in its
+    # BeforeEach and Pester has no un-mock, so the real cmdlet -- and through it the real
+    # Get-OERGroupRelation -- can only run here. Only the transport is answered.
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    Context 'a service principal only the typed read lists is exported by its id' {
+        # Microsoft Graph v1.0 groups/{id}/members and groups/{id}/owners leave service principals
+        # out (measured 2026-10-06); the typed .../microsoft.graph.servicePrincipal read lists them,
+        # without an @odata.type annotation. A service principal has no userPrincipalName, so the
+        # export writes it by its object id.
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Resolve-OERPrincipalName { @{} }
+            # The group does not use PIM for Groups, so no policy read is reached.
+            Mock -ModuleName $script:moduleName Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $false; Reason = 'x'; Manageable = $true } }
+            # Any request the fixture does not answer fails its read visibly.
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { throw "unexpected request: $Uri" }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = '22222222-2222-2222-2222-222222222222'; displayName = 'role_sec_team'; securityEnabled = $true
+                            isAssignableToRole = $false; groupTypes = @(); description = $null; mailNickname = $null }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups?$filter=securityEnabled%20eq%20true' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ '@odata.type' = '#microsoft.graph.group'; id = 'g-nested'; displayName = 'nested' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @(@{ id = 'sp-1'; displayName = 'an app' }) }
+            } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ value = @() }
+            } -ParameterFilter { $Uri -match 'eligibilityScheduleInstances' }
+        }
+
+        It 'exports the service principal member once and the service principal owner, both by object id' {
+            $Err = $null
+            $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+            # Positive identity first: the group was exported and nothing was reported unread.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' }).Count | Should -Be 0
+            $Groups = @($Inv.groups)
+            $Groups.Count | Should -Be 1
+            $Groups[0].displayName | Should -Be 'role_sec_team'
+
+            @($Groups[0].members).Count | Should -Be 2
+            @($Groups[0].members)[0] | Should -Be 'g-nested'
+            @(@($Groups[0].members) | Where-Object { $_ -eq 'sp-1' }).Count | Should -Be 1
+            @($Groups[0].owners) | Should -Contain 'sp-1'
+            @($Groups[0].owners).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+            }
+        }
+
+        Context 'a failed typed read leaves the collection unread' {
+            # The typed read fails AFTER the untyped read succeeded. The group is exported with the
+            # collection stated as unread, never as the half the untyped read listed: a members key
+            # is an explicit null (which the apply engine reads as leave untouched), an owners key
+            # is omitted (which it never reconciles), and InventoryPartial names the collection.
+            # The mocks carry the same exact-URI filter as the BeforeEach's; defined later, they win.
+            It 'exports members as an explicit null and names groups/role_sec_team/members as unread when the typed members read fails' {
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
+
+                $Err = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+                # Positive identity first: the group was exported, and the typed read was reached.
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 1
+                $Groups[0].displayName | Should -Be 'role_sec_team'
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' -and $All
+                }
+                # Present as a key, with the value null: not omitted, not an empty or half list.
+                $Groups[0].PSObject.Properties.Name -contains 'members' | Should -BeTrue
+                $null -eq $Groups[0].members | Should -BeTrue
+                # The owners were read whole and are exported.
+                (@($Groups[0].owners) -join ',') | Should -Be 'sp-1'
+
+                $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+                $Partial.Count | Should -Be 1
+                $Partial[0].Exception.Message | Should -BeLike '*Unread: groups/role_sec_team/members. A section*'
+            }
+
+            It 'omits owners and names groups/role_sec_team/owners as unread when the typed owners read fails' {
+                # A user owner the untyped read lists: were the half exported, owners would hold it.
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    @{ value = @(@{ '@odata.type' = '#microsoft.graph.user'; id = 'u-1'; displayName = 'a user' }) }
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners' }
+                Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                    throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Forbidden: denied'), 'Forbidden', 'PermissionDenied', $null)
+                } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' }
+
+                $Err = $null
+                $Inv = Get-OERInventory -Include Groups -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+
+                $Groups = @($Inv.groups)
+                $Groups.Count | Should -Be 1
+                $Groups[0].displayName | Should -Be 'role_sec_team'
+                Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                    $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/owners/microsoft.graph.servicePrincipal' -and $All
+                }
+                $Groups[0].PSObject.Properties.Name -contains 'owners' | Should -BeFalse
+                # The members were read whole and are exported.
+                (@($Groups[0].members) -join ',') | Should -Be 'g-nested,sp-1'
+
+                $Partial = @($Err | Where-Object { $_.FullyQualifiedErrorId -like 'InventoryPartial*' })
+                $Partial.Count | Should -Be 1
+                $Partial[0].Exception.Message | Should -BeLike '*Unread: groups/role_sec_team/owners. A section*'
+            }
+        }
+    }
+}

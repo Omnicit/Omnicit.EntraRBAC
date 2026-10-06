@@ -3765,6 +3765,116 @@ that read for a `pimPolicy`-only entry lets a 403 on the beta eligibility endpoi
 has no use for the answer. A group renamed through `previousDisplayName` takes the existing-group
 path and is asked like any other existing group.
 
+## typed-group-member-read
+
+Sprint 9 step 1 (BL-13) made `Get-OERGroupRelation` the single reader of a group's `members` and
+`owners` collections, and made that reader ask twice where it used to ask once. This anchor records
+the defect, what was measured, why the second request is a typed one, and why the group prune never
+removes a service principal (A9).
+
+**The defect (BL-13).** Microsoft Learn documents it twice: "Known issues in Microsoft Graph" lists
+"GET /groups/{id}/members doesn't return service principals in v1.0" (workaround: the `beta`
+endpoint, or `$expand=members`), and a note on "List group owners" says the same of owners.
+`Get-OERGroup -IncludeMembers -IncludeOwners` and `Get-OERGroupMember` read exactly those two
+collections, so the module never saw a service principal that was a member or an owner. Nothing
+failed: the read succeeded and the guard for unread collections never fired, so the export wrote a
+group's members and owners without them as if that were the whole list.
+
+**The measurement (2026-10-06).** Checks 1.1 to 1.5 of
+`docs/live-verification/fix-read-service-principal-group-members-checklist.md`, app-only as the
+dedicated live-verification identity through the module's own transport, on the unchanged build. The
+group held one group member, one service principal member and one service principal owner, and no
+user, device or organizational contact. Counts only:
+
+| Read | Answer | Listed by the untyped read |
+|---|---|---|
+| `v1.0` `members`, untyped | 1 object, the group | -- |
+| `members/microsoft.graph.servicePrincipal` | 1 object, the service principal | no |
+| `members/microsoft.graph.group` | 1 object, the group | yes |
+| `members` cast to `user`, `device` or `orgContact` | 0 each, cast accepted (200) | -- |
+| `beta` `members`, for the record | 2 objects, service principal and group | -- |
+| `v1.0` `owners`, untyped | 0 objects | -- |
+| `owners/microsoft.graph.servicePrincipal` | 1 object, the service principal | no |
+| `owners/microsoft.graph.user` | 0 objects | -- |
+
+The typed answers carry no `@odata.type` annotation at all. As the same certificate's identity with
+no permission, the group read succeeds, the untyped members read and both owners reads answer 403
+`Authorization_RequestDenied`, and the typed service principal members read still succeeds: the two
+requests can disagree about permission, which matters for the whole-or-nothing rule below.
+
+**Why a typed read, and not `beta` or `$expand=members`.** `beta` answers both (the table's `beta`
+row), but the module pins group reads to `v1.0`; the PIM-for-Groups `beta` pin is a separate,
+owned exception (`#pim-beta-pin`), and moving the module's most-used group reads onto `beta` would
+carry that endpoint's unestablished availability in the US Government and China clouds
+(`#sovereign-clouds`) onto every group read. `$expand=members` is the other workaround Learn names,
+but "Customize Microsoft Graph responses with query parameters" says an expand on a directory
+object typically returns at most 20 items and has no `@odata.nextLink`: a group with more members
+would come back short with no signal, which is the failure this fix removes. The typed collection
+is an ordinary list, so `-All` follows its pages.
+
+**R1: only `servicePrincipal` is read typed, for both relations.** It is the only type the untyped
+read was seen to leave out, and the only one Learn names. The `user`, `device` and `orgContact`
+casts were accepted but the group held none of them, so their zeros show that the cast works, not
+that nothing is missing. If wrong: a device or organizational contact the untyped read leaves out
+would still be missing from `Members`. The repair is one more entry in the type list at the top of
+`Get-OERGroupRelation`, made after a measurement with such a member.
+
+**How the two reads are merged.** On object id, ignoring case, the untyped read's order first and
+then what only the typed read added, so a service principal that Graph one day starts listing in
+both appears once. Every object goes through `ConvertTo-OERGroupMember`. Since a typed answer has no
+`@odata.type`, the helper passes the type it asked for as `-DefaultObjectType`, so ObjectType reads
+`servicePrincipal`; an untyped object with no annotation whose id the typed read also lists gets it
+too, the typed read being the proof of its type.
+
+**A5: read whole or not at all.** Two requests make a new way to be half right: the untyped read
+succeeds and the typed one fails (a 403, an exhausted 429, a 5xx), or the reverse. Handing back
+what was read would state half a collection as a fact, which `Get-OERInventory` would write into an
+apply document and `-Prune` would then act on (the chain behind issue #76). So
+`Get-OERGroupRelation` emits nothing until both reads have succeeded and lets either failure
+propagate; the caller's own catch reports it under the id it always had. `Get-OERGroup` omits the
+property and writes `GroupMemberReadFailed` or `GroupOwnerReadFailed`, and `Get-OERGroupMember`
+writes the transport's own record and returns nothing. `Get-OERGroupMember` collects the objects
+into a list before it emits any, since a cmdlet emits as it goes: output from a successful first
+read would already be in the pipeline when the second read failed. No ErrorId, parameter or output
+type is new.
+
+**Nothing else in the reads changed.** The export and the apply engine read a group through
+`Get-OERGroup`, so they follow with no code of their own. A group's service principal members and
+owners now count in the engine's comparison like any other principal: a declared one that is live
+is `Unchanged`, a declared one that is not live is added, and the engine reconciles owners only when
+the document declares an `owners` key, as before. The one change to the engine is A9, below.
+
+**A9: the group prune never removes a service principal (Sprint 9 step 1, round 1).** Microsoft
+Learn documents both omissions for every caller of `v1.0`, not as an effect of app-only: the List
+group members operation "currently doesn't return any service principals" ("Known issues in
+Microsoft Graph"), and "service principals are not listed as group owners" (the note on List group
+owners); the test tenant measured both (the table above). So before this fix no version of the
+module saw a service principal in a group, no version pruned one, and no document exported by an
+earlier version lists one. Making the reads whole would on its own have turned every such document
+into a removal: applied with `-Prune`, it would take every group's service principal members and
+owners away, which is more than any earlier version ever removed -- a decision that is not this
+fix's to make. So the reads and the export are whole, and the engine withholds the prune instead:
+an undeclared live member or owner whose ObjectType is `servicePrincipal` is reported `Extra`
+without `-Prune`, with a hint that `-Prune` leaves it in place, and `Skipped` with `-Prune`, with a
+Detail starting `prune withheld:`, under `-WhatIf` too. No warning is written, no ShouldProcess
+prompt is issued and `Remove-OERGroupMember` is not called for it. A declared service principal is
+added and reported like any other principal, and a member or owner of any other type, or of none, is
+pruned exactly as before. `ConvertTo-OERPruneWithheldResult` owns the rule and both texts, as the
+single owner of "prune withheld" (its `-ObjectType` form); the handler calls it straight after the
+unresolved-entry rule and, for owners, before the last-owner guard, so a lone service principal
+owner is withheld for its type and still counts as an owner standing. Removing one stays possible
+on purpose, one at a time, with `Remove-OERGroupMember`. Whether the engine should ever prune
+service principals is a separate decision, recorded as BL-82.
+
+**What A9 takes away: self-removal.** The group prune has no guard for the signed-in identity, unlike
+the directory role prune, which never removes the signed-in identity's own assignment nor one held
+through a group the identity belongs to (`#directory-role-assignments`). Without A9 the typed read
+would have made an app-only identity (ClientCertificate, ClientSecret or ManagedIdentity) a group
+prune candidate for the first time: a document that omits the running automation's own service
+principal, applied with `-Prune -Confirm:$false` by that app, would remove it from the group and
+could cut its own privileges part-way through the run. Under A9 that service principal is never
+removed, so the case does not arise. A delegated user removing themselves through a group prune was
+possible before this fix and still is; this change does not touch it.
 ## group-rename
 
 Sprint 6 step 5 made a group renameable through the apply document: `previousDisplayName` names the

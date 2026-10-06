@@ -501,6 +501,60 @@ Describe 'Invoke-OERStructure output for a group that gains PIM eligibility' {
     }
 }
 
+Describe 'Invoke-OERStructure -Prune and a group''s service principals (A9)' {
+    # No version before the typed member read saw a group's service principals, so no earlier
+    # document lists them, and the group prune never removes one. The real engine and the real group
+    # handler run; the live group is a mocked Get-OERGroup whose members and owners carry the
+    # ObjectType Get-OERGroupRelation gives them.
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g-1' }
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            [PSCustomObject]@{
+                Id = 'g-1'; Description = $null; MailNickname = $null; PimEligibility = @()
+                Members = @(
+                    [PSCustomObject]@{ id = 'u-1'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' }
+                )
+                Owners = @(
+                    [PSCustomObject]@{ id = 'u-2'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'u-3'; ObjectType = 'user' }
+                    [PSCustomObject]@{ id = 'sp-1'; ObjectType = 'servicePrincipal' }
+                )
+            }
+        }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+        Mock -ModuleName $script:moduleName Get-OERGroupPimPolicy { $null }
+        Mock -ModuleName $script:moduleName Remove-OERGroupMember { }
+    }
+
+    It 'removes the undeclared user member and owner and leaves the service principal, under -Prune -Confirm:$false' {
+        # u-3 is declared and stays an owner, so the last-owner guard does not hide a removal of the
+        # service principal owner: only the A9 guard stands between it and Remove-OERGroupMember.
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": [], "owners": ["u-3"] } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include Groups -Prune -Confirm:$false `
+                -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -WarningVariable PruneWarnings)
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-1' -and $AccessType -ne 'owner' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 1 -Exactly -ParameterFilter { $PrincipalId -eq 'u-2' -and $AccessType -eq 'owner' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly -ParameterFilter { $PrincipalId -eq 'sp-1' }
+        @($Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+        $Withheld = @($Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "prune withheld: undeclared * 'sp-1' is a service principal*" })
+        $Withheld.Count | Should -Be 2
+        @($PruneWarnings | Where-Object { "$_" -match "removing undeclared (member|owner) 'u-" }).Count | Should -Be 2
+        @($PruneWarnings | Where-Object { "$_" -match 'sp-1' }).Count | Should -Be 0
+    }
+
+    It 'still reports the undeclared service principal Extra without -Prune, with a hint that -Prune leaves it' {
+        $Json = '{ "version": "1.0", "groups": [ { "displayName": "g1", "members": ["u-1"], "owners": ["u-2", "u-3"] } ] }'
+        $Rows = @(Invoke-OERStructure -Json $Json -Include Groups -Confirm:$false -ErrorAction SilentlyContinue -WarningAction SilentlyContinue)
+        @($Rows | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member 'sp-1' (a service principal, which -Prune leaves in place)" }).Count | Should -Be 1
+        @($Rows | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared owner 'sp-1' (a service principal, which -Prune leaves in place)" }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
+    }
+}
+
 Describe 'Invoke-OERStructure directoryRoleManagementPolicies section' {
     # The directory-role policy section is Graph-only: it is dispatched after accessReviews and before
     # the two Azure sections, and it never asks Initialize-OERAuth for an ARM token.

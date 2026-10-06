@@ -7,14 +7,16 @@ function ConvertTo-OERGroupMember {
     Maps a directory object returned by groups/{id}/members or groups/{id}/owners into a
     [PSCustomObject] tagged Omnicit.EntraRBAC.GroupMember so Format views apply. The @odata.type is
     reduced to a friendly ObjectType (user, group, servicePrincipal, device); when the annotation is
-    absent ObjectType is $null, matching ConvertTo-OERAdministrativeUnitMember. MemberType records
+    absent ObjectType is $null, matching ConvertTo-OERAdministrativeUnitMember, unless
+    -DefaultObjectType is given (then ObjectType is that value). MemberType records
     whether the object came from the members or owners collection. PrincipalId is the member's own
     object id, stored once; the generic Id is an AliasProperty of PrincipalId, registered in
     suffix.ps1, rather than a second stored copy that could drift out of sync -- piped output still
     round-trips into Add-OERGroupMember and Remove-OERGroupMember via -PrincipalId
     ValueFromPipelineByPropertyName binding, and every existing .Id read keeps resolving to the same
     value. This private converter is the single owner of the group-member output shape and is used by
-    Get-OERGroupMember and Get-OERGroup -IncludeMembers.
+    Get-OERGroupRelation, the single reader behind Get-OERGroupMember and Get-OERGroup
+    -IncludeMembers/-IncludeOwners.
 
     .PARAMETER InputObject
     The raw Graph directory object (hashtable or PSObject) to convert. Accepts pipeline input.
@@ -24,6 +26,11 @@ function ConvertTo-OERGroupMember {
 
     .PARAMETER MemberType
     Whether the object is a Member or an Owner of the group.
+
+    .PARAMETER DefaultObjectType
+    The ObjectType to use when the input carries no @odata.type annotation, as an object from a
+    typed Graph read (groups/{id}/members/microsoft.graph.servicePrincipal) does not. An annotation
+    always wins. Without it, an object with no annotation keeps a null ObjectType.
 
     .EXAMPLE
     ConvertTo-OERGroupMember -InputObject $obj -GroupId 'g1' -MemberType 'Member'
@@ -38,11 +45,15 @@ function ConvertTo-OERGroupMember {
         [string]$GroupId,
 
         [ValidateSet('Member', 'Owner')]
-        [string]$MemberType = 'Member'
+        [string]$MemberType = 'Member',
+
+        [string]$DefaultObjectType
     )
     process {
         $OdataType = $InputObject.'@odata.type'
-        $ObjectType = if ($OdataType) { ([string]$OdataType -replace '^#microsoft\.graph\.', '') } else { $null }
+        $ObjectType = if ($OdataType) { ([string]$OdataType -replace '^#microsoft\.graph\.', '') }
+        elseif ($DefaultObjectType) { $DefaultObjectType }
+        else { $null }
         $Out = [PSCustomObject]@{
             PrincipalId       = $InputObject.id
             DisplayName       = $InputObject.displayName

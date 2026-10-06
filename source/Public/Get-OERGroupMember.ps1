@@ -9,6 +9,10 @@ function Get-OERGroupMember {
     Omnicit.EntraRBAC.GroupMember object per principal. The group is given by -Group (display name or
     GUID, resolved via Resolve-OERGroupId) and binds from the pipeline by property name so
     Get-OERGroup pipes straight in. A group with no members/owners returns nothing (not an error).
+    Service principals are included: Microsoft Graph's v1.0 member and owner lists leave them out,
+    so the typed servicePrincipal collection is read as well. The read is whole or not at all: when
+    either request fails, the error is written as itself and nothing is returned, never a partial
+    list.
 
     .PARAMETER Group
     The group whose members or owners are listed, given as a display name or object id (GUID) and
@@ -106,18 +110,19 @@ function Get-OERGroupMember {
             return
         }
         $IsOwner = $Owners -or ($AccessType -eq 'owner')
-        $MemberType = if ($IsOwner) { 'Owner' } else { 'Member' }
-        $Segment = if ($IsOwner) { 'owners' } else { 'members' }
+        $Relation = if ($IsOwner) { 'owners' } else { 'members' }
+        # Collected first, emitted after: a typed read that fails after the untyped one succeeded
+        # must leave nothing in the pipeline (a collection is read whole or not at all).
+        $Items = $null
         try {
-            $Response = Invoke-OERGraphRequest -Uri ("v1.0/groups/{0}/{1}" -f $GroupId, $Segment) -All
+            $Items = @(Get-OERGroupRelation -GroupId $GroupId -Relation $Relation)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }
-        foreach ($Item in @($Response.value)) {
-            if ($null -eq $Item) { continue }
-            ConvertTo-OERGroupMember -InputObject $Item -GroupId $GroupId -MemberType $MemberType
-        }
+        # One at a time, not the array itself: emitting $Items whole reads to PSScriptAnalyzer as an
+        # undeclared System.Object[] output (PSUseOutputTypeCorrectly).
+        foreach ($Item in $Items) { $Item }
     }
 }

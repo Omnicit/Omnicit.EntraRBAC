@@ -54,19 +54,22 @@ function Sync-OERStructureGroup {
        write is never attempted; this also suppresses the contradictory 'group properties match'
        Unchanged for the same group.
     2. Reconcile declared members (add missing; emit Extra or prune undeclared with -Prune, or report
-       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below) -- UNLESS
+       them Skipped while a declared member cannot be resolved -- see "Withheld prune" below; a
+       service principal is never pruned -- see "Service principals" below) -- UNLESS
        the group is dynamic (already dynamic, or declared dynamic=true in the document). Microsoft Learn
        is explicit that a member of a dynamic membership group cannot be added or removed manually, so
        every declared member is reported as a Skipped record instead, nothing is added, and the
        Extra/prune pass does not run (a group with no declared members but a live membership still gets
        one summary Skipped record so the inaction is visible under -Prune too).
     2b. Reconcile declared owners (add missing; emit Extra or prune undeclared with -Prune, or report
-        them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below), gated on
+        them Skipped while a declared owner cannot be resolved -- see "Withheld prune" below; a
+        service principal is never pruned -- see "Service principals" below), gated on
         the document's owners key being DECLARED (present and non-null) -- an omitted owners key never
         reconciles or prunes, unlike members. Owners are not rule-derived, so this step runs even on a
         dynamic group. Microsoft Learn states a group's last (user) owner cannot be removed; a -Prune
         run that would remove the last remaining owner reports a Skipped record instead of firing a
-        call Microsoft Graph rejects.
+        call Microsoft Graph rejects. A service principal owner is withheld before that guard and
+        counts as an owner still standing.
     3. Reconcile time-bound eligibility entries (those with durationDays) -- the first eligibility
        request onboards the group to PIM for Groups if it was not onboarded yet. Each entry is matched
        on the (principal, accessType) pair and its declared window is diffed against the live schedule
@@ -171,6 +174,19 @@ function Sync-OERStructureGroup {
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
 
+    Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
+    never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service
+    principals out, so before Get-OERGroupRelation added the typed read no version saw one in a
+    group, none pruned one, and no document exported by an earlier version lists one; pruning them
+    now would remove more than any earlier version did. An undeclared service principal is reported
+    Extra without -Prune (with a hint that -Prune leaves it in place) and Skipped with -Prune, with a
+    Detail that starts "prune withheld: ... is a service principal", under -WhatIf too; no warning is
+    written, no ShouldProcess prompt is issued and Remove-OERGroupMember is not called for it
+    (ConvertTo-OERPruneWithheldResult owns the rule and both texts). The check comes straight after
+    the unresolved-entry rule below and, for owners, before the last-owner guard. A declared service
+    principal is added and reported like any other principal, and a member or owner of any other
+    type, or with no type, is reconciled and pruned exactly as described above.
+
     Withheld prune: members, owners and eligibility each withhold their OWN prune when one of their
     declared entries cannot be resolved (Resolve-OERStructurePrincipal gives no object id). Such an
     entry carries no id, so the pass cannot tell which live entry it names, and its live counterpart
@@ -229,6 +245,8 @@ function Sync-OERStructureGroup {
     resolved to an object id, nothing in that collection is removed or reported Extra: every
     undeclared live entry in it is reported Skipped with a Detail starting "prune withheld:", with or
     without this switch. A lookup that throws aborts the item instead, before that collection's prune.
+    A service principal member or owner is never removed: with this switch it is reported Skipped
+    ("prune withheld:"), without it Extra.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias, accepted only for call-site uniformity with the other
@@ -645,6 +663,11 @@ function Sync-OERStructureGroup {
                     if ($DeclaredMemberIds -notcontains $CurId) {
                         $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
                         if ($Withheld) { $Withheld; continue }
+                        # A9: a service principal is never pruned from a group. No version before the
+                        # typed read saw one, so no earlier document lists one; it is Extra without
+                        # -Prune and Skipped with it (ConvertTo-OERPruneWithheldResult owns the rule).
+                        $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -ObjectType $CurMember.ObjectType -Candidate "undeclared member '$CurId'" -Prune:$Prune
+                        if ($Withheld) { $Withheld; continue }
                         if ($Prune) {
                             $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                             Write-Warning "Sync-OERStructureGroup: $PruneVerb undeclared member '$CurId' from group '$Name'."
@@ -728,11 +751,18 @@ function Sync-OERStructureGroup {
             # without first confirming the behaviour against a real tenant -- see the checklist. The
             # number of owners still standing is tracked as removals are applied, and the removal that
             # would leave none is refused with a Skipped record instead of firing a call that may fail.
+            # Since A9 an owner the read types servicePrincipal is withheld before this guard and never
+            # removed, so the guard decides only for owners of other types or of no type, and a
+            # withheld service principal owner counts as one still standing.
             $RemainingOwnerCount = $CurrentOwners.Count
             foreach ($CurOwner in $CurrentOwners) {
                 $CurId = $CurOwner.id
                 if ($DeclaredOwnerIds -notcontains $CurId) {
                     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -Unresolved $OwnerUnresolved -Candidate "undeclared owner '$CurId'"
+                    if ($Withheld) { $Withheld; continue }
+                    # A9, as for members, and before the last-owner guard: a service principal owner
+                    # is never removed, so it stays in $RemainingOwnerCount.
+                    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item $Name -ObjectType $CurOwner.ObjectType -Candidate "undeclared owner '$CurId'" -Prune:$Prune
                     if ($Withheld) { $Withheld; continue }
                     if ($Prune) {
                         if ($RemainingOwnerCount -le 1) {

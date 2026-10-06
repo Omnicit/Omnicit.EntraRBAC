@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, or when a live scoped role's name could not be read.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, or when a live group member or owner is a service principal.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -44,6 +44,22 @@ function ConvertTo-OERPruneWithheldResult {
     every unnamed role id in the order given, and states that the role is neither added nor removed
     (the module's own guard, not a Graph rejection). Declaring the role by its role id reconciles it.
 
+    A fourth kind is a LIVE group member or owner that is a service principal (decision A9, Sprint 9
+    step 1). Microsoft Graph's v1.0 member and owner lists leave service principals out, so before the
+    typed read in Get-OERGroupRelation the module never saw one in a group: no earlier version pruned
+    one, and no document exported by an earlier version lists one. The group prune therefore never
+    removes a service principal. The caller passes the candidate's ObjectType as -ObjectType, and this
+    helper owns both the rule and its texts: it returns nothing unless the type is servicePrincipal
+    (compared ignoring case, as the handler compares every string), so a member or owner of any other
+    type, or of no type, is reported and pruned as before. For a service principal it returns exactly
+    one record: with -Prune a Skipped record whose Detail starts 'prune withheld: ' and states that
+    -Prune never removes a service principal from a group (the module's own guard, not a Graph
+    rejection), and without -Prune the Extra record the pass would have written, whose hint says that
+    -Prune leaves it in place rather than "use -Prune to remove". The caller calls it straight after
+    the unresolved-entry call above and before any other guard, the last-owner guard included, and
+    continues with the next candidate when it returns a record: no Write-Warning and no
+    ShouldProcess prompt is issued for it.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -58,7 +74,7 @@ function ConvertTo-OERPruneWithheldResult {
 
     .PARAMETER Candidate
     A readable description of the live entry the pass would otherwise report Extra or remove, for
-    example "undeclared member '<id>'".
+    example "undeclared member '<id>'". Used by the -Unresolved and the -ObjectType forms.
 
     .PARAMETER UnresolvedScope
     The labels of the declared entries of the section whose scope could not be resolved, in document
@@ -74,6 +90,16 @@ function ConvertTo-OERPruneWithheldResult {
     The role ids of the live scoped roles that principal holds on the unit whose names the directory
     role list did not give, in the order the caller wants them named. One id or several; at least one
     is expected, since the record says the declared role may be one of them.
+
+    .PARAMETER ObjectType
+    The ObjectType of the live group member or owner the pass would otherwise report Extra or remove,
+    as Get-OERGroup gives it (servicePrincipal, user, group, device, or null when the read carried no
+    type). Only servicePrincipal returns a record. Not combinable with -Unresolved, -UnresolvedScope,
+    -Declared or -UnnamedRoleId.
+
+    .PARAMETER Prune
+    With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is
+    the Skipped "prune withheld:" record; without it, the Extra record.
 
     .EXAMPLE
     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
@@ -101,6 +127,14 @@ function ConvertTo-OERPruneWithheldResult {
     Returns one Skipped record saying the declared role matches no live scoped role by name while the
     principal holds a live scoped role whose name could not be read (role id 'dirrole-1'), so the role
     is neither added nor removed.
+
+    .EXAMPLE
+    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -ObjectType $CurMember.ObjectType -Candidate "undeclared member '$CurId'" -Prune:$Prune
+    if ($Withheld) { $Withheld; continue }
+
+    Emits the service principal's Skipped record (with -Prune) or its Extra record (without), and
+    moves on to the next live member, when the member is a service principal; otherwise the pass
+    reports or prunes it as usual.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
@@ -108,11 +142,24 @@ function ConvertTo-OERPruneWithheldResult {
         [Parameter(Mandatory)][string]$Section,
         [Parameter(Mandatory)][string]$Item,
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
-        [Parameter(Mandatory, ParameterSetName = 'Unresolved')][string]$Candidate,
+        [Parameter(Mandatory, ParameterSetName = 'Unresolved')]
+        [Parameter(Mandatory, ParameterSetName = 'ObjectType')][string]$Candidate,
         [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
-        [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId
+        [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId,
+        [Parameter(Mandatory, ParameterSetName = 'ObjectType')][AllowNull()][AllowEmptyString()][string]$ObjectType,
+        [Parameter(ParameterSetName = 'ObjectType')][switch]$Prune
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'ObjectType') {
+        if ($ObjectType -ne 'servicePrincipal') { return }
+        if ($Prune) {
+            return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+                -Detail "prune withheld: $Candidate is a service principal, and -Prune never removes a service principal from a group; it is left in place (our own guard, not a Graph rejection). Remove it with Remove-OERGroupMember (-AccessType owner for an owner) if it is meant to go."
+        }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Extra' `
+            -Detail "$Candidate (a service principal, which -Prune leaves in place)"
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'UnreadRoleName') {
         $QuotedIds = ($UnnamedRoleId | ForEach-Object { "'$_'" }) -join ', '
