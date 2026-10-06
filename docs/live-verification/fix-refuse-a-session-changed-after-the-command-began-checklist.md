@@ -110,7 +110,7 @@ checks share one.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -139,13 +139,22 @@ changes; `The worktree's build carries A: True; the check before a sign-in, B an
 clone; any `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:06 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at e1e85d2 (docs-only commits after the a4f8d95 build) with 0 tracked changes; the build carries A (Checkpoint-OERSignIn), the check before a sign-in at four call sites (B and C) and D (the BL-74 check).
+
+[oer-s92] The module loads from a worktree that is not the main clone: True
+[oer-s92] Main clone: branch main; HEAD 6817b33
+[oer-s92] Worktree: branch fix/refuse-a-session-changed-after-the-command-began; HEAD e1e85d2 docs: count only tenant targets in the live checklist's prerequisite plan check; tracked changes: 0
+[oer-s92] The worktree's build carries A: True; the check before a sign-in, B and C (four call sites): 4; D: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -164,11 +173,27 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:05 UTC: every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, service principal named oer-live-cc and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.3).
+
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] The module is the worktree's build: True
+```
 
 ### 0.2. Identity check as oer-live-cc-noperm
 
-- [ ] **0.2** The no-permission identity signs in to a Graph SDK session of its own.
+- [x] **0.2** The no-permission identity signs in to a Graph SDK session of its own.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -184,11 +209,22 @@ Disconnect-OerLive
 session is `oer-live-cc-noperm`: `True`, the test tenant `True`, `identity check passed: True`.
 **Failure looks like:** any `False` -- STOP; section 2 needs this identity.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:05 UTC: oer-live-cc-noperm signs in to a Graph SDK session of its own: app-only with its app id, app name oer-live-cc-noperm, the test tenant, all True; identity check passed.
+
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Microsoft Graph sign-in as oer-live-cc-noperm: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc-noperm identity check: app name in the session is oer-live-cc-noperm: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc-noperm identity check: tenant is the test tenant: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc-noperm: identity check passed: True
+```
 
 ### 0.3. The prerequisite plan names only oer-s92- objects
 
-- [ ] **0.3** `Initialize-OerS92Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every `What if:` line names an object with the prefix `oer-s92-`.
+- [x] **0.3** `Initialize-OerS92Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every `What if:` line names an object with the prefix `oer-s92-`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -211,11 +247,39 @@ with `oer-s92-` (`True`).
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:06 UTC (the second run: the first run, at 16:05 UTC, counted the script's own two local files under raw\s92\ as targets and printed False; check 0.3 was corrected to count tenant targets apart, commit "count only tenant targets in the live checklist's prerequisite plan check"). Identity check passed; no residue; the sweep finds nothing with the prefix; no baseline yet. The plan: the transcript and the baseline under raw\s92\, and two tenant targets, oer-s92-grp and oer-s92-member, both with the prefix (True). WhatIf: nothing was created or written. Read and confirmed by the controller before 0.4.
+
+[oer-s92] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s92] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s92] What if: Performing the operation "Start the redacted transcript" on target "raw\s92\prereq-20261006-160648Z.log".
+[oer-s92] [oer-s92] Mode: CREATE or complete. Prefix 'oer-s92-'. Objects (fixed): oer-s92-grp (prereq description, no member); oer-s92-member (no member). OerLive 1.0.3.
+[oer-s92] [oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s92] [oer-s92] Residue: raw\residue.json holds no rows.
+[oer-s92] [oer-s92] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s92-' is left.
+[oer-s92] [oer-s92] Found: oer-s92-grp exists: False; oer-s92-member exists: False.
+[oer-s92] [oer-s92] No baseline yet: it is written now, before the first write to the tenant (groups 98).
+[oer-s92] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s92\baseline-s92.json".
+[oer-s92] What if: Performing the operation "Create a plain security group with the prereq description and no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s92-grp".
+[oer-s92] What if: Performing the operation "Create a plain security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s92-member".
+[oer-s92] [oer-s92] Summary: oer-s92-grp absent; oer-s92-member absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s92] [oer-s92] WhatIf: nothing was created, removed or written.
+[oer-s92] [oer-s92] Done.
+[oer-s92] Planned writes: 4; local files under raw\s92\: 2; tenant targets: 2; every tenant target starts with oer-s92-: True
+```
 
 ### 0.4. The prerequisite objects
 
-- [ ] **0.4** `Initialize-OerS92Prereq.ps1 -Unattended` writes the baseline when there is none, and creates `oer-s92-grp` (prereq description, no member) and `oer-s92-member`.
+- [x] **0.4** `Initialize-OerS92Prereq.ps1 -Unattended` writes the baseline when there is none, and creates `oer-s92-grp` (prereq description, no member) and `oer-s92-member`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -232,7 +296,42 @@ oer-s92-grp` and `Created group oer-s92-member` (or `exists`); `Summary: oer-s92
 oer-s92-member present`; exit code 0.
 **Failure looks like:** exit code 1 -- read the `Refusing to run` or `Stopped` line; a 401/403 -- STOP.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:06 UTC: identity check passed; the baseline written (groups 98) and read back; oer-s92-grp created (201, resolves by name after 6.5 s) and oer-s92-member created (201, after 14.3 s); summary both present; exit code 0. (Before section 1 was run again, the two groups were removed with the script's -Teardown and created again with this same setup at 16:11 UTC, exit code 0: see 1.2.)
+
+[oer-s92] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s92] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s92] [oer-s92] Transcript (redacted): raw\s92\prereq-20261006-160659Z.log; OerLive 1.0.3.
+[oer-s92] [oer-s92] Mode: CREATE or complete. Prefix 'oer-s92-'. Objects (fixed): oer-s92-grp (prereq description, no member); oer-s92-member (no member). OerLive 1.0.3.
+[oer-s92] [oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s92] [oer-s92] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s92] [oer-s92] Residue: raw\residue.json holds no rows.
+[oer-s92] [oer-s92] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s92-' is left.
+[oer-s92] [oer-s92] Found: oer-s92-grp exists: False; oer-s92-member exists: False.
+[oer-s92] [oer-s92] No baseline yet: it is written now, before the first write to the tenant (groups 98).
+[oer-s92] [oer-s92] Wrote the baseline raw\s92\baseline-s92.json and read it back.
+[oer-s92] [oer-s92] Created group oer-s92-grp: 201.
+[oer-s92] [oer-s92] oer-s92-grp resolves by its display name: not yet (read 1, 0.3 s, likely replication delay) -- reading again in 2 s.
+[oer-s92] [oer-s92] oer-s92-grp resolves by its display name: not yet (read 2, 2.4 s, likely replication delay) -- reading again in 4 s.
+[oer-s92] [oer-s92] oer-s92-grp resolves by its display name: converged after 3 read(s), 6.5 s.
+[oer-s92] [oer-s92] Created group oer-s92-member: 201.
+[oer-s92] [oer-s92] oer-s92-member resolves by its display name: not yet (read 1, 0 s, likely replication delay) -- reading again in 2 s.
+[oer-s92] [oer-s92] oer-s92-member resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s92] [oer-s92] oer-s92-member resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s92] [oer-s92] oer-s92-member resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s92] [oer-s92] Summary: oer-s92-grp present; oer-s92-member present; written to the tenant: True.
+[oer-s92] [oer-s92] Done.
+[oer-s92] Exit code: 0
+```
 
 ## 1. Regression: each command alone works as before
 
@@ -243,7 +342,7 @@ written to the step's raw folder and deleted at the end of 1.3.
 
 ### 1.1. Invoke-OERStructure alone, without -TenantId: the document is applied
 
-- [ ] **1.1** `Invoke-OERStructure -Path <doc> -Confirm:$false`, a statement of its own, without `-TenantId`: `oer-s92-grp`'s description is updated and `oer-s92-member` is added as its member; no `SignInSuperseded`.
+- [x] **1.1** `Invoke-OERStructure -Path <doc> -Confirm:$false`, a statement of its own, without `-TenantId`: `oer-s92-grp`'s description is updated and `oer-s92-member` is added as its member; no `SignInSuperseded`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -323,11 +422,32 @@ with `writes: 2` (the PATCH and the member `$ref` POST); `ARM requests: 0`; the 
 change (a false refusal of every plain apply); `writes: 0` -- nothing was applied; a `Failed` row --
 read its detail.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:12 UTC as oer-live-cc (every identity line True), with the module from the step's worktree build (a4f8d95 code: the snapshot helper, the four checks before a sign-in and the BL-74 check present) and the two forwarding fences resolving for the module (True). Invoke-OERStructure -Path (the document, in raw\s92\) -Confirm:$false, a statement of its own, without -TenantId: no error; two rows, groups | oer-s92-grp | Updated (Description) and Updated (added member 'oer-s92-member'); Graph requests 8, of which 2 writes (the PATCH and the member reference); ARM requests 0. Read back: oer-s92-member is a member of oer-s92-grp (True, after 0.1 s) and the description is the document's (True). A plain apply whose session did not change is not refused.
+
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s92] 1.1 Invoke-OERStructure alone, without -TenantId: output objects 2; errors: none; Graph requests: 8 (writes: 2); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.1 Invoke-OERStructure alone, without -TenantId: row groups | oer-s92-grp | Updated | updated group properties (Description)
+[oer-s92] 1.1 Invoke-OERStructure alone, without -TenantId: row groups | oer-s92-grp | Updated | added member 'oer-s92-member'
+[oer-s92] oer-s92-member is listed as a member of oer-s92-grp: converged after 1 read(s), 0.1 s.
+[oer-s92] 1.1 read back: oer-s92-member is a member of oer-s92-grp: True (after 0.1 s); the description is the document's: True
+```
 
 ### 1.2. The same document again: only Unchanged (G8)
 
-- [ ] **1.2** The same `Invoke-OERStructure -Path <doc> -Confirm:$false` again: every row `Unchanged`, no write.
+- [x] **1.2** The same `Invoke-OERStructure -Path <doc> -Confirm:$false` again: every row `Unchanged`, no write.
 
 ```powershell
 # Graph's replicas can answer a read by id with the old description for a while after the PATCH:
@@ -349,11 +469,25 @@ $null = Invoke-S92 -Label '1.2 the same document again, without -TenantId' -Call
 **Failure looks like:** an `Updated` or a member row that adds again -- the first run did not converge
 (wait and run again before judging); `SignInSuperseded` -- a false refusal.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (round 1). Run 2026-10-06 16:12 UTC: after three reads in a row returned the document's description (True, after 20 s), the same document again without -TenantId: both rows Unchanged (group properties match; member already present); Graph requests 5, writes 0; ARM requests 0. The first run of this check (16:07 UTC), started seconds after 1.1, reported the description Updated a second time (writes 1) while 1.3 a few seconds later found every row Unchanged: Graph's replicas returned the old description to a read by id after the PATCH. The checklist gained the wait (commit "wait for the description to settle before the live checklist's second apply"), the two groups were removed and created again with the prerequisite script, and section 1 was run again from 1.1. No code changed.
+
+[oer-s92] 1.2: three reads in a row return the document's description: True (after 20 s)
+[oer-s92] 1.2 the same document again, without -TenantId: output objects 2; errors: none; Graph requests: 5 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.2 the same document again, without -TenantId: row groups | oer-s92-grp | Unchanged | group properties match
+[oer-s92] 1.2 the same document again, without -TenantId: row groups | oer-s92-grp | Unchanged | member 'oer-s92-member' already present
+
+The first run of 1.2 (16:07 UTC, before the wait was added):
+[oer-s92] 1.2 the same document again, without -TenantId: output objects 2; errors: none; Graph requests: 7 (writes: 1); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.2 the same document again, without -TenantId: row groups | oer-s92-grp | Updated | updated group properties (Description)
+[oer-s92] 1.2 the same document again, without -TenantId: row groups | oer-s92-grp | Unchanged | member 'oer-s92-member' already present
+```
 
 ### 1.3. The same document with -TenantId: only Unchanged
 
-- [ ] **1.3** `Invoke-OERStructure -Path <doc> -TenantId <test tenant> -Confirm:$false`: every row `Unchanged`, no write -- a command with `-TenantId` behaves as before.
+- [x] **1.3** `Invoke-OERStructure -Path <doc> -TenantId <test tenant> -Confirm:$false`: every row `Unchanged`, no write -- a command with `-TenantId` behaves as before.
 
 ```powershell
 $null = Invoke-S92 -Label '1.3 the same document with -TenantId' -Call { Invoke-OERStructure -Path $Doc -TenantId $Cfg.TenantId -Confirm:$false }
@@ -364,11 +498,20 @@ Write-OerLiveStep "1.3: the apply document is deleted: $(-not (Test-Path -Litera
 **Expect:** `errors: none`; every row `Unchanged`; `writes: 0`; the document deleted `True`.
 **Failure looks like:** any write, or any error.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:12 UTC: the same document with -TenantId naming the test tenant: both rows Unchanged; Graph requests 5, writes 0; ARM requests 0; the document deleted (True). A command with -TenantId behaves as before.
+
+[oer-s92] 1.3 the same document with -TenantId: output objects 2; errors: none; Graph requests: 5 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.3 the same document with -TenantId: row groups | oer-s92-grp | Unchanged | group properties match
+[oer-s92] 1.3 the same document with -TenantId: row groups | oer-s92-grp | Unchanged | member 'oer-s92-member' already present
+[oer-s92] 1.3: the apply document is deleted: True
+```
 
 ### 1.4. Each builder alone, with a name it looks up
 
-- [ ] **1.4** `New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member`, `New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member` and `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member`, each a statement of its own: each builds its object around `oer-s92-member`'s object id, one Graph request each, no error.
+- [x] **1.4** `New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member`, `New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member` and `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member`, each a statement of its own: each builds its object around `oer-s92-member`'s object id, one Graph request each, no error.
 
 ```powershell
 $Stage = Invoke-S92 -Label '1.4a New-OERAccessPackageApprovalStage alone' -Call { New-OERAccessPackageApprovalStage -DurationDays 7 -Group 'oer-s92-member' }
@@ -387,7 +530,22 @@ requests: 0`, and its line naming `oer-s92-member` `True`; `Fences removed: True
 **Failure looks like:** `SignInSuperseded` -- a false refusal of a builder whose session did not
 change; `Graph requests: 0` with an object -- the name was not looked up (check the call).
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:12 UTC, each a statement of its own: New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member, New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member and New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member: each one object, no error, Graph requests 1 (the name lookup), writes 0, ARM requests 0; the primary approver, the allowed target and the reviewer query each name oer-s92-member's object id (True). The fences removed (True).
+
+[oer-s92] 1.4a New-OERAccessPackageApprovalStage alone: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.4a New-OERAccessPackageApprovalStage alone: object Omnicit.EntraRBAC.ApprovalStage
+[oer-s92] 1.4a: the primary approver is oer-s92-member: True
+[oer-s92] 1.4b New-OERAccessPackageRequestorScope alone: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.4b New-OERAccessPackageRequestorScope alone: object Omnicit.EntraRBAC.RequestorScope
+[oer-s92] 1.4b: the allowed target is oer-s92-member: True
+[oer-s92] 1.4c New-OERAccessReviewStage alone: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 1.4c New-OERAccessReviewStage alone: object Omnicit.EntraRBAC.AccessReviewStageSetting
+[oer-s92] 1.4c: the reviewer query names oer-s92-member: True
+[oer-s92] Fences removed: True
+```
 
 ## 2. A command does not act under a session another command in the pipeline switched to
 
@@ -401,7 +559,7 @@ requests are fenced and counted.
 
 ### 2.1. Invoke-OERStructure without -TenantId, then a sign-in as another identity in the same pipeline: refused, nothing sent
 
-- [ ] **2.1** `Invoke-OERStructure -Path <doc> -WhatIf` without `-TenantId`, piped into `ForEach-Object -Begin { Connect-OER ... }` signing in as `oer-live-cc-noperm`: the only error is `SignInSuperseded` naming `Invoke-OERStructure`, no row, and the fences count 0 Graph and 0 ARM requests.
+- [x] **2.1** `Invoke-OERStructure -Path <doc> -WhatIf` without `-TenantId`, piped into `ForEach-Object -Begin { Connect-OER ... }` signing in as `oer-live-cc-noperm`: the only error is `SignInSuperseded` naming `Invoke-OERStructure`, no row, and the fences count 0 Graph and 0 ARM requests.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -481,11 +639,30 @@ under `oer-live-cc-noperm`'s session, the identity `Invoke-OERStructure` never b
 nothing about the new one; the state's client still `oer-live-cc` -- `Connect-OER` did not run in the
 pipeline's `begin`; a 401 or 403 for `oer-live-cc` before the pipeline -- STOP.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:12 UTC as oer-live-cc (every identity line True), with the module from the step's worktree build (a4f8d95 code: the snapshot helper, the four checks before a sign-in and the BL-74 check present) and the fences resolving (True). Before: the state's client is oer-live-cc, the module holds an ARM token. Invoke-OERStructure -Path (the document) -WhatIf without -TenantId piped into ForEach-Object -Begin { Connect-OER ... } as oer-live-cc-noperm: no output object; the only error SignInSuperseded with target Invoke-OERStructure (category AuthenticationError; the message names Invoke-OERStructure and no tenant); Graph requests 0, writes 0, ARM requests 0. Afterwards the state's client is oer-live-cc-noperm (True) and the module holds no ARM token. Before this branch the same pipeline planned the document under oer-live-cc-noperm's session (BL-76; read in the code and reproduced by the unit and end-to-end tests with the check removed).
+
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s92] Before 2.1: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.1 Invoke-OERStructure -WhatIf, then Connect-OER as oer-live-cc-noperm in the same pipeline: output objects 0; errors: SignInSuperseded (Invoke-OERStructure); Graph requests: 0 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: False; is oer-live-cc-noperm: True; the module holds an ARM token: False
+[oer-s92] 2.1 Invoke-OERStructure -WhatIf, then Connect-OER as oer-live-cc-noperm in the same pipeline: SignInSuperseded,Invoke-OERStructure; category AuthenticationError -- Another OER command in the same pipeline signed in to a different tenant or identity after Invoke-OERStructure began, so Omnicit.EntraRBAC sends nothing while Invoke-OERStructure runs: this request was not sent. Run the commands as separate statements, so that each one signs in and finishes before t ...
+```
 
 ### 2.2. The same identity again in the same pipeline: nothing is refused
 
-- [ ] **2.2** After signing in again as `oer-live-cc`, the same pipeline with `Connect-OER` signing in as `oer-live-cc` again: no `SignInSuperseded`, the plan is read (Graph requests, no write), and every row is `Unchanged`.
+- [x] **2.2** After signing in again as `oer-live-cc`, the same pipeline with `Connect-OER` signing in as `oer-live-cc` again: no `SignInSuperseded`, the plan is read (Graph requests, no write), and every row is `Unchanged`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -505,11 +682,30 @@ change identity works exactly as before.
 **Failure looks like:** `SignInSuperseded` -- the snapshot comparison refuses an identical sign-in (a
 false refusal of every ordinary pipeline); `Graph requests: 0` with no error -- the plan never ran.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After Connect-OerLive -Arm as oer-live-cc again (identity check passed), the same pipeline with Connect-OER as oer-live-cc again in -Begin: no error; both rows Unchanged; Graph requests 5, writes 0; ARM requests 0; the client oer-live-cc before and after, ARM token kept; the document deleted (True). The same identity is no change, so an ordinary pipeline works as before.
+
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Before 2.2: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.2 Invoke-OERStructure -WhatIf, then Connect-OER as oer-live-cc again in the same pipeline: output objects 2; errors: none; Graph requests: 5 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.2 Invoke-OERStructure -WhatIf, then Connect-OER as oer-live-cc again in the same pipeline: row groups | oer-s92-grp | Unchanged | group properties match
+[oer-s92] 2.2 Invoke-OERStructure -WhatIf, then Connect-OER as oer-live-cc again in the same pipeline: row groups | oer-s92-grp | Unchanged | member 'oer-s92-member' already present
+[oer-s92] 2.2: the apply document is deleted: True
+```
 
 ### 2.3. New-OERAccessReviewStage, then a sign-in as another identity in the same pipeline: refused, no lookup
 
-- [ ] **2.3** After signing in again as `oer-live-cc`, `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member` piped into `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: the only error is `SignInSuperseded` naming `New-OERAccessReviewStage`, no object, and 0 Graph requests.
+- [x] **2.3** After signing in again as `oer-live-cc`, `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member` piped into `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: the only error is `SignInSuperseded` naming `New-OERAccessReviewStage`, no object, and 0 Graph requests.
 
 ```powershell
 Connect-OerLive -Arm
@@ -525,11 +721,28 @@ requests: 0 (writes: 0); ARM requests: 0`; afterwards the state's client is `oer
 **Failure looks like:** `Graph requests: 1` -- the name was looked up under `oer-live-cc-noperm`'s
 session (BL-81); an error carrying a 403 instead of `SignInSuperseded`.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After Connect-OerLive -Arm again: New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member piped into ForEach-Object -Begin { Connect-OER ... } as oer-live-cc-noperm: no object; the only error SignInSuperseded with target New-OERAccessReviewStage; Graph requests 0, ARM requests 0; afterwards the client is oer-live-cc-noperm. The name was not looked up under the switched session (BL-81).
+
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Before 2.3: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.3 New-OERAccessReviewStage, then Connect-OER as oer-live-cc-noperm in the same pipeline: output objects 0; errors: SignInSuperseded (New-OERAccessReviewStage); Graph requests: 0 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: False; is oer-live-cc-noperm: True; the module holds an ARM token: False
+[oer-s92] 2.3 New-OERAccessReviewStage, then Connect-OER as oer-live-cc-noperm in the same pipeline: SignInSuperseded,New-OERAccessReviewStage; category AuthenticationError -- Another OER command in the same pipeline signed in to a different tenant or identity after New-OERAccessReviewStage began, so Omnicit.EntraRBAC sends nothing while New-OERAccessReviewStage runs: this request was not sent. Run the commands as separate statements, so that each one signs in and finishe ...
+```
 
 ### 2.4. New-OERAccessPackageApprovalStage, then a sign-in as another identity in the same pipeline: refused, no lookup
 
-- [ ] **2.4** After signing in again as `oer-live-cc`, `New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member` piped into the same `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: `SignInSuperseded` naming `New-OERAccessPackageApprovalStage`, no object, 0 Graph requests.
+- [x] **2.4** After signing in again as `oer-live-cc`, `New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member` piped into the same `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: `SignInSuperseded` naming `New-OERAccessPackageApprovalStage`, no object, 0 Graph requests.
 
 ```powershell
 Connect-OerLive -Arm
@@ -544,11 +757,28 @@ $null = Invoke-S92 -Label '2.4 New-OERAccessPackageApprovalStage, then Connect-O
 `Graph requests: 0 (writes: 0); ARM requests: 0`.
 **Failure looks like:** `Graph requests: 1` -- the lookup went out under the switched session.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After Connect-OerLive -Arm again: New-OERAccessPackageApprovalStage -DurationDays 7 -Group oer-s92-member in the same pipeline shape: no object; the only error SignInSuperseded with target New-OERAccessPackageApprovalStage; Graph requests 0, ARM requests 0.
+
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Before 2.4: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.4 New-OERAccessPackageApprovalStage, then Connect-OER as oer-live-cc-noperm in the same pipeline: output objects 0; errors: SignInSuperseded (New-OERAccessPackageApprovalStage); Graph requests: 0 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: False; is oer-live-cc-noperm: True; the module holds an ARM token: False
+[oer-s92] 2.4 New-OERAccessPackageApprovalStage, then Connect-OER as oer-live-cc-noperm in the same pipeline: SignInSuperseded,New-OERAccessPackageApprovalStage; category AuthenticationError -- Another OER command in the same pipeline signed in to a different tenant or identity after New-OERAccessPackageApprovalStage began, so Omnicit.EntraRBAC sends nothing while New-OERAccessPackageApprovalStage runs: this request was not sent. Run the commands as separate statements, so that each one si ...
+```
 
 ### 2.5. New-OERAccessPackageRequestorScope, then a sign-in as another identity in the same pipeline: refused, no lookup
 
-- [ ] **2.5** After signing in again as `oer-live-cc`, `New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member` piped into the same `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: `SignInSuperseded` naming `New-OERAccessPackageRequestorScope`, no object, 0 Graph requests.
+- [x] **2.5** After signing in again as `oer-live-cc`, `New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member` piped into the same `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc-noperm`: `SignInSuperseded` naming `New-OERAccessPackageRequestorScope`, no object, 0 Graph requests.
 
 ```powershell
 Connect-OerLive -Arm
@@ -563,11 +793,28 @@ $null = Invoke-S92 -Label '2.5 New-OERAccessPackageRequestorScope, then Connect-
 `Graph requests: 0 (writes: 0); ARM requests: 0`.
 **Failure looks like:** `Graph requests: 1` -- the lookup went out under the switched session.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After Connect-OerLive -Arm again: New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -Group oer-s92-member in the same pipeline shape: no object; the only error SignInSuperseded with target New-OERAccessPackageRequestorScope; Graph requests 0, ARM requests 0.
+
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Before 2.5: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.5 New-OERAccessPackageRequestorScope, then Connect-OER as oer-live-cc-noperm in the same pipeline: output objects 0; errors: SignInSuperseded (New-OERAccessPackageRequestorScope); Graph requests: 0 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: False; is oer-live-cc-noperm: True; the module holds an ARM token: False
+[oer-s92] 2.5 New-OERAccessPackageRequestorScope, then Connect-OER as oer-live-cc-noperm in the same pipeline: SignInSuperseded,New-OERAccessPackageRequestorScope; category AuthenticationError -- Another OER command in the same pipeline signed in to a different tenant or identity after New-OERAccessPackageRequestorScope began, so Omnicit.EntraRBAC sends nothing while New-OERAccessPackageRequestorScope runs: this request was not sent. Run the commands as separate statements, so that each one  ...
+```
 
 ### 2.6. A builder with the same identity again in the same pipeline: nothing is refused
 
-- [ ] **2.6** After signing in again as `oer-live-cc`, `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member` piped into `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc` again: no `SignInSuperseded`, one Graph request, and the stage names `oer-s92-member`.
+- [x] **2.6** After signing in again as `oer-live-cc`, `New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member` piped into `ForEach-Object -Begin { Connect-OER ... }` as `oer-live-cc` again: no `SignInSuperseded`, one Graph request, and the stage names `oer-s92-member`.
 
 ```powershell
 Connect-OerLive -Arm
@@ -588,13 +835,32 @@ reviewer query `True`; `Fences removed: True`.
 **Failure looks like:** `SignInSuperseded` -- a false refusal; `Graph requests: 0` -- the name was not
 looked up.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After Connect-OerLive -Arm again: New-OERAccessReviewStage -DurationInDays 7 -ReviewerGroup oer-s92-member with Connect-OER as oer-live-cc again in -Begin: one object, no error, Graph requests 1 (the lookup), ARM requests 0; the reviewer query names oer-s92-member (True); the client oer-live-cc before and after. The fences removed (True).
+
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Before 2.6: the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.6 New-OERAccessReviewStage, then Connect-OER as oer-live-cc again in the same pipeline: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 0; the state names the test tenant: True; the state's client is oer-live-cc: True; is oer-live-cc-noperm: False; the module holds an ARM token: True
+[oer-s92] 2.6 New-OERAccessReviewStage, then Connect-OER as oer-live-cc again in the same pipeline: object Omnicit.EntraRBAC.AccessReviewStageSetting
+[oer-s92] 2.6: the reviewer query names oer-s92-member: True
+[oer-s92] Fences removed: True
+```
 
 ## Teardown
 
 ### T.1. The prerequisite objects are removed, nothing carries the prefix, no session is left, and the main clone is untouched
 
-- [ ] **T.1** `Initialize-OerS92Prereq.ps1 -Teardown -Unattended` removes `oer-s92-grp` and `oer-s92-member`; the sweep finds nothing with the prefix `oer-s92-`; the group count equals the baseline; no session is left; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
+- [x] **T.1** `Initialize-OerS92Prereq.ps1 -Teardown -Unattended` removes `oer-s92-grp` and `oer-s92-member`; the sweep finds nothing with the prefix `oer-s92-`; the group count equals the baseline; no session is left; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -625,4 +891,69 @@ this file: `Clear-OerLiveRedactionMap`, and `raw\s92\` deleted.
 run retries them; report each in the step's report. A group deleted with 204 can still show in the
 sweep for a few seconds: read back again before judging.
 
-Result:
+Result: 2026-10-06 16:18 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 16:14 UTC: the prerequisite script's -Teardown (identity check passed, no residue to retry) removed the member link (201) and deleted oer-s92-grp and oer-s92-member (204 each): removed 3, residue 0, unreadable 0, exit code 0. The sweep straight after still listed both deleted groups and counted 99 groups against the baseline's 98 -- the listing lags a DELETE by seconds (measured before in this programme), so the controller read back at 16:16 UTC with -ReadBack: no object starting with oer-s92- in any of the six collections, groups 98 equal to the baseline (True), no residue row. After Disconnect-OerLive no Graph SDK session is left and the module holds no session; the main clone is on main at 6817b33, the HEAD S.1 recorded, never switched. The redaction map is cleared and raw\s92\ deleted after this write-up.
+
+[oer-s92] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s92] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s92] [oer-s92] Transcript (redacted): raw\s92\teardown-20261006-161403Z.log; OerLive 1.0.3.
+[oer-s92] [oer-s92] Mode: REMOVE. Prefix 'oer-s92-'. Objects (fixed): oer-s92-grp (prereq description, no member); oer-s92-member (no member). OerLive 1.0.3.
+[oer-s92] [oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] [oer-s92] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s92] [oer-s92] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s92] [oer-s92] Residue: raw\residue.json holds no rows.
+[oer-s92] [oer-s92] Teardown of 'oer-s92-': users 0, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s92] [oer-s92] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s92] [oer-s92] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s92] [oer-s92] Removed: oer-s92-grp: PIM for Groups member assignment of a principal (201).
+[oer-s92] [oer-s92] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s92] [oer-s92] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s92] [oer-s92] Teardown 5/6: the prefixed groups.
+[oer-s92] [oer-s92] Deleted: group oer-s92-grp (204).
+[oer-s92] [oer-s92] Deleted: group oer-s92-member (204).
+[oer-s92] [oer-s92] Teardown 6/6: the prefixed users.
+[oer-s92] [oer-s92] Teardown of 'oer-s92-': removed 3, residue 0, unreadable 0.
+[oer-s92] [oer-s92] Sweep: group 'oer-s92-grp' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s92] [oer-s92] Counts: groups now 99, at the baseline 98; equal: False
+[oer-s92] [oer-s92] Done.
+[oer-s92] Teardown exit code: 0
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s92] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Sweep: group 'oer-s92-grp' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s92] Sweep: group 'oer-s92-member' (00000000-0000-0000-0000-000000000006) carries the prefix.
+[oer-s92] Prefixed objects: 2; a Graph SDK session is left: False; the module holds a session: False
+[oer-s92] Main clone: branch main; HEAD 6817b33
+
+Read-back at 16:16 UTC (Initialize-OerS92Prereq.ps1 -ReadBack):
+[oer-s92] Transcript (redacted): raw\s92\readback-20261006-161658Z.log; OerLive 1.0.3.
+[oer-s92] Mode: READ BACK. Prefix 'oer-s92-'. Objects (fixed): oer-s92-grp (prereq description, no member); oer-s92-member (no member). OerLive 1.0.3.
+[oer-s92] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg2\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s92] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s92] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s92] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s92-' is left.
+[oer-s92] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s92] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s92] Done.
+Exit code: 0; started 2026-10-06 16:16:57 UTC
+```
