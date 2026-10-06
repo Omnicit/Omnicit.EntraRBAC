@@ -623,8 +623,9 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
     # in the same call under -IncludeARM -- and compared with the Graph token (F3).
     #
     # A mutation set: (a), (d), (e) and (f) fail with the old carry condition ($ArmIdentityUnchanged
-    # alone); (d) and (e) fail when the ARM step reads $ArmCached alone; (b) and (c) fail when the token
-    # is never carried; (f) fails with either GUID term deleted.
+    # alone); (a), (d) and (e) with the equality term deleted; (d) and (e) when the ARM step reads
+    # $ArmCached alone; (b) and (c) when the token is never carried; and (f)'s third case with the GUID
+    # term deleted, since two absent tenants compare equal.
     BeforeEach {
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
@@ -773,11 +774,14 @@ Describe 'Initialize-OERAuth carries an ARM token over a renewal only for the re
     }
 
     It '(f) does not carry the ARM token over a renewal when <Case>' -ForEach @(
-        @{ Case = 'the cached ARM token reports no GUID tenant'; FirstArm = $null; RenewGraph = '11111111-1111-1111-1111-111111111111' }
-        @{ Case = 'the renewed Graph token reports no GUID tenant'; FirstArm = '11111111-1111-1111-1111-111111111111'; RenewGraph = $null }
+        @{ Case = 'the cached ARM token reports no GUID tenant'; FirstGraph = '11111111-1111-1111-1111-111111111111'; FirstArm = $null; RenewGraph = '11111111-1111-1111-1111-111111111111' }
+        @{ Case = 'the renewed Graph token reports no GUID tenant'; FirstGraph = '11111111-1111-1111-1111-111111111111'; FirstArm = '11111111-1111-1111-1111-111111111111'; RenewGraph = $null }
+        @{ Case = 'neither token reports a tenant, so the two compare equal'; FirstGraph = $null; FirstArm = $null; RenewGraph = $null }
     ) {
         # Nothing proves that such a token belongs with the renewed Graph token, so it is acquired again
-        # when a call next needs one rather than carried.
+        # when a call next needs one rather than carried. The third case is the GUID term's own: two
+        # absent tenants are equal, so only that term refuses to carry the token.
+        $script:BL95GraphTenant = $FirstGraph
         $script:BL95ArmTenant = $FirstArm
         InModuleScope $script:moduleName {
             Initialize-OERAuth -AuthMethod 'Interactive' -IncludeARM

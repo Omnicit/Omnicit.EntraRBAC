@@ -1183,10 +1183,12 @@ function Initialize-OERAuth {
             # carried is acquired again -- by the ARM step below in this very call under -IncludeARM, which
             # reads $ArmTokenKept, or else by the next call that needs one -- and that token is compared with
             # the tenant named, or with this Graph token when none is (F3). A tenant that is not a GUID on
-            # either side proves nothing, so that token is not carried either. Every term on its own line
+            # either side proves nothing, so that token is not carried either: the new Graph token's tenant
+            # must be a GUID, and the ARM token's must equal it, which makes it the same GUID -- a second
+            # GUID test on the ARM side would add nothing an input could falsify. Two tenants that are
+            # both absent compare equal, which is what the GUID term refuses. Every term on its own line
             # and independently deletable, so each stays mutation-provable.
             $ArmTokenKept = $ArmIdentityUnchanged -and
-                (Test-OERGuid -Value $script:_OERAuthState.ArmTokenTenantId) -and
                 (Test-OERGuid -Value $GrantedTenant) -and
                 $script:_OERAuthState.ArmTokenTenantId -eq $GrantedTenant
 
