@@ -10,7 +10,9 @@ not leave it blank and do not tick it. A check that could not run for a stated r
 prefix `oer-s93-` that matches no object, or runs `Invoke-OERStructure -WhatIf`. There is no
 prerequisite script and no test object; the teardown only proves that nothing carries the prefix and
 that no session is left. Section 4 writes two Tenant Profile files into the step's git-ignored raw
-folder and deletes them in the teardown.
+folder and deletes them in the teardown. Section 6 (round 1) writes one apply document there and
+deletes it in its own block, and 6.5 moves the module session's Graph token expiry forward in memory
+to make the module renew it; neither touches the tenant.
 
 **Who runs it.** The dedicated certificate identity `oer-live-cc`, through the OerLive library, which
 lives beside the operator's copy of this file outside the repository ([README.md](README.md), first
@@ -67,8 +69,17 @@ before it merges.
   existing `InvalidTenantAlias`, so a blank row in a loop leaves the session uncertain instead of
   continuing in the previous tenant; a source gate holds `-ReclaimGraphSession` to `Connect-OER`; and
   a sign-in that names no tenant refuses an Azure Resource Manager token issued for another tenant than
-  its Microsoft Graph token (`TenantMismatch`). An explicitly empty `-TenantId` still names no tenant
-  and continues in the current session's tenant (a stated limit).
+  its Microsoft Graph token (`TenantMismatch`). An explicitly empty `-TenantId` still named no tenant
+  and continued in the current session's tenant (a stated limit then; round 1 refuses it, H below).
+- **H. Round 1, A12, BL-94** ("refuse an empty tenant ID"). `Connect-OER` refuses a bound `-TenantId`
+  that is empty, whitespace or `$null` with the new `InvalidTenantId`, in its process block after it
+  marks the session uncertain, so the refusal counts as a refused sign-in. Every other public cmdlet
+  carries `[ValidateNotNullOrEmpty()]` on `-TenantId`: an empty or `$null` value stops that command at
+  parameter binding, before it signs in or sends anything.
+- **I. Round 1, A13, BL-95** ("carry the ARM token over a renewal only for its own tenant"). A sign-in
+  that rebuilds the state -- a renewal of the Graph token -- carries the cached ARM token only when it
+  was issued for the tenant the new Graph token was issued for, both GUIDs; otherwise it is dropped
+  and acquired again, and compared, when a call next needs one.
 
 A live tenant is needed for what the unit tests stub: the authority's real answer for a real domain,
 its GUID and a made-up domain; a real certificate token issued for the tenant a domain resolves to;
@@ -93,6 +104,12 @@ real refused `Connect-OER` and the commands after it.
 - **After `Disconnect-OER`, a command without `-TenantId` signs in interactively**, which no check may
   do (G9). 4.3 fences the token request instead: the command reaching its token request at all is the
   proof that the marker was cleared.
+- **A13: a renewal answered from another tenant drops the ARM token (class B, G9).** The certificate's
+  tokens always come from the test tenant, so a Graph token renewed from another tenant cannot be
+  produced live. Proved offline: `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe
+  `Initialize-OERAuth carries an ARM token over a renewal only for the renewed Graph token's tenant (A13, BL-95)`,
+  and in a runspace with no `try`, `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` H12 (6.4).
+  6.5 checks live that a renewal from the SAME tenant still keeps the ARM token.
 
 ## Setup, once
 
@@ -668,6 +685,183 @@ Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
 Verdict: PASS (class B, G9; not runnable live: the certificate's tokens always come from the test tenant). The offline proof passed in the step's final gate on e04bbb6 (7962 passed, 0 failed, coverage 94.64 %): tests/Unit/Private/Initialize-OERAuth.Tests.ps1, Describe 'Initialize-OERAuth granted-tenant guard', 'refuses a Graph token issued for another tenant than the one a domain resolves to' and 'refuses an ARM token issued for another tenant than the one a domain resolves to, caching nothing'; and, in a runspace with no try, tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1 'H7: Invoke-OERStructure with a tenant named by domain whose token comes back from another tenant, outside any try, connects nothing and sends no Graph or ARM request (BL-12)'. Mutation-proved in the step: the Graph comparison against the name again turns the domain refusal It and H7 red; the same on the ARM side turns the ARM It red. The live half of the evidence is 1.1 (the authority's real answers) and 2.1 (a real token for the tenant the domain resolves to).
 ```
 
+## 6. Round 1: an empty tenant ID is refused (A12), and the ARM token follows only its own tenant (A13)
+
+Round 1 of the step runs from its own worktree, whose build carries H and I: the operator's copy of
+this file points `OER_LIVE_REPO` at it. 6.0 is its own process. Each of 6.1, 6.2, 6.3 and 6.5 is its
+OWN process too, and starts with the first lines of 2.1's block up to and including `$Filter` (the
+identity check as `oer-live-cc` by GUID, the fences, the helpers), unchanged; the check starts after
+them. Before round 1, every line marked "refused" below went out under the session it found: an empty
+`-TenantId` named no tenant.
+
+### 6.0. The module loads from round 1's build, which carries H and I
+
+- [ ] **6.0** The session's `Repo` is round 1's worktree, whose build carries H and I, and the main clone is on `main`, never switched; the module session passes the identity check, the module is that build, and of its public cmdlets with `-TenantId` every one but `Connect-OER` refuses an empty value at binding.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s93-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s93'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainPath = [System.IO.Path]::GetFullPath(($List[0] -replace '^worktree ', '')).TrimEnd('\', '/')
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "The module loads from a worktree that is not the main clone: $([System.IO.Path]::GetFullPath($Cfg.Repo).TrimEnd('\', '/') -ne $MainPath)"
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+Write-OerLiveStep "Worktree: branch $(git -C $Cfg.Repo branch --show-current); HEAD $(git -C $Cfg.Repo log -1 --format='%h %s'); tracked changes: $(@(git -C $Cfg.Repo status --porcelain --untracked-files=no).Count)"
+$Psm1 = Get-ChildItem -Path (Join-Path $Cfg.Repo 'output\module\Omnicit.EntraRBAC\*\Omnicit.EntraRBAC.psm1') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$H = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch "-ErrorId 'InvalidTenantId'" -Quiet)
+$I = [bool](Select-String -LiteralPath $Psm1.FullName -SimpleMatch '$ArmTokenKept = $ArmIdentityUnchanged -and' -Quiet)
+Write-OerLiveStep "The worktree's build carries H: $H; I: $I"
+Connect-OerLive -Arm
+$M = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "The module is the worktree's build: $($M.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
+$Carriers = @(Get-Command -Module Omnicit.EntraRBAC | Where-Object { $_.Parameters.ContainsKey('TenantId') })
+$Validated = @($Carriers | Where-Object { @($_.Parameters['TenantId'].Attributes | Where-Object { $_ -is [System.Management.Automation.ValidateNotNullOrEmptyAttribute] }).Count -gt 0 })
+Write-OerLiveStep "Public cmdlets with -TenantId: $($Carriers.Count); refusing an empty value at binding: $($Validated.Count); Connect-OER among those: $(@($Validated.Name) -contains 'Connect-OER')"
+Disconnect-OerLive
+```
+
+**Expect:** `The module loads from a worktree that is not the main clone: True`; the main clone on
+`main`, never switched; the worktree at this branch's head with 0 tracked changes; `H: True; I: True`;
+every identity line `True` and `identity check passed: True`; `The module is the worktree's build:
+True`; `Public cmdlets with -TenantId: 91; refusing an empty value at binding: 90; Connect-OER among
+those: False`.
+**Failure looks like:** `False` on the first line -- `OER_LIVE_REPO` names the main clone or step 3's
+worktree; `H` or `I` `False` -- build round 1's worktree first (`./build.ps1 -Tasks build`), never
+while the gate runs; `Connect-OER among those: True` -- a binding error would skip its marker.
+
+Result:
+
+### 6.1. Connect-OER -TenantId empty is refused with InvalidTenantId, and a command without -TenantId after it sends nothing
+
+- [ ] **6.1** Under the GUID session: a `Connect-OER -TenantId ''` `-ClientId -Certificate`: `InvalidTenantId` (category `InvalidArgument`), no lookup, no token request, the session uncertain; b `Get-OERGroup` without `-TenantId`: `SignInRefused (Get-OERGroup)`, no token request, no Graph request; c `Get-OERGroup -TenantId` (the GUID) goes out and clears the marker; d and f `Connect-OER -TenantId $null` and with spaces: `InvalidTenantId` again; e and g `Get-OERGroup` without `-TenantId` refused again.
+
+```powershell
+Invoke-S93 -Label '6.1 a: Connect-OER -TenantId empty' -Call { Connect-OER -TenantId '' -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.1 b: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Invoke-S93 -Label '6.1 c: Get-OERGroup -TenantId with the GUID' -Call { Get-OERGroup -TenantId $Cfg.TenantId -Filter $Filter }
+Invoke-S93 -Label '6.1 d: Connect-OER -TenantId null' -Call { Connect-OER -TenantId $null -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.1 e: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Invoke-S93 -Label '6.1 f: Connect-OER -TenantId of spaces' -Call { Connect-OER -TenantId '   ' -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.1 g: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest, function:Invoke-RestMethod, function:Get-AzToken
+Disconnect-OerLive
+```
+
+**Expect:** a, d and f: `errors: InvalidTenantId; lookups: 0; token requests: 0 (refused by the
+fence: 0); Graph requests: 0; ARM requests: 0`; the state still names the test tenant by GUID; `the
+session is uncertain: True`; the message begins `The tenant ID is empty`, category `InvalidArgument`.
+b, e and g: `errors: SignInRefused (Get-OERGroup)` (once or twice: its sign-in, then its request);
+`lookups: 0; token requests: 0; Graph requests: 0`; the message begins `An earlier sign-in in this
+PowerShell session failed or was refused`. c: `errors: GroupNotFound` (the empty prefix filter, as in
+2.1); `token requests: 0; Graph requests: 1`; `the session is uncertain: False`.
+**Failure looks like:** a, d or f with `errors: none` and `the session is uncertain: False` -- an empty
+`-TenantId` was read as no tenant, signed in to the current session's tenant and cleared the marker
+(BL-94 open); b, e or g with `Graph requests: 1` -- the command acted on the previous session.
+
+Result:
+
+### 6.2. Get-OERGroup and Invoke-OERStructure with an empty -TenantId are refused at parameter binding
+
+- [ ] **6.2** Under the GUID session: a and b `Get-OERGroup -TenantId ''` and `-TenantId $null`, and c `Invoke-OERStructure -TenantId '' -Path` (a one-group document) `-WhatIf`: each refused at parameter binding (`ParameterArgumentValidationError`), with no lookup, no token request, no Graph or ARM request, no row and the session not marked; d `Get-OERGroup` without `-TenantId` then goes out; e (a measurement) `Get-OERGroup -TenantId` of spaces passes binding, is looked up, and is refused.
+
+```powershell
+$null = [System.IO.Directory]::CreateDirectory($Raw)
+$Doc = Join-Path $Raw 'apply-s93-r1.json'
+[System.IO.File]::WriteAllText($Doc, (@{
+            version = '1.0'
+            groups  = @(@{ displayName = 'oer-s93-grp'; description = 'Omnicit.EntraRBAC live verification (oer-s93-): never created' })
+        } | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
+Invoke-S93 -Label '6.2 a: Get-OERGroup -TenantId empty' -Call { Get-OERGroup -TenantId '' -Filter $Filter }
+Invoke-S93 -Label '6.2 b: Get-OERGroup -TenantId null' -Call { Get-OERGroup -TenantId $null -Filter $Filter }
+Invoke-S93 -Label '6.2 c: Invoke-OERStructure -TenantId empty -WhatIf' -Call { Invoke-OERStructure -TenantId '' -Path $Doc -WhatIf }
+Invoke-S93 -Label '6.2 d: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Invoke-S93 -Label '6.2 e: Get-OERGroup -TenantId of spaces' -Call { Get-OERGroup -TenantId '   ' -Filter $Filter }
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest, function:Invoke-RestMethod, function:Get-AzToken
+Disconnect-OerLive
+[System.IO.File]::Delete($Doc)
+Write-OerLiveStep "The document is deleted: $(-not (Test-Path -LiteralPath $Doc))"
+```
+
+**Expect:** a, b and c: `output objects 0; errors: ParameterArgumentValidationError; lookups: 0;
+token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0`; `the session is
+uncertain: False`; the message says the argument is null or empty. d: `errors: GroupNotFound` (the
+empty prefix filter); `token requests: 0; Graph requests: 1`; `the session is uncertain: False` -- a
+binding error marks nothing. e: a value of spaces is not empty to the attribute, so `Get-OERGroup`
+signs in, names a tenant that is not the session's and looks it up: `errors: TenantResolutionFailed;
+lookups: 1; token requests: 0; Graph requests: 0`; `the session is uncertain: True`. `The document is
+deleted: True`.
+**Failure looks like:** a, b or c with `Graph requests: 1`, or a planning row in c -- the empty
+`-TenantId` was read as no tenant and the command acted on the current session (BL-94 open); e with
+`token requests: 1` and not `refused by the fence: 1` -- STOP: a token request without the certificate
+went out.
+
+Result:
+
+### 6.3. A valid -TenantId and a Connect-OER that names no tenant behave as before
+
+- [ ] **6.3** Under the GUID session: a `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate` and b `Connect-OER -ClientId -Certificate` with no tenant: signed in from the cache, the state still naming the test tenant by GUID; c a command without `-TenantId` goes out; d a refused `Connect-OER -TenantId ''`, then e `Connect-OER` with no tenant clears the marker as before, and f a command without `-TenantId` goes out; g from no session, `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate -IncludeARM`: signed in, two token requests, both tokens from the test tenant; h a command without `-TenantId` goes out.
+
+```powershell
+Invoke-S93 -Label '6.3 a: Connect-OER -TenantId with the GUID' -Call { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.3 b: Connect-OER without a tenant' -Call { Connect-OER -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.3 c: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Invoke-S93 -Label '6.3 d: Connect-OER -TenantId empty' -Call { Connect-OER -TenantId '' -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.3 e: Connect-OER without a tenant' -Call { Connect-OER -ClientId $Cfg.AppId -Certificate $Cert }
+Invoke-S93 -Label '6.3 f: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Disconnect-OerLive
+Invoke-S93 -Label '6.3 g: Connect-OER -TenantId with the GUID -IncludeARM, from no session' -Call { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.AppId -Certificate $Cert -IncludeARM }
+Invoke-S93 -Label '6.3 h: Get-OERGroup without -TenantId' -Call { Get-OERGroup -Filter $Filter }
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest, function:Invoke-RestMethod, function:Get-AzToken
+Disconnect-OerLive
+```
+
+**Expect:** a, b and e: `errors: none; lookups: 0; token requests: 0` (a cached return); the state
+names the test tenant by GUID; `the session is uncertain: False`. c, f and h: `errors: GroupNotFound`
+(the empty prefix filter); `Graph requests: 1`. d: `errors: InvalidTenantId; the session is uncertain:
+True`. g: `errors: none; lookups: 0; token requests: 2 (refused by the fence: 0)`; the state names the
+test tenant by GUID, `the Graph token was issued for the test tenant: True; the ARM token: True`; `the
+session is uncertain: False`.
+**Failure looks like:** a refusal in a, b, e or g -- round 1 refused a valid tenant or a Connect-OER
+that names none; e leaving the session uncertain -- `Connect-OER` without a tenant no longer clears the
+marker.
+
+Result:
+
+### 6.4. A13: a renewal answered from another tenant drops the ARM token -- class B
+
+- [ ] **6.4** Not runnable live (see "What this file does not check"). The offline proof instead, with its result in round 1's gate run on the branch head: in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth carries an ARM token over a renewal only for the renewed Graph token's tenant (A13, BL-95)`, Its (a) to (f); and in a runspace with no `try`, `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` `H12: after a Microsoft Graph renewal answered from another tenant, an Azure cmdlet without -TenantId, outside any try, sends no ARM request with the first tenant's token (A13, BL-95)`.
+
+Result:
+
+### 6.5. A renewal from the same tenant still keeps the ARM token
+
+- [ ] **6.5** Under the GUID session, whose Graph and ARM tokens are the test tenant's: the Graph token's expiry is moved into the five-minute window in the module's memory; a `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate` renews the Graph token only and keeps the same ARM token; b `Get-OERSubscription` without `-TenantId` then sends its ARM request with it, requesting no token.
+
+```powershell
+$ArmBefore = & $Module { $script:_OERAuthState.ArmToken }
+& $Module { $script:_OERAuthState.GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(1) }
+Write-OerLiveStep "6.5 the Graph token is within five minutes of its expiry: $(& $Module { $script:_OERAuthState.GraphTokenExpiry -lt [DateTime]::UtcNow.AddMinutes(5) }); the ARM token is not: $(& $Module { $script:_OERAuthState.ArmTokenExpiry -gt [DateTime]::UtcNow.AddMinutes(5) })"
+Invoke-S93 -Label '6.5 a: Connect-OER -TenantId with the GUID renews the Graph token' -Call { Connect-OER -TenantId $Cfg.TenantId -ClientId $Cfg.AppId -Certificate $Cert }
+Write-OerLiveStep "6.5 the renewal kept the same ARM token: $([object]::ReferenceEquals((& $Module { $script:_OERAuthState.ArmToken }), $ArmBefore)); the Graph token now lasts beyond five minutes: $(& $Module { $script:_OERAuthState.GraphTokenExpiry -gt [DateTime]::UtcNow.AddMinutes(5) })"
+Invoke-S93 -Label '6.5 b: Get-OERSubscription without -TenantId' -Call { Get-OERSubscription }
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest, function:Invoke-RestMethod, function:Get-AzToken
+Disconnect-OerLive
+```
+
+**Expect:** both window lines `True`; a: `errors: none; lookups: 0; token requests: 1 (refused by the
+fence: 0); Graph requests: 0; ARM requests: 0`; the state names the test tenant by GUID, `the Graph
+token was issued for the test tenant: True; the ARM token: True`; `the renewal kept the same ARM token:
+True; the Graph token now lasts beyond five minutes: True`. b: `output objects` 1 or more (the test
+subscription); `errors: none; token requests: 0`; `ARM requests` 1 or more.
+**Failure looks like:** `the renewal kept the same ARM token: False`, or b with `token requests: 1` --
+round 1 dropped an ARM token of the renewed Graph token's own tenant.
+
+Result:
+
 ## Teardown
 
 ### T.1. Nothing carries the prefix, no session is left, the profiles are gone, and the main clone is untouched
@@ -722,3 +916,33 @@ Verdict: PASS. Run 2026-10-06 22:33 UTC as oer-live-cc (every identity line True
 [oer-s93] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False; profile files left: 0
 [oer-s93] Main clone: branch main; HEAD 6817b33
 ```
+
+### T.2. Round 1: nothing carries the prefix, no session is left, the document is gone, and the main clone is untouched
+
+- [ ] **T.2** After section 6: the sweep finds nothing with the prefix `oer-s93-`; round 1's apply document is gone; no session is left; the main clone is still on `main` at the HEAD 6.0 recorded; the redaction map is deleted and `raw\s93\` removed after the write-up.
+
+```powershell
+$VaultDir = $env:OER_LIVE_DIR
+Import-Module (Join-Path $VaultDir 'OerLive\OerLive.psm1') -Force
+$Cfg = Import-OerLiveConfig -Prefix 'oer-s93-' -ConfigDirectory $VaultDir
+$Raw = Join-Path $Cfg.Repo 'docs\live-verification\raw\s93'
+if ($env:OER_LIVE_REPO) { $Cfg.Repo = $env:OER_LIVE_REPO }
+Connect-OerLive -Arm
+$Left = @(Find-OerLivePrefixed -ThrowOnUnread)
+Disconnect-OerLive
+$Module = Get-Module -Name Omnicit.EntraRBAC
+Write-OerLiveStep "Prefixed objects: $($Left.Count); a Graph SDK session is left: $([bool](Get-MgContext)); the module holds a session: $([bool](& $Module { $script:_OERAuthState })); round 1's document is left: $(Test-Path -LiteralPath (Join-Path $Raw 'apply-s93-r1.json'))"
+$List = @(git -C $Cfg.Repo worktree list --porcelain)
+$MainHead = ([string]($List | Where-Object { $_ -like 'HEAD *' } | Select-Object -First 1)) -replace '^HEAD ', ''
+$MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'detached' } | Select-Object -First 1)) -replace '^branch refs/heads/', ''
+Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
+```
+
+**Expect:** the identity lines `True`; the sweep's "no ... starting with 'oer-s93-' is left";
+`Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False; round 1's
+document is left: False`; the main clone on `main` at the HEAD 6.0 recorded. After the results are
+copied into this file: `Clear-OerLiveRedactionMap`, and `raw\s93\` deleted.
+**Failure looks like:** a prefixed object -- STOP: this file creates none, so it is not this run's
+(G11 stop condition: an object the prerequisite script did not create).
+
+Result:
