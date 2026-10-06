@@ -56,7 +56,14 @@ function Initialize-OERAuth {
     Manager token is dropped first, so a caller that carries on past the refusal has no token minted
     for the session's tenant to send to Azure under a request for another.
 
-    Every entry first latches the command that called this function (Lock-OERSignIn), and only a
+    Every entry first refuses a sign-in under a command whose own sign-in was refused: when a latched
+    command stands on the call stack outside the command that called this function
+    (Get-OERSignInRefusal -OutsideCaller), it raises a terminating SignInRefused naming that command,
+    before any token call or Connect-MgGraph and without latching its caller (BL-74), so a cmdlet that
+    a refused command calls never reaches a sign-in prompt. The caller's own latched frame, from an
+    earlier refused sign-in in the same invocation, does not count, so that command may sign in again.
+
+    Every other entry then latches the command that called this function (Lock-OERSignIn), and only a
     success releases it (Unlock-OERSignIn): the cached return, or a new connection that went the whole
     way. Every refusal, terminating error and early return -- ArmTokenAcquisitionFailed's included,
     so that command's Graph calls are refused too -- leaves that command latched, since outside any
@@ -64,7 +71,8 @@ function Initialize-OERAuth {
     transports send nothing for a latched command: they refuse each of its requests with
     SignInRefused, except that the Graph wrapper's session gate, which comes first, still reports a
     changed session as GraphSessionChanged. The latch is keyed on that command's invocation, so a
-    command it calls, or a pipeline neighbour, that signs in successfully does not release it. It
+    pipeline neighbour, or any other command, that signs in successfully does not release it (a
+    command it calls is refused before it signs in, as above). It
     stores only the boolean $true; its keys are the commands' own invocation objects, held weakly
     (the table keeps no command alive) and used only for their identity, and the decision never
     reads a key.
@@ -207,12 +215,30 @@ function Initialize-OERAuth {
         [switch]$ReclaimGraphSession
     )
 
-    # SEC (A19): the sign-in latch. Set here, before anything else, for the command that called this
-    # function, and released only where a sign-in succeeded: at the cached return below, and as the
-    # last statement of a new connection that went the whole way -- after the ARM step, inside the big
-    # try and never in its finally. Every refusal, terminating error and early return leaves it set,
-    # ArmTokenAcquisitionFailed's early return included, although the Graph session is connected by
-    # then, so that command's Graph calls are refused as well as its ARM calls. A terminating error
+    # SEC (BL-74): a sign-in under a command whose own sign-in was refused is refused here, before
+    # anything else. That command carries on past its refusal outside any try and calls cmdlets that
+    # sign in again without -TenantId; the transports refuse every request it makes (A19), but its
+    # nested sign-ins still ran, and near the cached token's expiry one of them would reach
+    # Get-AzToken -- an interactive or device code prompt -- or Connect-MgGraph for a command that
+    # sends nothing. Only a frame OUTSIDE the calling command counts (Get-OERSignInRefusal
+    # -OutsideCaller): the caller's own latched frame, from an earlier refused sign-in in the same
+    # invocation, is A19's same-frame retry and keeps its chance to sign in. Placed before
+    # Lock-OERSignIn, so the refusal latches nothing of its own; the outer command's latch already
+    # refuses every request the caller makes while it runs. No token call, no Connect-MgGraph.
+    $OuterRefused = Get-OERSignInRefusal -OutsideCaller
+    if ($OuterRefused) {
+        Write-CmdletError -ErrorRecord (New-OERSignInRefusedError -Command $OuterRefused) -Cmdlet $PSCmdlet -Terminating
+        return
+    }
+
+    # SEC (A19): the sign-in latch. Set directly after the BL-74 check above, for the command that
+    # called this function, and released only where a sign-in succeeded: at the cached return below,
+    # and as the last statement of a new connection that went the whole way -- after the ARM step,
+    # inside the big try and never in its finally. Every refusal, terminating error and early return
+    # leaves it set, ArmTokenAcquisitionFailed's early return included, although the Graph session is
+    # connected by then, so that command's Graph calls are refused as well as its ARM calls. The BL-74
+    # refusal above is the one exception: it comes before this latch, so it latches nothing of its own
+    # -- the latched outer command it found already refuses the caller's requests. A terminating error
     # ends this function but not the command that called it: outside any try that command carries on
     # with its next statement (see the SEC (A18) comment below), so a command whose sign-in for tenant
     # B failed or was refused would otherwise send its Graph and ARM calls under the session tenant A
@@ -226,13 +252,14 @@ function Initialize-OERAuth {
     # public cmdlets (New-OERGroup, Set-OERGroup, Get-OERRoleAssignment, ...) that call it again
     # without -TenantId, inherit the session and hit the cache: inside a refused
     # Invoke-OERStructure -TenantId B, the first nested cmdlet would release a boolean and every later
-    # write would go to A. A pipeline does the same: in Get-OERGroup -TenantId B | Remove-OERGroup both
-    # begin blocks run first, so Remove-OERGroup's cache hit would release a boolean before
-    # Get-OERGroup's process block reads. A transport refuses when ANY frame on its call stack is
-    # latched, so a nested command's own success releases only its own entry and the refused outer
-    # command stays latched, and a pipeline neighbour's success releases only its own. A command that
-    # finishes leaves every call stack, so the latch does not refuse the command after it: Connect-OER,
-    # or a new command whose sign-in succeeds, sends again.
+    # write would go to A. (Since BL-74 that nested sign-in is refused before it reaches the cache.)
+    # A pipeline does the same, and BL-74 does not reach it: in Get-OERGroup -TenantId B |
+    # Remove-OERGroup both begin blocks run first, so Remove-OERGroup's cache hit would release a
+    # boolean before Get-OERGroup's process block reads. A transport refuses when ANY frame on its
+    # call stack is latched, so a command's own success releases only its own entry: a refused
+    # command elsewhere stays latched, and a pipeline neighbour's success releases only its own. A
+    # command that finishes leaves every call stack, so the latch does not refuse the command after
+    # it: Connect-OER, or a new command whose sign-in succeeds, sends again.
     #
     # The calling command is the IMMEDIATE caller. Inside a transport's own refresh -- the claims
     # step-up or the token-rejected retry of Invoke-OERGraphRequest, the 401 retry of

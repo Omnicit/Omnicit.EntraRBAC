@@ -23,6 +23,17 @@ function Get-OERSignInRefusal {
     transport's nested function, Invoke-GraphSingle or Invoke-ArmCallWithRefresh, so the name returned
     for that retry is an internal function's.
 
+    With -OutsideCaller, which only Initialize-OERAuth passes, for its BL-74 check before it latches
+    its own caller, the walk starts after the command that called Initialize-OERAuth: frame 0 is this
+    function, frame 1 Initialize-OERAuth, and the caller is the first frame from index 2 that carries
+    an invocation -- the frame Lock-OERSignIn latches. Only a command outside that caller counts, so a
+    command whose own sign-in was refused earlier in the same invocation may still sign in again,
+    while a command it calls may not. The transports never pass it.
+
+    .PARAMETER OutsideCaller
+    Start the walk after the command that called Initialize-OERAuth, so only a command outside that
+    caller counts. Initialize-OERAuth only, for its BL-74 check; the transports never pass it.
+
     .EXAMPLE
     $Refused = Get-OERSignInRefusal
     if ($Refused) { throw (New-OERSignInRefusedError -Command $Refused) }
@@ -31,7 +42,13 @@ function Get-OERSignInRefusal {
     #>
     [CmdletBinding()]
     [OutputType([string])]
-    param()
+    param(
+        # Initialize-OERAuth only, for its BL-74 check before it latches its caller: start the walk
+        # after the command that called Initialize-OERAuth -- the first frame after this function's and
+        # Initialize-OERAuth's own that carries an invocation, the frame Lock-OERSignIn latches -- so
+        # only a command OUTSIDE that caller counts. The transports never pass it.
+        [switch]$OutsideCaller
+    )
 
     if ($null -eq $script:_OERSignInLatch) {
         return
@@ -39,8 +56,19 @@ function Get-OERSignInRefusal {
     $Held = $null
     # Module-qualified, so a function named Get-PSCallStack defined in the session cannot turn the
     # latch off.
-    foreach ($Frame in Microsoft.PowerShell.Utility\Get-PSCallStack) {
-        $Inv = $Frame.InvocationInfo
+    $Stack = @(Microsoft.PowerShell.Utility\Get-PSCallStack)
+    $Start = 0
+    if ($OutsideCaller) {
+        $Start = $Stack.Count
+        for ($Index = 2; $Index -lt $Stack.Count; $Index++) {
+            if ($null -ne $Stack[$Index].InvocationInfo) {
+                $Start = $Index + 1
+                break
+            }
+        }
+    }
+    for ($Index = $Start; $Index -lt $Stack.Count; $Index++) {
+        $Inv = $Stack[$Index].InvocationInfo
         if ($null -eq $Inv) {
             continue
         }

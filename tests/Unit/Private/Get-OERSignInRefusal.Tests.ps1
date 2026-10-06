@@ -155,3 +155,115 @@ Describe 'Get-OERSignInRefusal' {
         $Later.Refusal.Count | Should -Be 0
     }
 }
+
+Describe 'Get-OERSignInRefusal -OutsideCaller (BL-74)' {
+    # Initialize-OERAuth asks with -OutsideCaller before it latches its own caller. Each test below
+    # builds the chain Outer -> Caller -> Initialize-StandIn -> Get-OERSignInRefusal: frame 0 is
+    # Get-OERSignInRefusal, frame 1 the stand-in in Initialize-OERAuth's place, and the caller is the
+    # next frame that carries an invocation -- the frame Lock-OERSignIn would latch. Lock-StandIn
+    # latches the command that called it, as Initialize-OERAuth's own Lock-OERSignIn call does.
+
+    It 'names a latched command outside the caller' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Lock-StandIn { $null = Lock-OERSignIn }
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInRefusal -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Lock-StandIn
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        $R | Should -BeOfType ([string])
+        $R | Should -BeExactly 'Invoke-OuterCommand'
+    }
+
+    It 'names the latched command outside the caller, not the caller, when both are latched' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Lock-StandIn { $null = Lock-OERSignIn }
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInRefusal -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Lock-StandIn
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Lock-StandIn
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        $R | Should -BeExactly 'Invoke-OuterCommand'
+    }
+
+    It 'returns nothing when only the caller is latched' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Lock-StandIn { $null = Lock-OERSignIn }
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInRefusal -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Lock-StandIn
+                @{ Outside = @(Initialize-StandIn -Outside); WholeStack = @(Initialize-StandIn) }
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-CallerCommand
+            }
+            Invoke-OuterCommand
+        }
+        # Not vacuous: the same chain without the switch finds the latched caller (unchanged behaviour).
+        $R.WholeStack | Should -Be @('Invoke-CallerCommand')
+        $R.Outside.Count | Should -Be 0
+    }
+
+    It 'returns nothing when no frame on the call stack is latched' {
+        $R = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { param([switch]$Outside) Get-OERSignInRefusal -OutsideCaller:$Outside }
+            function Invoke-CallerCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn -Outside
+            }
+            function Invoke-OuterCommand {
+                [CmdletBinding()]
+                param()
+                Invoke-CallerCommand
+            }
+            if ($null -eq $script:_OERSignInLatch) {
+                $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+            }
+            @{ TableExists = $null -ne $script:_OERSignInLatch; Refusal = @(Invoke-OuterCommand) }
+        }
+        # The table is there, so the read walked the stack and found no held frame.
+        $R.TableExists | Should -BeTrue
+        $R.Refusal.Count | Should -Be 0
+    }
+
+    It 'returns nothing at once, without reading the call stack, when the latch table was never created' {
+        Mock -ModuleName Omnicit.EntraRBAC Get-PSCallStack { }
+        $R = InModuleScope Omnicit.EntraRBAC {
+            Remove-Variable -Scope Script -Name _OERSignInLatch -ErrorAction Ignore
+            @(Get-OERSignInRefusal -OutsideCaller)
+        }
+        $R.Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 0
+
+        # Not vacuous: the same mock does see the module-qualified call once a table exists.
+        $null = InModuleScope Omnicit.EntraRBAC {
+            $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+            @(Get-OERSignInRefusal -OutsideCaller)
+        }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Get-PSCallStack -Times 1 -Exactly
+    }
+}

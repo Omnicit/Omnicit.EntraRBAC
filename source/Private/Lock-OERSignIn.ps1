@@ -5,11 +5,12 @@ function Lock-OERSignIn {
     sign-in succeeds.
 
     .DESCRIPTION
-    Called only by Initialize-OERAuth, as its first statement. It finds the invocation of the command
-    that called Initialize-OERAuth -- the first frame of the call stack, after this function's own frame
-    and Initialize-OERAuth's, that carries an invocation -- records it in the module's sign-in latch, and
-    returns it. Initialize-OERAuth hands that invocation to Unlock-OERSignIn when the sign-in succeeds;
-    every refusal, terminating error and early return leaves it latched. Both transports then refuse
+    Called only by Initialize-OERAuth, directly after its BL-74 check. It finds the invocation of the
+    command that called Initialize-OERAuth -- the first frame of the call stack, after this function's
+    own frame and Initialize-OERAuth's, that carries an invocation -- records it in the module's sign-in
+    latch, and returns it. Initialize-OERAuth hands that invocation to Unlock-OERSignIn when the sign-in
+    succeeds; every refusal, terminating error and early return leaves it latched -- except the BL-74
+    refusal before this call, which latches nothing of its own. Both transports then refuse
     every request that command makes: Get-OERSignInRefusal finds it on the call stack and the request
     is refused with SignInRefused -- except that the Graph wrapper's session gate, which comes first,
     still reports a changed session as GraphSessionChanged.

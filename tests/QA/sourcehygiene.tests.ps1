@@ -1408,6 +1408,10 @@ BeforeAll {
         stamp a command again with the identity a later sign-in switched the state to, so that
         command is never seen as superseded. Get-OERSignInRefusal and Get-OERSignInSupersession, the readers the gates consult, are
         called only by the two wrappers: a reader anywhere else is a gate no static check places.
+        Get-OERSignInRefusal has one more owner, Initialize-OERAuth (BL-74): it reads the latch once,
+        before it latches its caller, to refuse a SIGN-IN under a latched outer command, and refuses
+        no request -- the transports' latch gates still do that, and this pass still places them -- so
+        the reason the rule exists does not apply to it.
         Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it,
         Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a
         command's snapshot of it and compares that snapshot with the identity the state carries
@@ -1462,15 +1466,16 @@ BeforeAll {
     # A set of owner files per command (see WHO MAY CALL WHAT in the Pass 9 comment): the command may
     # be CALLED nowhere else under source/, and every owner listed must really call it. The owner is
     # a file, not a function, so the rule is the same whichever function of that file calls it:
-    # Initialize-OERAuth calls Lock-OERSignIn once, at its entry, and Unlock-OERSignIn and
-    # Register-OERSignInIdentity at each of its two successful ends.
+    # Initialize-OERAuth calls Get-OERSignInRefusal once, at its entry (BL-74), Lock-OERSignIn once,
+    # directly after it, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
+    # successful ends.
     $script:signInMemoryPath = 'source\Private\Initialize-OERAuth.ps1'
     $script:transportGateOwners = @(
         [PSCustomObject]@{ Command = 'Get-MgContext'; Owners = @('source\Private\Get-OERGraphSessionFingerprint.ps1') }
         [PSCustomObject]@{ Command = 'Lock-OERSignIn'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Unlock-OERSignIn'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Register-OERSignInIdentity'; Owners = @($script:signInMemoryPath) }
-        [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
+        [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath, $script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInSupersession'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInIdentity'; Owners = @(
                 'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1',
@@ -3218,15 +3223,19 @@ statement directly after its Unlock, passing the same -Invocation variable.
             'each of the two success ends holds an Unlock-OERSignIn and, as the statement directly after it, a Register-OERSignInIdentity passing the same invocation')
     }
 
-    It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers' {
+    It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers and in Initialize-OERAuth' {
         $script:transportOwnerStale['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'both transport wrappers must really call Get-OERSignInRefusal for their latch gates; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'both transport wrappers must really call Get-OERSignInRefusal for their latch gates, and Initialize-OERAuth for its BL-74 check; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSignInRefusal is the reader the latch gate in front of every Graph and ARM request consults.
 This Describe proves where the transports' gates stand -- in the block that holds the send, in order,
 throwing and then returning -- and nothing proves any of that for a check in another file: a reader of
 the latch outside the two transports is a gate no static check places, whose refusal may not stop a
-request at all. Refuse requests in the two wrappers, through their latch gates.
+request at all. Refuse requests in the two wrappers, through their latch gates. Initialize-OERAuth is
+the one other owner (BL-74): it reads the latch once, before it latches its caller, to refuse a SIGN-IN
+under a latched outer command -- no token call, no Connect-MgGraph -- and it refuses no request; the
+transports' latch gates still do that, and this Describe still places them, so the reason this rule
+exists does not apply to it. The list is never wider than the call requires.
 '@
     }
 
