@@ -252,3 +252,124 @@ Describe 'New-OERAccessReviewStage -- a failed reviewer lookup is not a not-foun
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
     }
 }
+
+Describe 'New-OERAccessReviewStage looks a name up only under the session it began with (BL-81)' {
+    # The builder signs in only in its process block, through its name lookup
+    # (Resolve-OERReviewerScope). Every begin block of a pipeline runs before any process block, so a
+    # DOWNSTREAM command's begin block -- here a ForEach-Object -Begin, the shape of Connect-OER or any
+    # cmdlet naming another tenant -- switches the module's sign-in identity after the builder's begin
+    # block and before its process block. Without -TenantId the stage must then be refused with
+    # SignInSuperseded, before anything is looked up. The resolver is mocked at the module boundary;
+    # the switch is a direct write of the module state.
+    BeforeAll {
+        function script:Set-ProbeState {
+            param([string]$TenantId, [string]$AuthMethod = 'ClientCertificate', [string]$ClientId = '33333333-3333-3333-3333-333333333333')
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ T = $TenantId; M = $AuthMethod; C = $ClientId } {
+                param($T, $M, $C)
+                $script:_OERAuthState = if ($T) { @{ TenantId = $T; AuthMethod = $M; ClientId = $C; Environment = 'Global' } } else { $null }
+            }
+        }
+    }
+    BeforeEach {
+        Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444'
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        Mock -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope {
+            @{
+                Reviewers         = @(@{ query = '/users/uid-1'; queryType = 'MicrosoftGraph' })
+                FallbackReviewers = @()
+                FailedKind        = $null
+                FailedValue       = $null
+                FailedErrorId     = $null
+                FailedMessage     = $null
+                FailedRecord      = $null
+            }
+        }
+    }
+    AfterAll { Set-ProbeState -TenantId $null }
+
+    It 'refuses the stage with SignInSuperseded, before any lookup, when a later pipeline command switched the tenant' {
+        $Errs = $null
+        $Out = @(New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        # Nothing was looked up -- the lookup is where the builder signs in; the record below proves the
+        # check was reached.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 0
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessReviewStage' }).Count | Should -Be 1
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessReviewStage' })[0].TargetObject |
+            Should -BeExactly 'New-OERAccessReviewStage'
+        @($Errs).Count | Should -Be 1
+        $Out | Should -BeNullOrEmpty
+    }
+
+    It 'refuses a stage that names no reviewer by name too, under a changed session (fail-safe)' {
+        # The check stands before the lookup step, whatever the arguments: a stage of switches alone,
+        # which would look nothing up, is refused as well.
+        $Errs = $null
+        $Out = @(New-OERAccessReviewStage -DurationInDays 7 -Manager -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 0
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'SignInSuperseded,New-OERAccessReviewStage' }).Count | Should -Be 1
+        @($Errs).Count | Should -Be 1
+        $Out | Should -BeNullOrEmpty
+    }
+
+    It 'reports a reviewer argument error as itself, not SignInSuperseded, under a changed session' {
+        # The check stands after the cmdlet's own argument checks, so a stage that is invalid anyway
+        # reports its own error.
+        $Errs = $null
+        $Out = @(New-OERAccessReviewStage -DurationInDays 7 -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out | Should -BeNullOrEmpty
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -eq 'NoReviewer,New-OERAccessReviewStage' }).Count | Should -Be 1
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 0
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 0
+    }
+
+    It 'looks the names up and builds the stage when the later pipeline command signs in again as the same identity' {
+        $Errs = $null
+        $Out = @(New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessReviewStageSetting'
+        $Out[0].ReviewerCount | Should -Be 1
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 1 -Exactly
+    }
+
+    It 'behaves as today with -TenantId: no check, the names are looked up in the tenant it names' {
+        # The same downstream switch as the first test. With -TenantId the lookup's sign-in names its
+        # tenant, so the builder does not compare.
+        $Errs = $null
+        $Out = @(New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' -TenantId '44444444-4444-4444-4444-444444444444' -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessReviewStageSetting'
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 0
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 1 -Exactly
+        # Not vacuous: the downstream switch really happened before the builder looked anything up.
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be '77777777-7777-7777-7777-777777777777'
+    }
+
+    It 'is not refused when called inside another command''s process block, as an apply handler calls a builder' {
+        # Review Focus 4: a nested builder runs its begin and process blocks back to back, so its
+        # snapshot is taken after everything the outer pipeline did -- here a downstream switch that
+        # happened before the outer command's process block called the builder.
+        function Invoke-BL81NestedProbe {
+            [CmdletBinding()]
+            param()
+            process { New-OERAccessReviewStage -DurationInDays 7 -Reviewer 'person1@example.com' }
+        }
+        $Errs = $null
+        $Out = @(Invoke-BL81NestedProbe -ErrorAction SilentlyContinue -ErrorVariable Errs |
+                ForEach-Object -Begin { Set-ProbeState -TenantId '77777777-7777-7777-7777-777777777777' } -Process { $_ })
+        $Out.Count | Should -Be 1
+        $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AccessReviewStageSetting'
+        @($Errs).Count | Should -Be 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERReviewerScope -Times 1 -Exactly
+        # Not vacuous: the state the nested builder began and ran under is the switched one.
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState.TenantId } | Should -Be '77777777-7777-7777-7777-777777777777'
+    }
+}

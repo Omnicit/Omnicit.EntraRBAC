@@ -195,11 +195,17 @@ give it: its GUID, its domain, and no `-TenantId` at all before the module holds
 it records as `organizations`) are three different sign-ins. A pipeline that names one tenant two
 ways is therefore refused too; name it the same way on every command, as
 **Name the tenant explicitly and consistently** under [Sovereign Clouds](#sovereign-clouds) says.
-`Invoke-OERStructure` signs in when it processes its document, not before: without `-TenantId` it
-takes whatever tenant the session holds at that moment, which a later command in the same pipeline
-may already have switched, and nothing refuses that. Name `-TenantId` on it, or run it as a
-statement of its own. Run the commands as separate statements; to move objects between tenants,
-collect them in a variable first:
+`Invoke-OERStructure` signs in when it processes its document, not before, but without `-TenantId`
+it acts only under the session it began with: when another command in the same pipeline has signed
+in to a different tenant or identity by then -- any sign-in counts if the module held no session
+when it began -- it refuses that document with `SignInSuperseded` and sends nothing for it.
+`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope` and
+`New-OERAccessReviewStage` do the same before they resolve the approvers, targets or reviewers they
+are given. Called inside a script block or a function in a pipeline, such as
+`ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins only when that block
+runs, after every other command in the pipeline has begun and so after most of their sign-ins, and
+it takes the session they left for its own: name `-TenantId` there. Run the commands as separate
+statements; to move objects between tenants, collect them in a variable first:
 
 ```powershell
 # Read in one tenant, then write in another, as two statements

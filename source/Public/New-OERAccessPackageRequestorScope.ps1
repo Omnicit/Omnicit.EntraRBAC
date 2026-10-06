@@ -55,7 +55,12 @@ function New-OERAccessPackageRequestorScope {
     exclusive with -Scope, -User, and -Group.
 
     .PARAMETER TenantId
-    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
+    -User and -Group are resolved only under the session the command began with: when another command
+    in the same pipeline signed in to a different tenant or identity, or disconnected, after this
+    command began, a SpecificDirectoryUsers scope with -User or -Group is refused with
+    SignInSuperseded before any target is looked up and nothing is sent, even when every target is an
+    object id; a scope with no -User or -Group looks nothing up and is never refused.
 
     .EXAMPLE
     New-OERAccessPackageRequestorScope -Scope AllMemberUsers
@@ -103,6 +108,13 @@ function New-OERAccessPackageRequestorScope {
 
         [string]$TenantId
     )
+    begin {
+        # SEC (BL-81): the session this command began with (see Invoke-OERStructure's begin block for
+        # the pipeline order this rests on). This builder signs in only in its process block, through
+        # its name lookup (Resolve-OERTargetList), so without -TenantId a later pipeline command's
+        # sign-in would otherwise decide which tenant a name is looked up in.
+        $SignInSnapshot = Checkpoint-OERSignIn
+    }
     process {
         # SpecificDirectoryServicePrincipals is in the ValidateSet so a value the inventory exports
         # binds and is reported by name, but it cannot be built: that scope is only meaningful with
@@ -168,6 +180,15 @@ function New-OERAccessPackageRequestorScope {
             else {
                 $AuthParams = @{}
                 if ($TenantId) { $AuthParams.TenantId = $TenantId }
+                # SEC (BL-81): without -TenantId, look a name up only under the session this command
+                # began with; a changed identity refuses with SignInSuperseded and nothing is sent. The
+                # builder takes no pipeline input, so its process block runs once and the snapshot is
+                # never taken again. Inside this branch on purpose: a scope with no targets looks
+                # nothing up and is never refused.
+                if (-not $TenantId -and (Checkpoint-OERSignIn -ChangedSince $SignInSnapshot)) {
+                    $PSCmdlet.WriteError((New-OERSignInSupersededError -Command $PSCmdlet.MyInvocation.MyCommand.Name))
+                    return
+                }
                 $Resolved = Resolve-OERTargetList -User $User -Group $Group @AuthParams
                 if ($Resolved.FailedValue) {
                     # A lookup that FAILED (a 403, an exhausted 429, a 5xx) is not evidence that no such

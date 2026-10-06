@@ -3757,33 +3757,180 @@ Describe 'Initialize-OERAuth sign-in latch (A19)' {
             $Later.Refusal.Count | Should -Be 0
         }
 
-        It 'keeps the refused command latched when a command it calls signs in successfully' {
+        It 'keeps the refused command latched, and refuses the sign-in of a command it calls (BL-74)' {
             # The apply handlers' shape: Invoke-OERStructure's sign-in is refused, and a public cmdlet it
-            # calls then signs in again without -TenantId and hits the cache. That success must not
-            # release the outer command.
+            # calls then signs in again without -TenantId, where the cache would answer. Since BL-74
+            # that nested sign-in is refused before it latches anything, and the outer command stays
+            # latched.
             Connect-OwnSession
             $R = InModuleScope $script:moduleName {
                 function Invoke-NestedCommand {
                     [CmdletBinding()]
                     param()
-                    Initialize-OERAuth
-                    Get-OERSignInRefusal
+                    $NestedCaught = $null
+                    try { Initialize-OERAuth } catch { $NestedCaught = $PSItem }
+                    @{ Caught = $NestedCaught; Refusal = Get-OERSignInRefusal }
                 }
-                $Caught = $null
-                try {
-                    Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -AuthMethod 'ClientSecret' -ClientId '33333333-3333-3333-3333-333333333333'
-                } catch { $Caught = $PSItem }
-                $Nested = Invoke-NestedCommand
-                $Outer = Get-OERSignInRefusal
-                @{ Caught = $Caught; Nested = $Nested; Outer = $Outer }
+                function Invoke-RefusedCommand {
+                    [CmdletBinding()]
+                    param()
+                    $Caught = $null
+                    try {
+                        Initialize-OERAuth -TenantId '11111111-1111-1111-1111-111111111111' -AuthMethod 'ClientSecret' -ClientId '33333333-3333-3333-3333-333333333333'
+                    } catch { $Caught = $PSItem }
+                    $Nested = Invoke-NestedCommand
+                    @{ Caught = $Caught; Nested = $Nested; Outer = Get-OERSignInRefusal }
+                }
+                Invoke-RefusedCommand
             }
 
             $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
-            # Seen from inside the nested command, the refused outer frame is still on its call stack.
-            $R.Nested | Should -Not -BeNullOrEmpty
-            $R.Outer | Should -Not -BeNullOrEmpty
-            # The nested sign-in was the cache hit, not a new connection.
+            $R.Nested.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $R.Nested.Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+            # Seen from inside the nested command, the innermost latched frame is the refused outer
+            # command's: the nested command latched nothing of its own.
+            $R.Nested.Refusal | Should -BeExactly 'Invoke-RefusedCommand'
+            $R.Outer | Should -BeExactly 'Invoke-RefusedCommand'
+            # The one token and the one connect are Connect-OwnSession's: the nested sign-in made neither.
             Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'releases only its own entry when a sign-in succeeds: a refused command that is not on the call stack stays latched' {
+            # The property the nested test above carried before BL-74: a success releases the entry of
+            # the command that signed in, never another command's. Shown here with a refused command
+            # that has returned, so BL-74 has no latched frame outside the later command's to refuse.
+            Connect-OwnSession
+            $R = InModuleScope $script:moduleName {
+                function Invoke-RefusedCommand {
+                    [CmdletBinding()]
+                    param()
+                    $Caught = $null
+                    try {
+                        Initialize-OERAuth -TenantId '44444444-4444-4444-4444-444444444444' -AuthMethod 'ClientSecret' -ClientId '33333333-3333-3333-3333-333333333333'
+                    } catch { $Caught = $PSItem }
+                    @{ Caught = $Caught; Invocation = $MyInvocation }
+                }
+                function Invoke-LaterCommand {
+                    [CmdletBinding()]
+                    param()
+                    Initialize-OERAuth
+                    @(Get-OERSignInRefusal)
+                }
+                # Held here, so the weak table cannot drop the entry while the later command runs.
+                $Refused = Invoke-RefusedCommand
+                $Value = $null
+                $Before = $script:_OERSignInLatch.TryGetValue($Refused.Invocation, [ref]$Value)
+                $Later = @(Invoke-LaterCommand)
+                $After = $script:_OERSignInLatch.TryGetValue($Refused.Invocation, [ref]$Value)
+                @{ Caught = $Refused.Caught; Before = $Before; Later = $Later; After = $After }
+            }
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+            $R.Before | Should -BeTrue
+            # The later command's sign-in succeeded and released its own entry...
+            $R.Later.Count | Should -Be 0
+            # ...and only its own: the refused command is still latched.
+            $R.After | Should -BeTrue
+            # The later sign-in was the cache hit, not a new connection.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+    }
+
+    Context 'refused under a latched outer command (BL-74)' {
+        # A command whose own sign-in was refused carries on past the refusal outside any try, and the
+        # cmdlets it calls sign in again without -TenantId. Initialize-OERAuth refuses such a nested
+        # sign-in before it latches its caller and before any token call. The probe's outer command is
+        # latched by its own invocation, as Lock-OERSignIn latches a caller, and calls a nested command
+        # that signs in. The state is an interactive session for tenant A whose Microsoft Graph token
+        # expires within five minutes, so a nested sign-in that got past the check would renew it with
+        # Get-AzToken and Connect-MgGraph.
+        BeforeAll {
+            function script:Invoke-NestedUnderLatchProbe {
+                param([switch]$LatchOuter, [hashtable]$NestedParameters = @{})
+                InModuleScope $script:moduleName -Parameters @{ LatchOuter = [bool]$LatchOuter; NestedParameters = $NestedParameters } {
+                    param($LatchOuter, $NestedParameters)
+                    $Holder = @{ Caught = $null; Nested = $null; OuterRefusal = $null }
+                    function Invoke-NestedCommand {
+                        [CmdletBinding()]
+                        param([hashtable]$AuthParams)
+                        $Holder.Nested = $MyInvocation
+                        Initialize-OERAuth @AuthParams
+                    }
+                    function Invoke-OuterCommand {
+                        [CmdletBinding()]
+                        param([bool]$Latch, [hashtable]$AuthParams)
+                        if ($Latch) {
+                            if ($null -eq $script:_OERSignInLatch) {
+                                $script:_OERSignInLatch = [System.Runtime.CompilerServices.ConditionalWeakTable[object, object]]::new()
+                            }
+                            $script:_OERSignInLatch.AddOrUpdate($MyInvocation, $true)
+                        }
+                        try { Invoke-NestedCommand -AuthParams $AuthParams } catch { $Holder.Caught = $PSItem }
+                        $Holder.OuterRefusal = Get-OERSignInRefusal
+                    }
+                    Invoke-OuterCommand -Latch $LatchOuter -AuthParams $NestedParameters
+                    $Value = $null
+                    $Holder.NestedLatched = $null -ne $script:_OERSignInLatch -and
+                        $script:_OERSignInLatch.TryGetValue($Holder.Nested, [ref]$Value)
+                    $Holder
+                }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:_OERAuthState = @{
+                    TenantId         = '44444444-4444-4444-4444-444444444444'
+                    AuthMethod       = 'Interactive'
+                    ClientId         = ''
+                    Environment      = 'Global'
+                    Account          = 'admin@contoso.com'
+                    GraphTokenExpiry = [DateTime]::UtcNow.AddMinutes(2)
+                    ArmToken         = $null
+                    ArmTokenExpiry   = $null
+                    ArmResourceUrl   = $null
+                    ClaimsSatisfied  = $false
+                }
+            }
+        }
+
+        It 'refuses with SignInRefused naming the outer command, before Get-AzToken and Connect-MgGraph, when a command outside its caller is latched' {
+            $R = Invoke-NestedUnderLatchProbe -LatchOuter
+
+            # The token call and the connection first: a nested sign-in that got past the check would
+            # make both.
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 0 -Exactly
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $R.Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+            $R.Caught.TargetObject | Should -BeExactly 'Invoke-OuterCommand'
+
+            # Not vacuous: the same nested sign-in under an outer command that is not latched renews
+            # the token.
+            $Control = Invoke-NestedUnderLatchProbe
+            $Control.Caught | Should -BeNullOrEmpty
+            Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+        }
+
+        It 'leaves the calling command unlatched when it refuses (the check stands before Lock-OERSignIn)' {
+            $R = Invoke-NestedUnderLatchProbe -LatchOuter
+
+            $R.Caught.FullyQualifiedErrorId | Should -BeExactly 'SignInRefused,Initialize-OERAuth'
+            $R.Nested | Should -BeOfType ([System.Management.Automation.InvocationInfo])
+            $R.NestedLatched | Should -BeFalse
+            # The outer command stays latched: it still refuses every request it makes.
+            $R.OuterRefusal | Should -BeExactly 'Invoke-OuterCommand'
+
+            # Not vacuous: a nested sign-in refused for a reason of its own, under no latched outer
+            # command, is found latched by the same lookup.
+            $Control = Invoke-NestedUnderLatchProbe -NestedParameters @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientSecret'; ClientId = '33333333-3333-3333-3333-333333333333'
+            }
+            $Control.Caught.FullyQualifiedErrorId | Should -BeExactly 'MissingClientSecret,Initialize-OERAuth'
+            $Control.NestedLatched | Should -BeTrue
         }
     }
 

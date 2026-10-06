@@ -1408,10 +1408,18 @@ BeforeAll {
         stamp a command again with the identity a later sign-in switched the state to, so that
         command is never seen as superseded. Get-OERSignInRefusal and Get-OERSignInSupersession, the readers the gates consult, are
         called only by the two wrappers: a reader anywhere else is a gate no static check places.
-        Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it, and
-        Get-OERSignInSupersession, which compares it: a second identity builder can drift from the
-        one the comparison uses. Invoke-MgGraphRequest and Invoke-WebRequest are called only by
-        their wrapper.
+        Get-OERSignInRefusal has one more owner, Initialize-OERAuth (BL-74): it reads the latch once,
+        before it latches its caller, to refuse a SIGN-IN under a latched outer command, and refuses
+        no request -- the transports' latch gates still do that, and this pass still places them -- so
+        the reason the rule exists does not apply to it.
+        Get-OERSignInIdentity is called only by Register-OERSignInIdentity, which stores it,
+        Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a
+        command's snapshot of it and compares that snapshot with the identity the state carries
+        now (BL-76, BL-81): building the snapshot's value through the same function is what keeps
+        its terms identical to the remembered ones, and a second identity builder there is exactly
+        the drift this rule exists to stop. Checkpoint-OERSignIn's own callers get no row: the
+        snapshot is a value a command keeps in its own variable, never a gate in front of a
+        request. Invoke-MgGraphRequest and Invoke-WebRequest are called only by their wrapper.
 
         THE IDENTITY IS REMEMBERED WHERE THE LATCH IS RELEASED. In Initialize-OERAuth every
         Register-OERSignInIdentity call is the statement directly after an Unlock-OERSignIn call in
@@ -1458,18 +1466,20 @@ BeforeAll {
     # A set of owner files per command (see WHO MAY CALL WHAT in the Pass 9 comment): the command may
     # be CALLED nowhere else under source/, and every owner listed must really call it. The owner is
     # a file, not a function, so the rule is the same whichever function of that file calls it:
-    # Initialize-OERAuth calls Lock-OERSignIn once, at its entry, and Unlock-OERSignIn and
-    # Register-OERSignInIdentity at each of its two successful ends.
+    # Initialize-OERAuth calls Get-OERSignInRefusal once, at its entry (BL-74), Lock-OERSignIn once,
+    # directly after it, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
+    # successful ends.
     $script:signInMemoryPath = 'source\Private\Initialize-OERAuth.ps1'
     $script:transportGateOwners = @(
         [PSCustomObject]@{ Command = 'Get-MgContext'; Owners = @('source\Private\Get-OERGraphSessionFingerprint.ps1') }
         [PSCustomObject]@{ Command = 'Lock-OERSignIn'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Unlock-OERSignIn'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Register-OERSignInIdentity'; Owners = @($script:signInMemoryPath) }
-        [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
+        [PSCustomObject]@{ Command = 'Get-OERSignInRefusal'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath, $script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInSupersession'; Owners = @($script:transportGateGraphPath, $script:transportGateArmPath) }
         [PSCustomObject]@{ Command = 'Get-OERSignInIdentity'; Owners = @(
-                'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1') }
+                'source\Private\Register-OERSignInIdentity.ps1', 'source\Private\Get-OERSignInSupersession.ps1',
+                'source\Private\Checkpoint-OERSignIn.ps1') }
         [PSCustomObject]@{ Command = 'Invoke-MgGraphRequest'; Owners = @($script:transportGateGraphPath) }
         [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owners = @($script:transportGateArmPath) }
     )
@@ -3213,15 +3223,19 @@ statement directly after its Unlock, passing the same -Invocation variable.
             'each of the two success ends holds an Unlock-OERSignIn and, as the statement directly after it, a Register-OERSignInIdentity passing the same invocation')
     }
 
-    It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers' {
+    It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers and in Initialize-OERAuth' {
         $script:transportOwnerStale['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'both transport wrappers must really call Get-OERSignInRefusal for their latch gates; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'both transport wrappers must really call Get-OERSignInRefusal for their latch gates, and Initialize-OERAuth for its BL-74 check; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSignInRefusal is the reader the latch gate in front of every Graph and ARM request consults.
 This Describe proves where the transports' gates stand -- in the block that holds the send, in order,
 throwing and then returning -- and nothing proves any of that for a check in another file: a reader of
 the latch outside the two transports is a gate no static check places, whose refusal may not stop a
-request at all. Refuse requests in the two wrappers, through their latch gates.
+request at all. Refuse requests in the two wrappers, through their latch gates. Initialize-OERAuth is
+the one other owner (BL-74): it reads the latch once, before it latches its caller, to refuse a SIGN-IN
+under a latched outer command -- no token call, no Connect-MgGraph -- and it refuses no request; the
+transports' latch gates still do that, and this Describe still places them, so the reason this rule
+exists does not apply to it. The list is never wider than the call requires.
 '@
     }
 
@@ -3238,16 +3252,19 @@ supersession gates.
 '@
     }
 
-    It 'builds a sign-in identity with Get-OERSignInIdentity only in Register-OERSignInIdentity.ps1 and Get-OERSignInSupersession.ps1' {
+    It 'builds a sign-in identity with Get-OERSignInIdentity only in Register-OERSignInIdentity.ps1, Get-OERSignInSupersession.ps1 and Checkpoint-OERSignIn.ps1' {
         $script:transportOwnerStale['Get-OERSignInIdentity'] -join "`n" | Should -BeNullOrEmpty -Because (
-            'Register-OERSignInIdentity, which stores the identity, and Get-OERSignInSupersession, which compares it, must both really call Get-OERSignInIdentity; an owner listed here that calls it nowhere is a stale rule, not a pass')
+            'Register-OERSignInIdentity, which stores the identity, Get-OERSignInSupersession, which compares it, and Checkpoint-OERSignIn, which takes a command''s snapshot of it and compares that snapshot with the identity the state carries now, must each really call Get-OERSignInIdentity; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Get-OERSignInIdentity'] -join "`n" | Should -BeNullOrEmpty -Because @'
 Get-OERSignInIdentity is the single owner of what a sign-in's identity is: Register-OERSignInIdentity
-stores the value it returns, and Get-OERSignInSupersession compares the value it returns now with every
-stored one. A second caller is a second identity builder in the making, and one that drifts from the
-identity the comparison uses -- a term added or dropped on one side only -- makes the supersession gate
-refuse a command it should not, or let through one it should refuse. Read the identity only through
-those two helpers.
+stores the value it returns, Get-OERSignInSupersession compares the value it returns now with every
+stored one, and Checkpoint-OERSignIn keeps the value it returns when a command begins and compares that
+snapshot with the value it returns later (BL-76, BL-81), which is the one reason a third file may call
+it. A fourth caller is a second identity builder in the making, and one that drifts from the identity
+the comparisons use -- a term added or dropped on one side only -- makes a gate refuse a command it
+should not, or let through one it should refuse. The list is never wider than the call requires: read
+the identity only through those three helpers, and take a snapshot of it with Checkpoint-OERSignIn
+instead of calling Get-OERSignInIdentity again.
 '@
     }
 

@@ -16,9 +16,16 @@ function New-OERSignInRefusedError {
     that transport's own refresh. The message names no tenant, no account and no token: it is fixed
     text, and the command's name is the only value the record carries.
 
+    Initialize-OERAuth raises it too, as a terminating error before any token call or Connect-MgGraph
+    and before it latches its own caller, when a command OUTSIDE the one that called it is latched
+    (Get-OERSignInRefusal -OutsideCaller): a cmdlet that a refused command calls, or a sign-in made
+    inside a refused command's output. The target is then that latched outer command's name, and
+    the request the fixed message calls "this request" is the sign-in, which is not made.
+
     .PARAMETER Command
-    The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it ('a script
-    block' when the held frame carries no command name). It becomes the record's target object.
+    The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it, with or
+    without -OutsideCaller ('a script block' when the held frame carries no command name). It becomes
+    the record's target object.
 
     .EXAMPLE
     throw (New-OERSignInRefusedError -Command 'Get-OERGroup')

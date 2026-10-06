@@ -8,6 +8,12 @@ function New-OERSignInSupersededError {
     request made while a command on the call stack remembers another sign-in identity than the module's
     state now carries -- a command Get-OERSignInSupersession finds -- so nothing is sent, while that
     command runs, under a session another OER command in the same pipeline signed in to after it.
+    Invoke-OERStructure raises it too, before it signs in for a document without -TenantId, and so do
+    New-OERAccessPackageApprovalStage, New-OERAccessPackageRequestorScope and New-OERAccessReviewStage
+    before their name lookup without -TenantId, when the identity changed after the command's begin
+    block took a snapshot of the session (Checkpoint-OERSignIn), which is why the message says the
+    other sign-in came after the command began, not after it signed in: a command refused there has
+    not signed in at all.
 
     The target is that command's name, and the request it refuses is one made while that command runs,
     which is not always one the command makes itself: it can be the command's own request, a request of
@@ -21,9 +27,12 @@ function New-OERSignInSupersededError {
     and the command's name is the only value the record carries.
 
     .PARAMETER Command
-    The name of the command whose sign-in was superseded, as Get-OERSignInSupersession returns it ('a
-    script block' when the frame carries no command name). It becomes the record's target object, and
-    the message names it exactly as passed.
+    The name of the command the record names. From a transport, that is the command whose remembered
+    sign-in was superseded, as Get-OERSignInSupersession returns it ('a script block' when the frame
+    carries no command name). From Invoke-OERStructure or one of the three builders, it is the
+    refusing command's own name, passed before that command signs in, when the session changed after
+    its begin block -- or, for Invoke-OERStructure, after its last sign-in for an earlier document.
+    It becomes the record's target object, and the message names it exactly as passed.
 
     .EXAMPLE
     throw (New-OERSignInSupersededError -Command 'New-OERGroup')
@@ -42,7 +51,7 @@ function New-OERSignInSupersededError {
     # The command's name is the only value in the text. It is an argument of -f, never part of the
     # format string, so a name is written exactly as passed, whatever characters it holds.
     [string]$Message = ('Another OER command in the same pipeline signed in to a different tenant or ' +
-        'identity after {0} signed in, so Omnicit.EntraRBAC sends nothing while {0} runs: this request ' +
+        'identity after {0} began, so Omnicit.EntraRBAC sends nothing while {0} runs: this request ' +
         'was not sent. Run the commands as separate statements, so that each one signs in and finishes ' +
         'before the next one starts.') -f $Command
     [System.Management.Automation.ErrorRecord]::new(
