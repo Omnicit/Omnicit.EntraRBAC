@@ -79,8 +79,9 @@ function Connect-OER {
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
     -TenantAlias. An empty -TenantId names no tenant: Connect-OER then signs in to the current
-    session's tenant and, when that succeeds, makes the module send again after a refused sign-in,
-    so a script that takes the tenant from data must check the value before it passes it.
+    session's tenant, or to 'organizations' when there is no session, and, when that succeeds,
+    makes the module send again after a refused sign-in, so a script that takes the tenant from data
+    must check the value before it passes it.
 
     .PARAMETER TenantAlias
     The alias of a stored Tenant Profile from which the tenant id is resolved. Combines with any

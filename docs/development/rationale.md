@@ -1416,8 +1416,11 @@ the `AppOnlySessionCredentialUnavailable` check follows. A refused Graph token l
 half-built behind. A refused ARM token is the exception the BL-89 paragraph under
 [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain)
 describes: the ARM step comes after the Microsoft Graph half has connected and rebuilt the state (or
-answered from the cache), so the session then holds a Graph token for the tenant the sign-in named
-and no ARM token.
+answered from the cache), so the session then holds that Graph token -- for the tenant the sign-in
+named or, when it named none (Ruling F3, below), for the tenant the Graph token came from -- and no
+ARM token from this sign-in. The state is not cleared of an older one: on an ARM-only top-up, or a
+rebuild that carried the state forward for the same identity, the previous ARM token of that
+identity can stay in it.
 
 **Both values compared are GUIDs, whether the tenant was named by GUID or by domain** (BL-12, since
 Sprint 9 step 3). The requested side is the tenant ID the request named or, for a tenant named by
@@ -1431,8 +1434,8 @@ and that term -- one an input falsifies, so it stays mutation-provable -- is wha
 uncompared with a requested tenant. Graph and ARM compare against the same tenant ID, so a domain is
 refused exactly as a GUID is, by both `TenantMismatch` checks.
 
-**With no tenant named, the ARM token is compared with the Graph token** (Sprint 9 step 3, final
-review M1, Ruling F3). Since BL-77 the sign-in identity's tenant term is the Graph token's tenant, and
+**With no tenant named, an ARM token the sign-in acquires is compared with the Graph token** (Sprint
+9 step 3, final review M1, Ruling F3). Since BL-77 the sign-in identity's tenant term is the Graph token's tenant, and
 that opened one narrow path. In `X -TenantId <GUID> | Y -TenantId organizations` on an interactive
 session, Y names another tenant than the state, inherits nothing and signs in afresh: its Graph token
 comes from X's tenant and -- at a second prompt answered with another account -- its ARM token from
@@ -1444,9 +1447,16 @@ ARM token's tenant is compared with `$script:_OERAuthState.TokenTenantId` -- the
 call acquired, or the cached one an ARM-only acquisition runs beside -- when both are GUIDs, and a
 difference is the existing terminating `TenantMismatch`, raised before the ARM token is cached; its
 message names both tenants and says that the two tokens of one session were compared. A named
-tenant's ARM token is compared only with the tenant ID it names, as before. The limit is the GUID
+tenant's ARM token is compared only with the tenant ID it names, as before. Two limits. The GUID
 one: a token whose tenant AzAuth does not report as a GUID, on either side, leaves nothing to
-compare. No new error id; every term of the condition stands on its own line and is mutation-proved
+compare. And the comparison runs only where an ARM token is ACQUIRED: when only the Graph token of a
+session that names no tenant is renewed, `$ArmIdentityUnchanged` carries the old ARM token into the
+rebuilt state and `$ArmCached` skips the ARM branch, so the carried token is not compared with the
+new Graph token. MEASURED by the scoped re-review of the final fixes, with mocked tokens: Graph and ARM
+tokens from one tenant, then the Graph token renewed from another, left the state's Graph and ARM
+tenants different with no `TenantMismatch`. The gap is older than this branch -- before F3 an
+`organizations` session's ARM token was compared with nothing at all -- and stays open. No new error
+id; every term of the condition stands on its own line and is mutation-proved
 (see the proof under
 [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain)).
 
@@ -1831,8 +1841,9 @@ any tenant ID; the lookup does not refuse it. The ruling expected both to be ref
 measurement shows the lookup refuses only `common`. Whether a sign-in naming `consumers` then gets a
 token whose tenant compares equal is NOT measured. `organizations` stays exempt, unlooked-up and
 compared with no requested tenant: it is the module's own value for a sign-in that names no tenant.
-Its ARM token is compared with its Graph token instead (Ruling F3, under
-[Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)).
+An ARM token a sign-in acquires under it is compared with the session's Graph token instead; one
+carried over a renewal of the Graph token alone is not compared again, a known limit (Ruling F3,
+under [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)).
 
 **Known limits of the lookup.**
 
@@ -2558,7 +2569,8 @@ R15): the tenant term is `TokenTenantId` when it is a GUID, `TenantId` otherwise
 `ArmTokenTenantId`, since the ARM token is not always acquired and the identity must not change when
 it is. That left the ARM token of a sign-in naming no tenant compared with nothing, and so able to
 come from another tenant than the identity's; since the final review of Sprint 9 step 3 (Ruling F3)
-it is compared with the Graph token instead, under
+an ARM token such a sign-in acquires is compared with the Graph token instead, while one carried
+over a renewal of the Graph token alone is not compared again -- a known limit, under
 [Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant). One tenant named by GUID
 on one command and by domain on another, or not named at all, is then ONE identity to the
 supersession gate and to the snapshot, and P18 below pins the measured pipeline sending. What did not

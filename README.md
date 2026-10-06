@@ -290,8 +290,10 @@ and asked again at the next sign-in if it fails. A domain the authority does not
 is refused with `TenantResolutionFailed`, and no token is requested. A tenant is a GUID or a verified
 domain: any other value is looked up the same way and refused when it names no tenant, `common` among
 them. `organizations`, which the module uses when no tenant is named and there is no session, names
-no tenant and is not checked against one; its Azure Resource Manager token must still come from the
-tenant its Microsoft Graph token came from, or it is refused with `TenantMismatch`.
+no tenant and is not checked against one. When a sign-in under it acquires an Azure Resource Manager
+token, that token must come from the same tenant as the session's Microsoft Graph token, or it is
+refused with `TenantMismatch`; an Azure Resource Manager token the session keeps while only its
+Microsoft Graph token is renewed is not checked again.
 
 The module also warns before a client secret sign-in for the same application when the tenant you
 name differs from the one the credential AzAuth is currently holding for that application was built

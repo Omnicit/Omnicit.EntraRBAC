@@ -692,9 +692,11 @@ tenant; measured).
 named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect does
 not become a session, within two limits: a token whose tenant AzAuth does not report as a GUID (one
 without a `tid` claim) is not compared, and `organizations` names no tenant, so its tokens are
-compared with no requested tenant -- its ARM token is compared with the session's Graph token
-(`TokenTenantId`) instead, when both are GUIDs, and refused with the same `TenantMismatch` when
-they differ (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
+compared with no requested tenant -- an ARM token a sign-in acquires under it is compared with the
+session's Graph token (`TokenTenantId`) instead, when both are GUIDs, and refused with the same
+`TenantMismatch` when they differ, while an ARM token carried over a renewal of the Graph token alone
+is not compared again (known limit, older than that check)
+(`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
 call it only
 warns, for a client secret switch it can predict will not take effect (a
 `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
