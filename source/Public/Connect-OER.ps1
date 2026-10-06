@@ -26,19 +26,47 @@ function Connect-OER {
     sovereign-cloud tenants does not have to remember, and pass, which is which on every call; an
     explicit -Environment always overrides the profile's stored value.
 
-    Connect-OER is idempotent: calling it again for the same tenant and credential returns from the
-    cached session without re-authenticating. Omitting both -TenantId and -TenantAlias targets the
-    tenant of the current session rather than starting a fresh tenant-agnostic sign-in, so a bare
-    Connect-OER -Interactive issued after Connect-OER -TenantId A -Interactive still resolves to
-    tenant A instead of an unlabelled default. To sign in to a different tenant, pass an explicit
-    -TenantId (or -TenantAlias). A client secret sign-in for the same application also needs -Force
-    to move to another tenant in the same PowerShell session: AzAuth keeps its credential for the
-    whole process, and Disconnect-OER clears only this module's session, not that credential.
+    Connect-OER is idempotent while the Microsoft Graph PowerShell SDK session in the process is
+    still the one the module connected: calling it again for the same tenant and credential then
+    returns from the cached session without re-authenticating. Over a session that another
+    Connect-MgGraph has replaced, or one that has been closed (by Disconnect-MgGraph, for example),
+    it signs in again. Omitting both -TenantId and -TenantAlias targets the tenant of the current
+    session rather than starting a fresh tenant-agnostic sign-in, so a bare Connect-OER -Interactive
+    issued after Connect-OER -TenantId A -Interactive still resolves to tenant A instead of an
+    unlabelled default. To sign in to a different tenant, pass an explicit -TenantId (or
+    -TenantAlias). A client secret sign-in for the same application also needs -Force to move to
+    another tenant in the same PowerShell session: AzAuth keeps its credential for the whole
+    process, and Disconnect-OER clears this module's session and the Graph SDK session, not that
+    credential.
 
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
-    OER cmdlet. Disconnect-OER closes that session. Run Disconnect-OER before your own
-    Connect-MgGraph in the same process, or use a new PowerShell process.
+    OER cmdlet. Disconnect-OER closes whichever session the process holds, even one another
+    Connect-MgGraph started.
+
+    If another Connect-MgGraph -- your own, or another tool's -- replaces the module's session in
+    the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
+    GraphSessionChanged error instead of sending them under that session, and its Azure Resource
+    Manager calls with a SignInRefused error. An error can be reported more than once for one
+    cmdlet. The module never switches the session back by itself.
+    Run Connect-OER with the same sign-in the session used -- for an app-only session, its
+    certificate or client secret, since a bare Connect-OER signs in interactively -- to connect the
+    module again, which takes the session back and so replaces the other one, or use a new
+    PowerShell process. If the session is closed with Disconnect-MgGraph instead of Disconnect-OER,
+    the next OER cmdlet signs in again by itself, except on an app-only session (client secret or
+    certificate), which reports AppOnlySessionCredentialUnavailable until Connect-OER is run with
+    the secret or certificate.
+
+    More generally, an OER cmdlet whose own sign-in fails or is refused -- one that names another
+    tenant with -TenantId and cannot sign in to it, for example -- sends no Microsoft Graph or Azure
+    Resource Manager request: each request it then attempts is refused with a SignInRefused error
+    (or, in the case above, GraphSessionChanged for a Microsoft Graph request) instead of going out
+    under the session an earlier sign-in left. A cmdlet it calls, or a neighbour in the same
+    pipeline, that signs in successfully does not change that. Run Connect-OER, or a new command
+    whose sign-in succeeds, to send requests again. An OER command whose sign-in another command in
+    the same pipeline later replaced with a different tenant or identity sends nothing more either:
+    each request made while it runs is refused with a SignInSuperseded error. One pipeline works in
+    one tenant with one identity, so run such commands as separate statements.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
@@ -299,6 +327,11 @@ function Connect-OER {
         # every cmdlet that does not name one.
         if ($ResolvedEnvironment) { $AuthParams.Environment = $ResolvedEnvironment }
         if ($Force) { $AuthParams.ForceRefresh = $true }
+        # SEC (A18): Connect-OER is the operator's explicit instruction to connect, so a Microsoft Graph
+        # PowerShell SDK session that another Connect-MgGraph started after the module connected is a
+        # cache miss here and is replaced -- the one place the module takes the session back. Every
+        # other cmdlet refuses that session with GraphSessionChanged instead; see Initialize-OERAuth.
+        $AuthParams.ReclaimGraphSession = $true
 
         Initialize-OERAuth @AuthParams
     }

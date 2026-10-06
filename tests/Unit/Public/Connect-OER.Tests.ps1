@@ -4,6 +4,18 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+
+    # One stable Graph SDK context for every test in this file, unless a test mocks its own. The
+    # tests that run the real Initialize-OERAuth would otherwise read the REAL, process-wide
+    # Get-MgContext -- empty on CI, a developer's own session on a workstation -- and, since the
+    # module compares that session at every entry, their outcome would depend on the machine.
+    $script:DefaultGraphContext = [pscustomobject]@{
+        AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+        ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+        Account = 'admin@contoso.com'; AppName = 'oer-test-app'; Environment = 'Global'
+        Scopes = @('Group.ReadWrite.All')
+    }
+    Mock -ModuleName $script:moduleName Get-MgContext { $script:DefaultGraphContext }
 }
 
 AfterAll {
@@ -599,5 +611,128 @@ Describe 'Connect-OER -Force' {
     It 'is a switch' {
         $Command = Get-Command -Name Connect-OER -Module $script:moduleName
         $Command.Parameters['Force'].ParameterType | Should -Be ([switch])
+    }
+}
+
+# -------------------------------------------------------------------------------------------------
+# Graph SDK session (A18). The module refuses a Graph call under a Microsoft Graph PowerShell SDK
+# session that another Connect-MgGraph started after the module connected (GraphSessionChanged).
+# Connect-OER is the operator's explicit instruction to connect, so it is the one place that takes
+# the session back: it forwards -ReclaimGraphSession on every parameter set.
+# -------------------------------------------------------------------------------------------------
+Describe 'Connect-OER forwards -ReclaimGraphSession on every parameter set (A18)' {
+    BeforeAll {
+        $script:ReclaimSecret = ConvertTo-SecureString 'sek-reclaim' -AsPlainText -Force
+        # An in-memory certificate with an ephemeral key: no tenant call, no file, no store write.
+        $script:ReclaimKey = [System.Security.Cryptography.ECDsa]::Create(
+            [System.Security.Cryptography.ECCurve+NamedCurves]::nistP256)
+        $Request = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
+            'CN=oer-reclaim-test', $script:ReclaimKey, [System.Security.Cryptography.HashAlgorithmName]::SHA256)
+        $script:ReclaimCert = $Request.CreateSelfSigned(
+            [System.DateTimeOffset]::UtcNow.AddDays(-1), [System.DateTimeOffset]::UtcNow.AddDays(1))
+    }
+
+    AfterAll {
+        if ($script:ReclaimCert) { $script:ReclaimCert.Dispose() }
+        if ($script:ReclaimKey) { $script:ReclaimKey.Dispose() }
+    }
+
+    It 'passes ReclaimGraphSession on the <Name> set' -ForEach @(
+        @{ Name = 'Interactive';           ExpectedMethod = 'Interactive';       Connect = { param($Cert, $Secret) Connect-OER -TenantId 'contoso' -Interactive } }
+        @{ Name = 'DeviceCode';            ExpectedMethod = 'DeviceCode';        Connect = { param($Cert, $Secret) Connect-OER -TenantId 'contoso' -DeviceCode } }
+        @{ Name = 'ManagedIdentity';       ExpectedMethod = 'ManagedIdentity';   Connect = { param($Cert, $Secret) Connect-OER -ManagedIdentity } }
+        @{ Name = 'ClientSecret';          ExpectedMethod = 'ClientSecret';      Connect = { param($Cert, $Secret) Connect-OER -TenantId 'contoso' -ClientId 'cid' -ClientSecret $Secret } }
+        @{ Name = 'ClientCertificate';     ExpectedMethod = 'ClientCertificate'; Connect = { param($Cert, $Secret) Connect-OER -TenantId 'contoso' -ClientId 'cid' -Certificate $Cert } }
+        @{ Name = 'ClientCertificatePath'; ExpectedMethod = 'ClientCertificate'; Connect = { param($Cert, $Secret) Connect-OER -TenantId 'contoso' -ClientId 'cid' -CertificatePath 'C:\certs\app.pfx' } }
+    ) {
+        # Its own param() block, naming ReclaimGraphSession and everything Connect-OER forwards: a
+        # mock with no param block would take the splat without complaint and prove nothing about the
+        # name, and a block missing the name would refuse the splat.
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            param($TenantId, $AuthMethod, $ClientId, $ClientSecret, $Certificate, $CertificatePath,
+                  $IncludeARM, $ClaimsChallenge, $ForceRefresh, $Environment, [switch]$ReclaimGraphSession)
+        }
+
+        & $Connect $script:ReclaimCert $script:ReclaimSecret
+
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+            $ReclaimGraphSession -eq $true -and $AuthMethod -eq $ExpectedMethod
+        }
+    }
+}
+
+Describe 'Connect-OER over the Graph SDK session (A18)' {
+    BeforeAll {
+        # Calls Connect-OER and returns the record it raised, or nothing when it raised none.
+        function script:Invoke-ConnectOERCatching {
+            param([hashtable]$Parameters)
+            $Caught = $null
+            try { Connect-OER @Parameters -ErrorAction Stop } catch { $Caught = $PSItem }
+            $Caught
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERLastAuthorityHost = $null
+            $script:_OERLastTokenRequest = $null
+            $script:_OERLastIssuedSession = $null
+        }
+        $script:CurrentContext = $null
+        $script:OwnContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '33333333-3333-3333-3333-333333333333'; TenantId = '44444444-4444-4444-4444-444444444444'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        # Another Connect-MgGraph's session: a certificate sign-in as another app, in another tenant.
+        $script:ForeignContext = [pscustomobject]@{
+            AuthType = 'AppOnly'; TokenCredentialType = 'ClientCertificate'
+            ClientId = '55555555-5555-5555-5555-555555555555'; TenantId = '66666666-6666-6666-6666-666666666666'
+            Account = $null; AppName = 'another-app'; Environment = 'Global'; Scopes = @()
+        }
+        Mock -ModuleName $script:moduleName Get-AzToken {
+            [pscustomobject]@{ Token = 'fake-graph-token-NOT-A-REAL-TOKEN'; ExpiresOn = [DateTimeOffset]::UtcNow.AddHours(1); Identity = 'sp'; TenantId = '44444444-4444-4444-4444-444444444444' }
+        }
+        # Stateful, like the SDK: no session until Connect-MgGraph, then the module's own. A test swaps
+        # the session by assigning $script:CurrentContext (another session, or $null for none).
+        Mock -ModuleName $script:moduleName Connect-MgGraph { $script:CurrentContext = $script:OwnContext }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:CurrentContext }
+        Mock -ModuleName $script:moduleName Invoke-MgGraphRequest { }
+    }
+
+    It 'connects again over a session another Connect-MgGraph replaced, and the session is its own afterwards' {
+        $Params = @{ TenantId = '44444444-4444-4444-4444-444444444444'; Interactive = $true }
+        Invoke-ConnectOERCatching -Parameters $Params | Should -BeNullOrEmpty
+        $script:CurrentContext = $script:ForeignContext
+
+        $Caught = Invoke-ConnectOERCatching -Parameters $Params
+
+        $Caught | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        InModuleScope $script:moduleName { Get-OERGraphSessionState } | Should -Be 'Own'
+    }
+
+    It 'stays idempotent over its own session' {
+        $Params = @{ TenantId = '44444444-4444-4444-4444-444444444444'; Interactive = $true }
+        Invoke-ConnectOERCatching -Parameters $Params | Should -BeNullOrEmpty
+
+        Invoke-ConnectOERCatching -Parameters $Params | Should -BeNullOrEmpty
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 1 -Exactly
+    }
+
+    It 'connects again when the process holds no session' {
+        $Params = @{ TenantId = '44444444-4444-4444-4444-444444444444'; Interactive = $true }
+        Invoke-ConnectOERCatching -Parameters $Params | Should -BeNullOrEmpty
+        $script:CurrentContext = $null
+
+        Invoke-ConnectOERCatching -Parameters $Params | Should -BeNullOrEmpty
+
+        Should -Invoke -ModuleName $script:moduleName Get-AzToken -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Connect-MgGraph -Times 2 -Exactly
+        InModuleScope $script:moduleName { Get-OERGraphSessionState } | Should -Be 'Own'
     }
 }

@@ -148,7 +148,7 @@ cmdlet; `Get-OERRequiredScope` reports the Graph/Azure permissions each one need
 per-function PSScriptAnalyzer, and a unit test file for every exported function),
 `about.tests.ps1` (the about topic is byte-identical to source, ASCII/BOM-free, and names every
 exported cmdlet and no other), `requiredscope.tests.ps1` (`Get-OERRequiredScopeMap` vs the module's
-own call graph), `sourcehygiene.tests.ps1` (the nine static source gates --
+own call graph), `sourcehygiene.tests.ps1` (the ten static source gates --
 `Why: docs/development/rationale.md#static-source-gates`), `dochygiene.tests.ps1` (keeps unredacted
 tenant object ids, tenant domains outside a fixed allowlist of four labels, non-documentation email
 addresses and credentials out of every tracked file under `docs/`, `specs/`, `source/` and
@@ -506,6 +506,73 @@ pre-auth shortcut -- all cmdlets authenticate automatically on first use. Auth u
 `Get-AzToken` for every credential type; state is cached in `$script:_OERAuthState`, keyed on tenant,
 auth identity, **and cloud**. The state also carries `SignedInObjectId`, the signed-in identity's
 object id read from the Graph token's `oid` claim -- never the token itself.
+`Why: docs/development/rationale.md#auth-state`
+
+**The state also carries `GraphSessionFingerprint`**, which records the Microsoft Graph PowerShell
+SDK session the module's own `Connect-MgGraph` left in the process -- never a token, never the
+context object, and never written to any stream. `Get-OERGraphSessionFingerprint` is the single
+owner of the fingerprint and `Get-OERGraphSessionState` of the comparison. Every
+`Initialize-OERAuth` entry checks it, the cached return included, and so does
+`Invoke-OERGraphRequest` before every Graph call; a session another `Connect-MgGraph` started is
+refused with `GraphSessionChanged`. Only `Connect-OER` passes `-ReclaimGraphSession`, which takes
+the session back. Never add a second reclaim caller, and never make the module switch the session
+back by itself: either one moves the other session's Graph calls to this module's tenant.
+`Why: docs/development/rationale.md#auth-state`
+
+**A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
+error from `Initialize-OERAuth` ends only `Initialize-OERAuth`: outside any `try` the cmdlet that
+called it carries on, and used to send its calls under the session an earlier sign-in left -- for
+`Invoke-OERStructure -TenantId B -Prune`, B's document applied to A. So `Initialize-OERAuth` latches
+its calling command as its first statement (`Lock-OERSignIn`) and releases it only on success
+(`Unlock-OERSignIn`: the cached return, or a new connection that went the whole way); both are
+called only there. Every refusal, terminating error and early return leaves the command latched --
+`ArmTokenAcquisitionFailed` included, so that command's Graph calls are refused too although its
+Graph half connected. Both transports ask `Get-OERSignInRefusal` before every request and refuse it
+while any frame on the call stack is latched, with `SignInRefused` (`New-OERSignInRefusedError` owns
+the id and the message) -- the Graph wrapper after its session gate, so a changed session still reads
+`GraphSessionChanged`, and after a `GraphSessionChanged` refusal at the cmdlet's entry its ARM calls
+read `SignInRefused`. The latch is keyed weakly on the calling command's INVOCATION, never a module
+boolean: a nested cmdlet's sign-in, or a pipeline neighbour's, releases only its own entry. A
+finished command is on no call stack, so the next command, or `Connect-OER`, sends again. An ARM call
+of a command whose entry was not refused still goes out with the module's own token: ARM has no
+session gate. Never write that the cmdlet stops -- it carries on and sends nothing -- and never call
+`Lock-OERSignIn` or `Unlock-OERSignIn` outside `Initialize-OERAuth`. Call `Initialize-OERAuth`
+directly in the command's own block, never from a nested function, `& { }` or any other scriptblock:
+the latch is keyed on the frame that calls it, and such a frame ends at once (the transports' own
+refreshes, in `Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the one exception).
+`Why: docs/development/rationale.md#auth-state`
+
+**A command sends nothing under a sign-in a later command replaced.** In a pipeline every `begin`
+block runs first, so an upstream command's `process` block would act under the session a downstream
+command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B`
+created the group in B. Both sign-ins succeed, so neither the latch nor the session gate sees it. So
+where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases the latch --
+`Register-OERSignInIdentity` remembers, keyed weakly on the calling command's invocation, the
+identity the state carries: tenant, method, client and cloud, the terms `$ArmIdentityUnchanged`
+compares, never a token. `Get-OERSignInIdentity` is the single owner of that identity. Both
+transports ask `Get-OERSignInSupersession` before every request and refuse it with
+`SignInSuperseded` (`New-OERSignInSupersededError` owns the id and the message) while ANY frame on
+the call stack remembers another identity than the state now carries. So an outer command whose
+nested cmdlets inherited the switched state is refused too, and so is a downstream command's request
+made inside the upstream command's output call, where the upstream frame is still on the stack.
+`Invoke-OERStructure` and `Connect-OER` sign in in `process`, not `begin`, and a downstream
+command's `begin` runs first, even when it takes no pipeline input. When they name a tenant, their
+own sign-in switches the state back to it, so downstream of them it is the downstream command that
+is refused. WITHOUT `-TenantId`, `Invoke-OERStructure` inherits the state the downstream command's
+`begin` left, remembers that, and nothing is refused: its document, `-Prune` included, applies to
+the downstream command's tenant. That is a known gap, older than A20 and open (final review of A20,
+measured with a stand-in of its shape), so never pipe `Invoke-OERStructure` into a command that
+names another tenant. The identity's tenant term is the tenant as NAMED, so one tenant named by
+GUID on one command and by domain on another -- or not named at all before the module holds a
+session, which is recorded as `organizations` -- is two identities, and that pipeline is refused
+(fail-safe; README's "Name the tenant explicitly and consistently", the about topic's equivalent
+under SOVEREIGN CLOUDS). The order is fixed: in the Graph wrapper the session gate, then the latch
+gate, then the supersession gate; in the ARM wrapper the latch gate, then the supersession gate. A
+command with no memory is not compared. A pipeline must not span tenants or identities: run the
+commands as separate statements, for example collecting into a variable first.
+Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere but directly after
+an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
+transports.
 `Why: docs/development/rationale.md#auth-state`
 
 | Parameter set | Key parameters | Use case |
@@ -949,19 +1016,37 @@ bug.
   therefore sound negative proofs -- do not "fix" them, and never justify adding `-Exactly` at zero
   by calling the bare form vacuous.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
-- **Seven rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
+- **Eight rules in this file are machine-checked** by `tests/QA/sourcehygiene.tests.ps1`: ASCII/BOM
   encoding; bearer-scrub-first in every transport-reaching catch; `ConvertTo-OERDuration` as the sole
   int-to-ISO encoder; the `suffix.ps1`/dev-mode-psm1 mirroring; `Get-OERCloudEndpoint` as the sole
   owner of the cloud-to-endpoint table; `Test-OERDeclaredProperty`/`Test-OERDeclaredNull` as the
   single owners of the apply engine's declared-value rule (no direct read of a node's
   `PSObject.Properties.Name` in a `Sync-OERStructure*` handler outside the named, reasoned
   allowlist -- flagged on the read itself, not on the `-contains`-family operator that might later
-  consume it, so an intermediate variable cannot hide the same defect); and the module never calling
-  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above).
+  consume it, so an intermediate variable cannot hide the same defect); the module never calling
+  an Az cmdlet that could establish or mutate an Az PowerShell context (see **Dependencies** above);
+  and the transport gates -- `Get-MgContext` called only in `Get-OERGraphSessionFingerprint`,
+  `Lock-OERSignIn`, `Unlock-OERSignIn` and `Register-OERSignInIdentity` only in
+  `Initialize-OERAuth`, `Get-OERSignInRefusal` and `Get-OERSignInSupersession` only in the two
+  transport wrappers, `Get-OERSignInIdentity` only in `Register-OERSignInIdentity` and
+  `Get-OERSignInSupersession`, `Invoke-MgGraphRequest` only in the Graph wrapper and
+  `Invoke-WebRequest` only in the ARM wrapper, every listed owner really calling it; every
+  `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
+  same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
+  a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
+  `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`), that try preceded, in the very block that
+  holds it and in this order, by its session gate (Graph only), its latch gate and its supersession
+  gate, each a throw followed by a return, with no `Initialize-OERAuth` or `Start-Sleep` between the
+  earliest gate and any request, the ARM bearer token (`.ArmToken` or `['ArmToken']`) materialized
+  only after the last gate, and the transport statements counted exactly (three Graph, one ARM) so a
+  new send path cannot escape the scan; and every `Initialize-OERAuth` call standing directly in
+  its file's own function (in the two wrappers, in `Invoke-GraphSingle` and
+  `Invoke-ArmCallWithRefresh`) and never in a nested function or a scriptblock inside it, since the
+  sign-in latch is keyed on the frame that calls it.
   Two further gates in the
   same file check rules stated only in
   `docs/development/rationale.md` (every ARM api-version is documented under `#arm-transport`) or in
-  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- nine
+  no rule at all (every `Verb-OER...` token in `source/` resolves to a real function) -- ten
   `Describe` blocks in total. When a new catch trips the scrub gate, add the scrub -- do not add an
   exemption. The transport tripwire rule under these conventions is machine-checked separately, by
   `tests/QA/testhygiene.tests.ps1`.
@@ -1010,7 +1095,7 @@ with the team may be in Swedish.
 | Module | Floor | Purpose |
 |---|---|---|
 | `AzAuth` | 2.9.0 | Token acquisition for all auth methods via `Get-AzToken` |
-| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken` and `Invoke-MgGraphRequest` (inside wrapper) |
+| `Microsoft.Graph.Authentication` | 2.36.0 | `Connect-MgGraph -AccessToken`, `Invoke-MgGraphRequest` (inside wrapper) and `Get-MgContext` (the Graph SDK session check) |
 
 That column is the **runtime FLOOR** declared in `source/Omnicit.EntraRBAC.psd1`: a manifest
 `ModuleVersion` is always a minimum, never an exact pin, and there is no manifest syntax for
@@ -1059,7 +1144,10 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
      node, joins the named file list in `tests/QA/sourcehygiene.tests.ps1` gate 8 -- the glob that
      gate scans alone does not make a drop visible; the file must be named.
 4. **Call `Initialize-OERAuth`** at the entry point (`begin` block or top of `process`) for any
-   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM.
+   function that calls Graph or Azure. Pass `-IncludeARM` for functions that call ARM. Call it
+   directly in the command's own block, never from a nested function, `& { }` or any other
+   scriptblock -- the sign-in latch is keyed on the frame that calls it, and gate 10 of
+   `tests/QA/sourcehygiene.tests.ps1` fails a call that stands anywhere else.
 5. **Route all Graph calls through `Invoke-OERGraphRequest`.** Never call `Invoke-MgGraphRequest`
    directly.
 6. **Tag output:** convert the response to `[PSCustomObject]`, insert a type name, add a `<View>`

@@ -11,8 +11,23 @@ function Disconnect-OER {
 
     Connect-OER sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
     Connect-MgGraph with the module's token, and so does the automatic sign-in of any other OER
-    cmdlet. Disconnect-OER closes that session. Run Disconnect-OER before your own Connect-MgGraph
-    in the same process, or use a new PowerShell process.
+    cmdlet. If another Connect-MgGraph -- your own, or another tool's -- replaces that session in
+    the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
+    GraphSessionChanged error instead of sending them under that session, and its Azure Resource
+    Manager calls with a SignInRefused error. An error can be reported more than once for one
+    cmdlet. The module never switches the session back by itself:
+    Connect-OER, run with the same sign-in the session used -- for an app-only session, its
+    certificate or client secret, since a bare Connect-OER signs in interactively -- connects the
+    module again and takes the session back, and a new PowerShell process is the other way.
+
+    Disconnect-OER closes whichever Microsoft Graph PowerShell SDK session the process holds: it
+    clears the module's state, including its record of the session the module connected, and calls
+    Disconnect-MgGraph. After another Connect-MgGraph has replaced the module's session,
+    Disconnect-OER therefore ends that other session too. If the session is closed with
+    Disconnect-MgGraph instead of Disconnect-OER, the module keeps its state and the next OER cmdlet
+    signs in again by itself, except on an app-only session (client secret or certificate), which
+    reports AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret or
+    certificate.
 
     An Az PowerShell session you started yourself is deliberately LEFT ALONE. Omnicit.EntraRBAC
     never establishes an Az context: -IncludeARM only acquires an Azure Resource Manager token,

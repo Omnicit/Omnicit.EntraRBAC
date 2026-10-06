@@ -165,8 +165,66 @@ you want to end that one too.
 
 `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
 `Connect-MgGraph` with the module's token, and so does the automatic sign-in of any other OER
-cmdlet. `Disconnect-OER` closes that session. Run `Disconnect-OER` before your own `Connect-MgGraph`
-in the same process, or use a new PowerShell process.
+cmdlet. `Disconnect-OER` closes whichever session the process holds, even one another
+`Connect-MgGraph` started.
+
+If another `Connect-MgGraph` -- yours, or another tool's -- replaces the module's session in the
+same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with
+`GraphSessionChanged` instead of sending them under that session, and its Azure Resource Manager
+calls with `SignInRefused`. An error can be reported more than once for one cmdlet. The module never
+switches the session back by itself. Run `Connect-OER` with the same
+sign-in the session used -- for an app-only session, its certificate or client secret, since a bare
+`Connect-OER` signs in interactively -- to connect the module again, which takes the session back,
+or use a new PowerShell process. If the session is closed with `Disconnect-MgGraph` instead of
+`Disconnect-OER`, the next OER cmdlet signs in again by itself, except on an app-only session
+(client secret or certificate), which reports `AppOnlySessionCredentialUnavailable` until you run
+`Connect-OER` with the secret or certificate.
+
+Runspaces in one process -- `ForEach-Object -Parallel` and `Start-ThreadJob` -- share one Graph SDK
+session, so a parallel fan-out across tenants in one process gets `GraphSessionChanged`; run each
+tenant in its own process instead, with `Start-Job` or a separate PowerShell process.
+
+One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to
+different tenants or identities, a command whose sign-in another one replaced sends nothing more:
+every request made while it runs is refused with `SignInSuperseded`, including the requests of a
+command that handles its output, a `ForEach-Object` script block among them. Most OER cmdlets sign
+in before any command in the pipeline processes input, so that is usually the first command. A
+cmdlet that reports a failed lookup under an error of its own carries the refusal's message in that
+error instead -- `New-OERGroup`'s `GroupResolveFailed`, for one. A tenant counts by the name you
+give it: its GUID, its domain, and no `-TenantId` at all before the module holds a session (which
+it records as `organizations`) are three different sign-ins. A pipeline that names one tenant two
+ways is therefore refused too; name it the same way on every command, as
+**Name the tenant explicitly and consistently** under [Sovereign Clouds](#sovereign-clouds) says.
+`Invoke-OERStructure` signs in when it processes its document, not before: without `-TenantId` it
+takes whatever tenant the session holds at that moment, which a later command in the same pipeline
+may already have switched, and nothing refuses that. Name `-TenantId` on it, or run it as a
+statement of its own. Run the commands as separate statements; to move objects between tenants,
+collect them in a variable first:
+
+```powershell
+# Read in one tenant, then write in another, as two statements
+$Filter = "startswith(displayName,'role_sec_')"
+$Groups = @(Get-OERGroup -TenantId $TenantA -Filter $Filter)
+foreach ($Group in $Groups) {
+    New-OERGroup -TenantId $TenantB -DisplayName $Group.DisplayName
+}
+
+# Copy a structure the same way: read it, then apply it
+$Inventory = Get-OERInventory -TenantId $TenantA -Include Groups
+Invoke-OERStructure -InputObject $Inventory -TenantId $TenantB -WhatIf
+
+# Not as one pipeline: New-OERGroup would run inside Get-OERGroup's
+# output and send nothing, and so would Invoke-OERStructure inside
+# Get-OERInventory's
+# Get-OERGroup -TenantId $TenantA ... |
+#     ForEach-Object { New-OERGroup -TenantId $TenantB ... }
+# Get-OERInventory -TenantId $TenantA ... |
+#     Invoke-OERStructure -TenantId $TenantB ...
+```
+
+The second statement switches tenant in the same PowerShell process, so whether it reaches the
+tenant it names depends on the sign-in type, as [Switching tenants](#switching-tenants) below
+describes.
 
 ### Switching tenants
 
@@ -214,11 +272,11 @@ Neither warning stops the sign-in, but under `-WarningAction Stop` (or
 requested, the post-call warning before the session is created -- the same safe direction as the
 module's existing ambient `AZURE_AUTHORITY_HOST` warning.
 
-`Disconnect-OER` clears only this module's own session state; it does not clear the credential
-AzAuth keeps for the process, and the tenant-switch check above does not depend on that state -- it
-keeps its own record, so disconnecting and reconnecting to another tenant is still checked.
-`Connect-OER -Force` is the supported way, inside the same PowerShell process, to move a client
-secret sign-in to a new tenant.
+`Disconnect-OER` clears this module's own session state and closes the Graph SDK session; it does
+not clear the credential AzAuth keeps for the process, and the tenant-switch check above does not
+depend on that state -- it keeps its own record, so disconnecting and reconnecting to another tenant
+is still checked. `Connect-OER -Force` is the supported way, inside the same PowerShell process, to
+move a client secret sign-in to a new tenant.
 
 Name tenants by their tenant ID (a GUID) -- including a Tenant Profile's `TenantId` -- rather than
 by domain: with a GUID the module refuses a token issued for another tenant outright, where a

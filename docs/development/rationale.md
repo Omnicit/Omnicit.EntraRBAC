@@ -474,14 +474,19 @@ describes.
 
 ## static-source-gates
 
-`tests/QA/sourcehygiene.tests.ps1` carries nine `Describe` blocks. Four machine-check a rule stated
+`tests/QA/sourcehygiene.tests.ps1` carries ten `Describe` blocks. Four machine-check a rule stated
 in CLAUDE.md; the fifth checks a rule stated only in this file, the sixth checks an invariant no rule
 states in prose, the seventh (Task 6, issue #81) and eighth (Sprint 2) each machine-check a
-single-ownership rule CLAUDE.md ## Code Style states, and the ninth machine-checks the
-no-runtime-Az-cmdlet rule CLAUDE.md ## Dependencies states. They all run off one shared `BeforeAll`
-that enumerates and parses the tree once for the first six gates; the seventh, eighth and ninth each
-run their own additional parse pass, kept deliberately separate from that shared walk so a mistake in
-new detection logic cannot perturb the other gates' proven reachability closure or catch-clause scan.
+single-ownership rule CLAUDE.md ## Code Style states, the ninth machine-checks the
+no-runtime-Az-cmdlet rule CLAUDE.md ## Dependencies states, and the tenth (Sprint 8 step 4b) the
+transport gates CLAUDE.md ## Authentication Architecture, ## Graph Requests and ## ARM Requests
+state. They all run off one shared `BeforeAll` that enumerates and parses the tree once for the
+first six gates; the seventh, eighth and ninth each run their own additional parse pass, kept
+deliberately separate from that shared walk so a mistake in new detection logic cannot perturb the
+other gates' proven reachability closure or catch-clause scan. The tenth reads the command names
+that shared walk already collected for its ownership checks and the `Initialize-OERAuth` call nodes
+it keeps for its call-site check, and parses the two wrapper files again, from the text that walk
+read, for its structural check.
 
 **1. Encoding.** Every authored `.ps1`/`.psd1`/`.psm1`/`.ps1xml` under `source/` and `tests/` must
 be ASCII-only and carry no UTF-8 BOM. It is a byte-level check because PSScriptAnalyzer cannot do
@@ -574,16 +579,20 @@ each with its own exemption or non-vacuity mechanism:
 (CLAUDE.md ## Code Style); no apply-document-walking file may read a document node's
 `PSObject.Properties.Name` directly outside a named, reasoned allowlist. The violation is flagged on
 the READ itself rather than on the `-contains`-family operator that might later consume it, so an
-intermediate variable cannot hide the same defect. Its scope control asserts the fifteen scanned
-files BY NAME rather than by count -- the eight `Sync-OERStructure*` handlers (AccessPackage,
-AccessReview, AdministrativeUnit, Catalog, DirectoryRoleManagementPolicy, Group, RoleAssignment and
-RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`, `Get-OEROmittedPruneCollection.ps1`,
-`Resolve-OERDeclaredApprover.ps1` and the four `Resolve-OER*Change` helpers that take a `-Declared`
-node -- because a bare count says only that fifteen became fourteen, never which file left the scan.
-Two earlier rounds of that gate each claimed to cover every document consumer while missing some, so
-the named list is the finding, not the tidy-up. Sprint 6 step 2 added `Resolve-OERDeclaredApprover.ps1`
-(a document consumer, not a `Sync-OERStructure*` handler); Sprint 6 step 3 added
-`Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler).
+intermediate variable cannot hide the same defect. Its scope control asserts the eighteen scanned
+files BY NAME rather than by count -- the nine `Sync-OERStructure*` handlers (AccessPackage,
+AccessReview, AdministrativeUnit, Catalog, DirectoryRoleAssignment, DirectoryRoleManagementPolicy,
+Group, RoleAssignment and RoleManagementPolicy) plus `Read-OERStructureDocument.ps1`,
+`Get-OEROmittedPruneCollection.ps1`, `Resolve-OERDeclaredApprover.ps1`,
+`Resolve-OERStructureRoleAssignmentScope.ps1` and the five `Resolve-OER*Change` helpers that take a
+`-Declared` node -- because a bare count says only that eighteen became seventeen, never which file
+left the scan. Two earlier rounds of that gate each claimed to cover every document consumer while
+missing some, so the named list is the finding, not the tidy-up. Sprint 6 step 2 added
+`Resolve-OERDeclaredApprover.ps1` (a document consumer, not a `Sync-OERStructure*` handler); Sprint 6
+step 3 added `Sync-OERStructureDirectoryRoleManagementPolicy.ps1` (an eighth handler); Sprint 6 step
+4 added `Resolve-OERDirectoryRoleAssignmentChange.ps1` (a fifth `Resolve-OER*Change` helper) and
+`Sync-OERStructureDirectoryRoleAssignment.ps1` (a ninth handler); Sprint 8 step 1 added
+`Resolve-OERStructureRoleAssignmentScope.ps1`, the `roleAssignments` scope pre-pass.
 
 **9. Az context hygiene** (fix, stopping `Disconnect-OER` signing out the operator's own Az
 session). CLAUDE.md ## Dependencies states that no Az module is a dependency of this module and no
@@ -593,6 +602,63 @@ small allowlist covering AzAuth's own token surface and the module's internal `I
 helper -- anything else fails the gate, naming the file and line. Non-vacuity: more than 195 parsed
 files, more than 2700 `CommandAst` nodes, and at least one recognised `-Az`-shaped call still found,
 so a matcher that stopped matching cannot pass by finding nothing to complain about.
+
+**10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20). The gates that stand in front
+of every request -- the Graph SDK session gate in the Graph transport, and the sign-in latch gate
+and the sign-in supersession gate in both transports, all described under
+[#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
+this gate machine-checks that claim from the source. Ownership rules, read from the command names
+the shared walk collected per file: `Get-MgContext` is called only in
+`Get-OERGraphSessionFingerprint`; `Lock-OERSignIn`, `Unlock-OERSignIn` and
+`Register-OERSignInIdentity` only in `Initialize-OERAuth`; `Get-OERSignInRefusal` and
+`Get-OERSignInSupersession` only in the two wrappers; `Get-OERSignInIdentity` only in
+`Register-OERSignInIdentity` and `Get-OERSignInSupersession`; `Invoke-MgGraphRequest` only in the
+Graph wrapper and `Invoke-WebRequest` only in the ARM wrapper -- and every listed owner must really
+call its command, so a rule cannot hold over nothing and a stale owner is a failure. A pairing rule,
+read from `Initialize-OERAuth`: each `Register-OERSignInIdentity` call is the statement directly
+after an `Unlock-OERSignIn` call in the same block, each call standing alone and both passing
+`-Invocation` the same variable, and the two are called equally often -- two pairs, counted
+exactly, so a new success end is a deliberate edit of that number. A dropped memory write leaves
+that success path unremembered with nothing but `Initialize-OERAuth`'s own tests to show it, and a
+`Register-OERSignInIdentity` made conditional, piped, assigned or handed its invocation
+positionally is refused rather than judged. And one structural rule,
+read from the two wrappers' own ASTs: every send sits in the BODY of a try that holds exactly one
+call path (in each of the three Graph statements, in `Invoke-GraphSingle`, one
+`Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
+`Invoke-ArmCall`), and that try is preceded, in the very block that holds it and in this order, by
+its session gate (Graph only), its latch gate and its supersession gate, each a throw followed by a
+return, with no `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request, and
+the ARM bearer token materialized only after the last gate -- every `$Plain =` assignment,
+`.ArmToken` read and `['ArmToken']` or `["ArmToken"]` index read in `Invoke-ArmCall` starts after
+it. A gate in an enclosing block does not count, and a gate out of order is a violation of its own.
+The statement counts are exact, not floors: three Graph transport statements, one ARM statement,
+exactly one direct `Invoke-MgGraphRequest` inside `Invoke-GraphAttempt`, and two bearer markers, so
+a new send path is a deliberate edit of those numbers and never a statement the scan silently
+cannot place. A known-answer table of forty-five miniature regressions -- a case per way of breaking
+a rule, the order of the gates included -- and one of nine for the pairing rule run the checker
+itself in every run, each with the verdict it must reach. ARM has no session gate by design (its
+token is not a Graph SDK session), so none is required there.
+And one call-site rule, read from the `Initialize-OERAuth` call nodes the shared walk keeps per file
+(final review of round 1, F1): the latch is set on the frame that calls `Initialize-OERAuth`, so the
+nearest enclosing function of every call under `source/` must be the file's own top-level function
+-- in the Graph wrapper `Invoke-GraphSingle` and in the ARM wrapper `Invoke-ArmCallWithRefresh`, the
+two transport refreshes -- with no script block expression between the call and it. A `foreach`,
+`if` or `try` block is part of the function; a `{ ... }` handed to `&`, `.`, `ForEach-Object`,
+`Invoke-Command` or anything else is not, which is stricter than the engine on purpose (a
+`ForEach-Object` block inside a function was measured to carry the function's own invocation). Its
+non-vacuity: at least as many public call sites as public files whose command names include
+`Initialize-OERAuth` (86 files and 92 call sites in all when it was written, with a floor of 80
+files), `Invoke-OERStructure` among them by name, and each transport's nested function found holding
+a call. Its own known-answer table of eleven miniatures covers a direct call, statement blocks, `&`,
+`.`, a nested function, `ForEach-Object`, a call in no function, both transport exceptions, a
+refresh moved to another nested function and a call in a wrapper's top-level function.
+Its stated limits: it proves the SHAPE of a gate, not that its condition can be true, which is the
+unit suites' job, and so is the proof that `Get-OERSignInSupersession` walks every frame of the
+call stack; the pairing rule proves where `Register-OERSignInIdentity` stands, not what it stores;
+a command name built at run time is invisible to it, as to the Az context gate;
+the ownership scan resolves a module-qualified name and the three `Invoke-WebRequest` aliases
+and nothing else -- `Invoke-RestMethod`, which the module calls nowhere, is not scanned; and a bearer
+read spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker.
 
 Every gate asserts its own non-vacuity (per-root file counts, named control files, catch-clause and
 token counts, region-content checks) so a detection bug fails loudly instead of passing over an
@@ -1245,8 +1311,9 @@ NOT use the approach from Omnicit.PIM.
 
 1. **Idempotency** -- if `$script:_OERAuthState` already holds a Graph token for the same tenant
    *and* auth identity (AuthMethod + ClientId) with at least 5 minutes remaining, and, when
-   `-IncludeARM` is set, a valid cached ARM token, it returns immediately with no network call and
-   no prompt.
+   `-IncludeARM` is set, a valid cached ARM token, and the process still holds the Graph SDK
+   session it connected (see [The Graph SDK session](#the-graph-sdk-session) below), it returns
+   immediately with no network call and no prompt.
 2. **Graph token** -- `Get-AzToken -Resource 'https://graph.microsoft.com/'`, wired into
    `Connect-MgGraph -AccessToken` as a SecureString.
 3. **ARM token (optional)** -- with `-IncludeARM`, a second `Get-AzToken` acquires
@@ -1254,8 +1321,16 @@ NOT use the approach from Omnicit.PIM.
    directly rather than through Az.Accounts.
 4. **Cache** -- `$script:_OERAuthState` holds `TenantId`, `AuthMethod`, `ClientId`, `Account`,
    `GraphTokenExpiry`, `ArmTokenExpiry`, `ClaimsSatisfied`, plus `TokenTenantId` and
-   `ArmTokenTenantId` (below).
+   `ArmTokenTenantId` (below), and `GraphSessionFingerprint`, the fingerprint of the Graph SDK
+   session the module connected -- never a token ([The Graph SDK session](#the-graph-sdk-session)
+   below).
 5. **ACRS step-up** -- see [#graph-wrapper](#graph-wrapper) item 2.
+6. **Sign-in latch** -- every entry latches the command that called it, and only a success releases
+   it; both transports send nothing for a latched command, refusing each of its requests with
+   `SignInRefused`, except that the Graph wrapper's session gate, which comes first, still reports a
+   changed session as `GraphSessionChanged`. See
+   [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing)
+   below.
 
 The tenant *and identity* part of step 1 is load-bearing: PR #36 closed the audit's only Critical
 finding, which was an ARM token surviving a tenant switch. PR #37 then removed the
@@ -1672,23 +1747,255 @@ client secret line in the README's Quick Start.
 
 `Initialize-OERAuth` hands the Graph token it acquired to the Microsoft Graph PowerShell SDK:
 `Connect-MgGraph -AccessToken` with `-NoWelcome` and `-ErrorAction Stop`, plus `-Environment` outside
-`Global`, and **no `-ContextScope`**, so the SDK's own default applies. Every sign-in the module makes
-goes through that one call -- `Connect-OER` and the first-use sign-in of any other cmdlet alike -- so
-an OER session always comes with an SDK session in the same process. `Connect-MgGraph` runs only on
-a call where `$GraphCached` is false -- the first sign-in, a different tenant, identity or cloud,
-`-ForceRefresh`, a claims challenge, or a Graph token within five minutes of expiry -- so the SDK
-session is started per sign-in or token refresh and not once per cmdlet; a call whose Graph session
-is still valid never reaches it. `Disconnect-OER` is the matching end: inside its `ShouldProcess`
-it clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`.
+`Global`, and **no `-ContextScope`**, which is not a parameter of the `-AccessToken` parameter set
+at all (below). Every sign-in the module makes goes through that one call -- `Connect-OER` and the
+first-use sign-in of any other cmdlet alike -- so an OER session always comes with an SDK session in
+the same process. `Connect-MgGraph` runs only on a call where `$GraphCached` is false -- the first
+sign-in, a different tenant, identity or cloud, `-ForceRefresh`, a claims challenge, a Graph token
+within five minutes of expiry, a process that holds no SDK session at all, or, under `Connect-OER`
+only, a session another `Connect-MgGraph` started -- so the SDK session is started per sign-in or
+token refresh and not once per cmdlet; a call whose Graph session is still valid never reaches it.
+`Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears `$script:_OERAuthState`
+and calls `Disconnect-MgGraph`.
 
-The message is the same in four places, each in its own medium's voice: `Connect-OER`'s and
-`Disconnect-OER`'s `.DESCRIPTION`, the README's `### Disconnect`, and the about topic's
-`GRAPH SDK SESSION` section, which sits outside `SWITCHING TENANTS` so that the README binding of
-that section stays untouched. `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the
-current process (it calls `Connect-MgGraph` with the module's token), and `Disconnect-OER` closes it.
-Run `Disconnect-OER` before your own `Connect-MgGraph` in the same process, or use a new process.
+**Why the module checks which session the process holds.** The SDK keeps one session per process,
+and `Invoke-OERGraphRequest` passes no token of its own: it calls `Invoke-MgGraphRequest`, so every
+Graph call goes out under whichever session the SDK holds at that moment -- INFERRED, the second
+half of the premise below. Before the check existed, an operator's own `Connect-MgGraph`, or
+another tool's, made while the module's cache was still valid was followed by OER cmdlets that
+returned from the cache without reconnecting. Their Graph reads and writes would then go to that
+session's tenant while `$script:_OERAuthState` still named the module's, and Azure Resource Manager,
+which keeps its own token, could point at another tenant than Graph. A forced refresh, a claims
+challenge or the five-minute window reconnected and put the module's session back, so the window
+was bounded, but nothing announced it.
 
-**How well it is known that `Disconnect-OER` alone is enough.**
+The premise has two halves, with different evidence. That another `Connect-MgGraph` REPLACES the
+module's session is READ IN THE SOURCE (the SDK facts below). That `Invoke-MgGraphRequest` then
+CARRIES the module's next Graph calls under the replacing session is INFERRED: which session it
+authenticates with was not read. Check 1.3, in section 1 of the live checklist of the change that
+added the check, `docs/live-verification/fix-refuse-a-changed-graph-sdk-session-checklist.md`,
+measures that half live.
+
+**The SDK facts the check stands on.** READ IN THE SOURCE of `microsoftgraph/msgraph-sdk-powershell`
+at tag `v2.41.1`, not executed:
+
+- The session is a process-wide static singleton (`GraphSession.cs`). `Get-MgContext` writes
+  `GraphSession.Instance.AuthContext` itself, and nothing when it is null (`GetMGContext.cs`).
+- Every `Connect-MgGraph` builds a new `AuthContext` and assigns it after sign-in
+  (`ConnectMgGraph.cs:171`, `:256`); a failed one resets the session (`LogoutAsync`).
+  `Disconnect-MgGraph` sets it to null (`AuthenticationHelpers.cs:582`).
+- The module's own connect, `-AccessToken`, sets `AuthType` and `TokenCredentialType` to
+  `UserProvidedAccessToken` and `ContextScope` to `Process` (`ConnectMgGraph.cs:244-251`). Then
+  `JwtHelpers.DecodeJWT` sets `ClientId` from the token's `appid` claim, `Scopes` from `scp` (split)
+  or `roles`, `TenantId` from `tid`, `AppName` from `app_displayname` and `Account` from `upn`
+  (`JwtHelpers.cs:40-44`). `Environment` is the environment name, `Global` by default.
+  `-ContextScope` is not a parameter of the `-AccessToken` parameter set.
+- A certificate connect sets `AuthType` to `AppOnly`, `TokenCredentialType` to `ClientCertificate`
+  and `CertificateThumbprint`, with `ContextScope` `Process` by default
+  (`ConnectMgGraph.cs:206-218`), then the same decode.
+
+MEASURED 2026-10-05, by reflection over Microsoft.Graph.Authentication 2.41.1 offline, with no
+session in the process: `Get-MgContext` declares `[OutputType(IAuthContext)]`, and `IAuthContext`
+has `AuthType`, `TokenCredentialType`, `ClientId`, `TenantId`, `Scopes` (`String[]`), `Environment`,
+`AppName`, `Account`, `LoginHint`, `HomeAccountId`, `CertificateThumbprint`,
+`CertificateSubjectName`, `SendCertificateChain`, `Certificate` (`X509Certificate2`),
+`ContextScope`, `PSHostVersion`, `ManagedIdentityId`, `ClientSecret` (`SecureString`) and
+`WamEnabled` -- none of them a token. The contract `Describe` in
+`tests/Unit/Private/Get-OERGraphSessionFingerprint.Tests.ps1` pins the names and types of the eight
+properties the fingerprint reads, and of the two it never reads, against whichever SDK release CI
+resolves, so a renamed or retyped property turns it red instead of leaving the fingerprint to
+compare two empty values as equal.
+
+NOT YET MEASURED: the values `Get-MgContext` really holds after the module's own connect, and after
+a certificate connect for another application in the same tenant -- that is, whether the fingerprint
+tells those two apart live. Check 1.1, in section 1 of the same live checklist, measures them.
+
+**The fingerprint.** `Get-OERGraphSessionFingerprint` is its single owner. It reads eight
+properties of the context by name -- `AuthType`, `TokenCredentialType`, `ClientId`, `TenantId`,
+`Account`, `AppName`, `Environment` and `Scopes` -- sorts the scopes ordinally and keeps them as an
+array, and writes the eight as compact JSON. The same grant in another order is therefore the same
+session, and no value holding a separator -- one scope with a space in it -- can make two sessions
+compare equal. `Initialize-OERAuth` records it as `GraphSessionFingerprint` in the state it
+rebuilds, read straight after its own `Connect-MgGraph`; the key is written even when the value is
+`$null`, so a session whose context could not be read is still compared. From the facts above, a
+certificate connect differs from the module's in `AuthType` and `TokenCredentialType`, and an
+`-AccessToken` connect with a token for another application, tenant or user differs in `ClientId`,
+`TenantId` or `Account`. That a client secret, managed identity or interactive connect differs the
+same way is INFERRED, not read here. The properties outside the eight (`ContextScope`,
+`CertificateThumbprint`, `LoginHint`, `HomeAccountId`, `PSHostVersion`) do not change it; the same
+test file pins both directions.
+
+**Values, not object identity.** Two sessions with equal values give an equal fingerprint whatever
+object carries them. Two runspaces in one process -- `ForEach-Object -Parallel`, for example --
+connected as the same identity to the same tenant each sees the other's `Connect-MgGraph` as its
+own session, and neither is refused; the SDK's object identity is an implementation detail this
+module does not depend on. The cost is the mirror image: a session someone else started with
+exactly the same eight values is accepted, and such a session sends nothing to another tenant. The
+same test file pins that two distinct context objects with equal values give equal fingerprints.
+
+**What it never holds.** No token: it reads only the eight properties above, and the context
+carries no token property in the reflection above. Not the context object. And it never reads the
+context's `ClientSecret` or `Certificate`: every value is read by name, never by enumerating the
+context. The test for that records every read of the two properties and has a positive control,
+since a getter that throws would prove nothing -- MEASURED 2026-10-05, PowerShell 7 swallows an
+exception a ScriptProperty getter raises on member access and returns `$null`. The fingerprint does
+hold the session's tenant id and user principal name, so it is never written to any stream:
+`Get-OERGraphSessionState` returns only a state word, and the `GraphSessionChanged` message names
+no token and no tenant but the module's own.
+
+**Four states.** `Get-OERGraphSessionState` is the single owner of the comparison, which is
+ordinal:
+
+- `Untracked` -- no state, or a state without the key. Nothing is compared and `Get-MgContext` is
+  not called. Every state `Initialize-OERAuth` builds carries the key, so outside the tests, whose
+  hand-built states stay valid this way, this is the no-state case: a first sign-in, or the first
+  after `Disconnect-OER`, whose `Connect-MgGraph` replaces whatever session the process held, as any
+  `Connect-MgGraph` does.
+- `Own` -- the process holds the session the module connected. Everything carries on as before, the
+  cached return included.
+- `Absent` -- the process holds no session, after `Disconnect-MgGraph` for example. A cache miss: the
+  module connects again with a token of its own, as after a renewal. It does not keep its Graph
+  token to reconnect with, so an inherited app-only identity (client secret or certificate) cannot,
+  and gets `AppOnlySessionCredentialUnavailable`, whose message then names the closed Graph SDK
+  session (`Disconnect-MgGraph`), until `Connect-OER` is run with the secret or certificate. A
+  delegated or managed identity session signs in again by itself.
+- `Changed` -- another `Connect-MgGraph` replaced the module's session. `Initialize-OERAuth` raises
+  a terminating `GraphSessionChanged` (`AuthenticationError`, target the module's own tenant) at
+  every entry, before any token call: on a cache hit, under `-ForceRefresh`, for a claims-challenge
+  step-up, for a renewal inside the five-minute window, for a call naming another tenant with
+  `-TenantId` and for an `-IncludeARM` call alike. The module never switches the session back by
+  itself, since that would move the other session's calls to this module's tenant.
+
+**Taking the session back.** `-ReclaimGraphSession`, a private switch on `Initialize-OERAuth`,
+makes `Changed` a cache miss, so the module connects again and its `Connect-MgGraph` replaces the
+other session. Only `Connect-OER` passes it, on every parameter set: an explicit `Connect-OER` is
+the operator's instruction to take the session back. Any other caller passing it would move the
+other session's calls to this module's tenant without anyone asking, which is exactly what the
+refusal exists to prevent. `Connect-OER` is therefore idempotent only while the session is `Own`;
+over `Changed` or `Absent` it signs in again. The module's own renewal -- a `Connect-MgGraph` after
+the five-minute window, or `-ForceRefresh` under its own session -- writes a new fingerprint, and the
+next call is `Own`.
+
+**`Disconnect-OER`** clears `$script:_OERAuthState`, and the fingerprint with it, so the next
+cmdlet is `Untracked` and signs in from the start. It still calls `Disconnect-MgGraph` whatever
+session the process holds, so after another `Connect-MgGraph` it ends that session too, exactly as it
+did before the check existed; its help says so. That is the opposite of the choice for Az, which
+`Disconnect-OER` leaves alone since the module never establishes an Az context. The alternative,
+skipping `Disconnect-MgGraph` when the state is `Changed`, would be one condition and a help change.
+
+**Why `Invoke-OERGraphRequest` checks again before every call.** MEASURED 2026-10-05 in
+PowerShell 7, with plain functions and no module code:
+
+1. A terminating error that a nested advanced function raises with `$PSCmdlet.ThrowTerminatingError`
+   -- the shape of `Write-CmdletError -Terminating` -- ends that function, but the CALLING function
+   carries on with its next statement, with the default error preference as well as under
+   `-ErrorAction SilentlyContinue` or `Ignore`, unless a `try` or `trap` is active somewhere up the
+   call stack. Inside any `try`, Pester's included, it propagates.
+2. Under `SilentlyContinue` or `Ignore`, a function carries on past its OWN `throw` to its next
+   statement; inside any `try` it propagates.
+3. Under the same preference with no `try` up the stack, a `throw` inside a `catch` block resumes
+   after the whole `try` statement, not at the `catch` block's next statement.
+
+No public cmdlet wraps its `Initialize-OERAuth` call, so at a prompt or in a script a cmdlet carries
+on past the refusal at its entry (fact 1) and reaches its Graph calls. `Invoke-OERGraphRequest`
+therefore asks `Get-OERGraphSessionState` before every request it sends: at the head of each attempt
+-- the first, each throttled retry, each page under `-All` -- outside the attempt's `try`, whose
+`catch` would turn the refusal into a Graph failure, and again after the `Initialize-OERAuth` call of
+the claims-challenge step-up and of the token-rejected retry, since each of those sends a request
+too. Each gate is a `throw` followed by a `return`, and the `return` is load-bearing: under
+`SilentlyContinue` or `Ignore` it is what keeps the request from going out (fact 2). At a prompt
+the operator therefore sees more than one error for one cmdlet: `GraphSessionChanged` at its entry,
+and then an error for each Graph call it attempts -- `GraphSessionChanged` from the transport,
+carried in the message where the cmdlet re-publishes a failed lookup under its own id
+(`PrincipalNotFound`, for example) or the apply engine reports it as a `Failed` row. That is why the
+user-facing texts say the Graph CALLS are refused, never that the cmdlet stops.
+
+A paged read that a refusal interrupts ends. The paging `catch` re-throws, and under fact 3 that
+resumes after the whole `try` statement, so the `catch` sets `$PageFailed` and the loop checks it
+straight after the `try` statement: `if ($PageFailed) { return }`. Under
+`-ErrorAction SilentlyContinue` or `Ignore` outside any `try`, a page whose request fails (the
+refusal included) therefore ends the read with nothing on the success channel instead of looping.
+It is `return`, not `break`, so on that path the caller gets no partial collection that reads as
+complete. Inside a `try` the refusal propagates, with `PartialValue`, `NextLink` and `PageNumber` on
+its exception, as for any page whose request fails.
+
+The proofs run in a runspace with no `try`. Pester runs every test inside one, where all three facts
+turn into propagation, so a test there cannot see a cmdlet carry on. G6, G6b, G7 and G9 in
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Describe
+`Invoke-OERGraphRequest Graph SDK session gate (A18)`) run the module in a second runspace with no
+`try` (`Invoke-OERWithConfirmAnswer` in `tests/Unit/TestHelpers/OERConfirmHost.ps1`), with the
+transport tripwire installed, and assert that no request goes out once the session has changed.
+
+**Azure Resource Manager after the refusal.** The check is at every `Initialize-OERAuth` entry, so
+an Azure-only cmdlet's `-IncludeARM` entry raises `GraphSessionChanged` too, and inside a `try` that
+ends the cmdlet. Outside any `try` the cmdlet carries on (fact 1). Until the sign-in latch existed
+its Azure Resource Manager calls then went out, with whatever ARM token the state held; since then
+the refusal leaves the cmdlet latched, so `Invoke-OERArmRequest` refuses each of its ARM requests
+with `SignInRefused` before it materializes a bearer
+([A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing),
+below). There is still no session gate in the ARM wrapper: ARM sends the module's own token, which
+another `Connect-MgGraph` does not touch, so an ARM call of a cmdlet whose entry was NOT refused --
+the session replaced in the middle of a cmdlet, after its entry -- still goes out to the module's
+own tenant with that token, while the session gate refuses that cmdlet's Graph calls.
+
+The ARM token drop predates the latch and stays as a second guard that does not depend on it. A
+refused request that names another tenant, identity or cloud -- the `$ArmIdentityUnchanged` rule the
+state rebuild already applies -- drops that token first (`ArmToken`, `ArmTokenExpiry`,
+`ArmResourceUrl` and `ArmTokenTenantId`), since `Invoke-OERArmRequest` compares nothing and sends
+whatever token the state holds: a request that reached the send would carry an empty bearer, ARM
+would refuse it with 401, and the 401 path raises, since its forced refresh is refused as well.
+Before the drop existed, the final review of A18 MEASURED `Get-OERSubscription -TenantId` naming a
+second tenant, in a runspace with no `try`, being refused and then listing the first tenant's
+subscriptions with the first tenant's token. G10 in
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Describe
+`Initialize-OERAuth refusal leaves no ARM token for another tenant (A18, R20)`) runs that call in a
+runspace with no `try` and pins that no request carries that token. A12 and A13 in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1` pin the drop and its limit: a refused request for
+the module's own tenant, identity and cloud keeps its token, since that token is for the tenant the
+request meant. The cost falls on an app-only session: once
+`Connect-OER` has taken the session back after a drop, it needs `Connect-OER -IncludeARM` again
+before an Azure cmdlet, since the module never keeps the certificate or the client secret; a
+delegated or managed identity session re-acquires its ARM token by itself. An ARM-only cmdlet that
+has to acquire an ARM token is refused at its `Initialize-OERAuth` entry like any other, before any
+token call. Any Graph call such a cmdlet makes goes through the gate like every other. The
+user-facing texts therefore say that, after the refusal, the cmdlet's Microsoft Graph calls are
+refused with `GraphSessionChanged` and its Azure Resource Manager calls with `SignInRefused`.
+
+**What is still not covered.**
+
+- A session swapped by another runspace between the gate and the request. The gate reads the
+  session, and the SDK reads it again when it sends; a `Connect-MgGraph` in another runspace of the
+  same process in between is not caught.
+- A session swapped by another runspace between the module's own `Connect-MgGraph` and the
+  fingerprint read straight after it. `Initialize-OERAuth` records whatever session the process holds
+  at that read, so another runspace's `Connect-MgGraph` landing in between is recorded as the
+  module's own session, and the module's Graph calls then go out under it without a refusal.
+- The live values of the eight properties (check 1.1) and the carrying half of the premise (check
+  1.3), both in section 1 of the live checklist named above.
+
+**The message, in four places.** `Connect-OER`'s and `Disconnect-OER`'s `.DESCRIPTION`, the
+README's `### Disconnect` and the about topic's `GRAPH SDK SESSION` section, which sits outside
+`SWITCHING TENANTS` so that the README binding of that section stays untouched, say the same thing,
+each in its own medium's voice: `Connect-OER`, and the automatic sign-in of any other cmdlet, sets up
+a Graph SDK session with the module's token; another `Connect-MgGraph` that replaces it makes the
+next OER cmdlet send nothing, refusing its Microsoft Graph calls with `GraphSessionChanged` and
+(since the sign-in latch) its Azure Resource Manager calls with `SignInRefused`; the module never
+switches the session back by itself, and `Connect-OER` run with the same sign-in the session used
+(for an app-only session, its certificate or client secret, since a bare `Connect-OER` signs in
+interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
+instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
+and `Disconnect-OER` ends whichever session the process holds. The README and the about topic add
+one sentence the two help texts do not carry: runspaces in one process (`ForEach-Object -Parallel`,
+`Start-ThreadJob`) share one Graph SDK session, so a parallel fan-out across tenants in one process
+gets `GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate
+PowerShell process). `Connect-OER`'s `.DESCRIPTION` alone carries the general case as well: a cmdlet
+whose own sign-in fails or is refused sends no Microsoft Graph or Azure Resource Manager request
+(`SignInRefused`).
+
+**The old guidance, and what was known about it.** Until the check existed, the same four texts
+told the operator to run `Disconnect-OER` before their own `Connect-MgGraph` in the same process, or
+to use a new process. They no longer do: the module refuses its Graph calls under another session
+instead of relying on that order. What the record held about that order stays true as history:
 
 - MEASURED, for a certificate sign-in: check T.8 in
   `docs/live-verification/feat-pim-group-approval-checklist.md` ran `Disconnect-OER`, then
@@ -1701,41 +2008,368 @@ Run `Disconnect-OER` before your own `Connect-MgGraph` in the same process, or u
   "Output was not preserved; the operator reports every step completed as expected", dated
   2026-09-24. There is no captured output to point at.
 
-**No crash is recorded in the tracked checklists or in this file, and the help claims none.** That is
-the extent of the search: it covers the tracked files under `docs/live-verification/` and this
-file, and it does not rule out a failure that was seen and not written down. The caution is the
-explanation `feat-pim-group-approval-checklist.md` gives for the order of its steps: `Connect-OER`
-leaves its raw access token in the Graph SDK's process cache, which a later `Connect-MgGraph` would
-otherwise try to read as an MSAL cache. It is the explanation `c2a5c70` wrote, not a measurement: no
-output of a run that skipped the disconnect is saved. In the history `main` carries, the text first
-appears in `c2a5c70` (#10), in that checklist, and the same wording later appears in three more:
+Both checks disconnected first, so neither one ran the opposite order. The caution the live
+checklists give for that order -- that `Connect-OER` leaves its raw access token in the Graph SDK's
+process cache, which a later `Connect-MgGraph` would otherwise try to read as an MSAL cache -- was
+the explanation `c2a5c70` wrote. In the history `main` carries, the text first appears in `c2a5c70`
+(#10), in `feat-pim-group-approval-checklist.md`, and the same wording later appears in
 `feat-directory-role-management-policies-checklist.md` (`55acea9`),
 `feat-directory-role-assignments-checklist.md` (`6b952e6`) and
-`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`). The last of those calls the
-order "step 3's lesson" and gives no account of what happened. The caution is NOT in the T.4
-checklist: `fix-withhold-prune-on-unresolved-entries-checklist.md` has no such text, and its
-`Disconnect-OER` line comes from `c33aca4` (2026-09-24, #9), which gives no reason for it. Both
-checks above disconnected first, so neither one ran the opposite order. The guidance is therefore
-given as a precaution and never as a described failure, and the measured-versus-reported wording
-stays in this record rather than in user-facing help.
+`feat-inventory-directory-roles-and-rename-checklist.md` (`d9783e9`).
 
-**Why the guidance is still worth giving.** The SDK session is process-wide and belongs to
-Microsoft.Graph.Authentication, not to this module, while `$script:_OERAuthState` is the module's own
-cache. They are two separate records, and `Disconnect-OER` is what ends both together. INFERRED, and
-never run: the hazard is the two disagreeing. Three facts in the code carry it.
-`Invoke-OERGraphRequest` passes no token of its own and calls `Invoke-MgGraphRequest @Parameters`,
-so every Graph call goes out under whichever session the SDK holds at that moment; nothing under
-`source/` calls `Get-MgContext`, so the module never checks which session that is; and
-`Initialize-OERAuth` returns on a cache hit before `Connect-MgGraph`. The premise that is ASSUMED, and
-not verified here, is SDK behaviour: that an operator's own `Connect-MgGraph` replaces the session
-`Connect-OER` set up. Given that, an operator's `Connect-MgGraph` made while the module's cache is
-still valid is followed by OER cmdlets that return from the cache without reconnecting, and their
-Graph calls go out under the operator's session instead of the one the module believes it holds. The
-hazard is bounded: a forced refresh (`-ForceRefresh`, which the token-rejected retry passes), a
-claims challenge, or the Graph token entering its five-minute window each leave `$GraphCached`
-false, so `Initialize-OERAuth` runs again and reconnects, and the module's session takes the
-operator's place. It is a reasoned hazard, not an observed one, and it is the reason to disconnect
-first rather than a tidy habit.
+MEASURED on 2026-10-05, in checks 1.1, 1.3, 2.2 and 2.5 of
+`docs/live-verification/fix-refuse-a-changed-graph-sdk-session-checklist.md`, as the dedicated
+certificate identity: a `Connect-MgGraph` with a certificate thumbprint and `-ContextScope Process`,
+made straight after `Connect-OER` in the same process, fails with `AuthenticationFailedException`
+(MSAL cannot deserialize the SDK's process token cache, which holds the module's raw access token)
+and leaves no Graph SDK session at all. The module's next call then finds the session Absent, not
+Changed: a delegated or managed identity session connects again by itself, and an app-only one
+reports `AppOnlySessionCredentialUnavailable`. The same `Connect-MgGraph` made after
+`Disconnect-MgGraph` succeeds and replaces the session, and the module refuses that one with
+`GraphSessionChanged` (checks 2.2 and 2.5). INFERRED from the SDK source and not measured: a
+`Connect-MgGraph -AccessToken`, or a delegated sign-in with the default `-ContextScope CurrentUser`,
+does not read that process cache, and replaces the session as the `Disconnect-MgGraph`-first order
+does.
+
+### A command whose sign-in is refused sends nothing
+
+**The finding.** Fact 1 under [The Graph SDK session](#the-graph-sdk-session) is not particular to
+`GraphSessionChanged`. Every terminating error `Initialize-OERAuth` raises -- `GraphTokenAcquisitionFailed`,
+`GraphConnectFailed`, `TenantMismatch`, `AppOnlySessionCredentialUnavailable`, `MissingClientSecret`,
+`MissingClientCertificate` and `GraphSessionChanged` -- ends `Initialize-OERAuth` and not the cmdlet
+that called it, and no public cmdlet wraps its call. Finding F1 of the step 4b review (PR #24) was
+therefore that a cmdlet run with `-TenantId B`, whose sign-in for B failed or was refused, carried on
+and sent its Graph calls under the Graph SDK session tenant A left, and its ARM calls with whatever
+ARM token the state held. For `Invoke-OERStructure -TenantId B -Prune` that is B's document applied
+to A.
+
+**The latch.** The first statement of `Initialize-OERAuth` is `Lock-OERSignIn`, which records the
+invocation of the command that called it in `$script:_OERSignInLatch` and returns it.
+`Unlock-OERSignIn` removes that one entry, and `Initialize-OERAuth` calls it only where a sign-in
+succeeded: at the cached return, and as the last statement of a new connection that went the whole
+way -- after the ARM step, inside the big `try` and never in its `finally`, which also runs on every
+terminating error. Every refusal, terminating error and early return leaves the entry in place. The
+table is a `ConditionalWeakTable`, created on first use, and it stores only the boolean `$true`. Its
+keys are the commands' own invocation objects, held weakly, so the table keeps no command alive, and
+used only for their identity: the decision is a lookup by reference and never reads a key. The keys
+are not empty -- the table can be enumerated, and each invocation carries its command's bound
+parameters, `-TenantId` among them and, on `Connect-OER`, the `SecureString` secret and the
+certificate as well -- but nothing reads them through the latch. Gate 10 of
+[#static-source-gates](#static-source-gates) keeps both calls in `Initialize-OERAuth`.
+
+**The latched frame is the immediate caller's.** `Lock-OERSignIn` latches the frame of the command
+that called `Initialize-OERAuth` directly, which is the command's own frame only while the call
+stands in the command's own function. MEASURED: a `& { }` script block carries an invocation of its
+own, so a call moved into one, or into a nested function, latches a frame that ends at once, and the
+command sends again after a refused sign-in -- with every unit test still green, since they mock
+`Initialize-OERAuth`. So `Initialize-OERAuth` is called directly in the command's own function, and
+gate 10 holds every call site under `source/` to that; the transports' own refreshes, in
+`Invoke-GraphSingle` and `Invoke-ArmCallWithRefresh`, are the stated exception (Ruling R5).
+
+**The gates.** `Get-OERSignInRefusal` walks `Get-PSCallStack`, innermost frame first, and returns the
+name of the first frame whose invocation the table holds -- nothing when none is, and nothing at
+once, without reading the stack, when the table was never created, which is the case in every unit
+test that mocks `Initialize-OERAuth`. Both transports ask it before every request, and
+`New-OERSignInRefusedError` is the single owner of the refusal: `SignInRefused`,
+`AuthenticationError`, the latched command's name as its target, and a message that names no tenant,
+account or token. In `Invoke-OERGraphRequest` the latch gate stands straight after each session gate
+-- at the head of each attempt (the first, each throttled retry, each page under `-All`), and after
+the `Initialize-OERAuth` call of the claims-challenge step-up and of the token-rejected retry --
+outside the attempt's `try`, so a changed session is still reported as `GraphSessionChanged`. In
+`Invoke-OERArmRequest` it stands once, in `Invoke-ArmCall`, which every request passes through (the
+first, each throttled retry, the 401 retry and every page), before the bearer token is materialized
+and before `Invoke-WebRequest`. Each gate is a `throw` followed by a `return`, for fact 2. The ARM
+wrapper has no session gate (step 4b round 1, Ruling R2): an ARM call of a command whose entry was
+not refused still goes out with the module's own token, as described under
+[The Graph SDK session](#the-graph-sdk-session).
+
+**Why the key is the command, not a module boolean** (step 4b round 1, Ruling R1). MEASURED by the
+controller on 2026-10-05 in plain PowerShell 7, with no module code: a latch that any later
+successful sign-in releases does not close F1. Almost every public cmdlet calls `Initialize-OERAuth`
+in its `begin` block, and the apply handlers call public cmdlets (`New-OERGroup`, `Set-OERGroup`,
+`Get-OERRoleAssignment`, ...) that call it again without `-TenantId`, inherit session A and hit the
+cache: inside a refused `Invoke-OERStructure -TenantId B`, the first nested cmdlet would release a
+boolean and every later write would go to A. A pipeline does the same: in
+`Get-OERGroup -TenantId B | Remove-OERGroup` both `begin` blocks run first, so `Remove-OERGroup`'s
+cache hit would release a boolean before `Get-OERGroup`'s `process` block reads. Keyed on the
+invocation, and refused while ANY frame on the stack is held, a nested cmdlet's success releases
+only its own entry and the refused outer command stays latched, and a pipeline neighbour's success
+releases only its own. Measured the same way: `(Get-PSCallStack)[0].InvocationInfo` is
+reference-equal to `$MyInvocation` in an advanced function's `begin`, `process` and `end` blocks, a
+nested function sees its caller's frame at index 1, and `Get-PSCallStack` costs about 0.1 ms at a
+depth of 60 frames -- the price each request pays once the table exists.
+
+**Opening again.** A command that finishes is on no call stack, so the latch does not refuse the
+command after it: `Connect-OER`, or any new command whose own sign-in succeeds, sends again, and
+there is nothing to clear. `Disconnect-OER` does not touch the table and has no need to. Until it
+finishes, a refused command also refuses a command downstream of it in the same pipeline while that
+command handles its output, since the refused frame is on the call stack then (measured): in
+`Invoke-OERStructure -TenantId B ... | ForEach-Object { Get-OERGroup ... }`, the `Get-OERGroup`
+requests are refused too -- conservative, and intended.
+
+**What the operator sees.** Outside any `try`, a cmdlet whose sign-in was refused carries on, sends
+nothing, and reports an error for each request it then attempts: `SignInRefused` from the transport
+(`GraphSessionChanged` instead for a Graph request while the session stays changed), carried in the
+message where the cmdlet re-publishes a failed lookup under its own id -- `PrincipalNotFound` from
+`Get-OERActiveRoleAssignment`, `Get-OEREligibleRoleAssignment` or `Get-OERRoleAssignment` when
+their principal lookup is the refused request, for example -- or where the apply engine reports it
+as a `Failed` row. Inside a `try` the refusal at its entry propagates and ends it. The user-facing
+texts therefore say that such a command sends nothing, never that it stops.
+
+**`ArmTokenAcquisitionFailed`** (step 4b round 1, Ruling R4) is the one refusal that is not
+terminating: it writes its error and returns early, after the Graph half has connected or come from
+the cache. It leaves the latch set like every other early return, so that command's Microsoft Graph
+calls are refused too, although its Graph session is in order. It reaches every command that signs
+in with `-IncludeARM` and also calls Graph -- for example `Get-OERInventory -IncludeARM`,
+`Export-OERInventory` and `Invoke-OERStructure` with ARM sections, and the `-IncludeARM` role
+assignment cmdlets that resolve a principal through Graph. The rule is that every early abort leaves
+the latch set, and this path is no exception; the cost is a whole command refused where only its
+Azure half failed.
+
+**Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
+`Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
+
+- A refresh inside a transport (step 4b round 1, Ruling R5). The claims-challenge step-up and the
+  token-rejected retry of `Invoke-OERGraphRequest` call `Initialize-OERAuth` from its nested
+  `Invoke-GraphSingle`, and the 401 retry of `Invoke-OERArmRequest` from its nested
+  `Invoke-ArmCallWithRefresh`. A sign-in refused there latches that nested function, so
+  `SignInRefused`'s target names an internal function, only that one retry is refused, and the
+  command's next request is a new transport call, which the latch does not refuse. The session is
+  the same tenant's, and the session gate covers a changed one. The message's "this command" then
+  means that internal function, which only the target shows.
+- Three private helpers call `Initialize-OERAuth` themselves: `Resolve-OERInventoryScopeTree`,
+  `Resolve-OERReviewerScope` and `Resolve-OERTargetList`, each forwarding the `-TenantId` its caller
+  passed it. A refusal there latches the helper, and refuses only the requests made inside it. A
+  refusal at the calling cmdlet's own entry latches the cmdlet, and with it every request the helper
+  makes, since the cmdlet's frame is on the helper's call stack.
+
+**The proof.** Pester runs every test inside a `try`, where the refusal propagates, so the carrying
+on is proved in a runspace with no `try`, as for the session gate. H1 in
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` (Describe
+`A command whose sign-in was refused sends nothing through either transport (A19, F1)`) runs
+`Invoke-OERStructure -TenantId` naming another tenant, with `-WhatIf`, over a state for tenant A whose
+Graph SDK session is still the module's own, with that sign-in failing at its token call
+(`GraphTokenAcquisitionFailed`). No Graph and no ARM request leaves -- neither the group read the
+handler makes itself nor the role assignment read a nested `Get-OERRoleAssignment` makes after its
+own sign-in hit A's cache -- both sections answer with rows, and none is planned or written. H2 pins
+that a plain command after it, on the same state, sends its request. The latch's own states are
+pinned in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1` (Describe
+`Initialize-OERAuth sign-in latch (A19)`), and each wrapper's gate in its own test file (Describes
+`Invoke-OERGraphRequest sign-in latch gate (A19)` and `Invoke-OERArmRequest sign-in latch gate (A19)`).
+
+### A command sends nothing under a sign-in a later command replaced
+
+**The finding (F-E).** Round 1 of step 4b stopped on it, and it is older than the round: it was
+present in the first version. In a pipeline every `begin` block runs before any `process` block,
+and almost every public cmdlet signs in in its `begin` block and acts in its `process` block:
+counted from the source on 2026-10-06, 84 of the 86 public `Initialize-OERAuth` call sites stand in
+a `begin` block, and the other two, in `Invoke-OERStructure` and `Connect-OER`, in `process`. So
+the first command's `process` block acts under the session a LATER command's sign-in switched to:
+`New-OERGroup -TenantId A ... | Add-OERGroupMember -TenantId B` created the group in B, with no
+error. MEASURED in plain PowerShell 7, with no module code: two functions that each sign in in their
+`begin` block, piped one into the other, report "creates grp under session B (named A)". The rest
+was read in the code.
+
+**Why neither round 1 gate sees it.** Both sign-ins succeed. The latch holds a command only while
+its sign-in is refused, and each of the two commands released its own entry at its own success. The
+session gate compares the Graph SDK session with the one the module's own `Connect-MgGraph` left,
+and the downstream command's `Connect-MgGraph` is the module's own session -- for B. Everything the
+two gates read is true; what is wrong is which command the session was signed in for.
+
+**The memory.** Where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases
+the latch: at the cached return, and as the last statement of a new connection that went the whole
+way -- `Register-OERSignInIdentity` remembers which identity the calling command signed in as, keyed
+on the same invocation the latch uses (`$SignInCaller`, which `Lock-OERSignIn` returned at entry).
+The table, `$script:_OERSignInIdentity`, is a `ConditionalWeakTable` like the latch's: created on
+first use, keyed weakly on the commands' own invocation objects, and used only for their identity.
+Its value is one string from `Get-OERSignInIdentity`: the state's TenantId, AuthMethod, ClientId and
+Environment, in that fixed order, each read as a string (a missing one as empty) and joined by a
+line feed -- the four terms `$ArmIdentityUnchanged` compares, and never a token. A later success of
+the same command replaces its value, and a success that leaves no state removes its entry, so that
+command is no longer compared. One function builds both the remembered and the compared value, so
+the list of terms cannot drift between the two.
+
+**The gate.** Both transports ask `Get-OERSignInSupersession` before every request. It returns at
+once, without reading the call stack, when the table was never created -- the case in every unit
+test that mocks `Initialize-OERAuth`. Otherwise it reads the current identity once, walks
+`Microsoft.PowerShell.Utility\Get-PSCallStack` from the innermost frame outwards, and returns the
+name of the first frame whose invocation the table holds with a value that is not `-eq` the current
+identity -- `'a script block'` when that frame has no command name. The comparison is PowerShell's
+`-eq`, which ignores case, as `$ArmIdentityUnchanged` compares the same terms. A frame the table
+does not hold is not compared, so a command with no memory is never refused by this gate. When it
+returns a name, the transport throws the record `New-OERSignInSupersededError` builds --
+`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and fixed text that
+names no tenant, account or token -- followed by a `return`, for fact 2 under
+[The Graph SDK session](#the-graph-sdk-session).
+
+**Why any frame, and not the nearest.** The nested case. The apply handlers and several public
+cmdlets call public cmdlets that sign in again without `-TenantId` (see "Why the key is the command"
+under the previous subsection). In `Outer -TenantId A | Down -TenantId B`, a cmdlet nested in
+`Outer`'s `process` block signs in after `Down`'s `begin` block switched the state to B, hits B's
+cache and remembers B. Its own frame matches the state, so a walk that stopped at the nearest
+remembering frame would let it write to B on `Outer`'s behalf. The walk goes on past a frame whose
+memory equals the state and finds `Outer`, which remembers A.
+
+**Why the innermost frame that differs is the target.** In the nested case the inner frames
+inherited the current state and match it. The command whose sign-in another command replaced is the
+outer one, and it is the command the message speaks to ("Run the commands as separate statements").
+The first frame that differs, walking outwards, is the closest such command to the request.
+
+**Why no state counts as a difference.** When the module holds no state at all -- after a
+`Disconnect-OER` run inside the pipeline, for example -- there is no current identity, and a
+remembered string is never `-eq` to `$null`, so every remembering frame differs and the request is
+refused with `SignInSuperseded`. Refusing is the safe direction: the request would otherwise go out
+under no session of the module's, or with no token. The cost is that such a pipeline reports
+`SignInSuperseded` instead of an authentication failure.
+
+**The order of the three gates.** In `Invoke-OERGraphRequest` the supersession gate stands straight
+after each latch gate, which stands straight after each session gate: at the head of each attempt
+(the first, each throttled retry, each page under `-All`), and after the `Initialize-OERAuth` call
+of the claims-challenge step-up and of the token-rejected retry. In `Invoke-OERArmRequest` it stands
+once, in `Invoke-ArmCall`, straight after the latch gate and before the bearer token is
+materialized. The session gate comes first, so a changed session is still reported as
+`GraphSessionChanged`; the latch gate next, so a command whose own sign-in was refused is still
+reported as `SignInRefused`. All three stand outside the attempt's `try`, whose `catch` would turn a
+refusal into a Graph failure. At the two Graph retry sites, and on the ARM 401 retry, the
+supersession gate also refuses a step-up or a refresh whose sign-in changed the state's identity: a
+command on the call stack still remembers the identity from before it.
+
+**What it costs.** A pipeline that deliberately spans tenants or identities is refused, and more of
+it than the command whose sign-in was replaced. MEASURED on 2026-10-05, in plain PowerShell and in
+the round's end-to-end tests: a downstream command processes each object inside the upstream
+command's output call, with the upstream command's frame still on the call stack, in `Up | Down`
+and in `Up | ForEach-Object { Inner }` alike. So in
+`Get-OERGroup -TenantId A | ForEach-Object { New-OERGroup -TenantId B ... }` the downstream
+`New-OERGroup` sends nothing to B -- its requests are refused, the refusal naming `Get-OERGroup` --
+and any later request `Get-OERGroup` makes is refused too: the next group's member read under
+`-IncludeMembers`, for example. Its listing itself goes out under A, since `Get-OERGroup` reads
+every page of a `-Filter` or `-All` listing before it emits the first group (read in the code).
+That is the any-frame rule working as decided, and it is the rule the user-facing texts state: one
+pipeline works in one tenant with one identity. A cross-tenant copy is two statements, each of which
+signs in and finishes before the next one starts: `$Groups = @(Get-OERGroup -TenantId A ...)`, then
+`foreach ($Group in $Groups) { New-OERGroup -TenantId B ... }`. (`$Groups | New-OERGroup ...` is not
+the shape, since `New-OERGroup` binds nothing from the pipeline.) The same pipeline naming the same
+tenant and identity twice sends every request, and so do two separate statements naming different
+tenants.
+
+Two shapes that worked before this round are refused now, both on the safe side. The first is a
+copy of a whole structure: `Get-OERInventory -TenantId A ... | Invoke-OERStructure -TenantId B`
+(`-InputObject` binds the inventory from the pipeline, under its alias `Inventory`).
+`Invoke-OERStructure` signs in to B in its `process` block, inside `Get-OERInventory`'s output,
+while `Get-OERInventory`'s frame still remembers A, so every request of the apply is refused, the
+refusal naming `Get-OERInventory` (read in the code, by the same rule as the measured
+`Up | Down`). The working form is two statements:
+`$Inventory = Get-OERInventory -TenantId A ...`, then
+`Invoke-OERStructure -InputObject $Inventory -TenantId B ...`. The second is one tenant named two
+ways. The identity's tenant term is the tenant as the caller NAMED it, the value `TenantId` holds in
+the state -- the same key the cache predicates compare -- and not the tenant the token was issued
+for, so a GUID on one command and a domain on another are two identities, and so is no tenant named
+at all before the module holds a state, which records it as `organizations`. MEASURED by the final
+review of this round, with stand-ins of the cmdlets' shape and the module's own sign-in:
+`'x' | Up -TenantId <guid> | Down -TenantId <its domain>`, one tenant, sent nothing and
+reported `SignInSuperseded` for both commands; so did a pipeline after `Connect-OER` by GUID where
+only the downstream command named the domain. That is a false refusal, not a wrong-tenant write,
+and the texts answer it with the existing rule to name the tenant explicitly and consistently (the
+README's Sovereign Clouds section, the about topic's SOVEREIGN CLOUDS). Comparing the granted tenant
+(`TokenTenantId`) instead would end it, and is left to the architect as a recommendation: it changes
+what an identity is.
+
+**What the operator sees.** A public cmdlet catches the transport's refusal the way it catches any
+failed request: it writes it as an error record -- or the apply engine as a `Failed` row -- and
+carries on; the refused request is simply not sent. The record's target is the command whose
+sign-in was replaced, which is not always the command that wrote it: a downstream command's record
+names the upstream command, and its `FullyQualifiedErrorId` names the command that wrote it
+(`SignInSuperseded,<writer>` in the tests' terms). Where a cmdlet re-publishes a failed lookup
+under its own id, the refusal travels in that record's message instead: `New-OERGroup` reports its
+refused name lookup as `GroupResolveFailed`, so for `New-OERGroup` the operator sees that id and
+not `SignInSuperseded`. MEASURED in the round's end-to-end tests: a transport throw caught nowhere
+at all ends the whole script it runs in, which is why the stand-ins there catch each request the
+way the public cmdlets do. The texts therefore say that such a command sends nothing, never that it
+stops or that a refused request ends the statement.
+
+**A consequence, stated.** By the same rule, an outer command whose NESTED cmdlet deliberately signs
+in to another tenant or identity is refused for the outer command: the outer frame's memory differs
+from the state the nested sign-in left. No cmdlet under `source/` does that today -- read in the
+code, every nested sign-in passes the outer command's own `-TenantId`, or none. This is the rule
+working, not a limit to work around: work in another tenant belongs in a statement of its own.
+
+**Known limits.**
+
+- Runspaces in one process (step 4b's F5). Each runspace imports its own copy of the module, with
+  its own state and its own memory, so a sign-in in another runspace is never compared (INFERRED
+  from how PowerShell scopes a module's state, not measured in this round). What the runspaces
+  share is the process's Graph SDK session, which only the session gate covers, with the gaps listed
+  under [The Graph SDK session](#the-graph-sdk-session). Each tenant still belongs in its own
+  process.
+- `Invoke-OERStructure` and `Connect-OER` sign in in their `process` block, not in `begin`. In
+  `Invoke-OERStructure -TenantId A ... | X -TenantId B`, X's `begin` block signs in to B first, then
+  `Invoke-OERStructure`'s own sign-in switches the state to A. `Invoke-OERStructure` sends every
+  request to A, as it should, its `-Prune` deletions included, and it is X whose requests -- made
+  inside `Invoke-OERStructure`'s output, with X remembering B -- are refused. `Connect-OER` outputs
+  nothing, so no command downstream of it runs per object. The any-frame rule covers both
+  directions, and the user-facing texts therefore speak of the command whose sign-in another one
+  replaced, which is usually, not always, the first. Read in the code, not measured.
+- OPEN, and older than this round: `Invoke-OERStructure` WITHOUT `-TenantId` upstream of a command
+  that names another tenant. Its sign-in in `process` names no tenant, so it inherits the state the
+  downstream command's `begin` block already switched to B, remembers B, and nothing differs: its
+  document, `-Prune` deletions included, is applied to B with no error. MEASURED by the final review
+  of this round with a stand-in of `Invoke-OERStructure`'s shape (a sign-in with no tenant in
+  `process`, then a DELETE): after a sign-in to A, `'doc' | <stand-in> | Down -TenantId B` sent the
+  stand-in's DELETE under B, with no error. The same review measured that a downstream command's
+  `begin` block runs before the upstream `process` block even when the downstream command takes no
+  pipeline input, so `Invoke-OERStructure -Path x.json -Prune | <any OER cmdlet> -TenantId B`
+  applies the document in B as well (inferred from those two measurements). This round does not
+  make it worse -- before it, the same pipeline did the same -- and does not close it. The idea for
+  a later fix, not built: capture the effective tenant in `begin`, before any downstream `begin`
+  block can switch the state, and name it in the `process` block's sign-in. Until then the
+  user-facing texts tell the operator to name `-TenantId` on `Invoke-OERStructure` or to run it as a
+  statement of its own, and `CLAUDE.md` never to pipe it into a command that names another tenant.
+- A command that signs in again inside its own `process` block, to another tenant, replaces its own
+  memory, and nothing compares that second sign-in with its first: it is the same command's own
+  choice.
+
+**The user-facing texts.** The README's `### Disconnect` section and the about topic's
+`GRAPH SDK SESSION` section close with the same paragraph, outside `SWITCHING TENANTS` so that the
+README binding of that section stays untouched: one OER pipeline works in one tenant with one
+identity; if commands in it sign in to different tenants or identities, a command whose sign-in
+another one replaced sends nothing more, every request made while it runs refused with
+`SignInSuperseded`, the requests of a command handling its output included; most cmdlets sign in
+before any command in the pipeline processes input, so that is usually the first command; a cmdlet
+that reports a failed lookup under an error of its own, `New-OERGroup`'s `GroupResolveFailed` for
+one, carries the refusal's message in that error instead; a tenant counts by the name given, so its
+GUID, its domain and none named before the module holds a session (`organizations`) are three
+sign-ins and a pipeline naming one tenant two ways is refused, with a pointer to "Name the tenant
+explicitly and consistently"; `Invoke-OERStructure` signs in when it processes its document, so
+without `-TenantId` it takes whatever tenant a later command in the pipeline may already have
+switched to, and nothing refuses that -- name `-TenantId` on it, or run it as a statement of its
+own; the commands run as separate statements, with objects collected in a variable first to move
+them between tenants. Both give the two-statement examples -- groups read and created, and an
+inventory read and applied -- the two pipelines they replace commented out, and a pointer to the
+limits per sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
+`Connect-OER`'s help carries the same rule in two sentences, beside the general case of a refused
+sign-in.
+
+**The proof.** The two places the memory is written are pinned in
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe
+`Initialize-OERAuth sign-in memory (A20)`. Each wrapper's gate is pinned in its own test file,
+Describes `Invoke-OERGraphRequest sign-in supersession gate (A20)` and
+`Invoke-OERArmRequest sign-in supersession gate (A20)`, including its place after the session and
+latch gates and, in a runspace with no `try`, the `return` after each `throw`. End to end, the
+Describe `A command whose sign-in a later command in the pipeline replaced sends nothing (A20, F-E)`
+in `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` runs the real `Initialize-OERAuth` and
+both transports over stubbed token, connect and send calls, in a runspace with no `try` around the
+pipeline: P1 two commands naming different tenants, P1b the F-E pipeline itself with the real
+`New-OERGroup` and `Add-OERGroupMember` (nothing is created), P2 the nested case, P5 the
+`ForEach-Object` shape and P6 a sign-in that was a cached return, with P3 and P4 as the positive
+controls. P7 to P9 are the positive controls for a NEW sign-in that keeps the identity while a
+remembering command runs, in a one-tenant pipeline on a user-assigned managed identity: P7 the Graph
+wrapper's forced refresh after a rejected token, P8 the ARM wrapper's after a 401, P9 a downstream
+command's sign-in while the first command's tokens are within five minutes of expiry. Each request
+goes out, the retry included. Mutation-proved: a refresh that stops forwarding the client id turns
+P7 or P8 red, and an identity that also carried the Graph token's exact expiry turns all three red,
+and none of P1 to P6. Gate 10 of [#static-source-gates](#static-source-gates) keeps the three gates,
+their order, the pairing of each memory write with its latch release, and the helpers' owners in
+place.
 
 ## profile-path
 

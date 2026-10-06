@@ -92,6 +92,50 @@ function Invoke-OERArmRequest {
         # carry principal ids and role definition ids.
         Write-Verbose "[Invoke-OERArmRequest] $CallMethod $CallPath"
 
+        # SEC (A19): never an ARM request for a command whose sign-in was refused. Initialize-OERAuth
+        # latches the command that called it at entry and releases it only when the sign-in succeeds.
+        # Its refusal does not stop that command: measured 2026-10-05, a caller carries on past a
+        # nested function's terminating error unless a try or trap is active up the call stack, and no
+        # public cmdlet wraps its Initialize-OERAuth call -- so the command would send the ARM token an
+        # earlier sign-in left, for another tenant when it named -TenantId. Every public cmdlet the
+        # command calls signs in again from the cache and releases only its own latch, so
+        # Get-OERSignInRefusal looks for a latched command anywhere on the call stack.
+        #
+        # Here, once, before the bearer token is materialized and before Invoke-WebRequest: every
+        # request of this wrapper passes through this function -- the first, each throttled retry, the
+        # 401 retry (a refresh whose sign-in is refused latches its caller, Invoke-ArmCallWithRefresh)
+        # and every page. The return is load-bearing, not tidiness: measured 2026-10-05, under
+        # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on
+        # past its OWN throw to its next statement -- which here would build the bearer and send it.
+        $SignInRefusal = Get-OERSignInRefusal
+        if ($null -ne $SignInRefusal) {
+            throw (New-OERSignInRefusedError -Command $SignInRefusal)
+            return
+        }
+
+        # SEC (A20): never an ARM request while a command runs whose sign-in another command has since
+        # replaced. In a pipeline every begin block runs first, and almost every public cmdlet signs in
+        # in its begin block, so the upstream command's process block acts under the state the
+        # downstream command's sign-in switched to -- and would send the ARM token that sign-in cached,
+        # for the downstream command's tenant (F-E). Both sign-ins succeed, so the latch gate above does
+        # not see it. Initialize-OERAuth remembers which identity each command signed in as, and
+        # Get-OERSignInSupersession compares every frame on the call stack with the state, not only the
+        # nearest: a nested cmdlet signs in again without -TenantId, inherits the switched state and
+        # remembers it, so its own frame matches while the outer command's does not. A command that
+        # runs inside such a command's output -- the next command in its pipeline, or one in a
+        # ForEach-Object over it -- has that command's frame on its call stack (measured), so its
+        # requests are refused too. After the latch gate, so a command whose sign-in was refused is
+        # still reported as SignInRefused, and here, for the same requests as that gate -- the 401
+        # retry included, which reaches this gate when the refresh's sign-in changed the state's
+        # identity -- before the bearer token is materialized. The return is load-bearing for the same
+        # reason as the latch gate's: without it this function would carry on past its own throw to
+        # build the bearer and send it.
+        $SignInSupersession = Get-OERSignInSupersession
+        if ($null -ne $SignInSupersession) {
+            throw (New-OERSignInSupersededError -Command $SignInSupersession)
+            return
+        }
+
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
         $InvokeParams = @{
@@ -106,12 +150,15 @@ function Invoke-OERArmRequest {
             $InvokeParams.Body        = ($CallBody | ConvertTo-Json -Depth 100)
             $InvokeParams.ContentType = 'application/json'
         }
+        $TransportFailed = $false
         try {
             $Raw = Invoke-WebRequest @InvokeParams
         } catch {
             # Security hygiene: the failed request (carrying the Authorization: Bearer header) lives in
             # $Error -- remove it FIRST, before anything else, uniformly with the Graph wrapper.
             Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $TransportFailed = $true
             throw [System.Management.Automation.ErrorRecord]::new(
                 [System.Exception]::new("Azure Resource Manager request failed before a response was received: $($PSItem.Exception.Message)"),
                 'ArmTransportError',
@@ -120,6 +167,14 @@ function Invoke-OERArmRequest {
         } finally {
             $Plain = $null
         }
+        # The throw above does not always end this function. Measured 2026-10-05 in PowerShell 7: under
+        # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a throw inside a CATCH
+        # block resumes AFTER the whole try statement -- here, once the finally has run -- so a return
+        # placed after that throw would never run. Carrying on built a status-0 response out of a
+        # request that never got one, and the wrapper raised a second record for it (ArmError). No
+        # object at all goes back instead; every caller above hands that on without sending anything,
+        # and the top of the wrapper ends the call on it.
+        if ($TransportFailed) { return }
         # Normalize to a { StatusCode; Content; Headers } shape for the status logic, the throttle
         # backoff and Convert-ArmHttpException.
         #
@@ -290,6 +345,10 @@ function Invoke-OERArmRequest {
                 'AppOnlyTokenRefreshUnsatisfiable',
                 [System.Management.Automation.ErrorCategory]::AuthenticationError,
                 $CallPath)
+            # Load-bearing: under -ErrorAction SilentlyContinue or Ignore, with no try up the call
+            # stack, this function carried on past its own throw to the forced refresh an app-only
+            # session cannot satisfy, and sent the retry after it.
+            return
         }
         Write-Verbose "[Invoke-OERArmRequest] ARM token rejected (status=401). Forcing re-authentication and retrying once..."
         # Forward the cached ClientId so the SAME principal is re-acquired. Without it a user-assigned
@@ -428,8 +487,21 @@ function Invoke-OERArmRequest {
     $Response = Invoke-ArmCallWithBackoff -CallPath $Path -CallMethod $Method -CallBody $Body `
         -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
 
+    # EVERY THROW IN THIS FUNCTION IS FOLLOWED BY A RETURN (one inside a catch, by a flag read straight
+    # after its try), and none of them is tidiness. Measured 2026-10-05 in PowerShell 7: under
+    # -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries on past
+    # its OWN throw to its next statement -- and so does every caller of a nested function that threw,
+    # since a return there ends only that nested function.
+    #
+    # No response object at all means a nested function already raised and returned: the latch gate
+    # or the transport failure in Invoke-ArmCall, or the app-only refusal in Invoke-ArmCallWithRefresh.
+    # Its record is the call's answer. Converting the missing response would add a parameter-binding
+    # record of its own, since Convert-ArmHttpException requires one.
+    if ($null -eq $Response) { return }
     if ([int]$Response.StatusCode -lt 200 -or [int]$Response.StatusCode -gt 299) {
         throw (Convert-ArmHttpException -Response $Response -Path $Path)
+        # Carrying on parsed the error body and returned it as data.
+        return
     }
 
     if (-not $Response.Content) { return $null }
@@ -452,8 +524,14 @@ function Invoke-OERArmRequest {
         # path must back off exactly like the single-request path -- it is not the exception.
         $PageResponse = Invoke-ArmCallWithBackoff -CallPath $NextPath -CallMethod $Method -CallBody $Body `
             -BaseUrl $ArmBaseUrl -RefreshBudget $RefreshBudget -CallBudget $CallBudget
+        # The same two checks as for the first page above. return, never break: break would hand back
+        # the pages so far as though they were the whole collection.
+        if ($null -eq $PageResponse) { return }
         if ([int]$PageResponse.StatusCode -lt 200 -or [int]$PageResponse.StatusCode -gt 299) {
             throw (Convert-ArmHttpException -Response $PageResponse -Path $NextPath)
+            # Carrying on read the error body as a page with no next link, so the walk ended and
+            # returned the pages before it as the whole collection.
+            return
         }
         $Page = $PageResponse.Content | ConvertFrom-Json -ErrorAction Stop
         if ($null -ne $Page.value) { foreach ($Item in $Page.value) { $AllValues.Add($Item) } }

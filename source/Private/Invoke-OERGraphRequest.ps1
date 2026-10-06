@@ -817,6 +817,63 @@ function Invoke-OERGraphRequest {
         [int]$ThrottleAttempt = 0
         $AttemptError = $null
         while ($true) {
+            # SEC (A18): never a Graph call under a Microsoft Graph PowerShell SDK session this module
+            # did not connect. Initialize-OERAuth refuses one at a cmdlet's entry, but that refusal does
+            # not stop the CMDLET: measured 2026-10-05, a caller carries on past a nested function's
+            # terminating error unless a try or trap is active up the call stack, and no public cmdlet
+            # wraps its Initialize-OERAuth call. So the check is repeated here, before every attempt --
+            # the first, each throttled retry -- and outside the try below, whose catch would turn the
+            # refusal into a Graph failure.
+            #
+            # The return is load-bearing, not tidiness. Measured 2026-10-05: under -ErrorAction
+            # SilentlyContinue or Ignore, with no try up the call stack, a function carries on past its
+            # OWN throw to its next statement -- which here would be the request.
+            if ((Get-OERGraphSessionState) -eq 'Changed') {
+                throw (New-OERGraphSessionChangedError)
+                return
+            }
+            # SEC (A19): never a Graph call for a command whose sign-in was refused. Initialize-OERAuth
+            # latches the command that called it at entry and releases it only when the sign-in
+            # succeeds. Its refusal does not stop that command, which carries on past it when no try is
+            # active up the call stack (the measurement above) and would send under the session an
+            # earlier sign-in left -- another tenant's, when the command named -TenantId. Every public
+            # cmdlet the command calls signs in again from that session's cache and releases only its
+            # own latch, so Get-OERSignInRefusal looks for a latched command anywhere on the call
+            # stack. Checked after the session gate, so a changed session is still reported as
+            # GraphSessionChanged, and outside the try below for the same reason as that gate.
+            #
+            # The return is load-bearing for the same reason as the session gate's: under -ErrorAction
+            # SilentlyContinue or Ignore, with no try up the call stack, this function would carry on
+            # past its own throw to the request.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            # SEC (A20): never a Graph call while a command runs whose sign-in another command has since
+            # replaced. In a pipeline every begin block runs first, and almost every public cmdlet signs
+            # in in its begin block, so the upstream command's process block acts under the session the
+            # downstream command's sign-in switched to: New-OERGroup -TenantId A ... |
+            # Add-OERGroupMember -TenantId B created the group in B (F-E). Both sign-ins succeed, so
+            # neither gate above sees it. Initialize-OERAuth remembers which identity each command
+            # signed in as, and Get-OERSignInSupersession compares every frame on the call stack with
+            # the state, not only the nearest: a nested cmdlet signs in again without -TenantId,
+            # inherits the switched state and remembers it, so its own frame matches while the outer
+            # command's does not. A command that runs inside such a command's output -- the next
+            # command in its pipeline, or one in a ForEach-Object over it -- has that command's frame on
+            # its call stack (measured), so its requests are refused too. Checked after the latch gate,
+            # so a command whose sign-in was refused is still reported as SignInRefused, and outside the
+            # try below for the same reason as the two gates above: its catch would turn the refusal
+            # into a Graph failure.
+            #
+            # The return is load-bearing for the same reason as theirs: under -ErrorAction
+            # SilentlyContinue or Ignore, with no try up the call stack, this function would carry on
+            # past its own throw to the request.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
+                return
+            }
             $Attempt = $null
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
@@ -896,6 +953,17 @@ function Invoke-OERGraphRequest {
         # below has no loop and a second failure throws), so each command can step up as needed.
         $ClaimsJson = Get-ClaimsFromException $AttemptError
 
+        # EVERY THROW FROM HERE TO THE END OF THIS FUNCTION IS FOLLOWED BY A RETURN, and none of them
+        # is tidiness. Measured 2026-10-05 in PowerShell 7: under -ErrorAction SilentlyContinue or
+        # Ignore, with no try up the call stack, a function carries on past its OWN throw to its next
+        # statement, and a throw inside a CATCH block resumes after the whole try statement -- so the
+        # two retry catches below set a flag that is read straight after their try instead. Carrying
+        # on here sent the step-up or the forced refresh an app-only refusal exists to prevent, and
+        # the retry after it; handed back $null as though a failed retry had answered; let a failed
+        # step-up retry fall into the token-rejected path, which signed in again and sent a third
+        # request; and raised the first attempt's error again after a failed refresh retry's own.
+        # This matters on the single-request path only: under -All the paging loop calls this
+        # function inside a try, so each of these throws propagates to the paging catch.
         if ($ClaimsJson) {
             # App-only sessions (ClientSecret/ClientCertificate) cannot perform an interactive ACRS
             # step-up, and the module deliberately does not cache the secret/certificate material to
@@ -912,6 +980,7 @@ function Invoke-OERGraphRequest {
                     'AppOnlyClaimsChallengeUnsatisfiable',
                     [System.Management.Automation.ErrorCategory]::AuthenticationError,
                     $SingleUri)
+                return
             }
 
             Write-Verbose "[Invoke-OERGraphRequest] ACRS claims challenge detected. Performing step-up authentication..."
@@ -928,21 +997,46 @@ function Invoke-OERGraphRequest {
             }
             if ($script:_OERAuthState.ClientId) { $ClaimsParams.ClientId = $script:_OERAuthState.ClientId }
             Initialize-OERAuth @ClaimsParams
+            # SEC (A18): the retry below sends a request too; see the gate at the top of the loop.
+            if ((Get-OERGraphSessionState) -eq 'Changed') {
+                throw (New-OERGraphSessionChangedError)
+                return
+            }
+            # SEC (A19): the latch gate too; see the one at the top of the loop. A step-up whose sign-in
+            # is refused latches its caller, this function, so the retry below is refused.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            # SEC (A20): the supersession gate too; see the one at the top of the loop. What reaches
+            # it here is a step-up whose sign-in changed the state's identity: a command on the call
+            # stack still remembers the identity before it, so the retry below is refused.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
+                return
+            }
 
             # -- Retry once with the upgraded token --
             # Routed through Invoke-GraphAttempt like the first attempt: under -SkipHttpErrorCheck a
             # second failure comes back as DATA, and returning it here would hand the caller a Graph
             # error body as though the step-up had worked.
             $RetryAttempt = $null
+            $ClaimsRetryFailed = $false
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
                 $RetryAttempt = Invoke-GraphAttempt -Parameters $InvokeParams -Expected $SingleExpectedErrorCode -RequestUri $SingleUri
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                # Read straight after this try statement, where a suppressed throw resumes.
+                $ClaimsRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            if ($ClaimsRetryFailed) { return }
             if ($RetryAttempt.Kind -ne 'Failure') { return $RetryAttempt.Value }
             throw Convert-GraphHttpException $RetryAttempt.Value
+            return
         }
 
         # -- Token rejected/expired (not a claims challenge) -- re-auth and retry --
@@ -985,6 +1079,7 @@ function Invoke-OERGraphRequest {
                     'AppOnlyTokenRefreshUnsatisfiable',
                     [System.Management.Automation.ErrorCategory]::AuthenticationError,
                     $SingleUri)
+                return
             }
 
             Write-Verbose "[Invoke-OERGraphRequest] Token rejected (status=$StatusCode). Forcing re-authentication and retrying once..."
@@ -998,21 +1093,49 @@ function Invoke-OERGraphRequest {
             }
             if ($script:_OERAuthState.ClientId) { $RefreshParams.ClientId = $script:_OERAuthState.ClientId }
             Initialize-OERAuth @RefreshParams
+            # SEC (A18): the retry below sends a request too; see the gate at the top of the loop.
+            if ((Get-OERGraphSessionState) -eq 'Changed') {
+                throw (New-OERGraphSessionChangedError)
+                return
+            }
+            # SEC (A19): the latch gate too; see the one at the top of the loop. A refresh whose sign-in
+            # is refused latches its caller, this function, so the retry below is refused.
+            $SignInRefusal = Get-OERSignInRefusal
+            if ($null -ne $SignInRefusal) {
+                throw (New-OERSignInRefusedError -Command $SignInRefusal)
+                return
+            }
+            # SEC (A20): the supersession gate too; see the one at the top of the loop. What reaches
+            # it here is a refresh whose sign-in changed the state's identity: a command on the call
+            # stack still remembers the identity before it, so the retry below is refused.
+            $SignInSupersession = Get-OERSignInSupersession
+            if ($null -ne $SignInSupersession) {
+                throw (New-OERSignInSupersededError -Command $SignInSupersession)
+                return
+            }
             # Same reason as the claims retry above: a soft failure must not read as a success.
             $RefreshAttempt = $null
+            $RefreshRetryFailed = $false
             try {
                 if (-not $SingleExpectedErrorCode) { return Invoke-MgGraphRequest @InvokeParams }
                 $RefreshAttempt = Invoke-GraphAttempt -Parameters $InvokeParams -Expected $SingleExpectedErrorCode -RequestUri $SingleUri
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
+                # Read straight after this try statement, where a suppressed throw resumes.
+                $RefreshRetryFailed = $true
                 throw Convert-GraphHttpException $PSItem
             }
+            if ($RefreshRetryFailed) { return }
             if ($RefreshAttempt.Kind -ne 'Failure') { return $RefreshAttempt.Value }
             throw Convert-GraphHttpException $RefreshAttempt.Value
+            return
         }
 
         # -- Not recoverable -- convert and re-throw --
+        # The last statement of this function, so this return changes nothing today; it keeps the rule
+        # above true for a statement someone adds below it.
         throw Convert-GraphHttpException $AttemptError
+        return
     }
 
     # -- Per-CALL wait budget, shared by every page of a -All enumeration --
@@ -1053,6 +1176,7 @@ function Invoke-OERGraphRequest {
     while ($NextUri) {
         $PageNumber++
         Write-Verbose "[Invoke-OERGraphRequest] Fetching page $PageNumber..."
+        $PageFailed = $false
         try {
             $Page = Invoke-GraphSingle -SingleMethod $Method -SingleUri $NextUri -SingleBody $Body -CallBudget $CallBudget `
                 -SingleExpectedErrorCode $ExpectedErrorCode
@@ -1062,6 +1186,8 @@ function Invoke-OERGraphRequest {
             # already scrubbed on its own internal catch paths, but this is a SEPARATE catch clause
             # and the source-hygiene gate counts scrub-first PER CATCH, not per call chain.
             Remove-OERErrorRecord -Record $PSItem
+            # Read straight after this try statement; see the check there.
+            $PageFailed = $true
 
             # -- Issue #73: a failure on page N no longer discards what pages 1..N-1 already read --
             # F1, MEASURED (docs/development/rationale.md#graph-wrapper): a note property attached to
@@ -1090,6 +1216,19 @@ function Invoke-OERGraphRequest {
                 "attached to the thrown error's Exception for a caller that opts in; the call still fails.")
             throw
         }
+        # The throw above does not always end this function. Measured 2026-10-05 in PowerShell 7:
+        # under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a throw inside
+        # a CATCH block resumes AFTER the whole try statement -- here -- and not at the catch's next
+        # statement, so a return placed after that throw would never run. The loop then carried on
+        # with the previous page still in $Page: it appended that page again and re-read its next
+        # link, for ever -- a failed later page re-sent its request each turn, and a page the session
+        # gate refuses (A18) was refused each turn while $AllValues kept growing. A failed FIRST page
+        # returned an empty collection as though the read had found nothing.
+        #
+        # return, not break: break would hand back the partial collection as though it were complete,
+        # which is the defect class -All exists to prevent. The caller asked for silence, and gets
+        # nothing on the success channel.
+        if ($PageFailed) { return }
         # A -All GET can return an empty body (e.g. no results at all); indexing into a $null page
         # would otherwise throw a non-terminating InvalidOperation that becomes TERMINATING under a
         # caller's -ErrorAction Stop. Treat it as the end of the collection instead.
@@ -1134,6 +1273,11 @@ function Invoke-OERGraphRequest {
                 'GraphExpectedCodeOnLaterPage',
                 [System.Management.Automation.ErrorCategory]::OperationStopped,
                 $NextUri)
+            # This throw sits after the paging try, so under -ErrorAction SilentlyContinue or Ignore,
+            # with no try up the call stack, the loop carried on past it: the marker added no item and
+            # named no next link, so the walk ended and returned the pages before it as the whole
+            # collection. The same reason as the paging catch's check above: return, never break.
+            return
         }
         foreach ($Item in @($Page.value)) { if ($null -ne $Item) { $AllValues.Add($Item) } }
         $NextUri = [string]$Page['@odata.nextLink']
