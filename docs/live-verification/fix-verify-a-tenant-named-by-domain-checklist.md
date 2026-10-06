@@ -114,7 +114,7 @@ checks share one.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -147,13 +147,23 @@ changes; `A: True; B: True; C: True; D: True; E: True; the retired post-call war
 clone; any other `False`, or the tracker `True` -- build the worktree first
 (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:31 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree is on this branch at 5bde338 (the checklist commit; its code is e04bbb6's, built there and gated green) with 0 tracked changes; the build carries A (the lookup helper), B (TenantResolutionFailed), C (the comparison with the resolved tenant ID), D (the BL-77 tenant term) and E (the marker's owner and the A10 refusal), and no longer the retired warning's tracker.
+
+[oer-s93] OER_LIVE_REPO is a clone of Omnicit.EntraRBAC: True
+[oer-s93] The module loads from a worktree that is not the main clone: True
+[oer-s93] Main clone: branch main; HEAD 6817b33
+[oer-s93] Worktree: branch fix/verify-a-tenant-named-by-domain; HEAD 5bde338 docs: add the live checklist for the tenant lookup and the uncertain session; tracked changes: 0
+[oer-s93] The worktree's build carries A: True; B: True; C: True; D: True; E: True; the retired post-call warning's tracker: False
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -172,13 +182,30 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:31 UTC: every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, service principal named oer-live-cc and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.3).
+
+[oer-s93] OER_LIVE_REPO is a clone of Omnicit.EntraRBAC: True
+[oer-s93] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg3\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s93] The module is the worktree's build: True
+```
 
 ## 1. The measurement: the authority tells a real domain from a made-up one
 
 ### 1.1. OpenID discovery, unauthenticated, for the domain, the GUID, the made-up domain and organizations
 
-- [ ] **1.1** One GET without an `Authorization` header to `{AuthorityHost}{id}/v2.0/.well-known/openid-configuration` for each identifier, the host read from `Get-OERCloudEndpoint`: the test tenant's primary domain and its GUID answer 200 with the test tenant's GUID in `issuer`; the made-up domain answers an error; `organizations` answers the template issuer, which names no tenant.
+- [x] **1.1** One GET without an `Authorization` header to `{AuthorityHost}{id}/v2.0/.well-known/openid-configuration` for each identifier, the host read from `Get-OERCloudEndpoint`: the test tenant's primary domain and its GUID answer 200 with the test tenant's GUID in `issuer`; the made-up domain answers an error; `organizations` answers the template issuer, which names no tenant.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -218,7 +245,17 @@ invalid_tenant, AADSTS90002`; `organizations`: `status 200; issuer: template; ..
 **Failure looks like:** the made-up domain answering 200 -- STOP (decision A3): the lookup cannot tell a
 real domain from a made-up one, and the step goes back to the architect.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:31 UTC, no sign-in, and no Authorization header on any request (False on every line). The test tenant's primary domain, the same domain in upper case and its GUID answered 200 with an issuer carrying the test tenant's GUID (True); the made-up domain answered 400 invalid_tenant, AADSTS90002, with no issuer; organizations answered 200 with the template issuer. The same as the step's first measurement: the authority tells a real domain from a made-up one (decision A3 holds).
+
+[oer-s93] 1.1 the test tenant primary domain: status 200; issuer: tenant ID; issuer holds the test tenant's GUID: True; error: none; Authorization header sent: False
+[oer-s93] 1.1 the same domain in upper case: status 200; issuer: tenant ID; issuer holds the test tenant's GUID: True; error: none; Authorization header sent: False
+[oer-s93] 1.1 the test tenant GUID: status 200; issuer: tenant ID; issuer holds the test tenant's GUID: True; error: none; Authorization header sent: False
+[oer-s93] 1.1 the made-up domain: status 400; issuer: none; issuer holds the test tenant's GUID: False; error: invalid_tenant, AADSTS90002; Authorization header sent: False
+[oer-s93] 1.1 organizations: status 200; issuer: template; issuer holds the test tenant's GUID: False; error: none; Authorization header sent: False
+```
 
 ## 2. A tenant named by domain is resolved and checked; a GUID is unchanged
 
@@ -232,7 +269,7 @@ carry the certificate, so no check can open a browser or a device code prompt.
 
 ### 2.1. Connect-OER with the test tenant's domain: signed in, and the session records the test tenant's GUID
 
-- [ ] **2.1** `Connect-OER -TenantId` (the test tenant's primary domain) `-ClientId -Certificate -IncludeARM`, after `Disconnect-OerLive`: no error, one lookup, two token requests (Graph and ARM), the state names the domain and both tokens were issued for the test tenant's GUID, and the sign-in identity's tenant is that GUID (BL-77); a read afterwards goes out.
+- [x] **2.1** `Connect-OER -TenantId` (the test tenant's primary domain) `-ClientId -Certificate -IncludeARM`, after `Disconnect-OerLive`: no error, one lookup, two token requests (Graph and ARM), the state names the domain and both tokens were issued for the test tenant's GUID, and the sign-in identity's tenant is that GUID (BL-77); a read afterwards goes out.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -303,17 +340,36 @@ errors: none; lookups: 1; token requests: 2 (refused by the fence: 0)`; Graph an
 `Graph SDK session: True`; `the state names the test tenant by GUID: False; by its primary domain:
 True; the Graph token was issued for the test tenant: True; the ARM token: True; the client is
 oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is
-uncertain: False`. The read: `errors: none`, `lookups: 0`, `token requests: 0`, `Graph requests: 1`.
+uncertain: False`. The read: `errors: GroupNotFound` (the filter on the prefix matches no object: this file creates none), `lookups: 0`, `token requests: 0`, `Graph requests: 1`.
 **Failure looks like:** `TenantResolutionFailed` -- the lookup refused a real domain (read the
 message); `TenantMismatch` -- the token's tenant differs from the domain's (impossible with this
 certificate; STOP); `lookups: 0` -- the domain was not looked up; the identity term `False` -- BL-77 is
 not in the build.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:31 UTC as oer-live-cc (every identity line True), the four fences resolving for the module (True). After Disconnect-OerLive, Connect-OER -TenantId (the primary domain) -ClientId -Certificate -IncludeARM: no error; one lookup; two token requests (Graph and ARM), none refused by the fence; the state names the domain (True), both tokens were issued for the test tenant (True, True), the client is oer-live-cc (True), the sign-in identity's tenant term is the test tenant's GUID (True, BL-77), the session is not uncertain. The read without -TenantId went out (Graph requests 1, no token request); its GroupNotFound is the module's answer to a filter on the prefix that matches no object -- this run creates none -- so the Expect's "errors: none" was wrong and is corrected to GroupNotFound.
+
+[oer-s93] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg3\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 2.1 Connect-OER by domain: output objects 0; errors: none; lookups: 1; token requests: 2 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: False; by its primary domain: True; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 2.1 then a read without -TenantId: output objects 0; errors: GroupNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: False; by its primary domain: True; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 2.1 then a read without -TenantId: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'startswith(displayName,'oer-s93-')'.
+```
 
 ### 2.2. The same with the test tenant's GUID: unchanged, no lookup
 
-- [ ] **2.2** In the same process, `Disconnect-OerLive`, then `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate -IncludeARM`: no error, no lookup, two token requests, the state names the GUID; a read afterwards goes out.
+- [x] **2.2** In the same process, `Disconnect-OerLive`, then `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate -IncludeARM`: no error, no lookup, two token requests, the state names the GUID; a read afterwards goes out.
 
 ```powershell
 Disconnect-OerLive
@@ -324,14 +380,22 @@ Invoke-S93 -Label '2.2 then a read without -TenantId' -Call { Get-OERGroup -Filt
 **Expect:** `errors: none; lookups: 0; token requests: 2 (refused by the fence: 0)`; `the state names
 the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test
 tenant: True; the ARM token: True; ... the identity's tenant term is the test tenant's GUID: True; the
-session is uncertain: False`. The read: `errors: none`, `token requests: 0`, `Graph requests: 1`.
+session is uncertain: False`. The read: `errors: GroupNotFound` (as in 2.1), `token requests: 0`, `Graph requests: 1`.
 **Failure looks like:** `lookups: 1` -- a GUID was looked up; any error.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Same process, after Disconnect-OerLive: Connect-OER -TenantId (the GUID) -ClientId -Certificate -IncludeARM: no error, no lookup, two token requests; the state names the GUID (True), both tokens the test tenant (True, True), the identity term the GUID (True). The read without -TenantId went out (Graph requests 1; GroupNotFound as in 2.1).
+
+[oer-s93] 2.2 Connect-OER by GUID: output objects 0; errors: none; lookups: 0; token requests: 2 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 2.2 then a read without -TenantId: output objects 0; errors: GroupNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 2.2 then a read without -TenantId: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'startswith(displayName,'oer-s93-')'.
+```
 
 ### 2.3. The domain again in the same process: the tenant ID comes from the cache
 
-- [ ] **2.3** In the same process, `Disconnect-OerLive`, then the domain sign-in of 2.1 again: no error, no lookup (the tenant ID found in 2.1 is cached for the process; `Disconnect-OER` does not clear it), two token requests.
+- [x] **2.3** In the same process, `Disconnect-OerLive`, then the domain sign-in of 2.1 again: no error, no lookup (the tenant ID found in 2.1 is cached for the process; `Disconnect-OER` does not clear it), two token requests.
 
 ```powershell
 Disconnect-OerLive
@@ -346,13 +410,20 @@ the test tenant, the identity term the GUID; `Fences removed: True`.
 **Failure looks like:** `lookups: 1` -- the cache did not hold (one request per sign-in instead of per
 process).
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Same process, after Disconnect-OerLive: the domain sign-in of 2.1 again: no error, no lookup -- the tenant ID found in 2.1 came from the process cache, which Disconnect-OER does not clear -- and two token requests; the state names the domain, both tokens the test tenant, the identity term the GUID. Fences removed (True).
+
+[oer-s93] 2.3 Connect-OER by domain again: output objects 0; errors: none; lookups: 0; token requests: 2 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: False; by its primary domain: True; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] Fences removed: True
+```
 
 ## 3. A made-up domain is refused before any token is requested
 
 ### 3.1. Connect-OER with the made-up domain: TenantResolutionFailed, no token request, no session
 
-- [ ] **3.1** From no session (`Disconnect-OerLive` after the identity check), `Connect-OER -TenantId` (the made-up domain) `-ClientId -Certificate -IncludeARM`: `TenantResolutionFailed` naming the domain; one lookup; no token request; no Graph SDK session and no module session; the session is uncertain.
+- [x] **3.1** From no session (`Disconnect-OerLive` after the identity check), `Connect-OER -TenantId` (the made-up domain) `-ClientId -Certificate -IncludeARM`: `TenantResolutionFailed` naming the domain; one lookup; no token request; no Graph SDK session and no module session; the session is uncertain.
 
 ```powershell
 # The first lines are 2.1's block up to and including Invoke-S93's definition and $Filter (run them
@@ -371,7 +442,25 @@ session is uncertain: True`; the message names `MADE-UP-DOMAIN`, the authority's
 resolved; `GraphTokenAcquisitionFailed` instead of `TenantResolutionFailed` -- the lookup did not run
 first.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:31 UTC as oer-live-cc (every identity line True), then Disconnect-OerLive, so no session: Connect-OER -TenantId (the made-up domain) -ClientId -Certificate -IncludeARM gives TenantResolutionFailed (category AuthenticationError) after one lookup, with no token request (the fence saw none), no Graph or ARM request, no Graph SDK session, no module session, and the session uncertain (True). The message names MADE-UP-DOMAIN and the authority's 400 invalid_tenant (AADSTS90002), and says no token was requested.
+
+[oer-s93] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg3\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 3.1 Connect-OER with the made-up domain: output objects 0; errors: TenantResolutionFailed; lookups: 1; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: False; the module holds a session: False; the session is uncertain: True
+[oer-s93] 3.1 Connect-OER with the made-up domain: TenantResolutionFailed,Initialize-OERAuth; category AuthenticationError -- Could not resolve tenant 'MADE-UP-DOMAIN' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, s ...
+```
 
 ## 4. A10: after a refused sign-in, a command that names no tenant sends nothing
 
@@ -381,7 +470,7 @@ the check starts after them.
 
 ### 4.1. A refused Connect-OER, then a command without -TenantId; a command naming the tenant clears it
 
-- [ ] **4.1** Under the GUID session, a refused `Connect-OER` (made-up domain), then `Get-OERGroup` without `-TenantId`: `SignInRefused` naming `Get-OERGroup`, no token request and no Graph request. Then `Get-OERGroup -TenantId` (the GUID) goes out, and after it `Get-OERGroup` without `-TenantId` goes out again.
+- [x] **4.1** Under the GUID session, a refused `Connect-OER` (made-up domain), then `Get-OERGroup` without `-TenantId`: `SignInRefused` naming `Get-OERGroup`, no token request and no Graph request. Then `Get-OERGroup -TenantId` (the GUID) goes out, and after it `Get-OERGroup` without `-TenantId` goes out again.
 
 ```powershell
 Invoke-S93 -Label '4.1 a: Connect-OER with the made-up domain' -Call { Connect-OER -TenantId $FakeDomain -ClientId $Cfg.AppId -Certificate $Cert }
@@ -395,17 +484,41 @@ Disconnect-OerLive
 **Expect:** a: `errors: TenantResolutionFailed; token requests: 0`; the state still names the test
 tenant by GUID, `the session is uncertain: True`. b: `errors: SignInRefused (Get-OERGroup); lookups: 0;
 token requests: 0; Graph requests: 0`; the message begins `An earlier sign-in in this PowerShell session
-failed or was refused`. c: `errors: none; token requests: 0; Graph requests: 1`; `the session is
-uncertain: False`. d: `errors: none; Graph requests: 1`.
+failed or was refused`. c: `errors: GroupNotFound; token requests: 0; Graph requests: 1` (GroupNotFound: the empty
+prefix filter, as in 2.1); `the session is uncertain: False`. d: `errors: GroupNotFound; Graph requests: 1`.
 **Failure looks like:** b with `Graph requests: 1` and no error -- the command acted on the session the
 refused sign-in left (BL-89 open); c refused -- a command that names its tenant does not clear the
 marker.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:32 UTC as oer-live-cc by GUID (identity lines True, fences True). a: the refused Connect-OER (made-up domain): TenantResolutionFailed, no token request; the state still names the test tenant by GUID and the session is uncertain. b: Get-OERGroup without -TenantId: SignInRefused naming Get-OERGroup twice (its sign-in, then its request, refused by the latch), no lookup, no token request, Graph requests 0, with the message "An earlier sign-in in this PowerShell session failed or was refused ...". c: Get-OERGroup -TenantId (the GUID): sent (Graph requests 1, no token request, a cache hit), the session no longer uncertain. d: Get-OERGroup without -TenantId again: sent (Graph requests 1). GroupNotFound in c and d is the empty prefix filter (see 2.1). Before this branch, b went out under the session the refused sign-in left (BL-89).
+
+[oer-s93] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg3\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 4.1 a: Connect-OER with the made-up domain: output objects 0; errors: TenantResolutionFailed; lookups: 1; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.1 a: Connect-OER with the made-up domain: TenantResolutionFailed,Initialize-OERAuth; category AuthenticationError -- Could not resolve tenant 'MADE-UP-DOMAIN' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, s ...
+[oer-s93] 4.1 b: Get-OERGroup without -TenantId: output objects 0; errors: SignInRefused (Get-OERGroup) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.1 b: Get-OERGroup without -TenantId: SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+[oer-s93] 4.1 c: Get-OERGroup -TenantId with the GUID: output objects 0; errors: GroupNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.1 c: Get-OERGroup -TenantId with the GUID: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'startswith(displayName,'oer-s93-')'.
+[oer-s93] 4.1 d: Get-OERGroup without -TenantId again: output objects 0; errors: GroupNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.1 d: Get-OERGroup without -TenantId again: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'startswith(displayName,'oer-s93-')'.
+```
 
 ### 4.2. The same, cleared by Connect-OER
 
-- [ ] **4.2** A refused `Connect-OER`, `Get-OERGroup` without `-TenantId` refused, then `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate`: signed in; `Get-OERGroup` without `-TenantId` goes out.
+- [x] **4.2** A refused `Connect-OER`, `Get-OERGroup` without `-TenantId` refused, then `Connect-OER -TenantId` (the GUID) `-ClientId -Certificate`: signed in; `Get-OERGroup` without `-TenantId` goes out.
 
 ```powershell
 Invoke-S93 -Label '4.2 a: Connect-OER with the made-up domain' -Call { Connect-OER -TenantId $FakeDomain -ClientId $Cfg.AppId -Certificate $Cert }
@@ -418,14 +531,27 @@ Disconnect-OerLive
 
 **Expect:** a `TenantResolutionFailed`; b `SignInRefused (Get-OERGroup)`, `Graph requests: 0`, `token
 requests: 0`; c `errors: none`, `the session is uncertain: False` (a cached return: `token requests:
-0`); d `errors: none; Graph requests: 1`.
+0`); d `errors: GroupNotFound; Graph requests: 1` (the empty prefix filter, as in 2.1).
 **Failure looks like:** d refused -- `Connect-OER` does not clear the marker.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:32 UTC: a: TenantResolutionFailed, the session uncertain; b: Get-OERGroup without -TenantId refused with SignInRefused (Get-OERGroup), Graph requests 0, no token request; c: Connect-OER -TenantId (the GUID) -ClientId -Certificate: no error, a cached return (no token request), the session no longer uncertain; d: Get-OERGroup without -TenantId sent (Graph requests 1; GroupNotFound as in 2.1).
+
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 4.2 a: Connect-OER with the made-up domain: output objects 0; errors: TenantResolutionFailed; lookups: 1; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.2 a: Connect-OER with the made-up domain: TenantResolutionFailed,Initialize-OERAuth; category AuthenticationError -- Could not resolve tenant 'MADE-UP-DOMAIN' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, s ...
+[oer-s93] 4.2 b: Get-OERGroup without -TenantId: output objects 0; errors: SignInRefused (Get-OERGroup) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.2 b: Get-OERGroup without -TenantId: SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+[oer-s93] 4.2 c: Connect-OER with the GUID: output objects 0; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.2 d: Get-OERGroup without -TenantId: output objects 0; errors: GroupNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.2 d: Get-OERGroup without -TenantId: GroupNotFound,Get-OERGroup; category ObjectNotFound -- No group found for 'startswith(displayName,'oer-s93-')'.
+```
 
 ### 4.3. The same, cleared by Disconnect-OER
 
-- [ ] **4.3** A refused `Connect-OER`, `Get-OERGroup` without `-TenantId` refused, then `Disconnect-OER`; `Get-OERGroup` without `-TenantId` now gets past the refusal to its own sign-in, which -- with no session -- is interactive and stops at the token fence: `GraphTokenAcquisitionFailed`, one token request refused by the fence, no Graph request.
+- [x] **4.3** A refused `Connect-OER`, `Get-OERGroup` without `-TenantId` refused, then `Disconnect-OER`; `Get-OERGroup` without `-TenantId` now gets past the refusal to its own sign-in, which -- with no session -- is interactive and stops at the token fence: `GraphTokenAcquisitionFailed`, one token request refused by the fence, no Graph request.
 
 ```powershell
 Invoke-S93 -Label '4.3 a: Connect-OER with the made-up domain' -Call { Connect-OER -TenantId $FakeDomain -ClientId $Cfg.AppId -Certificate $Cert }
@@ -445,11 +571,25 @@ fence's text.
 -- `Disconnect-OER` does not clear the marker; d with `refused by the fence: 0` -- STOP: a token request
 without the certificate went out.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:32 UTC: a: TenantResolutionFailed; b: Get-OERGroup without -TenantId refused with SignInRefused (Get-OERGroup), no token request; c: Disconnect-OER: no error, no module session, the session no longer uncertain; d: Get-OERGroup without -TenantId got past the A10 refusal to its own sign-in -- with no session, interactive -- whose token request the fence refused (token requests 1, refused by the fence 1): GraphTokenAcquisitionFailed, then the latch's SignInRefused for its request, Graph requests 0, and that refused sign-in marked the session uncertain again, as designed. Reaching the token request at all is the proof that Disconnect-OER cleared the marker; no browser or device code prompt was shown.
+
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 4.3 a: Connect-OER with the made-up domain: output objects 0; errors: TenantResolutionFailed; lookups: 1; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.3 a: Connect-OER with the made-up domain: TenantResolutionFailed,Initialize-OERAuth; category AuthenticationError -- Could not resolve tenant 'MADE-UP-DOMAIN' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, s ...
+[oer-s93] 4.3 b: Get-OERGroup without -TenantId: output objects 0; errors: SignInRefused (Get-OERGroup) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.3 b: Get-OERGroup without -TenantId: SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+[oer-s93] 4.3 c: Disconnect-OER: output objects 0; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: False; the module holds a session: False; the session is uncertain: False
+[oer-s93] 4.3 d: Get-OERGroup without -TenantId: output objects 0; errors: GraphTokenAcquisitionFailed, SignInRefused (Get-OERGroup); lookups: 0; token requests: 1 (refused by the fence: 1); Graph requests: 0; ARM requests: 0; Graph SDK session: False; the module holds a session: False; the session is uncertain: True
+[oer-s93] 4.3 d: Get-OERGroup without -TenantId: GraphTokenAcquisitionFailed,Initialize-OERAuth; category AuthenticationError -- Failed to acquire a Microsoft Graph token: S93 fence: a token request without the certificate was refused before it was sent.
+[oer-s93] 4.3 d: Get-OERGroup without -TenantId: SignInRefused,Get-OERGroup; category AuthenticationError -- The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+```
 
 ### 4.4. The loop over Tenant Profiles: a refused Connect-OER -TenantAlias, then Invoke-OERStructure without -TenantId
 
-- [ ] **4.4** Two Tenant Profiles in the step's raw folder -- `oer-s93-test` (the test tenant's GUID) and `oer-s93-made-up` (the made-up domain) -- and the loop `Connect-OER -TenantAlias $Alias ...; Invoke-OERStructure -Path <doc> -WhatIf` over `oer-s93-test`, `oer-s93-missing` (no profile), `oer-s93-test`, a blank alias, `oer-s93-test`, `oer-s93-made-up`: the three `oer-s93-test` rounds plan the document; after `oer-s93-missing` (`TenantAliasNotFound`), the blank alias (`InvalidTenantAlias`) and `oer-s93-made-up` (`TenantResolutionFailed`) `Invoke-OERStructure` is refused with `SignInRefused`, sending nothing.
+- [x] **4.4** Two Tenant Profiles in the step's raw folder -- `oer-s93-test` (the test tenant's GUID) and `oer-s93-made-up` (the made-up domain) -- and the loop `Connect-OER -TenantAlias $Alias ...; Invoke-OERStructure -Path <doc> -WhatIf` over `oer-s93-test`, `oer-s93-missing` (no profile), `oer-s93-test`, a blank alias, `oer-s93-test`, `oer-s93-made-up`: the three `oer-s93-test` rounds plan the document; after `oer-s93-missing` (`TenantAliasNotFound`), the blank alias (`InvalidTenantAlias`) and `oer-s93-made-up` (`TenantResolutionFailed`) `Invoke-OERStructure` is refused with `SignInRefused`, sending nothing.
 
 ```powershell
 $ProfileDir = Join-Path $Raw 'profiles'
@@ -483,19 +623,56 @@ token requests: 0`; `Invoke-OERStructure` refused the same way. After `oer-s93-m
 planned in the session the refused sign-in left (the BL-89 shape; with `-Prune` and without `-WhatIf`,
 an apply in the previous tenant).
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:32 UTC, two Tenant Profiles in raw\s93\profiles (oer-s93-test: the test tenant's GUID; oer-s93-made-up: the made-up domain) and the loop Connect-OER -TenantAlias $Alias -BasePath ... -ClientId -Certificate; Invoke-OERStructure -Path (a one-group document) -WhatIf, without -TenantId. After each of the three oer-s93-test rounds: Connect-OER a cached return, no error; Invoke-OERStructure planned the group (row groups | oer-s93-grp | Skipped | would create group oer-s93-grp; Graph requests 1, ARM 0). After oer-s93-missing (TenantAliasNotFound, no lookup, no token request), the blank alias (InvalidTenantAlias: "The tenant alias is empty ...", no lookup, no token request) and oer-s93-made-up (TenantResolutionFailed, no token request): Invoke-OERStructure refused with SignInRefused (Invoke-OERStructure) at its sign-in (the A10 message) and at its handler's request (the latch message), its only row Failed, nothing planned, token requests 0, Graph requests 0, ARM requests 0. Before this branch each of those three documents was planned -- with -Prune and without -WhatIf, applied -- in the previous tenant (BL-89).
+
+[oer-s93] The module resolves the four fenced commands to the fences: True
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-test: output objects 0; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+What if: Performing the operation "Create group" on target "oer-s93-grp".
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: output objects 1; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: row groups | oer-s93-grp | Skipped | would create group oer-s93-grp
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-missing: output objects 0; errors: TenantAliasNotFound; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-missing: TenantAliasNotFound,Connect-OER; category ObjectNotFound -- No usable Tenant Profile for alias 'oer-s93-missing'. Either no profile file exists for that alias, or one exists and could not be parsed (a TenantProfileMalformed error is reported alongside this one). Create a missing profile with New-OERConfiguration; repair a malformed file on disk, or overwrite its values with Set-OERConfiguration.
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-missing: output objects 1; errors: SignInRefused (Invoke-OERStructure) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-missing: row groups | oer-s93-grp | Failed | handler error: The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-missing: SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-test: output objects 0; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+What if: Performing the operation "Create group" on target "oer-s93-grp".
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: output objects 1; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: row groups | oer-s93-grp | Skipped | would create group oer-s93-grp
+[oer-s93] 4.4 Connect-OER -TenantAlias (blank): output objects 0; errors: InvalidTenantAlias; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Connect-OER -TenantAlias (blank): InvalidTenantAlias,Connect-OER; category InvalidArgument -- The tenant alias is empty. Name the stored Tenant Profile to sign in with, or name the tenant with -TenantId: an empty alias is refused rather than read as no alias, which would sign in to the current session's tenant.
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after (blank): output objects 1; errors: SignInRefused (Invoke-OERStructure) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after (blank): row groups | oer-s93-grp | Failed | handler error: The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after (blank): SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-test: output objects 0; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+What if: Performing the operation "Create group" on target "oer-s93-grp".
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: output objects 1; errors: none; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 1; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: False
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-test: row groups | oer-s93-grp | Skipped | would create group oer-s93-grp
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-made-up: output objects 0; errors: TenantResolutionFailed; lookups: 1; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Connect-OER -TenantAlias oer-s93-made-up: TenantResolutionFailed,Initialize-OERAuth; category AuthenticationError -- Could not resolve tenant 'MADE-UP-DOMAIN' to its tenant ID: The Microsoft Entra ID authority 'https://login.microsoftonline.com/' did not resolve 'MADE-UP-DOMAIN' to a tenant: Response status code does not indicate success: 400 (Bad Request). (invalid_tenant, AADSTS90002) Omnicit.EntraRBAC checks the tenant every token is issued for, and a tenant named by domain is checked through its tenant ID, s ...
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-made-up: output objects 1; errors: SignInRefused (Invoke-OERStructure) x2; lookups: 0; token requests: 0 (refused by the fence: 0); Graph requests: 0; ARM requests: 0; Graph SDK session: True; the state names the test tenant by GUID: True; by its primary domain: False; the Graph token was issued for the test tenant: True; the ARM token: True; the client is oer-live-cc: True; the identity's tenant term is the test tenant's GUID: True; the session is uncertain: True
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-made-up: row groups | oer-s93-grp | Failed | handler error: The module's sign-in for this command was refused, so Omnicit.EntraRBAC sends nothing for this command: this request was not sent. Run Connect-OER, or run a new command whose sign-in succeeds, to send requests again.
+[oer-s93] 4.4 Invoke-OERStructure -WhatIf after oer-s93-made-up: SignInRefused,Initialize-OERAuth; category AuthenticationError -- An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.
+```
 
 ## 5. TenantMismatch with a domain: class B
 
-- [ ] **5** Not runnable live (see "What this file does not check"). The offline proof instead, with its result in the step's gate run on the branch head: in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth granted-tenant guard`, `refuses a Graph token issued for another tenant than the one a domain resolves to` and `refuses an ARM token issued for another tenant than the one a domain resolves to, caching nothing`; and in a runspace with no `try`, `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` `H7: Invoke-OERStructure with a tenant named by domain whose token comes back from another tenant, outside any try, connects nothing and sends no Graph or ARM request (BL-12)`.
+- [x] **5** Not runnable live (see "What this file does not check"). The offline proof instead, with its result in the step's gate run on the branch head: in `tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, Describe `Initialize-OERAuth granted-tenant guard`, `refuses a Graph token issued for another tenant than the one a domain resolves to` and `refuses an ARM token issued for another tenant than the one a domain resolves to, caching nothing`; and in a runspace with no `try`, `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` `H7: Invoke-OERStructure with a tenant named by domain whose token comes back from another tenant, outside any try, connects nothing and sends no Graph or ARM request (BL-12)`.
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (class B, G9; not runnable live: the certificate's tokens always come from the test tenant). The offline proof passed in the step's final gate on e04bbb6 (7962 passed, 0 failed, coverage 94.64 %): tests/Unit/Private/Initialize-OERAuth.Tests.ps1, Describe 'Initialize-OERAuth granted-tenant guard', 'refuses a Graph token issued for another tenant than the one a domain resolves to' and 'refuses an ARM token issued for another tenant than the one a domain resolves to, caching nothing'; and, in a runspace with no try, tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1 'H7: Invoke-OERStructure with a tenant named by domain whose token comes back from another tenant, outside any try, connects nothing and sends no Graph or ARM request (BL-12)'. Mutation-proved in the step: the Graph comparison against the name again turns the domain refusal It and H7 red; the same on the ARM side turns the ARM It red. The live half of the evidence is 1.1 (the authority's real answers) and 2.1 (a real token for the tenant the domain resolves to).
+```
 
 ## Teardown
 
 ### T.1. Nothing carries the prefix, no session is left, the profiles are gone, and the main clone is untouched
 
-- [ ] **T.1** The sweep finds nothing with the prefix `oer-s93-`; the two profile files and the document are deleted; no session is left; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
+- [x] **T.1** The sweep finds nothing with the prefix `oer-s93-`; the two profile files and the document are deleted; no session is left; the main clone is still on `main` at the HEAD S.1 recorded; the redaction map is deleted after the write-up.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -525,4 +702,23 @@ this file: `Clear-OerLiveRedactionMap`, and `raw\s93\` deleted.
 **Failure looks like:** a prefixed object -- STOP: this file creates none, so it is not this run's
 (G11 stop condition: an object the prerequisite script did not create).
 
-Result:
+Result: 2026-10-06 22:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-06 22:33 UTC as oer-live-cc (every identity line True): the sweep found no user, group, administrative unit, catalog, access package or app registration starting with oer-s93- (this file creates none); after Disconnect-OerLive no Graph SDK session is left and the module holds no session; the two profile files and the document were deleted (profile files left: 0); the main clone is on main at 6817b33, the HEAD S.1 recorded, never switched. No prerequisite script, no baseline, no residue. The redaction map is cleared and raw\s93\ deleted after this write-up.
+
+[oer-s93] OER_LIVE_REPO is a clone of Omnicit.EntraRBAC: True
+[oer-s93] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg3\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s93] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s93] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s93-' is left.
+[oer-s93] Prefixed objects: 0; a Graph SDK session is left: False; the module holds a session: False; profile files left: 0
+[oer-s93] Main clone: branch main; HEAD 6817b33
+```
