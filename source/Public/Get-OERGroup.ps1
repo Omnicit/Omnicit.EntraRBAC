@@ -11,10 +11,13 @@ function Get-OERGroup {
     With -IncludeMembers the group's direct members are attached as a Members property;
     with -IncludeOwners the group's owners are attached as an Owners property; with
     -IncludePimEligibility the group's PIM-for-groups eligibility schedule instances are attached
-    as a PimEligibility property. A named group that does not exist produces a non-terminating
-    GroupNotFound error. For each of those three collections, the property is attached only when its
-    read succeeds; a failed read omits the property entirely and raises a non-terminating error
-    instead, so an empty array in the result always means the group genuinely has none.
+    as a PimEligibility property. Members and Owners include service principals, which Microsoft
+    Graph's v1.0 member and owner lists leave out: each of those two reads also asks for the group's
+    service principals through the typed servicePrincipal collection. A named group that does not
+    exist produces a non-terminating GroupNotFound error. For each of those three collections, the
+    property is attached only when its read succeeds (for members and owners, when both requests
+    succeed); a failed read omits the property entirely and raises a non-terminating error instead,
+    so an empty array in the result always means the group genuinely has none.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same
@@ -35,15 +38,19 @@ function Get-OERGroup {
 
     .PARAMETER IncludeMembers
     When set, attaches the group's direct members as a Members property on the returned object, as
-    tagged Omnicit.EntraRBAC.GroupMember objects. The property is present only when the read
-    succeeds; a failed read is reported as a non-terminating GroupMemberReadFailed error and the
-    Members property is omitted, so a returned empty array always means the group has no members.
+    tagged Omnicit.EntraRBAC.GroupMember objects, service principals included (read through the
+    typed servicePrincipal collection as well). The property is present only when the read succeeds,
+    which takes both requests; a failed read is reported as a non-terminating GroupMemberReadFailed
+    error and the Members property is omitted, so a returned empty array always means the group has
+    no members.
 
     .PARAMETER IncludeOwners
     When set, attaches the group's owners as an Owners property on the returned object, as tagged
-    Omnicit.EntraRBAC.GroupMember objects (MemberType Owner). The property is present only when the
-    read succeeds; a failed read is reported as a non-terminating GroupOwnerReadFailed error and the
-    Owners property is omitted, so a returned empty array always means the group has no owners.
+    Omnicit.EntraRBAC.GroupMember objects (MemberType Owner), service principals included (read
+    through the typed servicePrincipal collection as well). The property is present only when the
+    read succeeds, which takes both requests; a failed read is reported as a non-terminating
+    GroupOwnerReadFailed error and the Owners property is omitted, so a returned empty array always
+    means the group has no owners.
 
     .PARAMETER IncludePimEligibility
     When set, attaches the group's PIM-for-groups eligibility schedule instances as a

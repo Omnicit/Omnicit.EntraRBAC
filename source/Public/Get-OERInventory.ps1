@@ -25,7 +25,10 @@ function Get-OERInventory {
     a time-bound eligibility time-bound and an owner eligibility on the owner access type. The Groups
     owners projection carries the group's owners (a privilege path distinct from members, since an
     owner can add members) so a re-applied inventory keeps them, and is emitted only when the group
-    has at least one owner. The Groups pimPolicy projection is emitted only for a group found to use
+    has at least one owner. A group's members and owners include its service principals, written by
+    object id; a document exported by an earlier version lacks them, so export again before applying
+    it with -Prune, which removes them as undeclared.
+    The Groups pimPolicy projection is emitted only for a group found to use
     PIM for Groups: one with PIM eligibility, or one whose PIM-for-Groups policy has been modified (it
     carries a lastModifiedDateTime or a lastModifiedBy). Microsoft Graph lists those policies for
     every group, including one never used with PIM for Groups, and applying a changed pimPolicy to

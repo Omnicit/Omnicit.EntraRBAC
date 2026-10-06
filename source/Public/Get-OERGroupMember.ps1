@@ -9,6 +9,10 @@ function Get-OERGroupMember {
     Omnicit.EntraRBAC.GroupMember object per principal. The group is given by -Group (display name or
     GUID, resolved via Resolve-OERGroupId) and binds from the pipeline by property name so
     Get-OERGroup pipes straight in. A group with no members/owners returns nothing (not an error).
+    Service principals are included: Microsoft Graph's v1.0 member and owner lists leave them out,
+    so the typed servicePrincipal collection is read as well. The read is whole or not at all: when
+    either request fails, the error is written as itself and nothing is returned, never a partial
+    list.
 
     .PARAMETER Group
     The group whose members or owners are listed, given as a display name or object id (GUID) and

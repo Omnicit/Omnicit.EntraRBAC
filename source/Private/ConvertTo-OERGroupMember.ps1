@@ -7,7 +7,8 @@ function ConvertTo-OERGroupMember {
     Maps a directory object returned by groups/{id}/members or groups/{id}/owners into a
     [PSCustomObject] tagged Omnicit.EntraRBAC.GroupMember so Format views apply. The @odata.type is
     reduced to a friendly ObjectType (user, group, servicePrincipal, device); when the annotation is
-    absent ObjectType is $null, matching ConvertTo-OERAdministrativeUnitMember. MemberType records
+    absent ObjectType is $null, matching ConvertTo-OERAdministrativeUnitMember, unless
+    -DefaultObjectType is given (then ObjectType is that value). MemberType records
     whether the object came from the members or owners collection. PrincipalId is the member's own
     object id, stored once; the generic Id is an AliasProperty of PrincipalId, registered in
     suffix.ps1, rather than a second stored copy that could drift out of sync -- piped output still

@@ -7,8 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-No changes to the module since 1.1.2. A preview published from this point differs from 1.1.2 only
-in documentation, tests or the build.
+Group reads now include service principals. Microsoft Graph's v1.0 member and owner lists leave
+service principals out, so `Get-OERGroup -IncludeMembers -IncludeOwners`, `Get-OERGroupMember` and
+the inventory export missed them. Each read now also asks for the group's service principals, and a
+read that cannot be completed leaves the collection unread rather than half-read. An apply document
+exported by an earlier version lacks those service principals: export it again before you apply it
+with `-Prune`, or they are removed as undeclared.
 
 ## [1.1.2] - 2026-10-06
 
