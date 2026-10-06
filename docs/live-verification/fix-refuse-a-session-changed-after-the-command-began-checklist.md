@@ -95,7 +95,7 @@ unchanged identity, still apply and resolve (sections 1 and 2).
 
 - The **test tenant** -- never a customer tenant -- and the two configuration files OerLive reads
   beside it (tenant values live there and nowhere else).
-- **OerLive 1.0.2** in the same folder; `$VaultDir` below is that folder (the environment variable
+- **OerLive 1.0.3** in the same folder; `$VaultDir` below is that folder (the environment variable
   `OER_LIVE_DIR`).
 - The **dedicated certificate identity** `oer-live-cc` enabled for the run, and `oer-live-cc-noperm`.
   This file adds no permission to either.
@@ -198,11 +198,16 @@ $Cfg = Import-OerLiveConfig -Prefix 'oer-s92-' -ConfigDirectory $VaultDir
 foreach ($Line in $Out) { Write-OerLiveStep (ConvertTo-OerLiveRedacted -Text $Line) }
 $Plan = @($Out | Where-Object { $_ -match 'What if: Performing the operation' })
 $Targets = @($Plan | ForEach-Object { if ($_ -match 'on target "([^"]+)"') { $Matches[1] } })
-Write-OerLiveStep "Planned writes: $($Plan.Count); targets read: $($Targets.Count); every target starts with oer-s92-: $(@($Targets | Where-Object { -not $_.StartsWith('oer-s92-') }).Count -eq 0)"
+# The script's own files (transcript, baseline) go to raw\s92\ in the clone; every other target is in the tenant.
+$Local = @($Targets | Where-Object { $_.StartsWith('raw\s92\') })
+$Tenant = @($Targets | Where-Object { -not $_.StartsWith('raw\s92\') })
+Write-OerLiveStep "Planned writes: $($Plan.Count); local files under raw\s92\: $($Local.Count); tenant targets: $($Tenant.Count); every tenant target starts with oer-s92-: $(@($Tenant | Where-Object { -not $_.StartsWith('oer-s92-') }).Count -eq 0)"
 ```
 
-**Expect:** the identity lines `True`; `WhatIf: nothing was created, removed or written.`; two planned
-writes (the two groups, or none if they exist already), each target starting with `oer-s92-` (`True`).
+**Expect:** the identity lines `True`; `WhatIf: nothing was created, removed or written.`; the
+script's own two local files under `raw\s92\` (the transcript and, on a first run, the baseline) and
+two tenant targets (the two groups, or none if they exist already), every tenant target starting
+with `oer-s92-` (`True`).
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run.
 
