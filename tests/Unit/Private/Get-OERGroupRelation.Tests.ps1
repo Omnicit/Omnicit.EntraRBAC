@@ -99,7 +99,8 @@ Describe 'Get-OERGroupRelation' {
             Mock Invoke-OERGraphRequest { @{ value = @() } } -ParameterFilter { $Uri -eq 'v1.0/groups/22222222-2222-2222-2222-222222222222/members/microsoft.graph.servicePrincipal' }
             # -ErrorAction Stop: an error record written by the call would throw here and fail the
             # test, so reaching the next line is the proof that none was written. (An unfiltered
-            # -ErrorVariable count is not: newer Pester lets its own bookkeeping leak into it.)
+            # -ErrorVariable count is not: records are re-deposited at call boundaries, see the
+            # repository's rationale.md, #writeerror-deposit.)
             $R = @(Get-OERGroupRelation -GroupId '22222222-2222-2222-2222-222222222222' -Relation members -ErrorAction Stop)
             $R.Count | Should -Be 0
             Should -Invoke Invoke-OERGraphRequest -Times 2 -Exactly
@@ -288,6 +289,9 @@ Describe 'Get-OERGroupRelation' {
                 Join-Path -Path $PSScriptRoot -ChildPath '../../../source'
             }
             $SourceRoot = (Resolve-Path -Path $SourceRoot).Path
+            if ($env:OER_COHORT_SOURCE_ROOT) {
+                Write-Warning "OER_COHORT_SOURCE_ROOT is set: scanning $SourceRoot instead of the repository source."
+            }
 
             # A Graph read of a group's members or owners collection: the collection itself (the {1}
             # of the helper's own format string included), a typed cast of it (microsoft.graph.<type>,
@@ -311,19 +315,85 @@ Describe 'Get-OERGroupRelation' {
                 }
             }
 
-            $Reads = @(
-                foreach ($File in (Get-ChildItem -Path $SourceRoot -Filter '*.ps1' -File -Recurse | Where-Object { $_.Extension -eq '.ps1' })) {
-                    $FileAst = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
-                    $Relative = [System.IO.Path]::GetRelativePath($SourceRoot, $File.FullName) -replace '\\', '/'
-                    & $GetCollectionReads $FileAst $Relative
+            # Every call of Get-OERGroupRelation the AST holds, with whether a try statement of the
+            # calling function holds it in its BODY (not its catch or finally): the nearest enclosing
+            # function is the boundary, since a try in another function does not guard the call. The
+            # helper emits nothing only because the transport's failure reaches the caller's catch;
+            # outside any try a caller carries on past the failed read, and the untyped half would
+            # be emitted (measured by the whole-branch review of Sprint 9 step 1).
+            $GetRelationCalls = {
+                param($Ast, $RelativePath)
+                foreach ($Command in $Ast.FindAll({
+                            param($Candidate)
+                            $Candidate -is [System.Management.Automation.Language.CommandAst] -and
+                            $Candidate.GetCommandName() -eq 'Get-OERGroupRelation'
+                        }, $true)) {
+                    $Guarded = $false
+                    $Ancestor = $Command.Parent
+                    while ($null -ne $Ancestor -and $Ancestor -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                        if ($Ancestor -is [System.Management.Automation.Language.TryStatementAst] -and
+                            $Ancestor.Body.Extent.StartOffset -le $Command.Extent.StartOffset -and
+                            $Command.Extent.EndOffset -le $Ancestor.Body.Extent.EndOffset) {
+                            $Guarded = $true
+                            break
+                        }
+                        $Ancestor = $Ancestor.Parent
+                    }
+                    [PSCustomObject]@{ Path = $RelativePath; Line = $Command.Extent.StartLineNumber; Guarded = $Guarded }
                 }
-            )
+            }
+
+            $Reads = @()
+            $Calls = @()
+            foreach ($File in (Get-ChildItem -Path $SourceRoot -Filter '*.ps1' -File -Recurse | Where-Object { $_.Extension -eq '.ps1' })) {
+                $FileAst = [System.Management.Automation.Language.Parser]::ParseFile($File.FullName, [ref]$null, [ref]$null)
+                $Relative = [System.IO.Path]::GetRelativePath($SourceRoot, $File.FullName) -replace '\\', '/'
+                $Reads += @(& $GetCollectionReads $FileAst $Relative)
+                $Calls += @(& $GetRelationCalls $FileAst $Relative)
+            }
         }
 
         It 'finds no read of a group collection outside Get-OERGroupRelation' {
             $Outside = @($Reads | Where-Object { $_.Path -ne 'Private/Get-OERGroupRelation.ps1' } |
                     ForEach-Object { '{0}:{1} {2}' -f $_.Path, $_.Line, $_.Value })
-            $Outside | Should -BeNullOrEmpty -Because 'a second reader of a group collection would leave out the service principals again'
+            $Outside | Should -BeNullOrEmpty -Because 'a second reader of a group collection would leave out the service principals again (docs/development/rationale.md#typed-group-member-read)'
+        }
+
+        It 'finds every caller of Get-OERGroupRelation inside the body of a try, none outside one or in a catch or finally' {
+            $Unguarded = @($Calls | Where-Object { $_.Path -ne 'Private/Get-OERGroupRelation.ps1' -and -not $_.Guarded } |
+                    ForEach-Object { '{0}:{1}' -f $_.Path, $_.Line })
+            $Unguarded | Should -BeNullOrEmpty -Because 'a caller outside a try would carry on past a failed read and emit the untyped half (docs/development/rationale.md#typed-group-member-read)'
+        }
+
+        It 'does find the three callers, Get-OERGroup for members and for owners and Get-OERGroupMember, so the try scan is not vacuous' {
+            $Callers = @($Calls | Where-Object { $_.Path -ne 'Private/Get-OERGroupRelation.ps1' })
+            $Callers.Count | Should -BeGreaterOrEqual 3
+            @($Callers | Where-Object { $_.Path -eq 'Public/Get-OERGroup.ps1' }).Count | Should -BeGreaterOrEqual 2
+            @($Callers | Where-Object { $_.Path -eq 'Public/Get-OERGroupMember.ps1' }).Count | Should -BeGreaterOrEqual 1
+        }
+
+        It 'tells a call in the body of a try from one outside a try, in a catch, in a finally or in another function than the try' {
+            $Snippet = @(
+                'function A { try { Get-OERGroupRelation -GroupId 1 -Relation members } catch { } }'
+                'function B { Get-OERGroupRelation -GroupId 2 -Relation members }'
+                'function C { try { } catch { Get-OERGroupRelation -GroupId 3 -Relation members } }'
+                'function D { try { } finally { Get-OERGroupRelation -GroupId 4 -Relation members } }'
+                'function E { try { try { } catch { Get-OERGroupRelation -GroupId 5 -Relation members } } catch { } }'
+                'function F { try { function Inner { Get-OERGroupRelation -GroupId 6 -Relation members } } catch { } }'
+            ) -join "`n"
+            $SnippetAst = [System.Management.Automation.Language.Parser]::ParseInput($Snippet, [ref]$null, [ref]$null)
+            $Found = @(& $GetRelationCalls $SnippetAst 'snippet.ps1')
+            $Found.Count | Should -Be 6
+            foreach ($Case in @(
+                    @{ Line = 1; Guarded = $true }
+                    @{ Line = 2; Guarded = $false }
+                    @{ Line = 3; Guarded = $false }
+                    @{ Line = 4; Guarded = $false }
+                    @{ Line = 5; Guarded = $true }
+                    @{ Line = 6; Guarded = $false }
+                )) {
+                @($Found | Where-Object { $_.Line -eq $Case.Line }).Guarded | Should -Be $Case.Guarded -Because ('the call on line {0}' -f $Case.Line)
+            }
         }
 
         It 'does find both of the helper''s own reads, the untyped and the typed, so the scan is not vacuous' {
