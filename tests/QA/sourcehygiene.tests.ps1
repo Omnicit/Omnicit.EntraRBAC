@@ -1438,6 +1438,9 @@ BeforeAll {
         Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
         (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
         skip comparing -- on rules of its own.
+        Each row of $script:transportGateOwners is enforced only by its own It below, which asserts that
+        the command has no caller outside its owners and that its owners really call it: no assertion
+        reads the table as a whole, so a new row needs its own It, and a row without one is inert.
 
         WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
         is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the

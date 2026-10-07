@@ -6069,6 +6069,38 @@ $RecordLines
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
+
+    It 'P19e: Invoke-OERStructure -TenantId naming another tenant ID than its document requests no token and sends nothing (BL-88, the check before the sign-in)' {
+        # The check before the sign-in, in a runspace with no try: the refusal is a non-terminating
+        # error and a return, so only that return keeps the command from signing in to the tenant
+        # -TenantId names. A plain statement, no pipeline: nothing else could refuse it.
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-SupersessionPipelineProbe -Scenario {
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'
+            $Doc = Join-Path ([System.IO.Path]::GetTempPath()) ('oer-bl88-p19e-' + [System.IO.Path]::GetRandomFileName() + '.json')
+            Set-Content -LiteralPath $Doc -Value '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444", "groups": [ { "displayName": "oer-bl88-probe" } ] }' -Encoding utf8
+            $Rows = @(Invoke-OERStructure -Path $Doc -TenantId '77777777-7777-7777-7777-777777777777' -WhatIf)
+            Remove-Item -LiteralPath $Doc
+            Write-Warning ('DOCUMENT REMOVED: {0}' -f (-not (Test-Path -LiteralPath $Doc)))
+            foreach ($Row in $Rows) { Write-Warning ('ROW: {0} | {1} | {2} | {3}' -f $Row.Section, $Row.Item, $Row.Action, $Row.Detail) }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'CONTEXT STUB REMOVED: True'
+        $R.Warnings | Should -Contain 'DOCUMENT REMOVED: True'
+        # The Connect-OER sign-in only: no token was requested for B, the tenant -TenantId names.
+        Get-PipelineProbeLine -Probe $R -Prefix 'TOKEN: ' | Should -Be @('graph 44444444-4444-4444-4444-444444444444')
+        Get-PipelineProbeLine -Probe $R -Prefix 'GRAPH: ' | Should -BeNullOrEmpty
+        Get-PipelineProbeLine -Probe $R -Prefix 'ARM: ' | Should -BeNullOrEmpty
+        $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
+        $Records.Count | Should -Be 1
+        $Records[0] | Should -BeLike 'DocumentTenantMismatch,Invoke-OERStructure | *oer-bl88-p19e-*.json | *'
+        $Records[0] | Should -BeLike '*names tenant ''44444444-4444-4444-4444-444444444444'', but -TenantId names tenant ''77777777-7777-7777-7777-777777777777''. *'
+        $Records[0] | Should -BeLike '*nothing was signed in to, read or written for this document*'
+        @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -BeNullOrEmpty
+        $R.Output | Should -Contain 'OUTPUT COUNT: 0'
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
 }
 
 Describe 'Invoke-OERGraphRequest stops at each of its own throws, outside any try (F3)' {

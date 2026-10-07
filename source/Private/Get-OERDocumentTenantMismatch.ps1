@@ -49,8 +49,6 @@ function Get-OERDocumentTenantMismatch {
 
     Refuses the document when the session's tokens were issued for another tenant than it names.
     #>
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
-        Justification = 'Pure comparison and in-memory error-record builder; performs no state change.')]
     [CmdletBinding(DefaultParameterSetName = 'Session')]
     [OutputType([System.Management.Automation.ErrorRecord])]
     param(

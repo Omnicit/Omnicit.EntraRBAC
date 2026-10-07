@@ -84,7 +84,7 @@ Describe 'Get-OERDocumentTenantMismatch (BL-88, A14)' {
             }
         }
 
-        It 'never reads the session state before the sign-in' {
+        It 'is not influenced by the session state before the sign-in' {
             InModuleScope Omnicit.EntraRBAC -Parameters @{ Doc = $script:DocA } {
                 param($Doc)
                 # A session of another tenant: the comparison before the sign-in is with -TenantId only.
