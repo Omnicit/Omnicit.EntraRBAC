@@ -9,9 +9,10 @@ function Get-OERDocumentTenantMismatch {
     a document is applied in (BL-88, decision A14), and of the DocumentTenantMismatch id and message.
     Get-OERInventory writes tenantId as the tenant the exporting session's Microsoft Graph token was
     issued for (Get-OERInventoryTenantId), and Invoke-OERStructure calls this function for every
-    document, so a document that names its tenant is applied in that tenant only -- also when the
-    command runs inside a script block in a pipeline, where the snapshot of the session it began with
-    is taken too late to see another command's sign-in (BL-88).
+    document that was read, validated and not refused by the pipeline session rule, so a document that
+    names its tenant is applied in that tenant only -- also when the command runs inside a script block
+    in a pipeline, where the snapshot of the session it began with is taken too late to see another
+    command's sign-in (BL-88).
 
     Returns nothing when the document has no tenantId key -- such a document is applied exactly as
     before, with no tenant check -- or when the comparison passes. Otherwise returns an ErrorRecord the

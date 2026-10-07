@@ -234,10 +234,10 @@ are given. Called inside a script block or a function in a pipeline, such as
 `ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins only when that block
 runs, after every other command in the pipeline has begun and so after most of their sign-ins, and
 it takes the session they left for its own. A document exported by `Get-OERInventory` or
-`Export-OERInventory` names its tenant (`tenantId`), and `Invoke-OERStructure` refuses it in any
-other tenant with `DocumentTenantMismatch`, reading and writing nothing for it, whichever session it
-began with. A document without `tenantId`, and the three cmdlets above, still take that session
-for their own, so name `-TenantId` there. Run the commands as separate statements; to move objects
+`Export-OERInventory` names its tenant (`tenantId`, when it carries one), and `Invoke-OERStructure`
+refuses it in any other tenant with `DocumentTenantMismatch`, reading and writing nothing for it,
+whichever session it began with. A document without `tenantId`, and the three cmdlets above, still
+take that session for their own, so name `-TenantId` there. Run the commands as separate statements; to move objects
 between tenants, collect them in a variable first:
 
 ```powershell
@@ -690,8 +690,8 @@ Remove-OERAccessPackageAssignment -AssignmentId '<id from the list above>'
 
 Read the tenant, hand the bundle to an LLM (or edit the JSON by hand), validate offline, preview,
 then apply. `Test-OERStructure` never touches the tenant, and `Invoke-OERStructure -WhatIf` only
-reads. The exported `inventory.json` names the tenant it was read from (`tenantId`), and
-`Invoke-OERStructure` applies it, or a proposal that keeps the key, only in that tenant.
+reads. The exported `inventory.json` names the tenant it was read from (`tenantId`, when it carries
+one), and `Invoke-OERStructure` applies it, or a proposal that keeps the key, only in that tenant.
 
 ```powershell
 # 1. Export the current posture into a timestamped bundle (JSON + schema + LLM prompt + README)

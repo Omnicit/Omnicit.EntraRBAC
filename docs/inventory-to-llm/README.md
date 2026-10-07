@@ -56,6 +56,10 @@ Invoke-OERStructure -Path .\proposal.json -WhatIf # preview the changes
 Invoke-OERStructure -Path .\proposal.json         # apply
 ```
 
+A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant the export came
+from: `Invoke-OERStructure` refuses it anywhere else with `DocumentTenantMismatch`. To apply it in
+another tenant, change `tenantId` to that tenant's ID or remove it first.
+
 ## Groups schema -- pimPolicy
 
 Groups carry a `pimPolicy` object in the inventory and apply document. The field

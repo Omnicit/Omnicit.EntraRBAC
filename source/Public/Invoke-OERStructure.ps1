@@ -74,7 +74,9 @@ function Invoke-OERStructure {
     sign-in, with the session the call began with. So a first sign-in from no session does not refuse
     the next document, while a document refused with SignInSuperseded, or one that could not be read
     or did not validate, signs nothing in and moves nothing: the document after it is compared with
-    the same session. With -TenantId the command signs in to that tenant as before.
+    the same session. With -TenantId the command signs in to that tenant as before, except that a
+    document naming another tenant than a -TenantId that is a tenant ID is refused before that
+    sign-in (see the document tenant rule below).
 
     Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory
     and Export-OERInventory write it -- is applied only in that tenant. With a -TenantId that is a
@@ -144,9 +146,9 @@ function Invoke-OERStructure {
     -InputObject.
 
     .PARAMETER InputObject
-    The document to apply: a PSCustomObject (such as the output of Get-OERInventory, whose tenantId
-    limits it to that tenant -- see the document tenant rule above) to apply directly, eliminating
-    the need for a manual ConvertTo-Json / ConvertFrom-Json round-trip; OR a
+    The document to apply: a PSCustomObject (such as the output of Get-OERInventory, whose tenantId,
+    when it carries one, limits it to that tenant -- see the document tenant rule above) to apply
+    directly, eliminating the need for a manual ConvertTo-Json / ConvertFrom-Json round-trip; OR a
     file to read -- either a path string or a System.IO.FileInfo (for example piped from
     Get-ChildItem or Get-Item), read from disk exactly like -Path. A System.IO.DirectoryInfo is an
     error. Mutually exclusive with -Path and -Json.

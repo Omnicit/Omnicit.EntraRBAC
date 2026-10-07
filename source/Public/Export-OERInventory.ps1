@@ -102,12 +102,14 @@ function Export-OERInventory {
 
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
-    oer-inventory-<tenantId>-<yyyyMMdd-HHmmss>, so inventory.json is at
-    <OutputPath>/oer-inventory-<tenantId>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
-    Because the stamp is generated per run, the only reliable way to address the bundle afterwards is
-    the BundlePath property of the returned Omnicit.EntraRBAC.InventoryBundle object -- an absolute
-    path, populated under -WhatIf too (as the planned location). Capture the returned object and join
-    onto its BundlePath rather than guessing the folder name; see the Test-OERStructure example below.
+    oer-inventory-<tenant>-<yyyyMMdd-HHmmss>, so inventory.json is at
+    <OutputPath>/oer-inventory-<tenant>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
+    <tenant> is the tenant as the session names it (an ID, or the domain given to -TenantId), which can
+    differ from the tenantId inside inventory.json. Because the stamp is generated per run, the only
+    reliable way to address the bundle afterwards is the BundlePath property of the returned
+    Omnicit.EntraRBAC.InventoryBundle object -- an absolute path, populated under -WhatIf too (as the
+    planned location). Capture the returned object and join onto its BundlePath rather than guessing
+    the folder name; see the Test-OERStructure example below.
 
     The full export to LLM to Test-OERStructure to Invoke-OERStructure walkthrough is documented in
     the repository at docs/inventory-to-llm/README.md, and a worked apply document is kept in the
@@ -161,7 +163,7 @@ function Export-OERInventory {
     .EXAMPLE
     Export-OERInventory -OutputPath C:\Temp -Include Groups,AdministrativeUnits,Catalogs,AccessPackages,RoleAssignments,RoleManagementPolicies
     Reads the full posture (including tenant-wide Azure role assignments and PIM policies) into a
-    bundle under C:\Temp\oer-inventory-<tenantId>-<stamp>\, not into C:\Temp itself.
+    bundle under C:\Temp\oer-inventory-<tenant>-<stamp>\, not into C:\Temp itself.
 
     .EXAMPLE
     $Bundle = Export-OERInventory -OutputPath C:\Temp

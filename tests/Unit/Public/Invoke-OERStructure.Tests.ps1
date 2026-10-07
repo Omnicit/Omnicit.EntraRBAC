@@ -889,7 +889,9 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
 
         $ParamText['TenantId'] | Should -Match 'tenantId'
         $ParamText['TenantId'] | Should -Match ([regex]::Escape('see the document tenant rule above'))
-        $ParamText['InputObject'] | Should -Match ([regex]::Escape('whose tenantId limits it to that tenant'))
+        $ParamText['InputObject'] | Should -Match ([regex]::Escape('whose tenantId, when it carries one, limits it to that tenant'))
+        # The pipeline session rule's last sentence no longer claims the sign-in is unconditional.
+        $Description | Should -Match ([regex]::Escape('With -TenantId the command signs in to that tenant as before, except that a document naming another tenant than a -TenantId that is a tenant ID is refused before that sign-in (see the document tenant rule below).'))
     }
 }
 
