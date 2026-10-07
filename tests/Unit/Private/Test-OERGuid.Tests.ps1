@@ -59,17 +59,23 @@ Describe 'Test-OERGuid is the single GUID predicate' {
         # (the optional (?:A-F)? group), since either literal class defines the same hex digits and
         # both are inline GUID regex duplication that should route through Test-OERGuid instead.
         #
-        # Exempt BY NAME, next to Test-OERGuid.ps1 itself: Get-OERStructureSchemaJson.ps1. Its draft-07
-        # JSON Schema carries the same canonical-GUID pattern on the top-level tenantId property.
-        # That is not PowerShell code re-implementing the predicate: it is the declarative twin of
-        # Test-OERGuid inside a document an external validator (an LLM's tooling, Test-Json) reads, so
-        # it cannot call Test-OERGuid. The offline validator's Rule 1b in Test-OERStructureSchema
-        # does call Test-OERGuid. The exemption is a name, never a loosened regex, and the next It
-        # holds the schema's pattern to Test-OERGuid's verdicts, so it cannot hide drift.
-        $ExemptNames = 'Test-OERGuid.ps1', 'Get-OERStructureSchemaJson.ps1'
+        # Test-OERGuid.ps1 is exempt as the predicate itself. Get-OERStructureSchemaJson.ps1 is
+        # exempt for exactly ONE match: its draft-07 JSON Schema carries the same canonical-GUID
+        # pattern on the top-level tenantId property. That is not PowerShell code re-implementing
+        # the predicate: it is the declarative twin of Test-OERGuid inside a document an external
+        # validator (an LLM's tooling, Test-Json) reads, so it cannot call Test-OERGuid. The offline
+        # validator's Rule 1b in Test-OERStructureSchema does call Test-OERGuid. The file is
+        # reported when its match count is not exactly 1 -- the single tenantId pattern of the JSON
+        # Schema -- so a second copy, or a removed pattern with a stale exemption, fails. The regex
+        # is never loosened, and the next It holds the schema's pattern to Test-OERGuid's verdicts.
+        # The match is case-insensitive, as the -match this replaced was.
+        $GuidClass = '\[0-9a-f(?:A-F)?\]\{8\}-'
         $Offenders = Get-ChildItem -Path $SourceRoot -Recurse -Filter '*.ps1' |
-            Where-Object { $_.Name -notin $ExemptNames } |
-            Where-Object { (Get-Content -Raw -Path $_.FullName) -match '\[0-9a-f(?:A-F)?\]\{8\}-' } |
+            Where-Object { $_.Name -ne 'Test-OERGuid.ps1' } |
+            Where-Object {
+                $Count = [regex]::Matches((Get-Content -Raw -Path $_.FullName), $GuidClass, 'IgnoreCase').Count
+                if ($_.Name -eq 'Get-OERStructureSchemaJson.ps1') { $Count -ne 1 } else { $Count -gt 0 }
+            } |
             ForEach-Object { $_.Name }
         $Offenders -join ', ' | Should -BeNullOrEmpty
     }
