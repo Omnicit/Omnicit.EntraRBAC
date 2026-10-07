@@ -17,8 +17,10 @@ function New-OERActiveRoleAssignment {
     first, then reports a PolicyOpenedButGrantFailed error naming the policy, whether the rollback
     succeeded and how the request failed, and only then re-publishes the grant's own error, so a
     caller running with -ErrorAction Stop is stopped by PolicyOpenedButGrantFailed after the
-    rollback. Principal resolution runs BEFORE scope resolution, so a call supplying both an
-    unresolvable principal and an invalid scope reports the principal error, not InvalidScope.
+    rollback. The rollback is not asked again, even under -Confirm: it puts back this invocation's
+    own change, which the operator already confirmed. Principal resolution runs BEFORE scope
+    resolution, so a call supplying both an unresolvable principal and an invalid scope reports the
+    principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -88,8 +90,9 @@ function New-OERActiveRoleAssignment {
     is returned and no assignment is created; use -AllowPermanentActiveAssignment via
     Set-OERRoleManagementPolicy directly, or supply a time-bound schedule with -DurationDays. If the
     grant is then refused, or answered with a status in the Failed family, the policy this
-    invocation opened is rolled back: a refused grant reports PolicyOpenedButGrantFailed, and a
-    Failed answer says so in its one AssignmentRequestFailed record.
+    invocation opened is rolled back without a second prompt, since it puts back this invocation's
+    own change: a refused grant reports PolicyOpenedButGrantFailed, and a Failed answer says so in
+    its one AssignmentRequestFailed record.
     .PARAMETER Justification
     Justification recorded on the request.
     .PARAMETER TicketNumber
@@ -324,11 +327,16 @@ function New-OERActiveRoleAssignment {
             # The one rollback of a policy this invocation opened, shared by a refused grant (the
             # catch below) and a grant answered with a status in the Failed family: it puts the policy
             # back and returns the sentence that says whether it did, so automation can revert it if
-            # the rollback fails too.
+            # the rollback fails too. It is NOT asked again (-Confirm:$false): it puts back this
+            # invocation's own open, which the operator already confirmed, and under an explicit
+            # -Confirm a declined nested prompt would emit nothing and throw nothing, so the policy
+            # would stay open while the record said it was rolled back. $Reverted is taken from a call
+            # that did not throw, never from its output: a rollback that finds nothing to change may
+            # emit nothing.
             $RollBackOpenedPolicy = {
                 $Reverted = $false
                 try {
-                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentActiveAssignment $false -ErrorAction Stop
+                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentActiveAssignment $false -Confirm:$false -ErrorAction Stop
                     $Reverted = $true
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem

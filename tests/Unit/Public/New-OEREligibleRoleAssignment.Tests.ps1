@@ -413,7 +413,7 @@ Describe 'New-OEREligibleRoleAssignment' {
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw 'ARM rejected the request' }
             New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -ParameterFilter {
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
                 $AllowPermanentEligibility -eq $true
             }
             Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 0 -ParameterFilter {
@@ -858,7 +858,8 @@ $Module = Get-Module Omnicit.EntraRBAC
         [pscustomobject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
     }
     Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
-        [CmdletBinding()]
+        # SupportsShouldProcess so the rollback's -Confirm:$false binds; the fake never asks.
+        [CmdletBinding(SupportsShouldProcess)]
         param([string]$PolicyId, [bool]$AllowPermanentEligibility)
         [System.IO.File]::AppendAllText('#LOG#', "$(if ($AllowPermanentEligibility) { 'open' } else { 'rollback' })`n")
         [pscustomobject]@{ PolicyId = $PolicyId }
@@ -900,5 +901,97 @@ $Result = New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -Use
         ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
         @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant PUT', 'rollback')
         @($Run.Errors) | Should -Be @($script:PolicyOpenedButGrantFailedText, 'ARM rejected the request')
+    }
+}
+
+Describe 'New-OEREligibleRoleAssignment: the rollback is not asked again under an explicit -Confirm (Ruling R12)' {
+    # Under an explicit -Confirm the propagated $ConfirmPreference makes every nested ShouldProcess
+    # prompt, and a declined Set-OERRoleManagementPolicy emits nothing and throws nothing. A rollback
+    # that asked could therefore be declined while the record still said "It was rolled back". So the
+    # rollback passes -Confirm:$false: it puts back this invocation's own open, which the operator
+    # already confirmed. The fake models the real cmdlet's contract -- it writes and emits only when
+    # its own ShouldProcess says yes -- and the host answers Yes to the assignment, Yes to the open,
+    # and No to any prompt after those. The open's prompt and its logged write prove the harness
+    # reaches the nested prompts. The script is transported as text and installs its own fakes in ITS
+    # copy of the module scope; the log is written with AppendAllText, which never prompts.
+    # Defined here, in the discovery phase, since -ForEach is read then.
+    $FailedAnswer = @'
+[pscustomobject]@{ id = '/subscriptions/s1/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/req-f1'; name = 'req-f1'
+    properties = [pscustomobject]@{
+        scope = '/subscriptions/s1'; roleDefinitionId = $Body.properties.roleDefinitionId; principalId = $Body.properties.principalId
+        principalType = 'User'; requestType = 'AdminAssign'; status = 'Failed'
+        scheduleInfo = [pscustomobject]@{ startDateTime = 't'; expiration = [pscustomobject]@{ type = 'NoExpiration' } } } }
+'@
+    $Paths = @(
+        @{
+            Path     = 'a refused grant'
+            Grant    = "throw 'ARM rejected the request'"
+            Expected = @(
+                ("PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment|The eligible role assignment failed after role management policy 'pol-1' " +
+                    'had been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request failed ' +
+                    'with: ARM rejected the request')
+                'ARM rejected the request,New-OEREligibleRoleAssignment|ARM rejected the request'
+            )
+        }
+        @{
+            Path     = 'a Failed answer'
+            Grant    = $FailedAnswer
+            Expected = @(
+                ("EligibilityRequestFailed,New-OEREligibleRoleAssignment|Azure Resource Manager accepted the eligible role assignment request 'req-f1' " +
+                    "(AdminAssign) of role '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal 'p1' at scope " +
+                    "'/subscriptions/s1' but answered status Failed, so nothing was granted. Role management policy 'pol-1' had been opened to " +
+                    'allow permanent assignments before the request was sent. It was rolled back to disallow permanent assignments.')
+            )
+        }
+    )
+
+    BeforeAll {
+        $script:NewConfirmScenario = {
+            param([string]$Log, [string]$Grant)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERScope -Value { '/subscriptions/s1' }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [pscustomobject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+    Set-Item -Path function:script:Get-OERPermanentPolicyState -Value {
+        [pscustomobject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+    }
+    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
+        [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium')]
+        param([string]$PolicyId, [bool]$AllowPermanentEligibility)
+        if ($PSCmdlet.ShouldProcess("role management policy '$PolicyId'", "Set AllowPermanentEligibility $AllowPermanentEligibility")) {
+            [System.IO.File]::AppendAllText('#LOG#', "$(if ($AllowPermanentEligibility) { 'open' } else { 'rollback' })`n")
+            [pscustomobject]@{ PolicyId = $PolicyId }
+        }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        [System.IO.File]::AppendAllText('#LOG#', "grant $Method`n")
+        #GRANT#
+    }
+}
+New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Recorded | Out-Null
+@($Recorded | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' } | ForEach-Object { '{0}|{1}' -f $_.FullyQualifiedErrorId, $_.Exception.Message })
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#GRANT#', $Grant))
+        }
+        function Get-TestLoggedLine ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'after <Path>, rolls the policy back without a prompt of its own, where a third prompt would be declined' -ForEach $Paths {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Run = Invoke-OERWithConfirmAnswer -AnswerSequence @('&Yes', '&Yes', '&No') -Script (& $script:NewConfirmScenario -Log $Log -Grant $Grant)
+        # Two prompts, the assignment's and the open's; the rollback asks none.
+        @($Run.Prompts).Count | Should -Be 2
+        $Run.Prompts[0] | Should -BeLike "*eligible role 'Reader' for User 'anna@contoso.com' at scope '/subscriptions/s1'*"
+        $Run.Prompts[1] | Should -BeLike "*Set AllowPermanentEligibility True*role management policy 'pol-1'*"
+        # The rollback was really written, so the record's "It was rolled back" is true.
+        @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant PUT', 'rollback')
+        @($Run.Output) | Should -Be (@($Expected) + 'END')
     }
 }

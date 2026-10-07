@@ -17,8 +17,10 @@ function New-OEREligibleRoleAssignment {
     policy back first, then reports a PolicyOpenedButGrantFailed error naming the policy, whether
     the rollback succeeded and how the request failed, and only then re-publishes the grant's own
     error, so a caller running with -ErrorAction Stop is stopped by PolicyOpenedButGrantFailed after
-    the rollback. Principal resolution runs BEFORE scope resolution, so a call supplying both an
-    unresolvable principal and an invalid scope reports the principal error, not InvalidScope.
+    the rollback. The rollback is not asked again, even under -Confirm: it puts back this
+    invocation's own change, which the operator already confirmed. Principal resolution runs BEFORE
+    scope resolution, so a call supplying both an unresolvable principal and an invalid scope
+    reports the principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -80,10 +82,17 @@ function New-OEREligibleRoleAssignment {
     Absolute end time for a time-bound eligibility.
     .PARAMETER Permanent
     Make the eligibility permanent (no expiration). Default when no schedule is supplied. When the
-    role's PIM policy forbids permanent eligibility, the cmdlet opens it first (a loud warning is
-    emitted and the policy change is a separate -WhatIf/-Confirm action); if the policy cannot be
-    opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error is returned and no
-    assignment is created.
+    role's PIM policy forbids permanent eligibility, a loud warning says so before the confirmation
+    prompt, and the cmdlet opens the policy only once the assignment itself is confirmed, before it
+    sends the grant: a declined prompt changes no policy, while -WhatIf still plans the policy
+    change (a separate -WhatIf/-Confirm action of Set-OERRoleManagementPolicy). If the policy cannot
+    be opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error is returned and
+    no assignment is created; use -AllowPermanentEligibility via Set-OERRoleManagementPolicy
+    directly, or supply a time-bound schedule with -DurationDays. If the grant is then refused, or
+    answered with a status in the Failed family, the policy this invocation opened is rolled back
+    without a second prompt, since it puts back this invocation's own change: a refused grant
+    reports PolicyOpenedButGrantFailed, and a Failed answer says so in its one
+    EligibilityRequestFailed record.
     .PARAMETER Justification
     Justification recorded on the request.
     .PARAMETER TicketNumber
@@ -319,11 +328,16 @@ function New-OEREligibleRoleAssignment {
             # The one rollback of a policy this invocation opened, shared by a refused grant (the
             # catch below) and a grant answered with a status in the Failed family: it puts the policy
             # back and returns the sentence that says whether it did, so automation can revert it if
-            # the rollback fails too.
+            # the rollback fails too. It is NOT asked again (-Confirm:$false): it puts back this
+            # invocation's own open, which the operator already confirmed, and under an explicit
+            # -Confirm a declined nested prompt would emit nothing and throw nothing, so the policy
+            # would stay open while the record said it was rolled back. $Reverted is taken from a call
+            # that did not throw, never from its output: a rollback that finds nothing to change may
+            # emit nothing.
             $RollBackOpenedPolicy = {
                 $Reverted = $false
                 try {
-                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentEligibility $false -ErrorAction Stop
+                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentEligibility $false -Confirm:$false -ErrorAction Stop
                     $Reverted = $true
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
