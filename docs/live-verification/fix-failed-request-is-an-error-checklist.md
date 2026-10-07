@@ -122,7 +122,7 @@ checks share one.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -153,13 +153,24 @@ C: True`.
 clone; `False`, or a lower count, on the last line -- build the worktree first
 (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-07 09:12 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:24 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at 29f4193 (the final fix wave, built there before this run) with 0 tracked changes; the build carries A (Test-OERScheduleRequestFailed: True; AssignmentRequestFailed in the six active-variant cmdlets: 6), B (the BL-50 refusal: True) and C (the BL-80 gate decision: True). 0.1 to 0.3 ran earlier against the 040bb3c build; the commits after it change only help, comments and the rationale.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] The module loads from a worktree that is not the main clone: True
+[oer-s95] Main clone: branch main; HEAD 6817b33
+[oer-s95] Worktree: branch fix/failed-request-is-an-error; HEAD 29f4193 docs: correct the help and comments on the owner and the policy rollback; tracked changes: 0
+[oer-s95] The worktree's build carries A: True (AssignmentRequestFailed sites: 6); B: True; C: True
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -178,11 +189,29 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-07 08:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 08:48 UTC: every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, service principal named oer-live-cc and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.3, built at 040bb3c).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module is the worktree's build: True
+```
 
 ### 0.2. The prerequisite plan names only oer-s95- objects
 
-- [ ] **0.2** `Initialize-OerS95Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s95-`.
+- [x] **0.2** `Initialize-OerS95Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s95-`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -208,11 +237,50 @@ yet.
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run.
 
-Result:
+Result: 2026-10-07 08:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 08:48 UTC: identity check passed; no residue; the sweep finds nothing with the prefix; no baseline yet; Reports Reader and Message Center Reader have no direct tenant-scope holder, so the checklist uses Reports Reader. The plan: the transcript and the count baseline under raw\s95\, and six tenant targets, oer-s95-grp, oer-s95-grp2, oer-s95-rg, oer-s95-cat, oer-s95-ap and oer-s95-ap: oer-s95-pol, every one with the prefix (True); no Reader-policy baseline under -WhatIf. WhatIf: nothing was created or written. Read and confirmed by the controller before 0.3.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] What if: Performing the operation "Start the redacted transcript" on target "raw\s95\prereq-20261007-084831Z.log".
+[oer-s95] [oer-s95] Mode: CREATE or complete. Prefix 'oer-s95-'. Objects (fixed): oer-s95-grp, oer-s95-grp2 (role-assignable, no member); oer-s95-rg (tagged, empty, its Reader policy baselined); oer-s95-cat, oer-s95-ap (hidden), oer-s95-pol (administrator-only). OerLive 1.0.3.
+[oer-s95] [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] [oer-s95] Residue: raw\residue.json holds no rows.
+[oer-s95] [oer-s95] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s95-' is left.
+[oer-s95] [oer-s95] Found: oer-s95-grp exists: False; oer-s95-grp2 exists: False; oer-s95-rg exists: False; oer-s95-cat exists: False; oer-s95-ap exists: False.
+[oer-s95] [oer-s95] Directory role 'Reports Reader': direct tenant-scope eligible schedules 0, active (Assigned) 0.
+[oer-s95] [oer-s95] Directory role 'Message Center Reader': direct tenant-scope eligible schedules 0, active (Assigned) 0.
+[oer-s95] [oer-s95] No baseline yet: it is written now, before the first write to the tenant (groups 98, catalogs 5, access packages 6; oer-s95-rg exists: False; the checklist's directory role: 'Reports Reader' (no direct holder)).
+[oer-s95] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s95\baseline-s95.json".
+[oer-s95] What if: Performing the operation "Create a role-assignable security group with no member (Graph v1.0 POST groups: isAssignableToRole true, not mail-enabled, assigned membership)" on target "oer-s95-grp".
+[oer-s95] What if: Performing the operation "Create a role-assignable security group with no member (Graph v1.0 POST groups: isAssignableToRole true, not mail-enabled, assigned membership)" on target "oer-s95-grp2".
+[oer-s95] What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s95)')" on target "oer-s95-rg".
+[oer-s95] What if: Performing the operation "Create a catalog, not externally visible (Graph v1.0 POST catalogs)" on target "oer-s95-cat".
+[oer-s95] What if: Performing the operation "Create a HIDDEN access package in oer-s95-cat, no resource role (Graph v1.0 POST accessPackages)" on target "oer-s95-ap".
+[oer-s95] What if: Performing the operation "Create an administrator-only assignment policy: allowedTargetScope notSpecified, no approval, no expiration (Graph v1.0 POST assignmentPolicies)" on target "oer-s95-ap: oer-s95-pol".
+[oer-s95] [oer-s95] No Reader-policy baseline: oer-s95-rg does not exist (WhatIf).
+[oer-s95] [oer-s95] Summary: oer-s95-grp absent; oer-s95-grp2 absent; oer-s95-rg absent; oer-s95-cat absent; oer-s95-ap absent; oer-s95-pol absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s95] [oer-s95] WhatIf: nothing was created, removed or written.
+[oer-s95] [oer-s95] Done.
+[oer-s95] Planned writes: 8; local files under raw\s95\: 2; tenant targets: 6; every tenant target starts with oer-s95-: True
+```
 
 ### 0.3. The prerequisite objects and the baselines
 
-- [ ] **0.3** `Initialize-OerS95Prereq.ps1 -Unattended` writes the baseline when there is none (with the directory role the checklist uses), creates the two groups, the resource group, the catalog, the package and its policy, and records the Reader-policy baseline at the resource group.
+- [x] **0.3** `Initialize-OerS95Prereq.ps1 -Unattended` writes the baseline when there is none (with the directory role the checklist uses), creates the two groups, the resource group, the catalog, the package and its policy, and records the Reader-policy baseline at the resource group.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -234,7 +302,54 @@ oer-s95-rg: rules N; permanent active assignment allowed: False` and the baselin
 policy -- STOP: a missing permission on the app path (G6); exit code 1 with `Refusing to run` -- read
 the reason.
 
-Result:
+Result: 2026-10-07 08:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 08:48 UTC: identity check passed; the baseline written before the first write (groups 98, catalogs 5, access packages 6; oer-s95-rg absent; the checklist's directory role Reports Reader, no direct holder); both groups created role-assignable (201; oer-s95-grp resolved by name after 4 reads, 14.3 s, replication delay); the resource group, the catalog, the hidden package and the administrator-only policy created (201); the Reader policy at oer-s95-rg read as the scope's own (17 rules; permanent active assignment allowed: False) and its baseline written; exit code 0.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [oer-s95] Transcript (redacted): raw\s95\prereq-20261007-084855Z.log; OerLive 1.0.3.
+[oer-s95] [oer-s95] Mode: CREATE or complete. Prefix 'oer-s95-'. Objects (fixed): oer-s95-grp, oer-s95-grp2 (role-assignable, no member); oer-s95-rg (tagged, empty, its Reader policy baselined); oer-s95-cat, oer-s95-ap (hidden), oer-s95-pol (administrator-only). OerLive 1.0.3.
+[oer-s95] [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] [oer-s95] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s95] [oer-s95] Residue: raw\residue.json holds no rows.
+[oer-s95] [oer-s95] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s95-' is left.
+[oer-s95] [oer-s95] Found: oer-s95-grp exists: False; oer-s95-grp2 exists: False; oer-s95-rg exists: False; oer-s95-cat exists: False; oer-s95-ap exists: False.
+[oer-s95] [oer-s95] Directory role 'Reports Reader': direct tenant-scope eligible schedules 0, active (Assigned) 0.
+[oer-s95] [oer-s95] Directory role 'Message Center Reader': direct tenant-scope eligible schedules 0, active (Assigned) 0.
+[oer-s95] [oer-s95] No baseline yet: it is written now, before the first write to the tenant (groups 98, catalogs 5, access packages 6; oer-s95-rg exists: False; the checklist's directory role: 'Reports Reader' (no direct holder)).
+[oer-s95] [oer-s95] Wrote the baseline raw\s95\baseline-s95.json and read it back.
+[oer-s95] [oer-s95] Created group oer-s95-grp (role-assignable): 201.
+[oer-s95] [oer-s95] oer-s95-grp resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s95] [oer-s95] oer-s95-grp resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s95] [oer-s95] oer-s95-grp resolves by its display name: not yet (read 3, 6.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s95] [oer-s95] oer-s95-grp resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s95] [oer-s95] Created group oer-s95-grp2 (role-assignable): 201.
+[oer-s95] [oer-s95] oer-s95-grp2 resolves by its display name: converged after 1 read(s), 0.1 s.
+[oer-s95] [oer-s95] Created resource group oer-s95-rg.
+[oer-s95] [oer-s95] Created catalog oer-s95-cat: 201.
+[oer-s95] [oer-s95] Created access package oer-s95-ap (hidden): 201 after 1 attempt(s).
+[oer-s95] [oer-s95] Created assignment policy oer-s95-pol (administrator-only): 201 after 1 attempt(s).
+[oer-s95] [oer-s95] The scope lists its role management policy: converged after 1 read(s), 3.8 s.
+[oer-s95] [oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] [oer-s95] Reader policy at oer-s95-rg: rules 17; permanent active assignment allowed: False
+[oer-s95] [oer-s95] Wrote the baseline raw\s95\baseline-s95-rgreader.json and read it back.
+[oer-s95] [oer-s95] Summary: oer-s95-grp present; oer-s95-grp2 present; oer-s95-rg present; oer-s95-cat present; oer-s95-ap present; oer-s95-pol present; written to the tenant: True.
+[oer-s95] [oer-s95] Done.
+[oer-s95] Exit code: 0
+```
 
 ## 1. BL-33: the directory role cmdlets on a real Provisioned and Revoked answer
 
@@ -247,7 +362,7 @@ assignments). Principal: `oer-s95-grp`.
 
 ### 1.0. The fences and the role
 
-- [ ] **1.0** The module resolves both transports to the fences, and the section's directory role is a low-risk one.
+- [x] **1.0** The module resolves both transports to the fences, and the section's directory role is a low-risk one.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -317,11 +432,30 @@ Write-OerLiveStep "1.0 the section's directory role: '$Role'; low-risk: $(@('Rep
 Center Reader'`, low-risk `True`.
 **Failure looks like:** the fences `False` -- nothing was called; a role that is not low-risk -- STOP.
 
-Result:
+Result: 2026-10-07 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:27 UTC as oer-live-cc (every identity line True), with the fences resolving for the module (True). The section's role is Reports Reader, low-risk True, and the baseline names it as free of direct holders (True).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s95] 1.0 the section's directory role: 'Reports Reader'; low-risk: True; the baseline names a role with no direct holder: True
+```
 
 ### 1.1. New-OEREligibleDirectoryRoleAssignment: Provisioned, no error
 
-- [ ] **1.1** `New-OEREligibleDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one Graph write.
+- [x] **1.1** `New-OEREligibleDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one Graph write.
 
 ```powershell
 $null = Invoke-S95 -Label '1.1 eligible create' -Call { New-OEREligibleDirectoryRoleAssignment -Role $Role -Group 'oer-s95-grp' -DurationDays 1 -Confirm:$false }
@@ -333,11 +467,18 @@ Omnicit.EntraRBAC.DirectoryRoleScheduleRequest; Status Provisioned; expiration a
 **Failure looks like:** `EligibilityRequestFailed` on a `Provisioned` object -- the rule takes a
 success for a failure; any other error -- read it.
 
-Result:
+Result: 2026-10-07 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. New-OEREligibleDirectoryRoleAssignment, Reports Reader, oer-s95-grp, one day: one request object, Status Provisioned, expiration afterDuration; errors none; 4 Graph requests, 1 write. The new rule does not take the real success answer for a failure.
+
+[oer-s95] 1.1 eligible create: output objects 1; errors: none; Graph requests: 4 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s95] 1.1 eligible create: object Omnicit.EntraRBAC.DirectoryRoleScheduleRequest; Status Provisioned; expiration afterDuration
+```
 
 ### 1.2. New-OERActiveDirectoryRoleAssignment: Provisioned, no error
 
-- [ ] **1.2** `New-OERActiveDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one Graph write.
+- [x] **1.2** `New-OERActiveDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one Graph write.
 
 ```powershell
 $null = Invoke-S95 -Label '1.2 active create' -Call { New-OERActiveDirectoryRoleAssignment -Role $Role -Group 'oer-s95-grp' -DurationDays 1 -Confirm:$false }
@@ -348,11 +489,18 @@ $ActiveAt = [datetime]::UtcNow
 **Failure looks like:** `AssignmentRequestFailed` on a `Provisioned` object -- the rule takes a
 success for a failure.
 
-Result:
+Result: 2026-10-07 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. New-OERActiveDirectoryRoleAssignment, Reports Reader, oer-s95-grp, one day: one request object, Status Provisioned, expiration afterDuration; errors none; 4 Graph requests, 1 write.
+
+[oer-s95] 1.2 active create: output objects 1; errors: none; Graph requests: 4 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s95] 1.2 active create: object Omnicit.EntraRBAC.DirectoryRoleScheduleRequest; Status Provisioned; expiration afterDuration
+```
 
 ### 1.3. Remove-OEREligibleDirectoryRoleAssignment: Revoked, no error
 
-- [ ] **1.3** After the active assignment has run five minutes, `Remove-OEREligibleDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error.
+- [x] **1.3** After the active assignment has run five minutes, `Remove-OEREligibleDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error.
 
 ```powershell
 $Wait = [int][math]::Max(0, [math]::Ceiling(305 - ([datetime]::UtcNow - $ActiveAt).TotalSeconds))
@@ -366,11 +514,20 @@ removal warning.
 **Failure looks like:** `EligibilityRequestFailed` on a `Revoked` object -- a removal's success read as
 a failure; `ActiveDurationTooShort` -- wait longer and run 1.3 again.
 
-Result:
+Result: 2026-10-07 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After waiting 305 s (the five-minute rule), Remove-OEREligibleDirectoryRoleAssignment: one request object, Status Revoked; errors none; 3 Graph requests, 1 write; the cmdlet's own removal warning. A removal's success is not read as a failure.
+
+[oer-s95] 1.3 waiting 305 s: Graph removes a principal's assignments of a role once its active assignment of the role has run five minutes.
+[oer-s95] 1.3 eligible remove: output objects 1; errors: none; Graph requests: 3 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s95] 1.3 eligible remove: object Omnicit.EntraRBAC.DirectoryRoleScheduleRequest; Status Revoked; expiration 
+[oer-s95] 1.3 eligible remove: warning -- Removing eligible directory role 'Reports Reader' for principal 'oer-s95-grp' at directory scope '/'.
+```
 
 ### 1.4. Remove-OERActiveDirectoryRoleAssignment: Revoked, no error, and nothing left
 
-- [ ] **1.4** `Remove-OERActiveDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error; afterwards neither kind is listed for the group.
+- [x] **1.4** `Remove-OERActiveDirectoryRoleAssignment -Role` (the role) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error; afterwards neither kind is listed for the group.
 
 ```powershell
 $null = Invoke-S95 -Label '1.4 active remove' -Call { Remove-OERActiveDirectoryRoleAssignment -Role $Role -Group 'oer-s95-grp' -Confirm:$false }
@@ -386,7 +543,17 @@ assignment: True`.
 **Failure looks like:** `AssignmentRequestFailed` on a `Revoked` object; a wait that does not
 converge -- the teardown removes what is left.
 
-Result:
+Result: 2026-10-07 09:19 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Remove-OERActiveDirectoryRoleAssignment: one request object, Status Revoked; errors none; 3 Graph requests, 1 write; the removal warning; oer-s95-grp holds no Reports Reader assignment after 1 read (1.3 s).
+
+[oer-s95] 1.4 active remove: output objects 1; errors: none; Graph requests: 3 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s95] 1.4 active remove: object Omnicit.EntraRBAC.DirectoryRoleScheduleRequest; Status Revoked; expiration 
+[oer-s95] 1.4 active remove: warning -- Removing active directory role 'Reports Reader' for principal 'oer-s95-grp' at directory scope '/'.
+[oer-s95] 1.4 oer-s95-grp holds no 'Reports Reader' assignment: converged after 1 read(s), 1.3 s.
+[oer-s95] 1.4 oer-s95-grp holds no 'Reports Reader' assignment: True (1 read(s), 1.3 s)
+```
 
 ## 2. BL-33: the apply engine's directory role rows, created, unchanged and pruned (G8)
 
@@ -405,7 +572,7 @@ and 2.1 and 2.2 still run.
 
 ### 2.1. Document A: Created, Created
 
-- [ ] **2.1** `Invoke-OERStructure -Path` (document A) `-Confirm:$false` reports both rows `Created`, no error, two Graph writes.
+- [x] **2.1** `Invoke-OERStructure -Path` (document A) `-Confirm:$false` reports both rows `Created`, no error, two Graph writes.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -445,11 +612,33 @@ $CreatedAt = [datetime]::UtcNow
 **Failure looks like:** a `Failed` row with `EligibilityRequestFailed` or `AssignmentRequestFailed` --
 a success read as a failure; a `Created` row with an error -- the old defect.
 
-Result:
+Result: 2026-10-07 09:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:34 UTC as oer-live-cc (identity True, fences True); role Reports Reader; the prune checks run (True). Document A: errors none; 16 Graph requests, 2 writes; both rows Created (eligible and active, time-bound one day). A real Provisioned answer through the apply engine still reads Created.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s95] 2.1 role 'Reports Reader'; the prune checks run: True
+[oer-s95] 2.1 document A: output objects 2; errors: none; Graph requests: 16 (writes: 2); ARM requests: 0 (writes: 0)
+[oer-s95] 2.1 document A: row directoryRoleAssignments | Reports Reader -> oer-s95-grp (Eligible) | Created | created the eligible assignment (time-bound assignment (1 days) is absent)
+[oer-s95] 2.1 document A: row directoryRoleAssignments | Reports Reader -> oer-s95-grp (Active) | Created | created the active assignment (time-bound assignment (1 days) is absent)
+```
 
 ### 2.2. Document A again: only Unchanged (G8)
 
-- [ ] **2.2** The same document A again: both rows `Unchanged`, no Graph write.
+- [x] **2.2** The same document A again: both rows `Unchanged`, no Graph write.
 
 ```powershell
 $null = Invoke-S95 -Label '2.2 document A again' -Call { Invoke-OERStructure -Path $DocA -Confirm:$false }
@@ -458,11 +647,19 @@ $null = Invoke-S95 -Label '2.2 document A again' -Call { Invoke-OERStructure -Pa
 **Expect:** `errors: none; ... (writes: 0)`; two rows `Unchanged`.
 **Failure looks like:** a write, or a row other than `Unchanged`.
 
-Result:
+Result: 2026-10-07 09:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). Document A again: errors none; 12 Graph requests, 0 writes; both rows Unchanged, "assignment matches".
+
+[oer-s95] 2.2 document A again: output objects 2; errors: none; Graph requests: 12 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s95] 2.2 document A again: row directoryRoleAssignments | Reports Reader -> oer-s95-grp (Eligible) | Unchanged | assignment matches
+[oer-s95] 2.2 document A again: row directoryRoleAssignments | Reports Reader -> oer-s95-grp (Active) | Unchanged | assignment matches
+```
 
 ### 2.3. Document B with -Prune -WhatIf: the plan removes only oer-s95-grp's two assignments
 
-- [ ] **2.3** After the active assignment has run five minutes, `Invoke-OERStructure -Path` (document B) `-Prune -WhatIf`, in a child process, plans `would create` for `oer-s95-grp2` twice and `would remove` for `oer-s95-grp` twice and for no other principal, and writes nothing.
+- [x] **2.3** After the active assignment has run five minutes, `Invoke-OERStructure -Path` (document B) `-Prune -WhatIf`, in a child process, plans `would create` for `oer-s95-grp2` twice and `would remove` for `oer-s95-grp` twice and for no other principal, and writes nothing.
 
 ```powershell
 if (-not $PruneAllowed) { Write-OerLiveStep '2.3 SKIPPED: the baseline names no role free of direct holders; 2.3 to 2.5 are class B.' } else {
@@ -504,11 +701,40 @@ than oer-s95-grp: False`, `would remove: 2`); `errors: 0`; the child's `What if:
 **Failure looks like:** a would-remove row for another principal -- STOP, 2.4 is not run (a real
 holder of the role); fewer than two -- read the plan.
 
-Result:
+Result: 2026-10-07 09:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After waiting 302 s, document B with -Prune -WhatIf in a child process: the child's identity lines True; four plan rows: two Skipped "would remove undeclared ... assignment" for one principal, oer-s95-grp (its id redacted as ...04, the id the block read for the group), and two Skipped "would create" for oer-s95-grp2; would remove 2; a would-remove row names another principal: False; the four What if lines and the two handler warnings, redacted; errors 0. Nothing was written.
+
+[oer-s95] 2.3 waiting 302 s: Graph removes a principal's assignments of a role once its active assignment of the role has run five minutes.
+[oer-s95] 2.3 child: [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] 2.3 child: [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] 2.3 child: [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] 2.3 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] 2.3 child: What if: Performing the operation "Remove undeclared eligible directory role assignment" on target "Reports Reader -> 00000000-0000-0000-0000-000000000004 (Eligible)".
+[oer-s95] 2.3 child: What if: Performing the operation "Remove undeclared active directory role assignment" on target "Reports Reader -> 00000000-0000-0000-0000-000000000004 (Active)".
+[oer-s95] 2.3 child: What if: Performing the operation "create eligible directory role assignment" on target "Reports Reader -> oer-s95-grp2 (Eligible)".
+[oer-s95] 2.3 child: What if: Performing the operation "create active directory role assignment" on target "Reports Reader -> oer-s95-grp2 (Active)".
+[oer-s95] 2.3 child: WARNING|Sync-OERStructureDirectoryRoleAssignment: would remove undeclared eligible assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'.
+[oer-s95] 2.3 child: WARNING|Sync-OERStructureDirectoryRoleAssignment: would remove undeclared active assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'.
+[oer-s95] 2.3 child: ROW|Skipped|Reports Reader -> 00000000-0000-0000-0000-000000000004 (Eligible)|would remove undeclared eligible assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'
+[oer-s95] 2.3 child: ROW|Skipped|Reports Reader -> 00000000-0000-0000-0000-000000000004 (Active)|would remove undeclared active assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'
+[oer-s95] 2.3 child: ROW|Skipped|Reports Reader -> oer-s95-grp2 (Eligible)|would create the eligible assignment (time-bound assignment (1 days) is absent)
+[oer-s95] 2.3 child: ROW|Skipped|Reports Reader -> oer-s95-grp2 (Active)|would create the active assignment (time-bound assignment (1 days) is absent)
+[oer-s95] 2.3 plan rows: 4; would remove: 2; a would-remove row names a principal other than oer-s95-grp: False; What if lines: 4; errors: 0
+```
 
 ### 2.4. Document B with -Prune: Created twice, Removed twice
 
-- [ ] **2.4** `Invoke-OERStructure -Path` (document B) `-Prune -Confirm:$false` reports the two `oer-s95-grp2` rows `Created` and the two `oer-s95-grp` rows `Removed`, no `Failed` row and no error.
+- [x] **2.4** `Invoke-OERStructure -Path` (document B) `-Prune -Confirm:$false` reports the two `oer-s95-grp2` rows `Created` and the two `oer-s95-grp` rows `Removed`, no `Failed` row and no error.
 
 ```powershell
 if (-not $PruneAllowed) { Write-OerLiveStep '2.4 SKIPPED: class B (see 2.3).' } else {
@@ -528,11 +754,25 @@ assignment: True`.
 **Failure looks like:** a `Failed` row carrying `EligibilityRequestFailed` or
 `AssignmentRequestFailed` on a `Revoked` answer -- a removal's success read as a failure.
 
-Result:
+Result: 2026-10-07 09:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Document B with -Prune: errors none; 19 Graph requests, 5 non-GET: the two removals, the two creates, and the POST getMemberGroups read of the signed-in identity's memberships (guard 4, run for a group candidate), which the fence counts as non-GET. The checklist's Expect said 4 and is corrected to 5 with that reason; nothing extra was written. Rows: Removed twice for oer-s95-grp (eligible and active), Created twice for oer-s95-grp2; the prune warnings; oer-s95-grp holds no Reports Reader assignment after 1 read (1.1 s). A real Revoked answer through the engine still reads Removed.
+
+[oer-s95] 2.4 document B, prune: output objects 4; errors: none; Graph requests: 19 (writes: 5); ARM requests: 0 (writes: 0)
+[oer-s95] 2.4 document B, prune: row directoryRoleAssignments | Reports Reader -> 00000000-0000-0000-0000-000000000004 (Eligible) | Removed | removed undeclared eligible assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'
+[oer-s95] 2.4 document B, prune: row directoryRoleAssignments | Reports Reader -> 00000000-0000-0000-0000-000000000004 (Active) | Removed | removed undeclared active assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'
+[oer-s95] 2.4 document B, prune: row directoryRoleAssignments | Reports Reader -> oer-s95-grp2 (Eligible) | Created | created the eligible assignment (time-bound assignment (1 days) is absent)
+[oer-s95] 2.4 document B, prune: row directoryRoleAssignments | Reports Reader -> oer-s95-grp2 (Active) | Created | created the active assignment (time-bound assignment (1 days) is absent)
+[oer-s95] 2.4 document B, prune: warning -- Sync-OERStructureDirectoryRoleAssignment: removing undeclared eligible assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'.
+[oer-s95] 2.4 document B, prune: warning -- Sync-OERStructureDirectoryRoleAssignment: removing undeclared active assignment of directory role 'Reports Reader' for principal '00000000-0000-0000-0000-000000000004'.
+[oer-s95] 2.4 oer-s95-grp holds no 'Reports Reader' assignment: converged after 1 read(s), 1.1 s.
+[oer-s95] 2.4 oer-s95-grp holds no 'Reports Reader' assignment: True (1 read(s), 1.1 s)
+```
 
 ### 2.5. Document B with -Prune again: only Unchanged (G8), and the documents are removed
 
-- [ ] **2.5** The same document B with `-Prune` again: both rows `Unchanged`, no `Removed` or `Extra` row, no Graph write; the fences are removed and the two documents deleted.
+- [x] **2.5** The same document B with `-Prune` again: both rows `Unchanged`, no `Removed` or `Extra` row, no Graph write; the fences are removed and the two documents deleted.
 
 ```powershell
 if ($PruneAllowed) {
@@ -549,7 +789,16 @@ Disconnect-OerLive
 deleted: True`.
 **Failure looks like:** a write, a `Removed` or an `Extra` row.
 
-Result:
+Result: 2026-10-07 09:28 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8), with one corrected line of the check itself. Document B with -Prune again: errors none; 12 Graph requests, 0 writes; both rows Unchanged; no Removed or Extra row; documents deleted True. "Fences removed: False" came from the check's own code: a scope-qualified function:global: path given to the removal cmdlet removes nothing (CLAUDE.md, Testing Conventions); the line is corrected to the unqualified form the step 4 checklist used. The fences lived only in that process, which ended with the section.
+
+[oer-s95] 2.5 document B again: output objects 2; errors: none; Graph requests: 12 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s95] 2.5 document B again: row directoryRoleAssignments | Reports Reader -> oer-s95-grp2 (Eligible) | Unchanged | assignment matches
+[oer-s95] 2.5 document B again: row directoryRoleAssignments | Reports Reader -> oer-s95-grp2 (Active) | Unchanged | assignment matches
+[oer-s95] Fences removed: False; documents deleted: True
+```
 
 ## 3. BL-33: the Azure role cmdlets on a real Provisioned and Revoked answer
 
@@ -563,7 +812,7 @@ with `-AtScope`.
 
 ### 3.0. The fences
 
-- [ ] **3.0** The module resolves both transports to the fences.
+- [x] **3.0** The module resolves both transports to the fences.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -581,11 +830,29 @@ $Rg = @{ Subscription = $Cfg.SubscriptionId; ResourceGroup = 'oer-s95-rg' }
 **Expect:** the identity lines `True`; the fences `True`.
 **Failure looks like:** the fences `False` -- nothing was called.
 
-Result:
+Result: 2026-10-07 09:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:31, 09:36 and 09:42 UTC (three processes, below) as oer-live-cc, every identity line True, the fences resolving for the module (True).
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+```
 
 ### 3.1. New-OEREligibleRoleAssignment: Provisioned, no error
 
-- [ ] **3.1** `New-OEREligibleRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write.
+- [x] **3.1** `New-OEREligibleRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write.
 
 ```powershell
 $null = Invoke-S95 -Label '3.1 eligible create' -Call { New-OEREligibleRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -DurationDays 1 -Confirm:$false }
@@ -596,11 +863,18 @@ roleEligibilityScheduleRequests)`; `object Omnicit.EntraRBAC.RoleScheduleRequest
 expiration AfterDuration`.
 **Failure looks like:** `EligibilityRequestFailed` on a `Provisioned` object.
 
-Result:
+Result: 2026-10-07 09:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 1, 09:31 UTC. New-OEREligibleRoleAssignment, Reader at oer-s95-rg, oer-s95-grp, one day: one request object, Status Provisioned, expiration AfterDuration; errors none; 1 ARM write (PUT roleEligibilityScheduleRequests).
+
+[oer-s95] 3.1 eligible create: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleEligibilityScheduleRequests)
+[oer-s95] 3.1 eligible create: object Omnicit.EntraRBAC.RoleScheduleRequest; Status Provisioned; expiration AfterDuration
+```
 
 ### 3.2. New-OERActiveRoleAssignment, time-bound: Provisioned, no error
 
-- [ ] **3.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Justification ... -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write and no policy write.
+- [x] **3.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Justification ... -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write and no policy write.
 
 ```powershell
 $null = Invoke-S95 -Label '3.2 active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -DurationDays 1 -Justification 'oer-s95 live verification' -Confirm:$false }
@@ -611,11 +885,23 @@ $ActiveAt = [datetime]::UtcNow
 `Status Provisioned; expiration AfterDuration`; no policy warning (a time-bound grant needs no open).
 **Failure looks like:** `AssignmentRequestFailed` on a `Provisioned` object.
 
-Result:
+Result: 2026-10-07 09:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS on the second run. Run 1, 09:31 UTC: Azure Resource Manager refused the request with RoleAssignmentRequestPolicyValidationFailed ('JustificationRule - Justification is required'): the Reader policy at a resource group requires a justification for an active assignment, and the checklist's block passed none. A thrown refusal, not a Failed answer; nothing was created. The block is corrected to pass -Justification (and 4.2 and 4.3 with it). Run 2, 09:36 UTC: one request object, Status Provisioned, expiration AfterDuration; errors none; 1 ARM write (PUT roleAssignmentScheduleRequests); no policy warning.
+
+--- run 2 ---
+[oer-s95] 3.2 active create: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleAssignmentScheduleRequests)
+[oer-s95] 3.2 active create: object Omnicit.EntraRBAC.RoleScheduleRequest; Status Provisioned; expiration AfterDuration
+
+--- run 1 ---
+[oer-s95] 3.2 active create: output objects 0; errors: RoleAssignmentRequestPolicyValidationFailed; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleAssignmentScheduleRequests)
+[oer-s95] 3.2 active create: RoleAssignmentRequestPolicyValidationFailed; category OperationStopped -- RoleAssignmentRequestPolicyValidationFailed: The following policy rules failed: JustificationRule - Justification is required
+```
 
 ### 3.3. Remove-OEREligibleRoleAssignment: Revoked, no error
 
-- [ ] **3.3** After the active assignment has run five minutes, `Remove-OEREligibleRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error.
+- [x] **3.3** After the active assignment has run five minutes, `Remove-OEREligibleRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error.
 
 ```powershell
 $Wait = [int][math]::Max(0, [math]::Ceiling(305 - ([datetime]::UtcNow - $ActiveAt).TotalSeconds))
@@ -628,11 +914,20 @@ $null = Invoke-S95 -Label '3.3 eligible remove' -Call { Remove-OEREligibleRoleAs
 `Status Revoked`.
 **Failure looks like:** `EligibilityRequestFailed` on a `Revoked` object.
 
-Result:
+Result: 2026-10-07 09:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 1, after waiting 305 s: Remove-OEREligibleRoleAssignment: one request object, Status Revoked; errors none; 1 ARM write; the removal warning (the subscription id redacted).
+
+[oer-s95] 3.3 waiting 305 s, so a removal of the group's Reader assignments is not refused as too young.
+[oer-s95] 3.3 eligible remove: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleEligibilityScheduleRequests)
+[oer-s95] 3.3 eligible remove: object Omnicit.EntraRBAC.RoleScheduleRequest; Status Revoked; expiration 
+[oer-s95] 3.3 eligible remove: warning -- Removing eligible role 'Reader' for principal 'oer-s95-grp' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg'.
+```
 
 ### 3.4. Remove-OERActiveRoleAssignment: Revoked, no error, and nothing left
 
-- [ ] **3.4** `Remove-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error; afterwards neither kind is listed for the group at `oer-s95-rg`.
+- [x] **3.4** `Remove-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Confirm:$false` emits one request object with status `Revoked` and writes no error; afterwards neither kind is listed for the group at `oer-s95-rg`.
 
 ```powershell
 $null = Invoke-S95 -Label '3.4 active remove' -Call { Remove-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -Confirm:$false }
@@ -648,7 +943,44 @@ Disconnect-OerLive
 **Failure looks like:** `AssignmentRequestFailed` on a `Revoked` object; a wait that does not
 converge -- the teardown removes what is left.
 
-Result:
+Result: 2026-10-07 09:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS on the second run, with a slow read-back. Run 1, 09:36 UTC: RoleAssignmentDoesNotExist, since run 1's 3.2 had created nothing, and the read-back block stopped on a binding error of its own: a principal filter cannot be combined with -AtScope (corrected: the principal's schedules are filtered to oer-s95-rg). Run 2, 09:42 UTC, after the five-minute rule: Remove-OERActiveRoleAssignment: one request object, Status Revoked; errors none; 1 ARM write; the removal warning. The read-back did not converge within its 180 s budget (10 reads); a read-only read about four minutes after the removal lists nothing: no eligible or active row through the module, and 0 rows of roleAssignmentSchedules, roleAssignmentScheduleInstances and roleEligibilitySchedules at oer-s95-rg for the group. Azure Resource Manager kept listing the revoked schedule for more than 180 s (replication delay), as OerLive's F5 records for Graph.
+
+--- run 2 ---
+[oer-s95] 3.4 active remove: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleAssignmentScheduleRequests)
+[oer-s95] 3.4 active remove: object Omnicit.EntraRBAC.RoleScheduleRequest; Status Revoked; expiration 
+[oer-s95] 3.4 active remove: warning -- Removing active assignment of role 'Reader' for principal 'oer-s95-grp' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg'.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 1, 3.3 s, likely replication delay) -- reading again in 2 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 2, 7.4 s, likely replication delay) -- reading again in 4 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 3, 14.3 s, likely replication delay) -- reading again in 8 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 4, 24.7 s, likely replication delay) -- reading again in 16 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 5, 43.5 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 6, 76.7 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 7, 108.8 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 8, 141.7 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: not yet (read 9, 174.8 s, likely replication delay) -- reading again in 6 s.
+[oer-s95] 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: NOT converged after 10 read(s), 184.6 s (budget 180 s).
+Exception: OerLive: 3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg -- not converged within budget (180 s, 10 reads).
+
+--- the read about four minutes later ---
+[oer-s95] Eligible rows for oer-s95-grp: 0
+[oer-s95] Active rows for oer-s95-grp: 0
+[oer-s95] roleAssignmentSchedules: status 200; rows 0
+[oer-s95] roleAssignmentScheduleInstances: status 200; rows 0
+[oer-s95] roleEligibilitySchedules: status 200; rows 0
+
+--- run 1 ---
+[oer-s95] 3.4 active remove: output objects 0; errors: RoleAssignmentDoesNotExist; Graph requests: 1 (writes: 0); ARM requests: 2 (writes: 1: PUT roleAssignmentScheduleRequests)
+[oer-s95] 3.4 active remove: warning -- Removing active assignment of role 'Reader' for principal 'oer-s95-grp' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg'.
+[oer-s95] 3.4 active remove: RoleAssignmentDoesNotExist; category OperationStopped -- RoleAssignmentDoesNotExist: The Role assignment does not exist.
+Get-OEREligibleRoleAssignment: HOME\AppData\Local\Temp\claude\C--Git-contoso-test-EntraRBAC\00000000-0000-0000-0000-000000000005\scratchpad\child-sec3.ps1:27
+Line |
+  27 |      , @(@(Get-OEREligibleRoleAssignment @Rg -Group 'oer-s95-grp' -AtS …
+     |            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | A principal filter (-User, -Group or -ServicePrincipal) cannot be combined with -AtScope or -AsTarget.
+```
 
 ## 4. BL-80: a permanent active Reader assignment at oer-s95-rg opens the policy only after consent
 
@@ -658,7 +990,7 @@ and the teardown puts it back.
 
 ### 4.0. The fences, and whether the policy forbids a permanent active assignment
 
-- [ ] **4.0** The module resolves both transports to the fences, and the Reader policy at `oer-s95-rg` forbids a permanent active assignment (otherwise 4.2 and 4.3 are class B).
+- [x] **4.0** The module resolves both transports to the fences, and the Reader policy at `oer-s95-rg` forbids a permanent active assignment (otherwise 4.2 and 4.3 are class B).
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -689,11 +1021,32 @@ nothing: 4.2 and 4.3 are `[~]` class B (the unit tests of `New-OERActiveRoleAssi
 path), and 4.3 still runs as a plain permanent grant; `the baseline exists: False` -- STOP, nothing
 is written to the policy without a baseline.
 
-Result:
+Result: 2026-10-07 09:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:50 UTC as oer-live-cc (every identity line True), the fences resolving (True). The Reader policy at oer-s95-rg, read as the scope's own, does not allow a permanent active assignment (False), and its baseline exists (True), so 4.2 and 4.3 are live, not class B.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s95] The scope lists its role management policy: converged after 1 read(s), 3.9 s.
+[oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] 4.0 the Reader policy at oer-s95-rg allows a permanent active assignment: False; the baseline exists: True
+```
 
 ### 4.1. Nothing at oer-s95-rg for the group yet
 
-- [ ] **4.1** Before the plan, the group holds no active Reader schedule at `oer-s95-rg`.
+- [x] **4.1** Before the plan, the group holds no active Reader schedule at `oer-s95-rg`.
 
 ```powershell
 $Pre = @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -ErrorAction Stop | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' -and ([string]$_.Scope).EndsWith('/resourceGroups/oer-s95-rg', [System.StringComparison]::OrdinalIgnoreCase) })
@@ -703,11 +1056,17 @@ Write-OerLiveStep "4.1 active Reader schedules of oer-s95-grp at oer-s95-rg: $($
 **Expect:** `0` (section 3 removed its own).
 **Failure looks like:** above 0 -- wait for 3.4's removal to converge, then read again.
 
-Result:
+Result: 2026-10-07 09:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. oer-s95-grp holds 0 active Reader schedules at oer-s95-rg before the plan (section 3's own removed).
+
+[oer-s95] 4.1 active Reader schedules of oer-s95-grp at oer-s95-rg: 0
+```
 
 ### 4.2. -WhatIf in a child process: the warning, two planned writes, nothing written
 
-- [ ] **4.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -WhatIf`, in a child process, warns that the assignment requires opening the policy, plans the policy change and the assignment, and writes nothing: the policy still forbids a permanent active assignment and the group holds none.
+- [x] **4.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -WhatIf`, in a child process, warns that the assignment requires opening the policy, plans the policy change and the assignment, and writes nothing: the policy still forbids a permanent active assignment and the group holds none.
 
 ```powershell
 $Child = Join-Path $Raw 'child-s95-4.2.ps1'
@@ -749,11 +1108,35 @@ permanent active assignment: False`; `active Reader schedules of oer-s95-grp: 0`
 **Failure looks like:** `ARM writes` above 0, or the policy allowing it after the plan -- the old
 defect (the open before the gate); one `What if:` line -- the plan no longer shows the policy change.
 
-Result:
+Result: 2026-10-07 09:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. New-OERActiveRoleAssignment -Permanent -WhatIf in a child process (its identity lines True): the policy warning under -WhatIf (True, 'This assignment requires opening the role management policy ... to allow PERMANENT active assignments'); two What if lines, redacted, in this order: the gate's own 'Create active Azure role assignment', then the policy change Set-OERRoleManagementPolicy plans ('Update rules: Expiration_Admin_Assignment') -- the gate is decided before the open, which the old code did the other way round; ARM writes 0; objects 0; errors 0; afterwards the policy still does not allow a permanent active assignment (False) and the group holds no active Reader schedule (0).
+
+[oer-s95] 4.2 child: [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] 4.2 child: [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] 4.2 child: [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] 4.2 child: [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] 4.2 child: What if: Performing the operation "Create active Azure role assignment" on target "active role 'Reader' for Group 'oer-s95-grp' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg'".
+[oer-s95] 4.2 child: What if: Performing the operation "Update rules: Expiration_Admin_Assignment" on target "role management policy '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000003'".
+[oer-s95] 4.2 child: WARNING|This assignment requires opening the role management policy for role 'Reader' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg' to allow PERMANENT active assignments, which affects ALL active assignments for this role at this scope.
+[oer-s95] 4.2 child: ARMWRITES|0
+[oer-s95] The scope lists its role management policy: converged after 1 read(s), 3.2 s.
+[oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] 4.2 the policy warning under -WhatIf: True; What if lines: 2; ARM writes: 0; objects: 0; errors: 0; the policy now allows a permanent active assignment: False; active Reader schedules of oer-s95-grp: 0
+```
 
 ### 4.3. Confirmed: the policy is opened, then the assignment is Provisioned
 
-- [ ] **4.3** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -Confirm:$false` warns, opens the policy, then creates the assignment: one request object `Provisioned` with no expiration, no error, the ARM writes in the order policy then request; afterwards the policy allows a permanent active assignment.
+- [x] **4.3** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -Confirm:$false` warns, opens the policy, then creates the assignment: one request object `Provisioned` with no expiration, no error, the ARM writes in the order policy then request; afterwards the policy allows a permanent active assignment.
 
 ```powershell
 $null = Invoke-S95 -Label '4.3 permanent active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -Permanent -Justification 'oer-s95 live verification' -Confirm:$false }
@@ -770,7 +1153,18 @@ Omnicit.EntraRBAC.RoleScheduleRequest; Status Provisioned; expiration NoExpirati
 after a `Provisioned` object; `PolicyOpenedButGrantFailed` -- read it, and check that the policy was
 rolled back.
 
-Result:
+Result: 2026-10-07 09:48 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. New-OERActiveRoleAssignment -Permanent -Justification -Confirm:$false: the warning; ARM writes 2 in the order PATCH roleManagementPolicies, then PUT roleAssignmentScheduleRequests (the open, then the grant); one request object, Status Provisioned, expiration NoExpiration; errors none; afterwards the policy allows a permanent active assignment (True). The teardown removes the assignment and puts the policy back to its baseline.
+
+[oer-s95] 4.3 permanent active create: output objects 1; errors: none; Graph requests: 1 (writes: 0); ARM requests: 5 (writes: 2: PATCH roleManagementPolicies, PUT roleAssignmentScheduleRequests)
+[oer-s95] 4.3 permanent active create: object Omnicit.EntraRBAC.RoleScheduleRequest; Status Provisioned; expiration NoExpiration
+[oer-s95] 4.3 permanent active create: warning -- This assignment requires opening the role management policy for role 'Reader' at scope '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s95-rg' to allow PERMANENT active assignments, which affects ALL active assignments for this role at this scope.
+[oer-s95] The scope lists its role management policy: converged after 1 read(s), 2.6 s.
+[oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] 4.3 the policy now allows a permanent active assignment: True (the teardown puts the baseline back)
+```
 
 ## 5. BL-50: a connected-organization scope with no target is refused, and nothing is sent
 
@@ -778,7 +1172,7 @@ Result:
 
 ### 5.0. The fences and the policy
 
-- [ ] **5.0** The module resolves both transports to the fences, and `oer-s95-ap` has one assignment policy, `oer-s95-pol`, administrator-only.
+- [x] **5.0** The module resolves both transports to the fences, and `oer-s95-ap` has one assignment policy, `oer-s95-pol`, administrator-only.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -807,11 +1201,30 @@ Write-OerLiveStep "5.0 policies of oer-s95-ap: $($Pols.Count); oer-s95-pol found
 found: True; allowedTargetScope notSpecified; targets 0`.
 **Failure looks like:** no policy -- run 0.3 again.
 
-Result:
+Result: 2026-10-07 09:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 09:52 UTC as oer-live-cc (every identity line True), the fences resolving (True). oer-s95-ap has one assignment policy, oer-s95-pol, found; allowedTargetScope notSpecified; 0 targets.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s95] 5.0 policies of oer-s95-ap: 1; oer-s95-pol found: True; allowedTargetScope notSpecified; targets 0
+```
 
 ### 5.1. -RequestorScope SpecificConnectedOrganizationUsers with no target: InvalidPolicyInput, no write
 
-- [ ] **5.1** `Set-OERAccessPackageAssignmentPolicy -Id` (the policy) `-DisplayName oer-s95-pol -RequestorScope` (a `SpecificConnectedOrganizationUsers` scope from `New-OERAccessPackageRequestorScope`) `-Confirm:$false` writes `InvalidPolicyInput`, emits nothing, sends one Graph read and no write, and leaves the policy as it was.
+- [x] **5.1** `Set-OERAccessPackageAssignmentPolicy -Id` (the policy) `-DisplayName oer-s95-pol -RequestorScope` (a `SpecificConnectedOrganizationUsers` scope from `New-OERAccessPackageRequestorScope`) `-Confirm:$false` writes `InvalidPolicyInput`, emits nothing, sends one Graph read and no write, and leaves the policy as it was.
 
 ```powershell
 $Scope = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers -ErrorAction Stop
@@ -825,11 +1238,19 @@ requests: 0`; the message naming the connected organizations and `-RequestorScop
 unchanged: True`.
 **Failure looks like:** `writes: 1` -- the PUT went out (the old defect); no error.
 
-Result:
+Result: 2026-10-07 09:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Set-OERAccessPackageAssignmentPolicy with a SpecificConnectedOrganizationUsers scope from New-OERAccessPackageRequestorScope: output objects 0; InvalidPolicyInput, category InvalidArgument, the message naming the scope, the builder that cannot name a connected organization and the update it would have made (redacted, cut at 300 characters); 1 Graph request (the read of the policy) and 0 writes; no ARM request; the policy is unchanged (scope, targets and modifiedDateTime: True).
+
+[oer-s95] 5.1 refused: output objects 0; errors: InvalidPolicyInput; Graph requests: 1 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s95] 5.1 refused: InvalidPolicyInput; category InvalidArgument -- -RequestorScope names allowedTargetScope SpecificConnectedOrganizationUsers but no connected organization -- New-OERAccessPackageRequestorScope cannot name one -- so the full update of assignment policy '00000000-0000-0000-0000-000000000006' would replace every connected organization the live policy ...
+[oer-s95] 5.1 the policy is unchanged: True
+```
 
 ### 5.2. The control: the same call without -RequestorScope sends the update
 
-- [ ] **5.2** `Set-OERAccessPackageAssignmentPolicy -Id` (the policy) `-DisplayName oer-s95-pol -Description 'oer-s95 control' -Confirm:$false` sends one PUT and emits the updated policy; the scope is carried forward unchanged.
+- [x] **5.2** `Set-OERAccessPackageAssignmentPolicy -Id` (the policy) `-DisplayName oer-s95-pol -Description 'oer-s95 control' -Confirm:$false` sends one PUT and emits the updated policy; the scope is carried forward unchanged.
 
 ```powershell
 $null = Invoke-S95 -Label '5.2 control' -Call { Set-OERAccessPackageAssignmentPolicy -Id $PolId -DisplayName 'oer-s95-pol' -Description 'oer-s95 control' -Confirm:$false }
@@ -845,13 +1266,21 @@ Omnicit.EntraRBAC.AssignmentPolicy`; `description changed: True; allowedTargetSc
 targets 0`.
 **Failure looks like:** no PUT -- the refusal fires on a call without `-RequestorScope`.
 
-Result:
+Result: 2026-10-07 09:49 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The control, the same call with -Description and without -RequestorScope: one AssignmentPolicy object; errors none; 2 Graph requests, 1 write (the PUT); the description changed (True); allowedTargetScope still notSpecified, 0 targets. The refusal does not fire on a call without -RequestorScope.
+
+[oer-s95] 5.2 control: output objects 1; errors: none; Graph requests: 2 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s95] 5.2 control: object Omnicit.EntraRBAC.AssignmentPolicy
+[oer-s95] 5.2 description changed: True; allowedTargetScope notSpecified; targets 0
+```
 
 ## Teardown
 
 ### T.1. The Azure schedules, the objects and the Reader policy are put back, nothing carries the prefix, and the main clone is untouched
 
-- [ ] **T.1** `Initialize-OerS95Prereq.ps1 -Teardown -Unattended` removes the Azure schedules of the prefixed groups at `oer-s95-rg` (4.3's permanent active assignment), the directory role assignments of `oer-s95-grp2` (2.4), the policy, the package, the catalog and both groups, puts the Reader policy at `oer-s95-rg` back to its baseline and deletes the resource group; the sweep finds nothing with the prefix; the counts equal the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
+- [x] **T.1** `Initialize-OerS95Prereq.ps1 -Teardown -Unattended` removes the Azure schedules of the prefixed groups at `oer-s95-rg` (4.3's permanent active assignment), the directory role assignments of `oer-s95-grp2` (2.4), the policy, the package, the catalog and both groups, puts the Reader policy at `oer-s95-rg` back to its baseline and deletes the resource group; the sweep finds nothing with the prefix; the counts equal the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -883,11 +1312,88 @@ resource group is NOT deleted, and the step stops (G11.5); exit code 3 -- residu
 `raw\residue.json`, which the next prereq run retries; report each row. An object deleted with 204 can
 still show in the sweep for a minute or two: read back with T.2 before judging.
 
-Result:
+Result: 2026-10-07 09:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, with one slow listing recorded as residue by the script and proven gone in T.2. Run 2026-10-07 09:53 UTC: identity check passed; no residue from earlier runs. Teardown A: oer-s95-grp held 1 active (Assigned) Azure schedule at oer-s95-rg (4.3's permanent Reader assignment); after waiting 218 s (the five-minute rule) it was removed (200, Revoked); Azure Resource Manager kept listing it beyond the 180 s budget, so the script counted it as residue and carried on (the same replication delay as 3.4); oer-s95-grp2 held none. The library's teardown: step 1 removed oer-s95-grp2's eligible and active Reports Reader assignments (201, 201) and the listing converged after 2 reads; step 2: the PIM for Groups assignment schedules of both groups are unreadable for oer-live-cc (PermissionScopeNotGranted), counted as such; step 3 deleted the policy, the package and the catalog (204); step 5 deleted both groups (204); removed 7, residue 0, unreadable 2. Teardown C: the Reader policy at oer-s95-rg had 1 rule differing from its baseline (Expiration_Admin_Assignment, opened by 4.3); it was put back and read back at the baseline after 1 read, and only then the resource group was deleted. The sweep finds nothing with the prefix; oer-s95-rg exists after the teardown: False; groups 98, catalogs 5 and access packages 6, each equal to the baseline (True); exit code 3 (the one slow listing); no Graph SDK session and no module session left; the main clone on main at 6817b33, the HEAD S.1 recorded, never switched.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [oer-s95] Transcript (redacted): raw\s95\teardown-20261007-094915Z.log; OerLive 1.0.3.
+[oer-s95] [oer-s95] Mode: REMOVE. Prefix 'oer-s95-'. Objects (fixed): oer-s95-grp, oer-s95-grp2 (role-assignable, no member); oer-s95-rg (tagged, empty, its Reader policy baselined); oer-s95-cat, oer-s95-ap (hidden), oer-s95-pol (administrator-only). OerLive 1.0.3.
+[oer-s95] [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] [oer-s95] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s95] [oer-s95] Residue: raw\residue.json holds no rows.
+[oer-s95] [oer-s95] Teardown A: oer-s95-grp at oer-s95-rg: eligible 0, active (Assigned) 1.
+[oer-s95] [oer-s95] oer-s95-grp: active Reader-or-other Azure role schedule at oer-s95-rg: waiting 218 s (an active assignment is removed once it has run five minutes).
+[oer-s95] [oer-s95] Removed: oer-s95-grp: active Reader-or-other Azure role schedule at oer-s95-rg (200 Revoked).
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 1, 2.7 s, likely replication delay) -- reading again in 2 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 2, 7.7 s, likely replication delay) -- reading again in 4 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 3, 13.8 s, likely replication delay) -- reading again in 8 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 4, 24.1 s, likely replication delay) -- reading again in 16 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 5, 44.8 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 6, 79.7 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 7, 112.6 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 8, 145 s, likely replication delay) -- reading again in 30 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: not yet (read 9, 177.4 s, likely replication delay) -- reading again in 3 s.
+[oer-s95] [oer-s95] oer-s95-grp: no Azure role schedule listed at oer-s95-rg: NOT converged after 10 read(s), 182.8 s (budget 180 s).
+[oer-s95] [oer-s95] Teardown A: RESIDUE: oer-s95-grp: its Azure role schedules at oer-s95-rg are still listed after the budget; the teardown carries on.
+[oer-s95] [oer-s95] Teardown A: oer-s95-grp2 at oer-s95-rg: eligible 0, active (Assigned) 0.
+[oer-s95] [oer-s95] Teardown of 'oer-s95-': users 0, groups 2, access packages 1, catalogs 1; administrative units 0 and app registrations 0 are reported only.
+[oer-s95] [oer-s95] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s95] [oer-s95] Removed: oer-s95-grp2: eligible 'Reports Reader' assignment at directory scope '/' (201).
+[oer-s95] [oer-s95] Removed: oer-s95-grp2: active 'Reports Reader' assignment at directory scope '/' (201).
+[oer-s95] [oer-s95] oer-s95-grp2: no direct directory role schedule listed: not yet (read 1, 1 s, likely replication delay) -- reading again in 2 s.
+[oer-s95] [oer-s95] oer-s95-grp2: no direct directory role schedule listed: converged after 2 read(s), 4.5 s.
+[oer-s95] [oer-s95] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s95] [oer-s95] Unreadable for this identity: PIM for Groups assignment schedules of oer-s95-grp (PermissionScopeNotGranted). oer-live-cc cannot create such assignments; deleting the group removes any that exist.
+[oer-s95] [oer-s95] Unreadable for this identity: PIM for Groups assignment schedules of oer-s95-grp2 (PermissionScopeNotGranted). oer-live-cc cannot create such assignments; deleting the group removes any that exist.
+[oer-s95] [oer-s95] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s95] [oer-s95] Deleted: oer-s95-ap: assignment policy 'oer-s95-pol' (204).
+[oer-s95] [oer-s95] Deleted: access package oer-s95-ap (204, 1 attempt(s)).
+[oer-s95] [oer-s95] Deleted: catalog oer-s95-cat (204, 1 attempt(s)).
+[oer-s95] [oer-s95] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s95] [oer-s95] Teardown 5/6: the prefixed groups.
+[oer-s95] [oer-s95] Deleted: group oer-s95-grp (204).
+[oer-s95] [oer-s95] Deleted: group oer-s95-grp2 (204).
+[oer-s95] [oer-s95] Teardown 6/6: the prefixed users.
+[oer-s95] [oer-s95] Teardown of 'oer-s95-': removed 7, residue 0, unreadable 2.
+[oer-s95] [oer-s95] The scope lists its role management policy: converged after 1 read(s), 3.3 s.
+[oer-s95] [oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] [oer-s95] Azure role policy at the scope: rules differing from the baseline: 1 (Expiration_Admin_Assignment)
+[oer-s95] [oer-s95] The scope lists its role management policy: converged after 1 read(s), 3.5 s.
+[oer-s95] [oer-s95] The policy listed at the scope is the scope's own: True
+[oer-s95] [oer-s95] Azure role policy back at its baseline: converged after 1 read(s), 4.3 s.
+[oer-s95] [oer-s95] Teardown C: Reader policy at oer-s95-rg at its baseline: True (rules differing before: 1: Expiration_Admin_Assignment).
+[oer-s95] [oer-s95] oer-s95-rg is gone: not yet (read 1, 0.3 s, likely replication delay) -- reading again in 2 s.
+[oer-s95] [oer-s95] oer-s95-rg is gone: converged after 2 read(s), 3.1 s.
+[oer-s95] [oer-s95] Teardown C: deleted oer-s95-rg.
+[oer-s95] [oer-s95] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s95-' is left.
+[oer-s95] [oer-s95] Resource group oer-s95-rg exists after the teardown: False
+[oer-s95] [oer-s95] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s95] [oer-s95] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s95] [oer-s95] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s95] [oer-s95] Done, with 1 residue item(s): see the RESIDUE lines and raw\residue.json.
+[oer-s95] [oer-s95] Done.
+[oer-s95] Teardown exit code: 3
+[oer-s95] A Graph SDK session is left: False; the module holds a session: False
+[oer-s95] Main clone: branch main; HEAD 6817b33
+```
 
 ### T.2. Read back, a few minutes later
 
-- [ ] **T.2** `Initialize-OerS95Prereq.ps1 -ReadBack` finds no object with the prefix, no resource group `oer-s95-rg`, the counts equal to the baseline and no residue row.
+- [x] **T.2** `Initialize-OerS95Prereq.ps1 -ReadBack` finds no object with the prefix, no resource group `oer-s95-rg`, the counts equal to the baseline and no residue row.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -902,4 +1408,37 @@ oer-s95-rg exists: False`; the three counts equal (`True`); `prefixed objects le
 collections: 0; residue rows: 0`.
 **Failure looks like:** an object left -- run T.1 again; a residue row -- report it.
 
-Result:
+Result: 2026-10-07 09:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 10:01 UTC: identity check passed; the sweep finds nothing with the prefix; oer-s95-rg exists: False; the three counts equal to the baseline (True); prefixed objects left 0, unread collections 0, residue rows 0. An extra read of the test subscription's Azure PIM schedules lists 0 rows whose scope is oer-s95-rg: roleAssignmentSchedules (12 rows in all), roleEligibilitySchedules (3) and roleAssignmentScheduleInstances (12). The schedule T.1 counted as residue is gone. The redaction map is cleared and raw\s95\ deleted after this write-up.
+
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s95] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s95] [oer-s95] Transcript (redacted): raw\s95\readback-20261007-095738Z.log; OerLive 1.0.3.
+[oer-s95] [oer-s95] Mode: READ BACK. Prefix 'oer-s95-'. Objects (fixed): oer-s95-grp, oer-s95-grp2 (role-assignable, no member); oer-s95-rg (tagged, empty, its Reader policy baselined); oer-s95-cat, oer-s95-ap (hidden), oer-s95-pol (administrator-only). OerLive 1.0.3.
+[oer-s95] [oer-s95] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg5\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s95] [oer-s95] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s95] [oer-s95] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s95-' is left.
+[oer-s95] [oer-s95] Read-back: resource group oer-s95-rg exists: False
+[oer-s95] [oer-s95] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s95] [oer-s95] Counts: catalogs now 5, at the baseline 5; equal: True
+[oer-s95] [oer-s95] Counts: accessPackages now 6, at the baseline 6; equal: True
+[oer-s95] [oer-s95] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s95] [oer-s95] Done.
+
+--- extra read ---
+[oer-s95] T.2 extra read: roleAssignmentSchedules in the test subscription: status 200; rows 12; rows at oer-s95-rg: 0
+[oer-s95] T.2 extra read: roleEligibilitySchedules in the test subscription: status 200; rows 3; rows at oer-s95-rg: 0
+[oer-s95] T.2 extra read: roleAssignmentScheduleInstances in the test subscription: status 200; rows 12; rows at oer-s95-rg: 0
+```
