@@ -27,6 +27,15 @@ function Set-OERRoleManagementPolicy {
     with ActivationCustomApproversNotEmpty -- the approvers are notified directly, so leave that
     notification's recipients empty (or use -Recipient Admin / Requestor).
 
+    Approvers apply only when approval is required, so -RequireApproval $false beside -ApproverUser
+    or -ApproverGroup, an empty list included, is a contradiction: it is refused with a
+    non-terminating MutuallyExclusiveParameter error before anything is looked up or sent, and nothing
+    else the call binds is sent either. Pass -RequireApproval $false alone to turn approval off.
+    Azure Resource Manager replaces the whole approver list, so approvers that name nobody are refused
+    too: -ApproverUser or -ApproverGroup bound with no approver among them (an empty list, or only
+    empty strings) is a non-terminating ApproverRequired error, raised before anything is looked up
+    or sent.
+
     .PARAMETER Role
     The role: display name, role definition GUID, or full ARM id. Tab-completion offers the five
     curated common Azure RBAC roles; any other built-in or custom role name is still accepted.
@@ -64,7 +73,9 @@ function Set-OERRoleManagementPolicy {
     Require ticket information when an eligible user activates the role.
 
     .PARAMETER RequireApproval
-    Require approval for activation (Approval_EndUser_Assignment rule).
+    Require approval for activation (Approval_EndUser_Assignment rule). $false turns approval off and
+    cannot be combined with -ApproverUser or -ApproverGroup, even an empty list: that call is refused
+    with MutuallyExclusiveParameter before anything is looked up or sent.
 
     .PARAMETER ApproverUser
     Primary approver users (user principal name or object id); each resolved to a User approver.
@@ -72,14 +83,22 @@ function Set-OERRoleManagementPolicy {
     any approver value cannot be resolved, nothing is read or sent. A value that matches no user is
     a non-terminating ApproverNotFound error; a lookup that fails (insufficient permission,
     throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
-    Supplying approvers implies RequireApproval = true, overriding any -RequireApproval $false.
+    Supplying approvers implies approval is required, so beside -RequireApproval $false they are
+    refused with a non-terminating MutuallyExclusiveParameter error before anything is looked up or
+    sent (an empty list included). Azure Resource Manager replaces the whole approver list, so
+    -ApproverUser and -ApproverGroup together must name at least one approver: a call that binds either
+    parameter and names no approver (an empty list, or only empty strings) is refused with a
+    non-terminating ApproverRequired error before anything is looked up or sent. Pass
+    -RequireApproval $false alone to turn approval off.
 
     .PARAMETER ApproverGroup
     Primary approver groups (display name or object id); each resolved to a Group approver, all or
     nothing as for -ApproverUser. A value that matches no group is a non-terminating
     ApproverNotFound error, a display name several groups share is a non-terminating
     AmbiguousApproverName error naming the candidate ids (pass the object id instead), and a lookup
-    that fails is reported as that error itself.
+    that fails is reported as that error itself. Beside -RequireApproval $false it is refused with
+    MutuallyExclusiveParameter, and with no approver named by either parameter it is refused with
+    ApproverRequired, as for -ApproverUser.
 
     .PARAMETER AuthenticationContextId
     Authentication context claim value required on activation (e.g. c1). An empty string disables the
@@ -209,6 +228,42 @@ function Set-OERRoleManagementPolicy {
         if ($PSBoundParameters.ContainsKey('AuthenticationContextId') -and $AuthenticationContextId -and $AuthenticationContextId -notmatch '^c\d+$') {
             Write-CmdletError -Message ([System.Exception]::new("AuthenticationContextId '$AuthenticationContextId' is invalid: use a value like 'c1', or an empty string to disable.")) -ErrorId 'InvalidAuthenticationContext' -Category InvalidArgument -TargetObject $AuthenticationContextId -Cmdlet $PSCmdlet
             return
+        }
+
+        # Approvers apply only when approval is required, so -RequireApproval $false beside an approver
+        # parameter contradicts itself: refused here, before the approver lookup, the scope, the role
+        # and the policy, so a refused call looks nothing up and reaches neither Azure Resource Manager
+        # nor Microsoft Graph, the other settings bound on the same call included. "Bound" means bound,
+        # so an empty list counts.
+        if ($PSBoundParameters.ContainsKey('RequireApproval') -and -not $RequireApproval -and
+            ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
+            $ContradictionTarget = if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') { $PolicyId } else { $Role }
+            Write-CmdletError -Message ([System.Exception]::new(
+                    '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply ' +
+                    'only when approval is required. Pass -RequireApproval $false alone to turn approval off (the ' +
+                    'approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. ' +
+                    'Nothing was looked up or sent.')) `
+                -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $ContradictionTarget -Cmdlet $PSCmdlet
+            return
+        }
+
+        # An approver parameter that names no approver would make approval required with nobody to
+        # approve it: Azure Resource Manager replaces the whole approver list, so the empty list is
+        # what would be sent. Counted offline, before the approver lookup, the scope, the role and the
+        # policy, on the non-blank values with the resolution loop's own blank rule below
+        # ("if (-not $Value) { continue }"), so a value the loop would look up is never called blank
+        # here. It stands after the contradiction check, so -RequireApproval $false beside an empty
+        # list still reports MutuallyExclusiveParameter. The target object is the same as theirs.
+        if ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup')) {
+            if (@(@($ApproverUser) + @($ApproverGroup) | Where-Object { $_ }).Count -eq 0) {
+                $ZeroApproverTarget = if ($PSCmdlet.ParameterSetName -eq 'ByPolicyId') { $PolicyId } else { $Role }
+                Write-CmdletError -Message ([System.Exception]::new(
+                        'Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, ' +
+                        'and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or ' +
+                        '-RequireApproval $false alone to turn approval off. Nothing was looked up or sent.')) `
+                    -ErrorId 'ApproverRequired' -Category InvalidArgument -TargetObject $ZeroApproverTarget -Cmdlet $PSCmdlet
+                return
+            }
         }
 
         # Approvers are resolved before the scope, the role and the policy, all or nothing. This cmdlet

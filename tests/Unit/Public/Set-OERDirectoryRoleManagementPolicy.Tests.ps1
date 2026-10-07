@@ -575,11 +575,111 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
             $Result.RequireApproval | Should -BeFalse
         }
 
-        It 'requires approval when approvers are supplied, even beside -RequireApproval $false' {
+        # Flipped on purpose in Sprint 9 step 4 (BL-08): this test pinned that approvers OVERRIDE
+        # -RequireApproval $false and require approval anyway. The combination is a contradiction and
+        # is refused now; the Context below holds the full matrix.
+        It 'refuses approvers supplied beside -RequireApproval $false with MutuallyExclusiveParameter, and sends nothing' {
             $script:LiveRules = New-TestRuleSet -ApprovalRequired $false -Approvers @()
-            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup 'grpB' -Confirm:$false
+            Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup 'grpB' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'MutuallyExclusiveParameter,Set-OERDirectoryRoleManagementPolicy' }).Count | Should -Be 1
+            @($script:Calls).Count | Should -Be 0
+        }
+    }
+
+    Context 'refuses -RequireApproval $false beside an approver parameter, before any lookup and any request (Sprint 9 step 4, BL-08)' {
+        # Approvers apply only when approval is required, so -RequireApproval $false beside
+        # -ApproverUser or -ApproverGroup contradicts itself. The refusal stands directly after the
+        # MFA / authentication-context refusal, before the NothingToUpdate step, the approver lookup,
+        # the role lookup and every request, so a refused call looks nothing up and sends nothing, the
+        # other settings bound on the same call included. "Bound" means bound: an empty list counts.
+        # Resolve-OERApproverInput and Resolve-OERDirectoryRoleDefinitionId are mocked so that their
+        # call counts show whether the lookups were reached; the controls prove those counts can rise.
+        BeforeAll {
+            $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+        }
+
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERApproverInput {
+                [pscustomobject]@{
+                    User  = [string[]]@(@($User) | Where-Object { $_ } | ForEach-Object { 'bbbbbbbb-0000-0000-0000-000000000001' })
+                    Group = [string[]]@(@($Group) | Where-Object { $_ } | ForEach-Object { 'cccccccc-0000-0000-0000-000000000001' })
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId { 'aaaaaaaa-0000-0000-0000-000000000001' }
+        }
+
+        It 'refuses -RequireApproval $false beside <Shape> (<Target>) with MutuallyExclusiveParameter, and looks nothing up and sends nothing' -TestCases @(
+            @{ Shape = '-ApproverUser'; Target = 'ByRole'; Splat = @{ Role = 'Reports Reader'; ApproverUser = @('person1@example.com') }; Expected = 'Reports Reader' }
+            @{ Shape = '-ApproverGroup'; Target = 'ByRole'; Splat = @{ Role = 'Reports Reader'; ApproverGroup = @('grpA') }; Expected = 'Reports Reader' }
+            @{ Shape = '-ApproverUser as an empty list'; Target = 'ByRole'; Splat = @{ Role = 'Reports Reader'; ApproverUser = @() }; Expected = 'Reports Reader' }
+            @{ Shape = '-ApproverGroup as an empty list'; Target = 'ByRole'; Splat = @{ Role = 'Reports Reader'; ApproverGroup = @() }; Expected = 'Reports Reader' }
+            @{
+                Shape = '-ApproverUser'; Target = 'ByPolicyId'; Expected = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+                Splat = @{ PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'; ApproverUser = @('person1@example.com') }
+            }
+            @{
+                Shape = '-ApproverGroup as an empty list'; Target = 'ByPolicyId'; Expected = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'
+                Splat = @{ PolicyId = 'DirectoryRole_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222'; ApproverGroup = @() }
+            }
+        ) {
+            $Err = $null
+            # -ActivationMaxHours rides along: without the refusal its rule would be sent, so the call
+            # counts below show that a refused call sends no other rule either.
+            $Result = Set-OERDirectoryRoleManagementPolicy @Splat -RequireApproval $false -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERDirectoryRoleManagementPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'MutuallyExclusiveParameter,Set-OERDirectoryRoleManagementPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be $Expected
+            $Own[0].Exception.Message | Should -BeExactly $script:RefusalMessage
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERApproverInput -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'does not refuse -RequireApproval $true beside approvers: the lookups are reached and the approval rule is sent' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $false -Approvers @()
+            $Err = $null
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $true -ApproverGroup 'grpA' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            @($Result.ChangedRuleIds) | Should -Be @('Approval_EndUser_Assignment')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERApproverInput -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Approval_EndUser_Assignment'
             $script:Calls[0].Body.setting.isApprovalRequired | Should -BeTrue
-            @(Get-SentPrimaryApprover).Count | Should -Be 1
+        }
+
+        It 'does not refuse -<Parameter> bound without -RequireApproval: the lookup is reached and the approval rule is sent' -TestCases @(
+            @{ Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+            @{ Parameter = 'ApproverGroup'; Value = @('grpA') }
+        ) {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $false -Approvers @()
+            $Err = $null
+            $Splat = @{ Role = 'Reports Reader'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat[$Parameter] = $Value
+            $null = Set-OERDirectoryRoleManagementPolicy @Splat
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERApproverInput -Times 1 -Exactly
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].RuleId | Should -Be 'Approval_EndUser_Assignment'
+        }
+
+        It 'does not refuse -RequireApproval $false bound alone: the approval rule is sent and the approvers on it are kept' {
+            $script:LiveRules = New-TestRuleSet -ApprovalRequired $true -Approvers @(New-TestGroupApprover -Id $script:GroupA)
+            $Err = $null
+            $Result = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.RequireApproval | Should -BeFalse
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 1 -Exactly
+            @($script:Calls).Count | Should -Be 1
+            $script:Calls[0].Body.setting.isApprovalRequired | Should -BeFalse
         }
     }
 
@@ -716,6 +816,127 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
         }
     }
 
+    Context 'no warning stops the update between its first PATCH and its last put-back, under -WarningAction Stop (BL-10)' {
+        # Send-OERPimRulePatch returns every message about a rejected rule, and about a put-back that
+        # failed; the cmdlet writes them only after the last PATCH and the put-back were sent. So a
+        # caller running with -WarningAction Stop is stopped by the FIRST message, which is written
+        # after every request. The scenario writes NO warning before the first PATCH: the live
+        # context c1 is enabled and MFA is not, so setting c2 and dropping the justification
+        # requirement reconciles nothing. The enablement rule goes first (an ENABLING context rule
+        # goes last), and the context rule is the one rejected, so the enablement rule is put back.
+        It 'inside a try: is stopped only after both rules and the put-back of the first were sent' {
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1'
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $Caught = $null
+            try {
+                Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false `
+                    -Confirm:$false -WarningAction Stop -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            # The pair in patch order, then the put-back of the first rule LAST.
+            @($script:Calls.RuleId) | Should -Be @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            @($script:Calls[0].Body.enabledRules).Count | Should -Be 0
+            @($script:Calls[2].Body.enabledRules) | Should -Be @('Justification') -Because 'the last request puts the live rule back'
+            # The stop came from a warning, and from the rejection of the context rule in particular:
+            # nothing was written before it, and it was written after the put-back.
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+            $Caught.Exception.Message | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy '$($script:PolicyId)' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'.*"
+        }
+
+        It 'inside a try: the control without Stop sends the same requests and writes the rejection as its FIRST warning' {
+            # Without this, the test above could pass for a call that never wrote that message.
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1'
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false `
+                -Confirm:$false -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+            @($script:Calls.RuleId) | Should -Be @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            @($Warn).Count | Should -BeGreaterThan 0
+            @($Warn)[0] | Should -Be "Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy '$($script:PolicyId)' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'."
+        }
+
+        Context 'in a script with no try' {
+            BeforeAll {
+                # The script runs in a runspace through Invoke-OERWithConfirmAnswer, so it is
+                # transported as text and installs its own fakes in ITS copy of the module scope. The
+                # transport stub appends "PATCH <rule id>" to a log file whose path is substituted into
+                # the text, and throws for the rejected rule exactly as the real wrapper does. The call
+                # stands in no try. The control removes the three private stubs again and counts what
+                # still resolves.
+                $script:NewNoTryScenario = {
+                    param([string]$Log, [string]$Stop)
+                    [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PATCH') {
+            $RuleId = ($Uri -split '/')[-1]
+            Add-Content -LiteralPath '#LOG#' -Value "PATCH $RuleId"
+            if ($RuleId -eq 'AuthenticationContext_EndUser_Assignment') { throw "Graph rejected rule '$RuleId'." }
+            return @{}
+        }
+        $Target = @{ caller = 'EndUser'; operations = @('All'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() }
+        @{
+            id = 'DirectoryRole_p1'; scopeId = '/'; scopeType = 'DirectoryRole'
+            rules = @(
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1'; target = $Target }
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification'); target = $Target }
+            )
+        }
+    }
+}
+$Result = Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_p1' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false -Confirm:$false #STOP#
+"REACHED:$(@($Result.ChangedRuleIds).Count)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Invoke-OERGraphRequest
+    "STUBS:$(@('Initialize-OERAuth', 'Remove-OERErrorRecord', 'Invoke-OERGraphRequest' | Where-Object { Get-Command -Name $PSItem -CommandType Function -ErrorAction Ignore }).Count)"
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
+                }
+                function Get-TestLoggedLine ([string]$Log) {
+                    if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+                }
+            }
+
+            It '-WarningAction Stop ends the script only after both rules and the put-back were sent' {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Scenario = & $script:NewNoTryScenario -Log $Log -Stop '-WarningAction Stop'
+                # Measured: a stop outside any try ends the whole script, so the runner throws to its caller.
+                { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } |
+                    Should -Throw -ExpectedMessage "*WarningPreference*Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy 'DirectoryRole_p1' was not applied*"
+                @(Get-TestLoggedLine -Log $Log) | Should -Be @(
+                    'PATCH Enablement_EndUser_Assignment'
+                    'PATCH AuthenticationContext_EndUser_Assignment'
+                    'PATCH Enablement_EndUser_Assignment'
+                )
+            }
+
+            It 'the control without Stop reaches the end of the script with the same requests' {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Scenario = & $script:NewNoTryScenario -Log $Log -Stop ''
+                $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+                # The sentinel and the stub removal prove the script ran to its end. Nothing is reported
+                # as changed, since the one accepted rule was put back and the other was rejected.
+                ($Run.Output -join '|') | Should -Be 'REACHED:0|STUBS:0|END'
+                @(Get-TestLoggedLine -Log $Log) | Should -Be @(
+                    'PATCH Enablement_EndUser_Assignment'
+                    'PATCH AuthenticationContext_EndUser_Assignment'
+                    'PATCH Enablement_EndUser_Assignment'
+                )
+                @($Run.Warnings)[0] | Should -Be "Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy 'DirectoryRole_p1' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'."
+                @($Run.Errors | Where-Object { $_ -like "*Directory role management policy 'DirectoryRole_p1' was not fully applied*" }).Count | Should -Be 1
+            }
+        }
+    }
+
     Context 'one confirmation per call' {
         BeforeAll {
             # Pester mocks do not cross into the answering runspace, so the fakes are installed in
@@ -841,5 +1062,95 @@ Describe 'Set-OERDirectoryRoleManagementPolicy: an approver lookup, missing, amb
             $Record -and [string]$Record.FullyQualifiedErrorId -like 'Authorization_RequestDenied*' -and
             $Record.Exception.Message -like '*Insufficient privileges*'
         }
+    }
+}
+
+Describe 'Set-OERDirectoryRoleManagementPolicy: the -RequireApproval $false refusal in a script with no try (Sprint 9 step 4, BL-08)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # look anything up or send a request on the way. The script stands in no try, prints a sentinel at
+    # its end, and the stubs append every lookup and request to a log file whose path is substituted
+    # into the text. The control runs the allowed form in the same script with the same stubs, so an
+    # empty log in the refused run cannot be an artefact of a stub that never logs.
+    BeforeAll {
+        $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+
+        $script:NewNoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERApproverInput -Value {
+        param($User, $Group)
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERApproverInput'
+        [pscustomobject]@{ User = [string[]]@(); Group = [string[]]@('cccccccc-0000-0000-0000-000000000001') }
+    }
+    Set-Item -Path function:script:Resolve-OERDirectoryRoleDefinitionId -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERDirectoryRoleDefinitionId'
+        'aaaaaaaa-0000-0000-0000-000000000001'
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERGraphRequest $Method"
+        if ($Method -eq 'PATCH') { return @{} }
+        $Target = @{ caller = 'EndUser'; operations = @('All'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() }
+        @{
+            id = 'DirectoryRole_p1'; scopeId = '/'; scopeType = 'DirectoryRole'
+            rules = @(
+                @{
+                    '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyApprovalRule'; id = 'Approval_EndUser_Assignment'; target = $Target
+                    setting = @{ isApprovalRequired = $false; approvalMode = 'SingleStage'; approvalStages = @() }
+                }
+            )
+        }
+    }
+}
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:RefusedCalls = @'
+$Results = @(
+    Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverUser 'person1@example.com' -Confirm:$false
+    Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_p1' -RequireApproval $false -ApproverGroup 'grpA' -Confirm:$false
+    Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverUser @() -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:AllowedCalls = @'
+$Results = @(
+    Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_p1' -RequireApproval $true -ApproverGroup 'grpA' -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-TestRefusalLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, looks nothing up, sends nothing, and writes the refusal once per call' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-TestRefusalLog -Log $Log).Count | Should -Be 0
+        @($Run.Errors).Count | Should -Be 3
+        @($Run.Errors | Where-Object { $_ -ceq $script:RefusalMessage }).Count | Should -Be 3
+    }
+
+    It 'the control: the allowed form in the same script reaches the lookup and sends the approval rule' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:AllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-TestRefusalLog -Log $Log) | Should -Be @(
+            'Resolve-OERApproverInput'
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest PATCH'
+        )
     }
 }

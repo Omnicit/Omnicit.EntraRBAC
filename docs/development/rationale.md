@@ -1334,6 +1334,101 @@ Three consequences worth keeping in mind:
   directions, and the direction that is wrong fails only against a live tenant -- every mocked test
   that does not assert on PATCH ORDER passes either way.
 
+## pim-rule-pair-put-back
+
+Sprint 9 step 4 (BL-09, BL-10). `Send-OERPimRulePatch` is the single owner of sending a Microsoft
+Graph PIM rule set one PATCH per rule, for `Set-OERGroupPimPolicy` and
+`Set-OERDirectoryRoleManagementPolicy`. It owns two rules the section above leaves open: the first
+rule of the MFA / authentication-context pair is put back when Graph rejects the second, and no
+warning is written between the first PATCH and the last put-back.
+
+**Why the pair is put back.** `AuthenticationContext_EndUser_Assignment` and
+`Enablement_EndUser_Assignment` together decide whether activation requires multi-factor
+authentication or an authentication context. The patch order above sends the conflict-removing half
+first, so when the second half is then rejected the first has already been applied: a context
+disabled, or MFA removed, and the control the caller asked for never arrived. The policy is left
+with NEITHER control, which is worse than the state before the call and worse than the state the
+caller wanted. `Set-OERDirectoryRoleManagementPolicy` already put the accepted half back, with logic
+written inline in the cmdlet; `Set-OERGroupPimPolicy` did not, and reported the accepted rule as
+applied. One helper replaces the inline copy and gives the group cmdlet the same behaviour, so the
+two cannot drift again: `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` holds by AST that
+neither cmdlet sends a rule PATCH of its own and that each calls the helper once. A rejected FIRST
+half needs nothing, since the second was validated against an unchanged policy. The pair counts
+only when both rules are in the confirmed set, so a DECLINED half is never put back (the
+declined-partner guard of the section above covers that case). A put-back that is itself rejected
+leaves the first half applied: the helper reports why, and the cmdlets say what activation now
+requires. The group cmdlet says it may now require neither control; the directory cmdlet reads the
+object it just returned and names what that role now requires.
+
+**A rule that was put back is not reported as changed.** The group cmdlet builds the property list
+of its result from the rules it sent minus the one put back, so that rule adds no property to the
+result. `Applied` is `$false` in any case, since a rule was rejected, and the `PolicyRulesRejected`
+error names the put-back, or its failure.
+
+**Why the group cmdlet confirms every rule before it sends any.** The helper takes the confirmed
+set and asks nothing itself, so the cmdlet answers every `ShouldProcess` prompt first, in patch
+order, and sends afterwards. It used to prompt and send rule by rule. The put-back also needs the
+first half's live version, which has to be read BEFORE the first PATCH changes it, and not under
+`-WhatIf` or when a prompt was declined, where nothing, or not the whole pair, is sent. With the
+confirmed set known first, the cmdlet reads the first half only when both pair rules were accepted,
+so `-WhatIf`, a declined prompt and a declined partner make no first-half read of their own. (A
+reconcile read, below, runs before the prompts and is made under `-WhatIf` as well.) The
+declined-partner guard of the section above reads the same set and is unchanged.
+
+**Where the first half's live version comes from.** The two reconcile reads the group cmdlet may
+already make are exactly the first half in each direction: `ClearMfa` reads the enablement rule and
+sends it first, `DisableAuthContext` reads the authentication-context rule and sends it first. Each
+read is kept by rule id and reused, so a reconcile adds no read. A call that supplies both
+parameters explicitly makes no reconcile read, and costs one: a single GET of the first rule, after
+the prompts and before the first PATCH. A failed read costs the put-back and nothing else, so it is
+a warning, written at once -- before any PATCH, so a `-WarningAction Stop` caller stops with nothing
+sent -- and the call goes on. Should the second half then be rejected, the helper sends no request
+and reports that the value before the call was not read. The directory cmdlet already holds every
+live rule from its policy read.
+
+**Why the put-back body is the live rule minus `@odata.context`.** A single-rule read carries an
+`@odata.context` annotation that describes the response and is not part of the rule. The helper
+sends the live rule as a new hashtable made by a JSON round trip, always, so the caller's copy is
+never changed, and removes that key. This is a design decision, not a measured one: the put-back
+cannot be provoked live, as below.
+
+**Why the helper returns its messages instead of writing them.** A caller running with
+`-WarningAction Stop`, or with `$WarningPreference` set to `Stop`, is stopped by the first
+`Write-Warning`. Measured: outside any `try` that ends the whole script (a hosted runspace's
+`Invoke()` then throws to its parent), and inside one the caller catches an
+`ActionPreferenceStopException`. The directory cmdlet wrote a rejected rule's warning inside its
+loop, directly BEFORE the put-back, so a Stop caller was stopped between the rejected rule and the
+put-back and left with exactly the half-applied pair the put-back exists to prevent; the group
+cmdlet's loop likewise left every later rule unsent. The helper therefore writes nothing -- its body
+holds no warning, error, information or host call, which the AST test checks -- and returns
+`Warning` in the order the messages arose. Both callers write them directly after it returns,
+before the result object, so the first message still stops a Stop caller, but only after every
+PATCH and the put-back were sent. The messages that precede the sends, a reconcile reason or a
+failed first-half read, are written before the first PATCH on purpose: stopping there sends
+nothing. The rejection text now names the policy, and the label differs per cmdlet: the group
+cmdlet writes `Rule 'ID' of PIM policy 'ID' was not applied`, the directory cmdlet
+`Rule 'ID' of directory role management policy 'ID' was not applied`. The group cmdlet's earlier
+wording, `Rule 'ID' was not applied`, survives in the older live-verification checklists and in the
+live run quoted above.
+
+**Why `requiredscope.tests.ps1` counts a call to the helper as a write by the caller.** That gate
+decides whether a cmdlet writes from the method of the `Invoke-OERGraphRequest` calls in its own
+body. The helper receives its path from the cmdlet and carries no path literal, and the two cmdlets
+no longer PATCH on their own, so their policy endpoints would have read as read-only and the gate
+would have accepted a read scope for a cmdlet that writes the policy. A call to
+`Send-OERPimRulePatch` now marks the CALLING function as a Graph writer. Measured by mutation:
+without the clause a read-only scope row for either cmdlet passes the gate, with it the gate is red.
+
+**The put-back cannot be provoked live.** The patch order is chosen so that Graph accepts both
+halves: the one rejection the exclusion has (enabling MFA while a context is enabled) is exactly
+what sending the conflict-removing half first avoids, and no request can be made to fail the second
+half on demand. It is check class B: mocked, mutation-proven unit tests with a rejecting transport,
+in `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` (the helper, both directions), in
+`tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and in
+`tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1` (the two cmdlets, each under
+`-WarningAction Stop` inside a `try` and in a script with no `try`). The decision rests on the
+asymmetry recorded in the section above, which was measured live; the put-back itself was not.
+
 ## completers
 
 Tab-completion is scriptblock-based, not `IArgumentCompleter` classes -- which is why there is no

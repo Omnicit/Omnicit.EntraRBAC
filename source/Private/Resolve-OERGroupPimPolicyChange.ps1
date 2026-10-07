@@ -31,17 +31,18 @@ function Resolve-OERGroupPimPolicyChange {
     group display name through Resolve-OERDeclaredApprover first, so this diff only ever compares ids
     with ids, never a name with an id. requireApproval and each approver side are independently
     presence-gated. A document that explicitly declares requireApproval = false takes precedence over
-    a declared approvers block, and no approver parameter is sent: binding -ApproverUser or
-    -ApproverGroup on Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval),
-    so sending them would override the explicit false -- the same reason the Azure Resource Manager
-    sibling gives. The ignore is noted in Changes, but that note alone changes nothing: when it is the
-    only entry, Changed is false and the handler reports "already matches" for that access type, so
-    the note is not shown to a plan reader at all. Unlike the Azure Resource Manager sibling
-    (Resolve-OERRoleManagementPolicyChange), which always sends both approver sides because ARM
-    replaces the whole primaryApprovers array in one patch, this diff sends only the DECLARED side(s)
-    when either side differs: Set-OERGroupPimPolicy replaces only the side it is bound for and carries
-    the other side from the live rule, so an undeclared side must never be sent here either. No Graph,
-    ARM, or authentication occurs.
+    a declared approvers block, and no approver parameter is sent: approvers apply only while approval
+    is required (supplying approvers implies approval), and Set-OERGroupPimPolicy refuses
+    -RequireApproval $false beside -ApproverUser or -ApproverGroup with MutuallyExclusiveParameter,
+    so the diff drops the approvers rather than send a call the cmdlet would refuse -- the same
+    reason the Azure Resource Manager sibling gives. The ignore is noted in Changes, but that note
+    alone changes nothing: when it is the only entry, Changed is false and the handler reports
+    "already matches" for that access type, so the note is not shown to a plan reader at all. Unlike
+    the Azure Resource Manager sibling (Resolve-OERRoleManagementPolicyChange), which always sends
+    both approver sides because ARM replaces the whole primaryApprovers array in one patch, this diff
+    sends only the DECLARED side(s) when either side differs: Set-OERGroupPimPolicy replaces only the
+    side it is bound for and carries the other side from the live rule, so an undeclared side must
+    never be sent here either. No Graph, ARM, or authentication occurs.
 
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat
@@ -188,10 +189,11 @@ function Resolve-OERGroupPimPolicyChange {
     # -- set: approvers (users/groups) --------------------------------------------------------
     # Declared values are already object ids (see the help above -- Resolve-OERDeclaredApprover runs
     # before this diff), so the comparison below only ever matches ids with ids. requireApproval=false
-    # wins over a declared approvers block: binding -ApproverUser or -ApproverGroup on
-    # Set-OERGroupPimPolicy FORCES approval on (supplying approvers implies approval, and
-    # New-OERPimRuleSet sends isApprovalRequired true whenever approvers are bound), so sending them
-    # would silently override the explicit false -- the same reason the ARM sibling,
+    # wins over a declared approvers block: approvers apply only while approval is required
+    # (supplying approvers implies approval, and New-OERPimRuleSet sends isApprovalRequired true
+    # whenever approvers are bound), and Set-OERGroupPimPolicy refuses -RequireApproval $false beside
+    # -ApproverUser or -ApproverGroup with MutuallyExclusiveParameter. So the diff drops the
+    # approvers rather than send a call the cmdlet would refuse -- the same reason the ARM sibling,
     # Resolve-OERRoleManagementPolicyChange, gives. The ignore is added to Changes, but it sets no
     # parameter: when it is the only entry, Changed is false and the handler reports "already
     # matches", so a plan reader never sees the note. Otherwise,

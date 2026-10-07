@@ -900,7 +900,27 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
 - **`ConvertFrom-OERGraphApprover` is the single reader of a Graph approver, and
   `Resolve-OERApproverInput` / `Resolve-OERGraphApproverSet` are the single owners of the Graph
   approver-side semantics shared by `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`
-  -- never re-implement the carry/count/ApproverRequired decision inline.**
+  -- never re-implement the carry/count/ApproverRequired decision inline.** `-RequireApproval $false`
+  beside a bound `-ApproverUser` or `-ApproverGroup` (an empty list included) is refused with
+  `MutuallyExclusiveParameter` by the three policy cmdlets -- those two and `Set-OERRoleManagementPolicy`
+  -- before any lookup or request, and `Resolve-OERGraphApproverSet` throws the same id as a backstop;
+  never let that combination reach a request.
+- **`Send-OERPimRulePatch` is the single owner of sending a Microsoft Graph PIM rule set, one PATCH
+  per rule.** That covers the pair put-back -- when Graph accepts the first rule of the MFA /
+  authentication-context pair and rejects the second, the first is PATCHed straight back to its live
+  version -- and the rule that no warning is written between the first PATCH and the last put-back:
+  the helper returns its messages and the caller writes them after it returns, since a
+  `-WarningAction Stop` caller is otherwise stopped before the put-back. It is called by
+  `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm first and order
+  the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly, and
+  never write a warning inside the helper. Held by the AST check in
+  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` and, for the caller-side half (the messages
+  written only after the last request), by the `-WarningAction Stop` tests in
+  `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and
+  `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script with
+  no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
+  the helper carries no path literal of its own.
+  `Why: docs/development/rationale.md#pim-rule-pair-put-back`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
   cloud is read from it; never hardcode one of those hosts a second time. `source/Private/Invoke-OERArmRequest.ps1`

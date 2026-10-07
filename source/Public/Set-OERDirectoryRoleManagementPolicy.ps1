@@ -45,13 +45,17 @@ function Set-OERDirectoryRoleManagementPolicy {
     only and -ApproverGroup the group approvers only; the side left unbound is carried over from
     the live approval stage, and a live approver of any other kind (a requestor's manager, for
     example) is never replaced by either parameter and is sent back unchanged. An explicit empty
-    list clears its side. Supplying approvers on either side implies approval is required, even
-    beside -RequireApproval $false. Every approver value is resolved to an object id first (a user
-    by user principal name or id, a group by display name or id), and nothing is read or sent unless
-    every value resolves: a value that matches nothing is a non-terminating ApproverNotFound error, a
-    group display name that several groups share is a non-terminating AmbiguousApproverName error
-    whose message names the candidate ids, and a lookup that fails (insufficient permission,
-    throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
+    list clears its side. Supplying approvers on either side implies approval is required, so
+    -RequireApproval $false beside -ApproverUser or -ApproverGroup, an empty list included, is a
+    contradiction: it is refused with a non-terminating MutuallyExclusiveParameter error before
+    anything is looked up or sent, and nothing else the call binds is sent either (pass
+    -RequireApproval $false alone to turn approval off). Every approver value is resolved to an object
+    id first (a user by user principal name or id, a group by display name or id), and nothing is
+    read or sent unless every value resolves: a value that matches nothing is a non-terminating
+    ApproverNotFound error, a group display name that several groups share is a non-terminating
+    AmbiguousApproverName error whose message names the candidate ids, and a lookup that fails
+    (insufficient permission, throttling, a dead transport, ...) is reported as that error itself,
+    never as ApproverNotFound.
     Approval required with no approver left -- -RequireApproval $true on a stage without one, or
     approver parameters that clear every approver -- is a non-terminating ApproverRequired error and
     nothing is sent.
@@ -119,23 +123,28 @@ function Set-OERDirectoryRoleManagementPolicy {
     .PARAMETER RequireApproval
     Require approval for activation (Approval_EndUser_Assignment rule). $true needs at least one
     approver, supplied or already on the live stage, or the call is refused with ApproverRequired.
-    $false turns approval off and keeps the live stage and its approvers.
+    $false turns approval off and keeps the live stage and its approvers; it cannot be combined with
+    -ApproverUser or -ApproverGroup, even an empty list, and that call is refused with
+    MutuallyExclusiveParameter before anything is looked up or sent.
 
     .PARAMETER ApproverUser
     The user approvers, each a user principal name or user object id, resolved to object ids before
     anything is read or sent. Replaces the user approvers on the live stage; the group approvers are
-    kept. An empty list clears the user side. Supplying it implies approval is required. The same
-    user named twice (by user principal name and by id, or in another letter case) is sent once. A
-    value that matches no user refuses the whole call with ApproverNotFound; a lookup that fails
-    refuses it too, reported as that error itself.
+    kept. An empty list clears the user side. Supplying it implies approval is required, so beside
+    -RequireApproval $false it is refused with MutuallyExclusiveParameter before anything is looked
+    up or sent (an empty list included). The same user named twice (by user principal name and by
+    id, or in another letter case) is sent once. A value that matches no user refuses the whole call
+    with ApproverNotFound; a lookup that fails refuses it too, reported as that error itself.
 
     .PARAMETER ApproverGroup
     The group approvers, each a group display name or group object id, resolved to object ids before
     anything is read or sent. Replaces the group approvers on the live stage; the user approvers are
-    kept. An empty list clears the group side. Supplying it implies approval is required. A value
-    that matches no group refuses the whole call with ApproverNotFound, and a display name several
-    groups share refuses it with AmbiguousApproverName, naming the candidate ids (pass the object id
-    instead); a lookup that fails refuses it too, reported as that error itself.
+    kept. An empty list clears the group side. Supplying it implies approval is required, so beside
+    -RequireApproval $false it is refused with MutuallyExclusiveParameter before anything is looked
+    up or sent (an empty list included). A value that matches no group refuses the whole call with
+    ApproverNotFound, and a display name several groups share refuses it with AmbiguousApproverName,
+    naming the candidate ids (pass the object id instead); a lookup that fails refuses it too,
+    reported as that error itself.
 
     .PARAMETER AuthenticationContextId
     Authentication context claim value required on activation (e.g. c1). An empty string disables
@@ -283,6 +292,23 @@ function Set-OERDirectoryRoleManagementPolicy {
                 Write-CmdletError -Message ([System.Exception]::new($Conflict.Reason)) -ErrorId 'InvalidPolicyChange' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
                 return
             }
+        }
+
+        # Approvers apply only when approval is required, so -RequireApproval $false beside an approver
+        # parameter contradicts itself: refused here, before the NothingToUpdate step, the approver
+        # lookup and every request, so a refused call looks nothing up and sends nothing, the other
+        # settings bound on the same call included. "Bound" means bound, so an empty list counts.
+        # Resolve-OERGraphApproverSet throws the same id as a backstop should a caller ever let the
+        # combination through.
+        if ($PSBoundParameters.ContainsKey('RequireApproval') -and -not $RequireApproval -and
+            ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
+            Write-CmdletError -Message ([System.Exception]::new(
+                    '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply ' +
+                    'only when approval is required. Pass -RequireApproval $false alone to turn approval off (the ' +
+                    'approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. ' +
+                    'Nothing was looked up or sent.')) `
+                -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
+            return
         }
 
         # 3. Nothing to do. Bound approvers are a setting even though they only join $Setting once
@@ -473,74 +499,41 @@ function Set-OERDirectoryRoleManagementPolicy {
         $ToSend = @(Get-OERPimRulePatchOrder -Rule @(@($Plan.Rules) | Where-Object { $ChangedIds -contains [string]$_.id }))
         $SendIds = @($ToSend | ForEach-Object { [string]$_.id })
 
-        # 11. One confirmation for the call, then one PATCH per rule. A rejected rule does not stop
-        #     the others.
+        # 11. One confirmation for the call, then every changed rule through Send-OERPimRulePatch,
+        #     the single owner of the per-rule PATCH: a rejected rule does not stop the others.
         if ($PSCmdlet.ShouldProcess("directory role management policy '$ResolvedPolicyId'", "Update rules: $($SendIds -join ', ')")) {
             $LiveById = @{}
             foreach ($LiveRule in $Rules) { if ($LiveRule.id) { $LiveById[[string]$LiveRule.id] = $LiveRule } }
 
             # The authentication-context rule and the activation enablement rule together decide
             # whether activation requires MFA or an authentication context, so when both are sent
-            # they are applied together or not at all. Should Microsoft Graph accept the first (in
-            # patch order) and reject the second, the first is PATCHed straight back to its live
-            # version: left half-applied, the pair can leave activation with NEITHER control -- a
-            # context disabled for an MFA flag that never arrived, or MFA cleared for a context that
-            # never arrived. Every changed rule is a clone of a live one (the patch builder refuses a
-            # rule the policy lacks), so the live version is always there to send back. A rejected
-            # FIRST half needs nothing: the second was then validated against an unchanged policy.
-            $PairIds = @($SendIds | Where-Object { $_ -in @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment') })
-            $PairFirst = $null
-            $PairSecond = $null
-            if ($PairIds.Count -eq 2) {
-                $PairFirst = $PairIds[0]
-                $PairSecond = $PairIds[1]
-            }
-            $Restored = $null
-            $RestoreError = $null
-
-            $Accepted = [System.Collections.Generic.List[string]]::new()
-            $Failed = [System.Collections.Generic.List[string]]::new()
-            foreach ($Rule in $ToSend) {
-                $RuleId = [string]$Rule.id
-                # Invoke-OERGraphRequest takes a [hashtable] body and the builder's changed rules are
-                # PSCustomObject clones, so each is converted with a JSON round-trip (the same idiom
-                # Enable-OERGroupPermanentEligibility uses for a single-rule PATCH).
-                $Body = $Rule | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
-                try {
-                    Invoke-OERGraphRequest -Method PATCH -Uri ('v1.0/policies/roleManagementPolicies/{0}/rules/{1}' -f $ResolvedPolicyId, $RuleId) -Body $Body | Out-Null
-                    $Accepted.Add($RuleId)
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $Failed.Add($RuleId)
-                    Write-Warning "Rule '$RuleId' of directory role management policy '$ResolvedPolicyId' was not applied: $($PSItem.Exception.Message)"
-                }
-
-                if ($RuleId -eq $PairSecond -and $Failed.Contains($RuleId) -and $Accepted.Contains($PairFirst)) {
-                    $LiveBody = $LiveById[$PairFirst] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
-                    try {
-                        Invoke-OERGraphRequest -Method PATCH -Uri ('v1.0/policies/roleManagementPolicies/{0}/rules/{1}' -f $ResolvedPolicyId, $PairFirst) -Body $LiveBody | Out-Null
-                        [void]$Accepted.Remove($PairFirst)
-                        $Restored = $PairFirst
-                    } catch {
-                        Remove-OERErrorRecord -Record $PSItem
-                        $RestoreError = $PSItem.Exception.Message
-                        Write-Warning "Rule '$PairFirst' of directory role management policy '$ResolvedPolicyId' could not be put back to its value before this call: $RestoreError"
-                    }
-                }
-            }
+            # they are applied together or not at all: should Microsoft Graph accept the first (in
+            # patch order) and reject the second, the helper PATCHes the first straight back to its
+            # live version. Every changed rule is a clone of a live one (the patch builder refuses a
+            # rule the policy lacks), so the live version is always in $Rules to send back.
+            $SendResult = Send-OERPimRulePatch -Rule $ToSend -RulesPath ('v1.0/policies/roleManagementPolicies/{0}/rules' -f $ResolvedPolicyId) -LiveRule $Rules -PolicyLabel "directory role management policy '$ResolvedPolicyId'"
+            # The helper writes no warning itself, so a -WarningAction Stop caller is never stopped
+            # half-way: its messages are written here, once every rule and the put-back were sent.
+            foreach ($Message in $SendResult.Warning) { Write-Warning $Message }
+            $Accepted = [string[]]$SendResult.Accepted
+            $Failed = [string[]]$SendResult.Failed
+            $Restored = $SendResult.Restored
+            $RestoreError = $SendResult.RestoreError
+            $PairFirst = $SendResult.PairFirst
+            $PairSecond = $SendResult.PairSecond
 
             # What was accepted, overlaid on the live rules: a rejected rule, and a rule put back
             # above, keeps its live version.
             $Effective = @(foreach ($PlannedRule in @($Plan.Rules)) {
                     $PlannedId = [string]$PlannedRule.id
-                    if (($Failed.Contains($PlannedId) -or $PlannedId -eq $Restored) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
+                    if (($Failed -contains $PlannedId -or $PlannedId -eq $Restored) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
                 })
             $ConvertParams = @{
                 Rules         = $Effective
                 PolicyId      = $ResolvedPolicyId
                 Scope         = '/'
                 ApproverShape = 'Graph'
-                ChangedRuleId = $Accepted.ToArray()
+                ChangedRuleId = $Accepted
             }
             if ($PSCmdlet.ParameterSetName -eq 'ByRole') {
                 $ConvertParams.RoleName = $RoleNameOut
