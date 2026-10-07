@@ -333,17 +333,55 @@ Describe 'New-OEREligibleRoleAssignment' {
             ($Warnings.Message -join ' ') | Should -BeLike '*affects ALL eligible assignments for this role at this scope*'
         }
 
-        It 'rolls the policy back and reports PolicyOpenedButGrantFailed when the grant fails' {
-            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { throw 'ARM rejected the request' }
-            $Reverts = [System.Collections.Generic.List[object]]::new()
-            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -ParameterFilter {
-                $AllowPermanentEligibility -eq $false
-            } -MockWith { $Reverts.Add($PolicyId) }
+        It 'rolls the policy back FIRST when the grant is refused, then writes PolicyOpenedButGrantFailed, then the grant''s own error' {
+            # Ruling R7: the rollback comes before any error, so -ErrorAction Stop cannot skip it.
+            $Order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $Order.Add('grant'); throw 'ARM rejected the request' }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
+                if ($AllowPermanentEligibility) { $Order.Add('open') } else { $Order.Add('rollback') }
+                [PSCustomObject]@{ PolicyId = 'pol-1' }
+            }
             New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false `
-                -ErrorAction SilentlyContinue -ErrorVariable Err
-            @($Reverts) | Should -Contain 'pol-1'
-            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment' }).Count |
-                Should -Be 1
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Order -join ',' | Should -Be 'open,grant,rollback'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy -Times 1 -Exactly -ParameterFilter {
+                $PolicyId -eq 'pol-1' -and $AllowPermanentEligibility -eq $false
+            }
+            # -ErrorVariable also collects every record the mock layers raise as the refused PUT
+            # unwinds; the cmdlet's OWN records are the ones that carry its name, in the order written.
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' })
+            $Own.Count | Should -Be 2
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
+            $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+            $Own[0].TargetObject | Should -BeExactly 'pol-1'
+            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+                'been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request ' +
+                'failed with: ARM rejected the request')
+            # The grant's own record, re-published unchanged.
+            $Own[1].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OEREligibleRoleAssignment'
+            $Own[1].Exception.Message | Should -BeExactly 'ARM rejected the request'
+        }
+
+        It 'still rolls back under -ErrorAction Stop, and the error that stops the caller is PolicyOpenedButGrantFailed' {
+            $Order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $Order.Add('grant'); throw 'ARM rejected the request' }
+            Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
+                if ($AllowPermanentEligibility) { $Order.Add('open') } else { $Order.Add('rollback') }
+                [PSCustomObject]@{ PolicyId = 'pol-1' }
+            }
+            $Thrown = $null
+            try {
+                New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+            } catch {
+                $Order.Add('error')
+                $Thrown = $PSItem
+            }
+            $Order -join ',' | Should -Be 'open,grant,rollback,error'
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
+            $Thrown.Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+                'been opened to allow permanent assignments. It was rolled back to disallow permanent assignments. The request ' +
+                'failed with: ARM rejected the request')
         }
 
         It 'names the policy left open and scrubs the bearer record when the rollback ALSO fails' {
@@ -354,11 +392,16 @@ Describe 'New-OEREligibleRoleAssignment' {
             } -MockWith { throw 'rollback forbidden' }
             New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false `
                 -ErrorAction SilentlyContinue -ErrorVariable Err
-            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment' })
-            $Reported.Count | Should -Be 1
-            $Reported[0].Exception.Message | Should -BeLike '*rollback ALSO failed*'
-            $Reported[0].Exception.Message | Should -BeLike '*pol-1*'
-            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 2
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' })
+            $Own.Count | Should -Be 2
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
+            $Own[0].Exception.Message | Should -BeExactly ("The eligible role assignment failed after role management policy 'pol-1' had " +
+                "been opened to allow permanent assignments. The rollback ALSO failed, so the policy is still open. Run " +
+                "'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentEligibility `$false' to close it. The request " +
+                'failed with: ARM rejected the request')
+            $Own[1].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OEREligibleRoleAssignment'
+            # The refused grant's record and the failed rollback's record.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 2 -Exactly
         }
 
         It 'neither reports PolicyOpenedButGrantFailed nor rolls back when the nested open was DECLINED' {
@@ -378,6 +421,10 @@ Describe 'New-OEREligibleRoleAssignment' {
             }
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment' }).Count |
                 Should -Be 0
+            # The thrown path without an opened policy writes the grant's own error, and only that.
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OEREligibleRoleAssignment' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OEREligibleRoleAssignment'
         }
     }
 
@@ -785,5 +832,73 @@ Describe 'New-OEREligibleRoleAssignment piped principal ambiguity guard' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
             $Body.properties.principalId -eq '66666666-6666-6666-6666-666666666666'
         }
+    }
+}
+
+Describe 'New-OEREligibleRoleAssignment: a refused grant after the policy open, in a script with no try (Ruling R7)' {
+    # Under -ErrorAction Stop the first error the cmdlet writes stops it, and where no try stands
+    # anywhere up the call stack it ends the whole script. So the rollback must be sent BEFORE that
+    # error, and the error must be PolicyOpenedButGrantFailed. The script runs in a runspace through
+    # Invoke-OERWithConfirmAnswer, so it is transported as text and installs its own fakes in ITS copy
+    # of the module scope; they append every policy write and PUT to a log file whose path is
+    # substituted into the text, since a stopped script prints nothing. The control runs the same
+    # script without Stop, so the logged rollback cannot be an artefact of a fake that never logs.
+    BeforeAll {
+        $script:NewNoTryScenario = {
+            param([string]$Log, [string]$Stop)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERScope -Value { '/subscriptions/s1' }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value { [pscustomobject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+    Set-Item -Path function:script:Get-OERPermanentPolicyState -Value {
+        [pscustomobject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Eligibility'; PermanentAllowed = $false }
+    }
+    Set-Item -Path function:script:Set-OERRoleManagementPolicy -Value {
+        [CmdletBinding()]
+        param([string]$PolicyId, [bool]$AllowPermanentEligibility)
+        [System.IO.File]::AppendAllText('#LOG#', "$(if ($AllowPermanentEligibility) { 'open' } else { 'rollback' })`n")
+        [pscustomobject]@{ PolicyId = $PolicyId }
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        [System.IO.File]::AppendAllText('#LOG#', "grant $Method`n")
+        throw 'ARM rejected the request'
+    }
+}
+$Result = New-OEREligibleRoleAssignment -Role 'Reader' -Subscription 'Prod' -User 'anna@contoso.com' -Permanent -Confirm:$false -WarningAction SilentlyContinue #STOP#
+"REACHED:$(@($Result).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
+        }
+        $script:PolicyOpenedButGrantFailedText = "The eligible role assignment failed after role management policy 'pol-1' had been opened " +
+            'to allow permanent assignments. It was rolled back to disallow permanent assignments. The request failed with: ARM rejected the request'
+        function Get-TestLoggedLine ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'under -ErrorAction Stop rolls the policy back before PolicyOpenedButGrantFailed ends the script' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Stop '-ErrorAction Stop'
+        # Measured: a stop outside any try ends the whole script, so the runner throws to its caller.
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+        $Thrown.Exception.InnerException.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OEREligibleRoleAssignment'
+        $Thrown.Exception.InnerException.ErrorRecord.Exception.Message | Should -BeExactly $script:PolicyOpenedButGrantFailedText
+        # The rollback was sent before that error stopped the script, and nothing after it.
+        @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant PUT', 'rollback')
+    }
+
+    It 'the control: without Stop the same script reaches the end, PolicyOpenedButGrantFailed written before the grant''s own error' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Stop ''
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant PUT', 'rollback')
+        @($Run.Errors) | Should -Be @($script:PolicyOpenedButGrantFailedText, 'ARM rejected the request')
     }
 }
