@@ -45,8 +45,11 @@ function Set-OERDirectoryRoleManagementPolicy {
     only and -ApproverGroup the group approvers only; the side left unbound is carried over from
     the live approval stage, and a live approver of any other kind (a requestor's manager, for
     example) is never replaced by either parameter and is sent back unchanged. An explicit empty
-    list clears its side. Supplying approvers on either side implies approval is required, even
-    beside -RequireApproval $false. Every approver value is resolved to an object id first (a user
+    list clears its side. Supplying approvers on either side implies approval is required, so
+    -RequireApproval $false beside -ApproverUser or -ApproverGroup, an empty list included, is a
+    contradiction: it is refused with a non-terminating MutuallyExclusiveParameter error before
+    anything is looked up or sent, whatever other parameters the call binds (pass -RequireApproval
+    $false alone to turn approval off). Every approver value is resolved to an object id first (a user
     by user principal name or id, a group by display name or id), and nothing is read or sent unless
     every value resolves: a value that matches nothing is a non-terminating ApproverNotFound error, a
     group display name that several groups share is a non-terminating AmbiguousApproverName error
@@ -119,23 +122,28 @@ function Set-OERDirectoryRoleManagementPolicy {
     .PARAMETER RequireApproval
     Require approval for activation (Approval_EndUser_Assignment rule). $true needs at least one
     approver, supplied or already on the live stage, or the call is refused with ApproverRequired.
-    $false turns approval off and keeps the live stage and its approvers.
+    $false turns approval off and keeps the live stage and its approvers; it cannot be combined with
+    -ApproverUser or -ApproverGroup, even an empty list, and that call is refused with
+    MutuallyExclusiveParameter before anything is looked up or sent.
 
     .PARAMETER ApproverUser
     The user approvers, each a user principal name or user object id, resolved to object ids before
     anything is read or sent. Replaces the user approvers on the live stage; the group approvers are
-    kept. An empty list clears the user side. Supplying it implies approval is required. The same
-    user named twice (by user principal name and by id, or in another letter case) is sent once. A
-    value that matches no user refuses the whole call with ApproverNotFound; a lookup that fails
-    refuses it too, reported as that error itself.
+    kept. An empty list clears the user side. Supplying it implies approval is required, so beside
+    -RequireApproval $false it is refused with MutuallyExclusiveParameter before anything is looked
+    up or sent (an empty list included). The same user named twice (by user principal name and by
+    id, or in another letter case) is sent once. A value that matches no user refuses the whole call
+    with ApproverNotFound; a lookup that fails refuses it too, reported as that error itself.
 
     .PARAMETER ApproverGroup
     The group approvers, each a group display name or group object id, resolved to object ids before
     anything is read or sent. Replaces the group approvers on the live stage; the user approvers are
-    kept. An empty list clears the group side. Supplying it implies approval is required. A value
-    that matches no group refuses the whole call with ApproverNotFound, and a display name several
-    groups share refuses it with AmbiguousApproverName, naming the candidate ids (pass the object id
-    instead); a lookup that fails refuses it too, reported as that error itself.
+    kept. An empty list clears the group side. Supplying it implies approval is required, so beside
+    -RequireApproval $false it is refused with MutuallyExclusiveParameter before anything is looked
+    up or sent (an empty list included). A value that matches no group refuses the whole call with
+    ApproverNotFound, and a display name several groups share refuses it with AmbiguousApproverName,
+    naming the candidate ids (pass the object id instead); a lookup that fails refuses it too,
+    reported as that error itself.
 
     .PARAMETER AuthenticationContextId
     Authentication context claim value required on activation (e.g. c1). An empty string disables
@@ -283,6 +291,23 @@ function Set-OERDirectoryRoleManagementPolicy {
                 Write-CmdletError -Message ([System.Exception]::new($Conflict.Reason)) -ErrorId 'InvalidPolicyChange' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
                 return
             }
+        }
+
+        # Approvers apply only when approval is required, so -RequireApproval $false beside an approver
+        # parameter contradicts itself: refused here, before the NothingToUpdate step, the approver
+        # lookup and every request, so a refused call looks nothing up and sends nothing, the other
+        # settings bound on the same call included. "Bound" means bound, so an empty list counts.
+        # Resolve-OERGraphApproverSet throws the same id as a backstop should a caller ever let the
+        # combination through.
+        if ($PSBoundParameters.ContainsKey('RequireApproval') -and -not $RequireApproval -and
+            ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
+            Write-CmdletError -Message ([System.Exception]::new(
+                    '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply ' +
+                    'only when approval is required. Pass -RequireApproval $false alone to turn approval off (the ' +
+                    'approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. ' +
+                    'Nothing was looked up or sent.')) `
+                -ErrorId 'MutuallyExclusiveParameter' -Category InvalidArgument -TargetObject $RequestTarget -Cmdlet $PSCmdlet
+            return
         }
 
         # 3. Nothing to do. Bound approvers are a setting even though they only join $Setting once

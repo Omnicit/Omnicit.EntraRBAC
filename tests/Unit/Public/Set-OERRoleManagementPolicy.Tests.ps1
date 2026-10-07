@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -437,6 +438,223 @@ Describe 'Set-OERRoleManagementPolicy' {
                 $Record.Exception.Message -like '*Insufficient privileges*'
             }
         }
+    }
+
+    Context 'refuses -RequireApproval $false beside an approver parameter, before any lookup and any request (Sprint 9 step 4, BL-08)' {
+        # Approvers apply only when approval is required, so -RequireApproval $false beside
+        # -ApproverUser or -ApproverGroup contradicts itself. The refusal stands directly after the
+        # authentication-context check, before the approver lookup, the scope, the role and the policy,
+        # so a refused call looks nothing up and reaches neither Azure Resource Manager nor Microsoft
+        # Graph, the other settings bound on the same call included. "Bound" means bound: an empty
+        # list counts. Every lookup is mocked so that its call count shows whether it was reached;
+        # the controls prove those counts can rise.
+        BeforeAll {
+            $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+        }
+
+        BeforeEach {
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal {
+                [pscustomobject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111'; PrincipalType = 'User' }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId {
+                [PSCustomObject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'; RoleName = 'Reader'; Scope = '/subscriptions/s1'; EffectiveRules = @() }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest { }
+            # The live policy holds an approval rule that requires approval with ONE other approver, so
+            # each allowed call below changes it and reaches the PATCH.
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Method -eq 'GET' -or -not $Method } {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @(
+                            [PSCustomObject]@{
+                                id = 'Approval_EndUser_Assignment'; ruleType = 'RoleManagementPolicyApprovalRule'
+                                setting = [PSCustomObject]@{
+                                    isApprovalRequired = $true; approvalMode = 'SingleStage'
+                                    approvalStages = @([PSCustomObject]@{
+                                            approvalStageTimeOutInDays = 1; isApproverJustificationRequired = $true; escalationTimeInMinutes = 0
+                                            primaryApprovers = @([PSCustomObject]@{ id = '22222222-2222-2222-2222-222222222222'; userType = 'User'; isBackup = $false })
+                                            isEscalationEnabled = $false; escalationApprovers = @()
+                                        })
+                                }
+                                target = [PSCustomObject]@{ caller = 'EndUser'; operations = @('All'); level = 'Assignment' }
+                            }
+                        ) }
+                }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -ParameterFilter { $Method -eq 'PATCH' } {
+                [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @($Body.properties.rules) } }
+            }
+        }
+
+        It 'refuses -RequireApproval $false beside <Shape> (<Target>) with MutuallyExclusiveParameter, and looks nothing up and sends nothing' -TestCases @(
+            @{ Shape = '-ApproverUser'; Target = 'ByRole'; Splat = @{ Role = 'Reader'; Subscription = 'Prod'; ApproverUser = @('person1@example.com') }; Expected = 'Reader' }
+            @{ Shape = '-ApproverGroup'; Target = 'ByRole'; Splat = @{ Role = 'Reader'; Subscription = 'Prod'; ApproverGroup = @('pim-approvers') }; Expected = 'Reader' }
+            @{ Shape = '-ApproverUser as an empty list'; Target = 'ByRole'; Splat = @{ Role = 'Reader'; Subscription = 'Prod'; ApproverUser = @() }; Expected = 'Reader' }
+            @{ Shape = '-ApproverGroup as an empty list'; Target = 'ByRole'; Splat = @{ Role = 'Reader'; Subscription = 'Prod'; ApproverGroup = @() }; Expected = 'Reader' }
+            @{
+                Shape = '-ApproverUser'; Target = 'ByPolicyId'; Expected = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'
+                Splat = @{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'; ApproverUser = @('person1@example.com') }
+            }
+            @{
+                Shape = '-ApproverGroup as an empty list'; Target = 'ByPolicyId'; Expected = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'
+                Splat = @{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'; ApproverGroup = @() }
+            }
+        ) {
+            $Err = $null
+            # -ActivationMaxHours rides along: without the refusal its rule would be sent, so the call
+            # counts below show that a refused call sends no other rule either.
+            $Result = Set-OERRoleManagementPolicy @Splat -RequireApproval $false -ActivationMaxHours 4 -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            $Result | Should -BeNullOrEmpty
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERRoleManagementPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'MutuallyExclusiveParameter,Set-OERRoleManagementPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be $Expected
+            $Own[0].Exception.Message | Should -BeExactly $script:RefusalMessage
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Get-OERRoleManagementPolicyId -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'does not refuse -RequireApproval $true beside approvers: the lookup is reached and the policy is patched' {
+            $Err = $null
+            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'does not refuse -<Parameter> bound without -RequireApproval: the lookup is reached and the policy is patched' -TestCases @(
+            @{ Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+            @{ Parameter = 'ApproverGroup'; Value = @('pim-approvers') }
+        ) {
+            $Err = $null
+            $Splat = @{ PolicyId = 'pol-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat[$Parameter] = $Value
+            $null = Set-OERRoleManagementPolicy @Splat
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+        }
+
+        It 'does not refuse -RequireApproval $false bound alone: no approver is looked up and approval is turned off' {
+            $Err = $null
+            $Result = Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.ChangedRuleIds | Should -Be 'Approval_EndUser_Assignment'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal -Times 0 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and (@($Body.properties.rules) | Where-Object { $_.id -eq 'Approval_EndUser_Assignment' }).setting.isApprovalRequired -eq $false
+            }
+        }
+    }
+}
+
+Describe 'Set-OERRoleManagementPolicy: the -RequireApproval $false refusal in a script with no try (Sprint 9 step 4, BL-08)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # look anything up or send a request on the way. The script stands in no try, prints a sentinel at
+    # its end, and the stubs append every lookup and request to a log file whose path is substituted
+    # into the text. The control runs the allowed form in the same script with the same stubs, so an
+    # empty log in the refused run cannot be an artefact of a stub that never logs.
+    BeforeAll {
+        $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+
+        $script:NewNoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERPrincipal -Value {
+        param([string]$User, [string]$Group)
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERPrincipal'
+        [pscustomobject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111'; PrincipalType = 'User' }
+    }
+    Set-Item -Path function:script:Resolve-OERScope -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERScope'
+        '/subscriptions/s1'
+    }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERRoleDefinitionId'
+        '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+    }
+    Set-Item -Path function:script:Get-OERRoleManagementPolicyId -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Get-OERRoleManagementPolicyId'
+        [pscustomobject]@{ PolicyId = '/subscriptions/s1/providers/Microsoft.Authorization/roleManagementPolicies/pol1'; RoleName = 'Reader'; Scope = '/subscriptions/s1'; EffectiveRules = @() }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERGraphRequest $Method"
+        @{}
+    }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERArmRequest $Method"
+        if ($Method -eq 'PATCH') { return [pscustomobject]@{ properties = [pscustomobject]@{ scope = '/subscriptions/s1'; rules = @($Body.properties.rules) } } }
+        [pscustomobject]@{ properties = [pscustomobject]@{ scope = '/subscriptions/s1'; rules = @(
+                    [pscustomobject]@{
+                        id = 'Approval_EndUser_Assignment'; ruleType = 'RoleManagementPolicyApprovalRule'
+                        setting = [pscustomobject]@{ isApprovalRequired = $false; approvalMode = 'NoApproval'; approvalStages = @() }
+                        target = [pscustomobject]@{ caller = 'EndUser'; operations = @('All'); level = 'Assignment' }
+                    }
+                ) }
+        }
+    }
+}
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:RefusedCalls = @'
+$Results = @(
+    Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -RequireApproval $false -ApproverUser 'person1@example.com' -Confirm:$false
+    Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $false -ApproverGroup 'pim-approvers' -Confirm:$false
+    Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -RequireApproval $false -ApproverUser @() -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:AllowedCalls = @'
+$Results = @(
+    Set-OERRoleManagementPolicy -PolicyId 'pol-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-TestRefusalLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, looks nothing up, sends nothing, and writes the refusal once per call' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-TestRefusalLog -Log $Log).Count | Should -Be 0
+        @($Run.Errors).Count | Should -Be 3
+        @($Run.Errors | Where-Object { $_ -ceq $script:RefusalMessage }).Count | Should -Be 3
+    }
+
+    It 'the control: the allowed form in the same script reaches the lookup and sends the policy' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:AllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-TestRefusalLog -Log $Log) | Should -Be @(
+            'Resolve-OERPrincipal'
+            'Invoke-OERArmRequest GET'
+            'Invoke-OERArmRequest PATCH'
+        )
     }
 }
 

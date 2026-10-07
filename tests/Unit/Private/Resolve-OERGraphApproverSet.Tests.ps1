@@ -84,13 +84,49 @@ Describe 'Resolve-OERGraphApproverSet' {
         @($Set.LivePrimary).Count | Should -Be 1
     }
 
-    It 'requires approval when approvers are bound, even beside -RequireApproval $false' {
+    # Flipped on purpose in Sprint 9 step 4 (BL-08): this test pinned that approvers bound beside
+    # -RequireApproval $false require approval anyway. Both callers refuse that combination with
+    # MutuallyExclusiveParameter before they look anything up, so the helper no longer answers it; it
+    # throws, as a backstop that a caller which forgot the refusal cannot get past silently.
+    It 'refuses approvers bound beside -RequireApproval $false (<Shape>)' -TestCases @(
+        @{ Shape = 'groups'; Splat = @{ UserBound = $false; GroupBound = $true; ResolvedGroup = @('g2') } }
+        @{ Shape = 'users'; Splat = @{ UserBound = $true; GroupBound = $false; ResolvedUser = @('u2') } }
+        @{ Shape = 'both sides'; Splat = @{ UserBound = $true; GroupBound = $true; ResolvedUser = @('u2'); ResolvedGroup = @('g2') } }
+        @{ Shape = 'an empty user list'; Splat = @{ UserBound = $true; GroupBound = $false; ResolvedUser = @() } }
+    ) {
+        $Caught = $null
+        try {
+            $Splat.LiveApprovalRule = New-TestApprovalRule -Approvers @()
+            $Splat.RequireApprovalBound = $true
+            $Splat.RequireApproval = $false
+            $null = Invoke-ApproverSet $Splat
+        } catch {
+            $Caught = $PSItem
+        }
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -Be 'MutuallyExclusiveParameter'
+        $Caught.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Caught.Exception | Should -BeOfType ([System.ArgumentException])
+        $Caught.Exception.Message | Should -BeExactly 'Approvers were bound beside -RequireApproval $false; the caller must refuse that combination with MutuallyExclusiveParameter before any lookup.'
+    }
+
+    It 'still requires approval when approvers are bound and -RequireApproval is not bound at all' {
         $Rule = New-TestApprovalRule -Approvers @()
         $Set = Invoke-ApproverSet @{
             LiveApprovalRule = $Rule; UserBound = $false; GroupBound = $true; ResolvedGroup = @('g2')
-            RequireApprovalBound = $true; RequireApproval = $false
+            RequireApprovalBound = $false; RequireApproval = $false
         }
         $Set.EffRequired | Should -BeTrue
+    }
+
+    It 'requires approval when approvers are bound beside -RequireApproval $true' {
+        $Rule = New-TestApprovalRule -Approvers @()
+        $Set = Invoke-ApproverSet @{
+            LiveApprovalRule = $Rule; UserBound = $false; GroupBound = $true; ResolvedGroup = @('g2')
+            RequireApprovalBound = $true; RequireApproval = $true
+        }
+        $Set.EffRequired | Should -BeTrue
+        @($Set.EffGroup) | Should -Be @('g2')
     }
 
     It 'counts the live approvers as they are when only -RequireApproval is bound' {

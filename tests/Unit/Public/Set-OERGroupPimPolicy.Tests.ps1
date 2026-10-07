@@ -829,6 +829,92 @@ Describe 'Set-OERGroupPimPolicy' {
         }
     }
 
+    Context 'refuses -RequireApproval $false beside an approver parameter, before any lookup and any request (Sprint 9 step 4, BL-08)' {
+        # Approvers apply only when approval is required, so -RequireApproval $false beside -ApproverUser
+        # or -ApproverGroup contradicts itself. The refusal stands directly after the NothingToUpdate
+        # guard, before the approver lookup, so a refused call looks nothing up and sends nothing, the
+        # other rules bound on the same call included. "Bound" means bound: an empty list counts.
+        # Resolve-OERApproverInput is mocked so that its call count shows whether the lookup was
+        # reached; the controls below prove those counts can rise.
+        BeforeAll {
+            $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+        }
+
+        BeforeEach {
+            Mock -ModuleName $script:moduleName Resolve-OERApproverInput {
+                [pscustomobject]@{
+                    User  = [string[]]@(@($User) | Where-Object { $_ } | ForEach-Object { '11111111-1111-1111-1111-111111111111' })
+                    Group = [string[]]@(@($Group) | Where-Object { $_ } | ForEach-Object { '33333333-3333-3333-3333-333333333333' })
+                }
+            }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                if ($Method -eq 'PATCH') { return @{} }
+                @{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'NoApproval'; approvalStages = @() } }
+            }
+        }
+
+        It 'refuses -RequireApproval $false beside <Shape> with MutuallyExclusiveParameter, and looks nothing up and sends nothing' -TestCases @(
+            @{ Shape = '-ApproverUser'; Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+            @{ Shape = '-ApproverGroup'; Parameter = 'ApproverGroup'; Value = @('pim-approvers') }
+            @{ Shape = '-ApproverUser as an empty list'; Parameter = 'ApproverUser'; Value = @() }
+            @{ Shape = '-ApproverGroup as an empty list'; Parameter = 'ApproverGroup'; Value = @() }
+        ) {
+            $Err = $null
+            # -ActivationMaxHours rides along: without the refusal its rule would be sent, so the call
+            # count below shows that a refused call sends no other rule either.
+            $Splat = @{ Group = 'gid-1'; RequireApproval = $false; ActivationMaxHours = 8; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat[$Parameter] = $Value
+            $Result = Set-OERGroupPimPolicy @Splat
+            $Result | Should -BeNullOrEmpty
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Set-OERGroupPimPolicy' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -Be 'MutuallyExclusiveParameter,Set-OERGroupPimPolicy'
+            $Own[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Own[0].TargetObject | Should -Be 'gid-1'
+            $Own[0].Exception.Message | Should -BeExactly $script:RefusalMessage
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERApproverInput -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Get-OERPimGroupPolicyId -Times 0 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -Exactly
+        }
+
+        It 'does not refuse -RequireApproval $true beside approvers: the lookup is reached and the approval rule is sent' {
+            $Err = $null
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.Applied | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERApproverInput -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and $Uri -like '*rules/Approval_EndUser_Assignment'
+            }
+        }
+
+        It 'does not refuse -<Parameter> bound without -RequireApproval: the lookup is reached' -TestCases @(
+            @{ Parameter = 'ApproverUser'; Value = @('person1@example.com') }
+            @{ Parameter = 'ApproverGroup'; Value = @('pim-approvers') }
+        ) {
+            $Err = $null
+            $Splat = @{ Group = 'gid-1'; Confirm = $false; ErrorAction = 'SilentlyContinue'; ErrorVariable = 'Err' }
+            $Splat[$Parameter] = $Value
+            $Result = Set-OERGroupPimPolicy @Splat
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.Applied | Should -BeTrue
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERApproverInput -Times 1 -Exactly
+        }
+
+        It 'does not refuse -RequireApproval $false bound alone: the approval rule is sent and the approvers on it are kept' {
+            $Err = $null
+            $Result = Set-OERGroupPimPolicy -Group 'gid-1' -RequireApproval $false -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like 'MutuallyExclusiveParameter*' }).Count | Should -Be 0
+            $Result.RequireApproval | Should -BeFalse
+            Should -Invoke -ModuleName $script:moduleName Resolve-OERGroupId -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PATCH' -and $Uri -like '*rules/Approval_EndUser_Assignment' -and $Body.setting.isApprovalRequired -eq $false
+            }
+        }
+    }
+
     Context 'an approver lookup: missing, ambiguous and failed are three outcomes (Sprint 8 step 3, BL-14)' {
         # The real Resolve-OERApproverInput and Resolve-OERPrincipal run here; only the lookups under
         # them answer. Approvers are resolved before the target group, so the filtered mocks answer
@@ -1651,11 +1737,13 @@ Describe 'Set-OERGroupPimPolicy: no warning stops an update between its first PA
     }
 
     Context 'inside a try' {
-        It 'explicit pair: is stopped only after both rules and the put-back of the first were sent' {
+        # The two tests below take their splat from the same $StopCases entry the control and the
+        # no-try tests use, so the call stays the same in all of them.
+        It 'explicit pair: is stopped only after both rules and the put-back of the first were sent' -TestCases @($StopCases[0]) {
             $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
             $Caught = $null
             try {
-                Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+                Set-OERGroupPimPolicy -Group 'g' @Splat -Confirm:$false `
                     -WarningAction Stop -ErrorAction SilentlyContinue
             } catch {
                 $Caught = $PSItem
@@ -1676,11 +1764,11 @@ Describe 'Set-OERGroupPimPolicy: no warning stops an update between its first PA
             $Caught.Exception.Message | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'p1' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'.*"
         }
 
-        It 'three rules, the first rejected: is stopped only after all three were sent' {
+        It 'three rules, the first rejected: is stopped only after all three were sent' -TestCases @($StopCases[1]) {
             $script:RejectRuleId = @('Expiration_EndUser_Assignment')
             $Caught = $null
             try {
-                Set-OERGroupPimPolicy -Group 'g' -ActivationMaxHours 4 -ActiveEnabledRules Justification -EligibleAlertRecipient 'person18@example.com' -Confirm:$false `
+                Set-OERGroupPimPolicy -Group 'g' @Splat -Confirm:$false `
                     -WarningAction Stop -ErrorAction SilentlyContinue
             } catch {
                 $Caught = $PSItem
@@ -1776,5 +1864,92 @@ $Result = Set-OERGroupPimPolicy -Group 'g' #ARGS# -Confirm:$false #STOP#
             @(Get-TestLoggedLine -Log $Log) | Should -Be $Expected
             @($Run.Warnings)[0] | Should -Be "Rule '$Reject' of PIM policy 'p1' was not applied: Graph rejected rule '$Reject'."
         }
+    }
+}
+
+Describe 'Set-OERGroupPimPolicy: the -RequireApproval $false refusal in a script with no try (Sprint 9 step 4, BL-08)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # look anything up or send a request on the way. The script stands in no try, prints a sentinel at
+    # its end, and the stubs append every lookup and request to a log file whose path is substituted
+    # into the text. The control runs the allowed form in the same script with the same stubs, so an
+    # empty log in the refused run cannot be an artefact of a stub that never logs.
+    BeforeAll {
+        $script:RefusalMessage = '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was looked up or sent.'
+
+        $script:NewNoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERApproverInput -Value {
+        param($User, $Group)
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERApproverInput'
+        [pscustomobject]@{ User = [string[]]@('11111111-1111-1111-1111-111111111111'); Group = [string[]]@() }
+    }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Resolve-OERGroupId'
+        'g1'
+    }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value {
+        Add-Content -LiteralPath '#LOG#' -Value 'Get-OERPimGroupPolicyId'
+        'p1'
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        Add-Content -LiteralPath '#LOG#' -Value "Invoke-OERGraphRequest $Method $(($Uri -split '/')[-1])"
+        if ($Method -eq 'PATCH') { return @{} }
+        @{ id = 'Approval_EndUser_Assignment'; setting = @{ isApprovalRequired = $false; approvalMode = 'NoApproval'; approvalStages = @() } }
+    }
+}
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:RefusedCalls = @'
+$Results = @(
+    Set-OERGroupPimPolicy -Group 'g' -RequireApproval $false -ApproverUser 'person1@example.com' -Confirm:$false
+    Set-OERGroupPimPolicy -Group 'g' -RequireApproval $false -ApproverGroup 'pim-approvers' -Confirm:$false
+    Set-OERGroupPimPolicy -Group 'g' -RequireApproval $false -ApproverUser @() -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:AllowedCalls = @'
+$Results = @(
+    Set-OERGroupPimPolicy -Group 'g' -RequireApproval $true -ApproverUser 'person1@example.com' -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-TestRefusalLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, looks nothing up, sends nothing, and writes the refusal once per call' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-TestRefusalLog -Log $Log).Count | Should -Be 0
+        @($Run.Errors).Count | Should -Be 3
+        @($Run.Errors | Where-Object { $_ -ceq $script:RefusalMessage }).Count | Should -Be 3
+    }
+
+    It 'the control: the allowed form in the same script reaches the lookups and sends the approval rule' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewNoTryScenario -Log $Log -Calls $script:AllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-TestRefusalLog -Log $Log) | Should -Be @(
+            'Resolve-OERApproverInput'
+            'Resolve-OERGroupId'
+            'Get-OERPimGroupPolicyId'
+            'Invoke-OERGraphRequest GET Approval_EndUser_Assignment'
+            'Invoke-OERGraphRequest PATCH Approval_EndUser_Assignment'
+        )
     }
 }

@@ -290,7 +290,10 @@ function Resolve-OERPolicyRulePatch {
         $Rule = Get-RuleClone -Source $ById -Cache $Touched -Id 'Approval_EndUser_Assignment'
         if ($Setting.ContainsKey('RequireApproval')) { Add-RuleField -Object $Rule.setting -Name 'isApprovalRequired' -Value ([bool]$Setting.RequireApproval) }
         if ($Setting.ContainsKey('PrimaryApprovers')) {
-            # Supplying approvers implies approval is required (overrides any RequireApproval = $false).
+            # Supplying approvers implies approval is required. No caller passes them beside
+            # RequireApproval = $false: the three Set cmdlets refuse that combination with
+            # MutuallyExclusiveParameter before they get here, and both apply diffs drop the approvers
+            # when a document declares requireApproval: false.
             Add-RuleField -Object $Rule.setting -Name 'isApprovalRequired' -Value $true
             if (-not $Rule.setting.approvalMode -or $Rule.setting.approvalMode -eq 'NoApproval') { Add-RuleField -Object $Rule.setting -Name 'approvalMode' -Value 'SingleStage' }
             $Stage = @($Rule.setting.approvalStages) | Select-Object -First 1

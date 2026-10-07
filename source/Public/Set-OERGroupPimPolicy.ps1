@@ -52,8 +52,11 @@ function Set-OERGroupPimPolicy {
     so a call that names a new user approver keeps the group approvers already there (this differs
     from Set-OERRoleManagementPolicy, which replaces the whole list). A live approver that is neither
     a user nor a group (a requestor's manager, for example) is never replaced by either parameter and
-    is sent back unchanged. Supplying approvers on either
-    side implies approval is required. -RequireApproval $true needs at least one approver, either
+    is sent back unchanged. Supplying approvers on either side implies approval is required, so
+    -RequireApproval $false beside -ApproverUser or -ApproverGroup, an empty list included, is a
+    contradiction: it is refused with a non-terminating MutuallyExclusiveParameter error before
+    anything is looked up or sent, whatever other parameters the call binds (pass -RequireApproval
+    $false alone to turn approval off). -RequireApproval $true needs at least one approver, either
     supplied or already on the live rule; with none, a non-terminating ApproverRequired error is
     written and nothing is sent. Every approver value is resolved to an object id first (a user by
     UPN or id, a group by display name or id), before the group is looked up, and nothing is sent
@@ -166,24 +169,30 @@ function Set-OERGroupPimPolicy {
     Whether end-user activation requires approval (the Approval_EndUser_Assignment rule). $true
     requires at least one approver, either supplied with -ApproverUser or -ApproverGroup or already on
     the live rule, or the call is refused with ApproverRequired. $false turns approval off and keeps
-    the live stage and approvers for a later re-enable. When omitted and neither approver parameter
-    is bound, the approval rule is not patched.
+    the live stage and approvers for a later re-enable; it cannot be combined with -ApproverUser or
+    -ApproverGroup, even an empty list, and that call is refused with MutuallyExclusiveParameter
+    before anything is looked up or sent. When omitted and neither approver parameter is bound, the
+    approval rule is not patched.
 
     .PARAMETER ApproverUser
     The user approvers, each a user principal name or user object id, resolved to object ids before
     anything is sent. Replaces the user approvers on the live rule; the group approvers are kept.
-    Supplying it implies -RequireApproval $true. An empty list clears the user side. A value that
-    matches no user refuses the whole call with ApproverNotFound; a lookup that fails refuses it too,
-    reported as that error itself. The same user named twice (by UPN and by id, or in a different
-    letter case) is sent once.
+    Supplying it implies -RequireApproval $true, so beside -RequireApproval $false it is refused with
+    MutuallyExclusiveParameter before anything is looked up or sent. An empty list clears the user
+    side (and is refused beside -RequireApproval $false all the same). A value that matches no user
+    refuses the whole call with ApproverNotFound; a lookup that fails refuses it too, reported as
+    that error itself. The same user named twice (by UPN and by id, or in a different letter case)
+    is sent once.
 
     .PARAMETER ApproverGroup
     The group approvers, each a group display name or group object id, resolved to object ids before
     anything is sent. Replaces the group approvers on the live rule; the user approvers are kept.
-    Supplying it implies -RequireApproval $true. An empty list clears the group side. A value that
-    matches no group refuses the whole call with ApproverNotFound, and a display name several groups
-    share refuses it with AmbiguousApproverName, naming the candidate ids (pass the object id
-    instead); a lookup that fails refuses it too, reported as that error itself.
+    Supplying it implies -RequireApproval $true, so beside -RequireApproval $false it is refused with
+    MutuallyExclusiveParameter before anything is looked up or sent. An empty list clears the group
+    side (and is refused beside -RequireApproval $false all the same). A value that matches no group
+    refuses the whole call with ApproverNotFound, and a display name several groups share refuses it
+    with AmbiguousApproverName, naming the candidate ids (pass the object id instead); a lookup that
+    fails refuses it too, reported as that error itself.
 
     .PARAMETER AllowPermanentEligibility
     Allow permanent eligible assignments (sets isExpirationRequired to false on the eligibility rule).
@@ -300,6 +309,26 @@ function Set-OERGroupPimPolicy {
                     '-AllowPermanentActive. -AccessType alone only selects which policy would be patched; it is ' +
                     'not itself an update.')) `
                 -ErrorId 'NothingToUpdate' `
+                -Category InvalidArgument `
+                -TargetObject $Group `
+                -Cmdlet $PSCmdlet
+            return
+        }
+
+        # Approvers apply only when approval is required, so -RequireApproval $false beside an approver
+        # parameter contradicts itself: refused here, before the approver lookup and every request, so
+        # a refused call looks nothing up and sends nothing, the other rules bound on the same call
+        # included. "Bound" means bound, so an empty list counts. Resolve-OERGraphApproverSet throws the
+        # same id as a backstop should a caller ever let the combination through.
+        if ($PSBoundParameters.ContainsKey('RequireApproval') -and -not $RequireApproval -and
+            ($PSBoundParameters.ContainsKey('ApproverUser') -or $PSBoundParameters.ContainsKey('ApproverGroup'))) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    '-RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply ' +
+                    'only when approval is required. Pass -RequireApproval $false alone to turn approval off (the ' +
+                    'approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. ' +
+                    'Nothing was looked up or sent.')) `
+                -ErrorId 'MutuallyExclusiveParameter' `
                 -Category InvalidArgument `
                 -TargetObject $Group `
                 -Cmdlet $PSCmdlet
