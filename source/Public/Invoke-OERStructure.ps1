@@ -303,6 +303,18 @@ function Invoke-OERStructure {
         $AuthParams = @{}
         if ($TenantId)  { $AuthParams.TenantId   = $TenantId }
         if ($NeedArm)   { $AuthParams.IncludeARM  = $true }
+        # SEC (BL-88, A14): a document that names its tenant (tenantId, written by Get-OERInventory) is
+        # applied in that tenant only. A -TenantId that is a tenant ID and names another tenant refuses
+        # the document here, before the sign-in: no token is requested for a tenant the document does not
+        # name. A domain or 'organizations' is compared after the sign-in, through its token.
+        # Get-OERDocumentTenantMismatch owns the comparison; the document's tenant is never signed in to.
+        if ($TenantId) {
+            $TenantRefusal = Get-OERDocumentTenantMismatch -Document $Document -Target $DocumentTarget -RequestedTenantId $TenantId
+            if ($TenantRefusal) {
+                $PSCmdlet.WriteError($TenantRefusal)
+                return
+            }
+        }
         # SEC (BL-76): without -TenantId, act only under the session this command began with (see
         # begin). A changed identity -- another tenant, application, method or cloud, or none at all
         # -- refuses this document with SignInSuperseded before anything is signed in to or sent. With
@@ -318,6 +330,19 @@ function Invoke-OERStructure {
         # not: without -TenantId a refused sign-in leaves the identity as it was, or sets the one this
         # command itself asked for.
         $SignInSnapshot = Checkpoint-OERSignIn
+        # SEC (BL-88, A14): after the sign-in, and before anything below reads or writes -- the
+        # omitted-collection warning, the administrative unit pre-pass and every section -- the session
+        # the document would be applied under must be the tenant it names: the Graph token's tenant, and
+        # the Azure Resource Manager token's when an Azure section is applied. This is what closes BL-88
+        # for a document that names its tenant: a command inside a script block in a pipeline takes its
+        # snapshot after a downstream command's sign-in, so neither the snapshot nor A20 sees the switch,
+        # but the document still names the tenant it was exported from. A refused sign-in leaves the
+        # previous session (or none) in place, which this compares like any other.
+        $TenantRefusal = Get-OERDocumentTenantMismatch -Document $Document -Target $DocumentTarget -IncludeARM:$NeedArm
+        if ($TenantRefusal) {
+            $PSCmdlet.WriteError($TenantRefusal)
+            return
+        }
 
         # -- 6. Dispatch sections in dependency order ------------------------------------
         $Results = [System.Collections.Generic.List[object]]::new()
