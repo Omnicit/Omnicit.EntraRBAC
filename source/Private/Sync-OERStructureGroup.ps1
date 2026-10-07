@@ -905,8 +905,9 @@ function Sync-OERStructureGroup {
                             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
                             break
                         }
-                        # -eq is case-insensitive; the transport hands back a hashtable, read by key.
-                        if ($null -ne $EligibilityRequest -and [string]$EligibilityRequest.status -ne 'Failed') {
+                        # Test-OERScheduleRequestFailed owns which statuses are the Failed family; the
+                        # transport hands back a hashtable, read by key.
+                        if ($null -ne $EligibilityRequest -and -not (Test-OERScheduleRequestFailed -Status ([string]$EligibilityRequest.status))) {
                             $EligibilityApplied = $true
                             break
                         }
@@ -1284,9 +1285,9 @@ function Sync-OERStructureGroup {
                         } finally {
                             $script:_OERGroupEligibilityFailedIsReplication = $false
                         }
-                        # ConvertTo-OERGroupEligibilityRequest stamps Status from Graph's status; -eq is
-                        # case-insensitive.
-                        if (@($PermanentRequest | Where-Object { [string]$_.Status -eq 'Failed' }).Count -eq 0) {
+                        # ConvertTo-OERGroupEligibilityRequest stamps Status from Graph's status, and
+                        # Test-OERScheduleRequestFailed owns which statuses are the Failed family.
+                        if (@($PermanentRequest | Where-Object { Test-OERScheduleRequestFailed -Status ([string]$_.Status) }).Count -eq 0) {
                             $PermanentApplied = $true
                             break
                         }

@@ -22,6 +22,14 @@ function New-OERActiveRoleAssignment {
     the role to each piped item's own principal. Piping a role definition, subscription, resource
     group or resource alongside a named principal is unaffected -- none of those shapes carries a
     PrincipalId.
+
+    Azure Resource Manager can accept the request and answer it with a status in the Failed family
+    (Failed, FailedAsResourceIsLocked, or any other status that starts with Failed, in any letter
+    case), which grants nothing. The cmdlet then still emits the request object (its Status reads as
+    answered) and afterwards writes a non-terminating AssignmentRequestFailed error (category
+    InvalidResult, target the scope), so a caller running with -ErrorAction Stop still receives the
+    object, for example through -OutVariable, before the error stops it. Every other status is not
+    an error -- Provisioned and PendingApproval included.
     .PARAMETER Role
     The role: display name (e.g. 'Reader'), role definition GUID, or full ARM id. Pipeline by
     property name (RoleDefinitionId). Tab-completion offers the five curated common Azure RBAC
@@ -278,7 +286,19 @@ function New-OERActiveRoleAssignment {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            $Request = ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
+            # -OutVariable, for example) before the error below stops it.
+            $Request
+            # Azure Resource Manager can ACCEPT the request and answer it with a status in the Failed
+            # family, which grants nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "Azure Resource Manager accepted the active role assignment request '$($Request.Name)' (AdminAssign) of role " +
+                        "'$RoleDefinitionId' for principal '$($Principal.PrincipalId)' at scope '$TargetScope' but answered status " +
+                        "$($Request.Status), so nothing was granted.")) `
+                    -ErrorId 'AssignmentRequestFailed' -Category InvalidResult -TargetObject $TargetScope -Cmdlet $PSCmdlet
+            }
         }
     }
 }

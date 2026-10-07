@@ -13,6 +13,14 @@ function Remove-OERGroupEligibility {
     eligibility is revoked. The request body is built by the private New-OERGroupEligibilityBody helper.
     The result is a tagged Omnicit.EntraRBAC.GroupEligibility object. Supports -WhatIf and -Confirm.
 
+    Microsoft Graph can accept the removal request and answer it with a status in the Failed family
+    (Failed, or any status that starts with Failed, in any letter case), which removes nothing. The
+    cmdlet then still emits the request object (its Status reads as answered) and afterwards writes a
+    non-terminating EligibilityRequestFailed error (category InvalidResult, target the group id), so
+    a caller running with -ErrorAction Stop still receives the object, for example through
+    -OutVariable, before the error stops it; the eligibility is still in place. Every other status
+    is not an error -- Revoked, the answer to a removal that succeeded, included.
+
     Because -PrincipalId binds from the pipeline by property name, supplying -User, -GroupPrincipal or
     -ServicePrincipal together with piped input is rejected with a non-terminating AmbiguousPrincipal
     error instead of silently applying the named principal's precedence rule to every piped item.
@@ -168,8 +176,21 @@ function Remove-OERGroupEligibility {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            ConvertTo-OERGroupEligibilityRequest -InputObject $Response `
+            $Request = ConvertTo-OERGroupEligibilityRequest -InputObject $Response `
                 -GroupId $GroupId -PrincipalId $ResolvedPrincipalId -AccessType $AccessType -Action 'adminRemove'
+            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
+            # -OutVariable, for example) before the error below stops it.
+            $Request
+            # Microsoft Graph can ACCEPT the removal and answer it with a status in the Failed family,
+            # which removes nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            # Revoked, a removal's success, is not one of them.
+            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "Microsoft Graph accepted the PIM $AccessType eligibility removal request '$($Request.RequestId)' for " +
+                        "principal '$ResolvedPrincipalId' on group '$GroupId' but answered status $($Request.Status), so nothing " +
+                        'was removed: the eligibility is still in place.')) `
+                    -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $GroupId -Cmdlet $PSCmdlet
+            }
         }
     }
 }
