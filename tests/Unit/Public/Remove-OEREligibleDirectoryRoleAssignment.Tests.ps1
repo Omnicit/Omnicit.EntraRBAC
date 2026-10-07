@@ -147,13 +147,16 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }
 
-    It 'refuses a piped Get-OERGroupMember row (MemberType <MemberType>, <Shape>) with NotDirectAssignment saying it is a group member row, before any Graph call' -TestCases @(
-        @{ MemberType = 'Member'; Shape = 'tagged Omnicit.EntraRBAC.GroupMember'; Tagged = $true }
-        @{ MemberType = 'Owner'; Shape = 'untagged, told apart by MemberType alone'; Tagged = $false }
+    It 'refuses a piped Get-OERGroupMember row (<Shape>) with NotDirectAssignment saying it is a group member row, before any Graph call' -TestCases @(
+        @{ MemberType = 'Member'; Shape = 'tagged Omnicit.EntraRBAC.GroupMember, MemberType Member'; Tagged = $true }
+        @{ MemberType = 'Owner'; Shape = 'untagged, MemberType Owner, told apart by MemberType alone'; Tagged = $false }
+        @{ MemberType = ''; Shape = 'tagged, no MemberType, told apart by the type name alone'; Tagged = $true }
     ) {
         # A Get-OERGroupMember row is no role assignment at all: calling it inherited through a group
         # was wrong, so the message says what it is and how to remove the principal's own direct
         # eligibility on purpose. The refusal, its ErrorId, category and target are unchanged.
+        # The guard has two terms, the type name OR a MemberType of Member/Owner; the second and third
+        # case each pass through one term alone.
         $Row = [PSCustomObject]@{
             PrincipalId = 'cccccccc-0000-0000-0000-000000000003'
             DisplayName = 'Row Principal'
@@ -161,6 +164,7 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
             MemberType  = $MemberType
             GroupId     = 'dddddddd-0000-0000-0000-000000000004'
         }
+        if (-not $MemberType) { $Row.PSObject.Properties.Remove('MemberType') }
         if ($Tagged) { $Row.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupMember') }
         $Err = $null
         $Row | Remove-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -Confirm:$false `
