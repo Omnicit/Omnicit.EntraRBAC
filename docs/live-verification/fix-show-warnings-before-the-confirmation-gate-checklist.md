@@ -208,7 +208,7 @@ function Write-S96Capture {
 
 function Get-S96ContextId {
     # The first published authentication context, by claim value (only the claim value is ever printed).
-    @(Get-OERAuthenticationContext -Available -ErrorAction Stop | ForEach-Object { [string]$_.Id } | Sort-Object { [int]($_ -replace '^c', '') })[0]
+    @(Get-OERAuthenticationContext -Available -ErrorAction Stop | ForEach-Object { [string]$_.AuthenticationContextId } | Sort-Object { [int]($_ -replace '^c', '') })[0]
 }
 
 function Get-S96DocumentW {
