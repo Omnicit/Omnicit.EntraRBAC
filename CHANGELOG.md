@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+No changes to the module since 1.1.3. A preview published from this point differs from 1.1.3 only
+in documentation, tests or the build.
+
+## [1.1.3] - 2026-10-07
+
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name
 (`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope`,
 `New-OERAccessReviewStage`), refuse with `SignInSuperseded` and send nothing when another command in
