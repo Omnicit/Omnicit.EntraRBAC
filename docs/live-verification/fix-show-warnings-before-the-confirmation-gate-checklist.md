@@ -178,7 +178,7 @@ function Invoke-S96Captured {
     $From = [array]::IndexOf($All, "### BEGIN $Label")
     $To = [array]::IndexOf($All, "### END $Label")
     [PSCustomObject]@{
-        Lines  = @(if ($From -ge 0 -and $To -gt $From) { $All[($From + 1)..($To - 1)] | Where-Object { $_ -ne '' } })
+        Lines  = @(if ($From -ge 0 -and $To -gt ($From + 1)) { $All[($From + 1)..($To - 1)] | Where-Object { $_ -ne '' } })
         Output = @($Items | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
         Errors = @($Items | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
     }
