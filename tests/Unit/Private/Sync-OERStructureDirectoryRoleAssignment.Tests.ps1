@@ -1661,3 +1661,163 @@ Describe 'Sync-OERStructureDirectoryRoleAssignment prune removal Microsoft Graph
         }
     }
 }
+
+Describe 'Sync-OERStructureDirectoryRoleAssignment when Microsoft Graph answers the request with a status in the Failed family (BL-33)' {
+    # The New and Remove cmdlets run for REAL here: only the Graph transport, the sign-in and the
+    # resolvers are mocked, and the pass's own reads of the live assignments as in the suites above.
+    # Graph accepts each schedule request and answers it with the status under test. A Failed answer
+    # granted, changed or removed nothing; the cmdlet's own request-failed error, raised under the
+    # -ErrorAction Stop every engine call already passes, is what turns the row Failed -- the handler
+    # has no code of its own for it. The role-assignable read of a principal of unknown type answers
+    # "not a group". No id below is version-4 shaped.
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            $script:RR = 'aaaaaaaa-0000-0000-0000-000000000001'
+            $script:DraKept = 'bbbbbbbb-0000-0000-0000-000000000001'
+            $script:DraExtra = 'bbbbbbbb-0000-0000-0000-000000000002'
+            $script:AnsweredStatus = 'Failed'
+            $script:LiveRows = @()
+            function script:Invoke-SyncDraStatus {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item, [object[]]$DeclaredInSection = @(), [switch]$ReconcileSection, [switch]$Prune)
+                Sync-OERStructureDirectoryRoleAssignment -Item $Item -Caller $PSCmdlet -Prune:$Prune `
+                    -DeclaredInSection $DeclaredInSection -ReconcileSection:$ReconcileSection
+            }
+            # A direct, tenant-scope schedule of Reports Reader, projected as the pass reads it; the
+            # default window is 30 days from a fixed start, and -Permanent leaves it open.
+            function script:New-DraStatusRow {
+                param([string]$Principal, [string]$Kind, [switch]$Permanent)
+                $Row = [ordered]@{
+                    ScheduleId       = "schedule-$Principal"
+                    RoleDefinitionId = $script:RR
+                    RoleName         = 'Reports Reader'
+                    PrincipalId      = $Principal
+                    PrincipalType    = 'User'
+                    DirectoryScopeId = '/'
+                    MemberType       = 'Direct'
+                }
+                if ($Kind -eq 'Active') { $Row.AssignmentType = 'Assigned' }
+                $Row.StartDateTime = '2026-01-01T00:00:00Z'
+                $Row.EndDateTime = if ($Permanent) { $null } else { '2026-01-31T00:00:00Z' }
+                [PSCustomObject]$Row
+            }
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERDirectoryRoleDefinitionId {
+                if ($Role -eq 'Reports Reader') { return $script:RR }
+                if (Test-OERGuid -Value $Role) { return $Role.ToLowerInvariant() }
+                return $null
+            }
+            Mock Resolve-OERStructurePrincipal {
+                if (Test-OERGuid -Value $Reference) { return $Reference }
+                return $null
+            }
+            Mock Get-OEREligibleDirectoryRoleAssignment { @($script:LiveRows) | Where-Object { -not $PrincipalId -or $_.PrincipalId -eq $PrincipalId } }
+            Mock Get-OERActiveDirectoryRoleAssignment { @($script:LiveRows) | Where-Object { -not $PrincipalId -or $_.PrincipalId -eq $PrincipalId } }
+            Mock Get-OERSignedInObjectId { 'aaaaaaaa-0000-0000-0000-0000000000ff' }
+            Mock Get-OERMemberGroupId { throw 'unexpected membership read' }
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'POST' } -MockWith {
+                [PSCustomObject]@{
+                    id               = 'req-status'
+                    action           = $Body.action
+                    status           = $script:AnsweredStatus
+                    roleDefinitionId = $Body.roleDefinitionId
+                    principalId      = $Body.principalId
+                    directoryScopeId = $Body.directoryScopeId
+                    scheduleInfo     = $null
+                }
+            }
+            # Get-OERRoleAssignableState asks whether a principal of unknown type is a group: not one.
+            Mock Invoke-OERGraphRequest -ParameterFilter { $Method -ne 'POST' } -MockWith {
+                if ($Uri -notlike 'v1.0/groups/*') { throw "unexpected request: $Uri" }
+                $Marker = [PSCustomObject]@{ ExpectedErrorCode = 'Request_ResourceNotFound'; StatusCode = 404; Message = 'Request_ResourceNotFound'; Uri = $Uri }
+                $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                $Marker
+            }
+        }
+    }
+
+    It 'reports the <Kind> <Action> answered status <Status> Failed, and never Created or Updated' -ForEach @(
+        @{ Kind = 'Eligible'; Action = 'adminAssign'; Status = 'Failed'; Id = 'EligibilityRequestFailed' }
+        @{ Kind = 'Eligible'; Action = 'adminUpdate'; Status = 'Failed'; Id = 'EligibilityRequestFailed' }
+        @{ Kind = 'Active'; Action = 'adminAssign'; Status = 'Failed'; Id = 'AssignmentRequestFailed' }
+        @{ Kind = 'Active'; Action = 'adminUpdate'; Status = 'Failed'; Id = 'AssignmentRequestFailed' }
+        @{ Kind = 'Eligible'; Action = 'adminAssign'; Status = 'FAILED'; Id = 'EligibilityRequestFailed' }
+        @{ Kind = 'Active'; Action = 'adminUpdate'; Status = 'FAILED'; Id = 'AssignmentRequestFailed' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Action = $Action; Status = $Status; Id = $Id } {
+            param($Kind, $Action, $Status, $Id)
+            $script:AnsweredStatus = $Status
+            $script:ExpectedAction = $Action
+            # adminUpdate: a live 30-day window that the declared 60 days changes; adminAssign: nothing live.
+            $script:LiveRows = if ($Action -eq 'adminUpdate') { @(New-DraStatusRow -Principal $script:DraKept -Kind $Kind) } else { @() }
+            $Item = [PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind; durationDays = 60 }
+            $Records = @(Invoke-SyncDraStatus -Item $Item -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            # The real cmdlet sent the request with the action the diff chose, and Graph answered it.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Body.action -eq $script:ExpectedAction }
+            @($Records).Action | Should -Be @('Failed')
+            # The row holds the record as the handler re-published it, under its caller's name; the
+            # cmdlet's own record, under the cmdlet's name, stays in the caller's -ErrorVariable too (measured:
+            # twice beside the ActionPreferenceStopException, a count PowerShell's collection decides, so not pinned).
+            $Records[0].Error.FullyQualifiedErrorId | Should -BeExactly "$Id,Invoke-SyncDraStatus"
+            $Cmdlet = if ($Kind -eq 'Eligible') { 'New-OEREligibleDirectoryRoleAssignment' } else { 'New-OERActiveDirectoryRoleAssignment' }
+            @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq "$Id,$Cmdlet" }).Count | Should -BeGreaterThan 0
+            $Verb = if ($Action -eq 'adminAssign') { 'create' } else { 'update' }
+            $Records[0].Detail | Should -BeLike ("failed to $Verb the $($Kind.ToLowerInvariant()) assignment: Microsoft Graph accepted the " +
+                "$($Kind.ToLowerInvariant()) directory role assignment request 'req-status' ($Action) *but answered status $Status, so nothing was granted or changed.")
+            @($Records | Where-Object { $_.Action -in @('Created', 'Updated') }).Count | Should -Be 0
+            $Written = @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraStatus' })
+            @($Written).Count | Should -Be 1
+        }
+    }
+
+    It 'reports the <Kind> prune answered status <Status> Failed, and never Removed' -ForEach @(
+        @{ Kind = 'Eligible'; Status = 'Failed'; Id = 'EligibilityRequestFailed' }
+        @{ Kind = 'Active'; Status = 'Failed'; Id = 'AssignmentRequestFailed' }
+        @{ Kind = 'Eligible'; Status = 'FAILED'; Id = 'EligibilityRequestFailed' }
+        @{ Kind = 'Active'; Status = 'FAILED'; Id = 'AssignmentRequestFailed' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind; Status = $Status; Id = $Id } {
+            param($Kind, $Status, $Id)
+            $script:AnsweredStatus = $Status
+            $script:LiveRows = @((New-DraStatusRow -Principal $script:DraKept -Kind $Kind -Permanent), (New-DraStatusRow -Principal $script:DraExtra -Kind $Kind -Permanent))
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            $Records = @(Invoke-SyncDraStatus -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            # The real Remove cmdlet sent the adminRemove for the undeclared principal, and Graph answered it.
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and $Body.action -eq 'adminRemove' -and $Body.principalId -eq 'bbbbbbbb-0000-0000-0000-000000000002'
+            }
+            @($Records).Action | Should -Be @('Failed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraExtra) ($Kind)"
+            $Records[0].Error.FullyQualifiedErrorId | Should -BeExactly "$Id,Invoke-SyncDraStatus"
+            $Cmdlet = if ($Kind -eq 'Eligible') { 'Remove-OEREligibleDirectoryRoleAssignment' } else { 'Remove-OERActiveDirectoryRoleAssignment' }
+            @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq "$Id,$Cmdlet" }).Count | Should -BeGreaterThan 0
+            $Records[0].Detail | Should -BeLike ("failed to remove undeclared $($Kind.ToLowerInvariant()) assignment of directory role 'Reports Reader' " +
+                "for principal '$($script:DraExtra)': Microsoft Graph accepted the $($Kind.ToLowerInvariant()) directory role assignment " +
+                "removal request 'req-status' (adminRemove) *but answered status $Status, so nothing was removed: the $($Kind.ToLowerInvariant()) assignment is still in place.")
+            @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 0
+            $Written = @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraStatus' })
+            @($Written).Count | Should -Be 1
+        }
+    }
+
+    It 'the control: reports the <Kind> prune answered status Revoked Removed, and writes no error' -ForEach @(
+        @{ Kind = 'Eligible' }
+        @{ Kind = 'Active' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Kind = $Kind } {
+            param($Kind)
+            $script:AnsweredStatus = 'Revoked'
+            $script:LiveRows = @((New-DraStatusRow -Principal $script:DraKept -Kind $Kind -Permanent), (New-DraStatusRow -Principal $script:DraExtra -Kind $Kind -Permanent))
+            $Section = @([PSCustomObject]@{ role = 'Reports Reader'; principal = $script:DraKept; assignmentType = $Kind })
+            $Records = @(Invoke-SyncDraStatus -Item $Section[0] -DeclaredInSection $Section -ReconcileSection -Prune `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable DraErrors)
+            Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'POST' -and $Body.action -eq 'adminRemove' -and $Body.principalId -eq 'bbbbbbbb-0000-0000-0000-000000000002'
+            }
+            @($Records).Action | Should -Be @('Removed', 'Unchanged')
+            $Records[0].Item | Should -BeExactly "Reports Reader -> $($script:DraExtra) ($Kind)"
+            @($DraErrors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -like '*,Invoke-SyncDraStatus' }).Count | Should -Be 0
+        }
+    }
+}
