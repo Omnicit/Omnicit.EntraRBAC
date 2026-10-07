@@ -1193,7 +1193,11 @@ composed from friendly parts, which is the job the friendly properties already d
 
 The deliberate exception is the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`,
 which intentionally also accepts braced, parenthesised and dash-less forms that `Test-OERGuid`
-rejects. Do not migrate those two call sites to `Test-OERGuid`.
+rejects. Do not migrate those two call sites to `Test-OERGuid`. Since Sprint 9 step 6 (ruling R14)
+two more read a group's `administrativeUnit` with the same cast, on purpose, so that they decide
+between an object id and a display name exactly as `New-OERGroup` does: the created-membership match
+in `Sync-OERStructureAdministrativeUnit` and the unit placement check (Rule 12) in
+`Test-OERStructureSchema`. Do not migrate them either.
 
 ## mfa-authcontext-exclusion
 
@@ -1246,7 +1250,7 @@ cleared or disabled only in the result row's Detail. `Sync-OERStructureGroup` no
 takes the same decision, through `Resolve-OERPimActivationConflict`, under `-WhatIf` only: its diff
 (`Resolve-OERRoleManagementPolicyChange`) does not reconcile the pair, so
 `Set-OERDirectoryRoleManagementPolicy` reconciles it itself and warns in a real run. Why the two
-differ: [#warning-before-confirmation](#warning-before-confirmation), ruling R5.
+differ: [#warning-before-confirmation](#warning-before-confirmation), Sprint 9 step 6, ruling R5.
 
 **The schema gate (`Test-OERStructureSchema`) treats the two sections differently on purpose.**
 The `roleManagementPolicies` (Azure PIM) section raises a hard `Error` for the same collision,
@@ -4840,7 +4844,9 @@ document and passes to the groups and administrative units handlers as a private
 R8: a run-scoped list through the handlers' extra parameters, as `roleAssignments` already does). A
 group `New-OERGroup` found already existing is recorded too, which can only withhold. The unit's
 prune pass, straight after the unresolved-entry call, withholds a candidate whose id is a recorded
-group id and whose record names this unit, by its display name or its object id: with `-Prune` the
+group id and whose record names this unit, by its display name or its object id (a reference that
+parses as a GUID, braced and dash-less forms included, is read as the unit's object id and compared
+as a GUID, as `New-OERGroup` reads it -- Sprint 9 step 6, ruling R14): with `-Prune` the
 row is `Skipped` and nothing is removed, without `-Prune` it is `Extra` as before, with the usual
 "use -Prune to remove" hint. Only the creating run withholds it. A later run cannot tell that the
 membership came from the create, since nothing records it in the tenant or the document, and
@@ -4851,13 +4857,15 @@ unit's `members` name the group.
 **The validator reports the later removal.** Rule 12 of `Test-OERStructureSchema` (issue #59)
 reports a Warning finding for a group whose `administrativeUnit` names a unit the same document
 reconciles without naming the group in its `members`. Since BL-07 it checks a template-based group
-under the name `Resolve-OERName` computes, as the duplicate check does; matches the unit by its
-`displayName` or by the `id` its entry declares; and reports a unit named by an object id that no
-entry declares when an entry that may be that unit reconciles its members without naming the group,
-since offline it cannot tell which unit that is. When the group declares no `id` of its own, a
-member that is an object id that may be the group counts as naming it, since an exported inventory
-lists a group member by its id (ruling R9: no false finding, at the price of a missed one when that
-id is another object). Its
+under the name `Resolve-OERName` computes, as the duplicate check does; matches the unit the way
+`New-OERGroup` reads `administrativeUnit` -- a value that parses as a GUID by the `id` an entry
+declares, any other by `displayName`; and reports a unit named by an object id that no entry
+declares when an entry that may be that unit (one declaring no `id` of its own) reconciles its
+members without naming the group, since offline it cannot tell which unit that is. When the group
+declares no `id` of its own, a member that is an object id may be the group and counts as naming it,
+since an exported inventory lists a group member by its id (Sprint 9 step 6, ruling R9: no false
+finding, at the price of a missed one when that id is another object) -- unless that id is the `id`
+another `groups[]` entry declares, which names that other group (ruling R13). Its
 text says what the engine now does: the creating run withholds the prune, every later apply with
 `-Prune` removes the membership. `Invoke-OERStructure` surfaces no Warning finding -- it joins only
 the Error findings into `StructureValidationFailed`, when it refuses the document -- so this finding
@@ -5237,7 +5245,9 @@ is not written there. There is no rollback in it to skip, and the order was left
 
 Sprint 9 step 6 (BL-18, BL-17) moved the warnings about a deletion or about widened access to where
 an operator can still act on them: ahead of the confirmation gate. This section records rule A4 for
-the public cmdlets and for the apply engine, the rulings taken on it, and what it does not cover. The
+the public cmdlets and for the apply engine, the rulings taken on it (numbered as in that step's
+ledger, so "ruling R5" below is Sprint 9 step 6's R5, not another section's), and what it does not
+cover. The
 same step's withheld prune of a unit membership the run created (BL-07) is described with the other
 kinds of withheld prune, under [#typed-group-member-read](#typed-group-member-read).
 

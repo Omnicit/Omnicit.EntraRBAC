@@ -900,7 +900,10 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   `Why: docs/development/rationale.md#reviewer-scope-query`
 - **`Test-OERGuid` is the single GUID predicate.** Never re-implement the canonical GUID regex
   inline. The wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup` is a deliberate
-  exception -- do not migrate those two. `Why: docs/development/rationale.md#guid-predicate`
+  exception -- do not migrate those two -- and so are the two places that read a group's
+  `administrativeUnit` the way `New-OERGroup` does: the created-membership match in
+  `Sync-OERStructureAdministrativeUnit` and the unit placement check in `Test-OERStructureSchema`.
+  `Why: docs/development/rationale.md#guid-predicate`
 - **`ConvertTo-OERCanonicalScope` is the single owner of how a document scope is compared, and
   `ConvertTo-OERScopeSplat` of the `sub:`/`subscription:`/`mg:` scope syntax** -- never re-implement
   either inline; the first is pure, since the offline validator uses it. A document scope that
