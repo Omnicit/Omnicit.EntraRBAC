@@ -468,8 +468,10 @@ Describe 'Set-OERGroupPimPolicy' {
         #
         # WHY A URI MATCH IS NOT A PIN FOR THIS GATE. The PATCH uri is built from $Rule.id, so a
         # -ParameterFilter { $Uri -match '<literal>' } assertion pins New-OERPimRuleSet's literal on
-        # the far side of the module, not Set-OERGroupPimPolicy's own $Sent.Contains('<literal>')
-        # line. The two are independent strings and a typo in either alone still passes such a test.
+        # the far side of the module, not Set-OERGroupPimPolicy's own $Reported.Contains('<literal>')
+        # line ($Reported is $Sent without a rule put back to its live value; the gate was on $Sent
+        # before the pair put-back). The two are independent strings and a typo in either alone
+        # still passes such a test.
         # What pins the gate is asserting that the corresponding $Patched property lands on the
         # returned object. Five of the original nine literals had no such assertion before this table:
         # AuthenticationContext_EndUser_Assignment, Enablement_EndUser_Assignment,
@@ -497,7 +499,7 @@ Describe 'Set-OERGroupPimPolicy' {
             $Result = Set-OERGroupPimPolicy @Splat
 
             $Result.PSObject.Properties.Name | Should -Contain $Property -Because (
-                "Set-OERGroupPimPolicy gates `$Patched.$Property on `$Sent.Contains('$Literal'), and " +
+                "Set-OERGroupPimPolicy gates `$Patched.$Property on `$Reported.Contains('$Literal'), and " +
                 "New-OERPimRuleSet must emit exactly that id -- if this fails the two literals disagree")
             # Compare through a join so one expression covers the scalar and the collection cases and
             # neither degenerates: @($null) -join ',' is the empty string, so a property that bound
@@ -1035,16 +1037,26 @@ Describe 'Set-OERGroupPimPolicy authentication context reconcile' {
         @($script:Patched) | Where-Object { $_.id -eq 'Enablement_EndUser_Assignment' } | Should -BeNullOrEmpty
     }
 
-    It 'case E: an explicit enablement list without MFA needs no live read' {
-        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false
+    It 'case E: an explicit enablement list without MFA needs no reconcile read' {
+        $Warn = $null
+        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -WarningVariable Warn -WarningAction SilentlyContinue
         # Positive anchor: prove the call actually reached Graph before asserting what it did NOT read.
         @($script:Patched) | Where-Object { $_.id -eq 'AuthenticationContext_EndUser_Assignment' } |
             Should -Not -BeNullOrEmpty
-        # No rule-id clause: case E must issue NO live read at all. Naming the Enablement rule would
-        # let a mutation that fires arm C instead -- reading the AuthenticationContext rule -- pass.
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 0 -ParameterFilter {
+        # Case E runs no reconcile. Both halves of the pair are sent, so its ONE read is the first
+        # half, the enablement rule, read after every rule was confirmed so that it could be put back
+        # (see 'MFA and authentication context pair, one half rejected'). A mutation firing arm C reads
+        # the AuthenticationContext rule, which the total of one excludes; one firing arm B reads the
+        # same enablement rule (the put-back then reuses it) and is told apart by the reconcile
+        # warning, since this call writes none.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
             $Method -ne 'PATCH'
         }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/Enablement_EndUser_Assignment'
+        }
+        @($Warn).Count | Should -Be 0
     }
 
     It 'refuses an authentication context that does not exist in the tenant' {
@@ -1225,9 +1237,16 @@ Describe 'Set-OERGroupPimPolicy MFA and authentication context patch order' {
     It 'explicit -AuthenticationContextId and -ActivationEnabledRules: the disabling context PATCH still goes first' {
         # No reconcile runs here -- both rules come straight from the caller's own binding -- so this
         # is what proves the ordering rule is general rather than a patch on the reconcile path.
+        $Warn = $null
         $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId '' `
-            -ActivationEnabledRules MultiFactorAuthentication -Confirm:$false -WarningAction SilentlyContinue
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 0 -ParameterFilter { $Method -ne 'PATCH' }
+            -ActivationEnabledRules MultiFactorAuthentication -Confirm:$false -WarningAction SilentlyContinue -WarningVariable Warn
+        # The one read is the first half of the pair, the disabling context rule, read after every
+        # rule was confirmed so that it could be put back; a reconcile would also have warned.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter { $Method -ne 'PATCH' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/AuthenticationContext_EndUser_Assignment'
+        }
+        @($Warn).Count | Should -Be 0
         $AcAt = $script:PatchOrder.IndexOf('AuthenticationContext_EndUser_Assignment')
         $EnAt = $script:PatchOrder.IndexOf('Enablement_EndUser_Assignment')
         $AcAt | Should -BeGreaterOrEqual 0
@@ -1245,8 +1264,16 @@ Describe 'Set-OERGroupPimPolicy MFA and authentication context patch order' {
     }
 
     It 'explicit -AuthenticationContextId and -ActivationEnabledRules: an ENABLING context PATCH still goes last' {
-        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false
-        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 0 -ParameterFilter { $Method -ne 'PATCH' }
+        $Warn = $null
+        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -WarningAction SilentlyContinue -WarningVariable Warn
+        # The one read is the first half of the pair, the enablement rule, read after every rule was
+        # confirmed so that it could be put back; a reconcile would also have warned.
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter { $Method -ne 'PATCH' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Exactly 1 -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/Enablement_EndUser_Assignment'
+        }
+        @($Warn).Count | Should -Be 0
         $AcAt = $script:PatchOrder.IndexOf('AuthenticationContext_EndUser_Assignment')
         $EnAt = $script:PatchOrder.IndexOf('Enablement_EndUser_Assignment')
         $AcAt | Should -BeGreaterOrEqual 0
@@ -1299,5 +1326,261 @@ Describe 'Set-OERGroupPimPolicy MFA and authentication context patch order' {
         # trailing rule. Should -Be (not a membership check) pins both the order and the count.
         $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId '' -EligibleDuration 30 -Confirm:$false
         @($script:PatchOrder) | Should -Be @('AuthenticationContext_EndUser_Assignment', 'Expiration_Admin_Eligibility')
+    }
+}
+
+Describe 'Set-OERGroupPimPolicy MFA and authentication context pair, one half rejected' {
+    # Modelled on Set-OERDirectoryRoleManagementPolicy's Context 'MFA and authentication context
+    # rules sent together, and one of them rejected'. The authentication-context rule and the
+    # activation enablement rule together decide whether activation requires multi-factor
+    # authentication or an authentication context, so when Microsoft Graph accepts the first of the
+    # two (in patch order) and rejects the second, the first is PATCHed straight back to its live
+    # value. $script:Calls records every request, reads and PATCHes alike, in the order sent.
+    BeforeAll {
+        # A rule as JSON with its keys sorted at every level, so a PATCH body can be compared with the
+        # live rule it must equal whatever order either hashtable enumerates its keys in.
+        function ConvertTo-CanonicalJson ($Value) {
+            function ConvertTo-SortedNode ($Node) {
+                if ($Node -is [System.Collections.IDictionary]) {
+                    $Sorted = [ordered]@{}
+                    foreach ($Key in @($Node.Keys | Sort-Object)) { $Sorted[[string]$Key] = ConvertTo-SortedNode $Node[$Key] }
+                    return $Sorted
+                }
+                if ($Node -is [System.Collections.IEnumerable] -and $Node -isnot [string]) {
+                    return , @(foreach ($Item in $Node) { ConvertTo-SortedNode $Item })
+                }
+                $Node
+            }
+            ConvertTo-SortedNode $Value | ConvertTo-Json -Depth 20 -Compress
+        }
+        # The live rule as it must be sent back: as read, without the read-only '@odata.context'.
+        function Get-TestExpectedPutBack ([hashtable]$Live) {
+            $Expected = $Live.Clone()
+            $Expected.Remove('@odata.context')
+            $Expected
+        }
+        function Get-TestCallLine { @($script:Calls | ForEach-Object { '{0} {1}' -f $_.Method, $_.RuleId }) }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g1' }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { 'p1' }
+        Mock -ModuleName $script:moduleName Get-OERAuthenticationContext {
+            [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+            [pscustomobject]@{ AuthenticationContextId = 'c2'; DisplayName = 'Require a compliant device'; IsAvailable = $true }
+        }
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        $script:RejectRuleId = @()
+        # A rule id here is accepted on its first PATCH and rejected on every later one.
+        $script:RejectRepeatRuleId = @()
+        $script:FailReadRuleId = @()
+        $script:LiveEnablement = @{
+            '@odata.context' = 'https://graph.microsoft.com/beta/$metadata#policies/roleManagementPolicies/p1/rules/$entity'
+            '@odata.type'    = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'
+            id               = 'Enablement_EndUser_Assignment'
+            enabledRules     = @('MultiFactorAuthentication', 'Justification')
+        }
+        $script:LiveContext = @{
+            '@odata.context' = 'https://graph.microsoft.com/beta/$metadata#policies/roleManagementPolicies/p1/rules/$entity'
+            '@odata.type'    = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'
+            id               = 'AuthenticationContext_EndUser_Assignment'
+            isEnabled        = $true
+            claimValue       = 'c1'
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            param([string]$Method = 'GET', [string]$Uri, $Body)
+            $RuleId = ($Uri -split '/')[-1]
+            $script:Calls.Add([pscustomobject]@{ Method = $Method; Uri = $Uri; RuleId = $RuleId; Body = $Body })
+            if ($Method -eq 'PATCH') {
+                if ($script:RejectRuleId -contains $RuleId) { throw "Graph rejected rule '$RuleId'." }
+                if ($script:RejectRepeatRuleId -contains $RuleId -and
+                    @($script:Calls | Where-Object { $_.Method -eq 'PATCH' -and $_.RuleId -eq $RuleId }).Count -gt 1) {
+                    throw "Graph rejected the repeated PATCH of rule '$RuleId'."
+                }
+                return @{}
+            }
+            if ($script:FailReadRuleId -contains $RuleId) { throw "Graph refused the read of rule '$RuleId'." }
+            if ($RuleId -eq 'Enablement_EndUser_Assignment') { return $script:LiveEnablement }
+            if ($RuleId -eq 'AuthenticationContext_EndUser_Assignment') { return $script:LiveContext }
+            @{}
+        }
+    }
+
+    It 'explicit pair, context enabled: reads the enablement rule once before any PATCH and puts it back when the context rule is rejected' {
+        $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn
+        # ONE read of the first half, before the first PATCH; then the pair in patch order and exactly
+        # one compensating PATCH, of the first rule.
+        @(Get-TestCallLine) | Should -Be @(
+            'GET Enablement_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+        )
+        @($script:Calls[1].Body.enabledRules) | Should -Be @('Justification')
+        $script:Calls[3].Uri | Should -Be $script:Calls[1].Uri
+        (ConvertTo-CanonicalJson $script:Calls[3].Body) | Should -Be (ConvertTo-CanonicalJson (Get-TestExpectedPutBack $script:LiveEnablement))
+        $Result.Applied | Should -BeFalse
+        @($Result.FailedRules) | Should -Be @('AuthenticationContext_EndUser_Assignment')
+        # The rule put back is not reported as changed; the rejected one, which was sent, still is.
+        $Result.PSObject.Properties.Name | Should -Not -Contain 'ActivationEnabledRules'
+        $Result.PSObject.Properties.Name | Should -Contain 'AuthenticationContextId'
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Rejected[0].Exception.Message | Should -BeLike "*Rule 'Enablement_EndUser_Assignment', which Microsoft Graph had accepted, was put back to its value before this call*"
+        $Rejected[0].Exception.Message | Should -BeLike '*activation keeps the protection it had before the call.*'
+        ($Warn -join ' ') | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'p1' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'.*"
+    }
+
+    It 'reconcile ClearMfa: puts the enablement rule back with the rule the reconcile already read, read once' {
+        $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/Enablement_EndUser_Assignment'
+        }
+        @(Get-TestCallLine) | Should -Be @(
+            'GET Enablement_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+        )
+        (ConvertTo-CanonicalJson $script:Calls[3].Body) | Should -Be (ConvertTo-CanonicalJson (Get-TestExpectedPutBack $script:LiveEnablement))
+        @($Result.FailedRules) | Should -Be @('AuthenticationContext_EndUser_Assignment')
+        $Result.PSObject.Properties.Name | Should -Not -Contain 'ActivationEnabledRules'
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Rejected[0].Exception.Message | Should -BeLike "*Rule 'Enablement_EndUser_Assignment', which Microsoft Graph had accepted, was put back*"
+    }
+
+    It 'reconcile DisableAuthContext: puts the context rule back with the rule the reconcile already read, read once' {
+        $script:RejectRuleId = @('Enablement_EndUser_Assignment')
+        $Result = Set-OERGroupPimPolicy -Group 'g' -ActivationEnabledRules MultiFactorAuthentication -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+            $Method -ne 'PATCH' -and $Uri -like '*rules/AuthenticationContext_EndUser_Assignment'
+        }
+        @(Get-TestCallLine) | Should -Be @(
+            'GET AuthenticationContext_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+        )
+        $script:Calls[1].Body.isEnabled | Should -BeFalse
+        (ConvertTo-CanonicalJson $script:Calls[3].Body) | Should -Be (ConvertTo-CanonicalJson (Get-TestExpectedPutBack $script:LiveContext))
+        @($Result.FailedRules) | Should -Be @('Enablement_EndUser_Assignment')
+        $Result.PSObject.Properties.Name | Should -Not -Contain 'AuthenticationContextId'
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Rejected[0].Exception.Message | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment', which Microsoft Graph had accepted, was put back*"
+    }
+
+    It 'says activation may now require neither control, and still reports the first rule, when the put-back is rejected too' {
+        $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+        $script:RejectRepeatRuleId = @('Enablement_EndUser_Assignment')
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn
+        @(Get-TestCallLine) | Should -Be @(
+            'GET Enablement_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+        )
+        $Result.PSObject.Properties.Name | Should -Contain 'ActivationEnabledRules'
+        @($Result.ActivationEnabledRules) | Should -Be @('Justification')
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Message = $Rejected[0].Exception.Message
+        $Message | Should -BeLike "*Rule 'Enablement_EndUser_Assignment' had been accepted, and putting it back to its value before this call failed too (Graph rejected the repeated PATCH of rule 'Enablement_EndUser_Assignment'.)*"
+        $Message | Should -BeLike '*activation may now require neither multi-factor authentication nor an authentication context*'
+        $Message | Should -BeLike '*Run the same command again, or run Set-OERGroupPimPolicy with -ActivationEnabledRules or -AuthenticationContextId set to the protection this group needs.*'
+        $Message | Should -Not -BeLike '*keeps the protection*'
+        ($Warn -join ' ') | Should -BeLike "*Rule 'Enablement_EndUser_Assignment' of PIM policy 'p1' could not be put back to its value before this call*"
+    }
+
+    It 'writes a failed first-half read before any PATCH: -WarningAction Stop stops there, with nothing sent' {
+        $script:FailReadRuleId = @('Enablement_EndUser_Assignment')
+        { Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false -WarningAction Stop } |
+            Should -Throw -ExpectedMessage "*Could not read the live rule 'Enablement_EndUser_Assignment' of PIM policy 'p1' before the update*"
+        @(Get-TestCallLine) | Should -Be @('GET Enablement_EndUser_Assignment')
+    }
+
+    It 'sends both rules after a failed first-half read, sends no put-back, names the unread value and scrubs the failed read' {
+        Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
+        $script:FailReadRuleId = @('Enablement_EndUser_Assignment')
+        $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+        $null = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue -WarningVariable Warn
+        @(Get-TestCallLine) | Should -Be @(
+            'GET Enablement_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+        )
+        @($Warn)[0] | Should -Be ("Could not read the live rule 'Enablement_EndUser_Assignment' of PIM policy 'p1' before the update, so it " +
+            "cannot be put back should Microsoft Graph reject 'AuthenticationContext_EndUser_Assignment': Graph refused the read of rule 'Enablement_EndUser_Assignment'.")
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Rejected[0].Exception.Message | Should -BeLike '*its value before this call was not read*'
+        Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+            $Record.Exception.Message -eq "Graph refused the read of rule 'Enablement_EndUser_Assignment'."
+        }
+    }
+
+    It 'sends no put-back when the FIRST half is rejected' {
+        $script:RejectRuleId = @('Enablement_EndUser_Assignment')
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue
+        @(Get-TestCallLine) | Should -Be @(
+            'GET Enablement_EndUser_Assignment'
+            'PATCH Enablement_EndUser_Assignment'
+            'PATCH AuthenticationContext_EndUser_Assignment'
+        )
+        @($Result.FailedRules) | Should -Be @('Enablement_EndUser_Assignment')
+        $Rejected = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyRulesRejected,Set-OERGroupPimPolicy' })
+        $Rejected.Count | Should -Be 1
+        $Rejected[0].Exception.Message | Should -Not -BeLike '*put back*'
+    }
+
+    It 'reads no first half and sends nothing under -WhatIf' {
+        $Result = Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -WhatIf
+        $Result | Should -BeNullOrEmpty
+        # Reached: the context was validated, so the call got as far as the confirmations.
+        Should -Invoke -ModuleName $script:moduleName Get-OERAuthenticationContext -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'reads no first half and sends no put-back when the operator declines the second half' {
+        $Scenario = {
+            Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+            $Module = Get-Module Omnicit.EntraRBAC
+            & $Module {
+                $script:TestCalls = [System.Collections.Generic.List[string]]::new()
+                Set-Item -Path function:script:Initialize-OERAuth -Value { }
+                Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
+                Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
+                Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+                    [CmdletBinding()] param()
+                    [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+                }
+                Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+                    param([string]$Method = 'GET', [string]$Uri, $Body)
+                    $script:TestCalls.Add(('{0} {1}' -f $Method, ($Uri -split '/')[-1]))
+                    if ($Method -eq 'PATCH') { return @{} }
+                    @{ id = ($Uri -split '/')[-1]; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+                }
+            }
+            Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm `
+                -ErrorAction SilentlyContinue -WarningAction SilentlyContinue | Out-Null
+            & $Module { $script:TestCalls.ToArray() }
+        }
+        # Accept the enablement rule (prompted first), decline the context rule.
+        $Run = Invoke-OERWithConfirmAnswer -AnswerSequence '&Yes', '&No' -Script $Scenario
+        $Run.Prompts.Count | Should -Be 2
+        $Run.Prompts[0] | Should -Match 'Enablement_EndUser_Assignment'
+        $Run.Prompts[1] | Should -Match 'AuthenticationContext_EndUser_Assignment'
+        @($Run.Output) | Should -Be @('PATCH Enablement_EndUser_Assignment')
     }
 }

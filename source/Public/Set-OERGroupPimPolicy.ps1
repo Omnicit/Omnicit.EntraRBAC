@@ -6,8 +6,19 @@ function Set-OERGroupPimPolicy {
     .DESCRIPTION
     Builds the activation rule set with the private New-OERPimRuleSet helper and PATCHes each rule on the
     group's roleManagementPolicy (resolved via Get-OERPimGroupPolicyId). Only the rules whose governing
-    parameters are bound are patched -- omitted parameters are left unchanged (surgical patch). Each rule
-    is patched individually so a single rejected rule does not abort the rest. The result is built by the
+    parameters are bound are patched -- omitted parameters are left unchanged (surgical patch). Every
+    rule is confirmed first, one confirmation per rule, and only then are the confirmed rules sent, each
+    PATCHed on its own so a single rejected rule does not abort the rest. The authentication-context
+    rule and the activation enablement rule are the exception, since together they decide whether
+    activation requires MFA or an authentication context: when both are sent and Microsoft Graph
+    accepts the first but rejects the second, the first is PATCHed straight back to its live value, so
+    activation keeps the protection it had before the call instead of being left with neither. That
+    rule is then not reported as sent, and the PolicyRulesRejected error says it was put back. Its live
+    value is the one the mutual-exclusion reconcile below read, or else it is read once before the
+    first PATCH; should that read fail, a warning says so before anything is sent, and the rule cannot
+    be put back. Should putting it back fail, the rule stays reported and the error says how to set
+    the protection the group needs. Warnings about rejected rules are written only after every rule
+    and the put-back were sent. The result is built by the
     private ConvertTo-OERGroupPimPolicyResult and tagged Omnicit.EntraRBAC.GroupPimPolicyResult (with the
     shared Omnicit.EntraRBAC.GroupPimPolicy type name still present underneath, for existing consumers):
     it lists ONLY the settings that were actually SENT to Graph -- a setting whose parameter was not
@@ -430,6 +441,10 @@ function Set-OERGroupPimPolicy {
         # ARM path. Only the two cases that can produce a real change issue a live read, and only the
         # rule they need -- an unconditional read would add a Graph call to every invocation.
         $Resolution = $null
+        # Each live rule a reconcile reads is kept by id: should both halves of the pair be sent and
+        # Microsoft Graph reject the second, Send-OERPimRulePatch puts the first back to this value,
+        # so it is not read a second time.
+        $LiveRuleById = @{}
         if ($WantsAc -and $WantsMfa) {
             $Resolution = Resolve-OERPimActivationConflict -CallerRequestsAuthContext -CallerRequestsMfa `
                 -EffectiveAuthContextEnabled -EffectiveAuthContextId $AuthenticationContextId `
@@ -439,6 +454,7 @@ function Set-OERGroupPimPolicy {
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/Enablement_EndUser_Assignment" -f $PolicyId))
                 $LiveEnabledRules = @($LiveRule.enabledRules)
+                if ($null -ne $LiveRule) { $LiveRuleById['Enablement_EndUser_Assignment'] = $LiveRule }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
                 Write-Warning "Could not read the live activation enablement rules for policy '$PolicyId'; multi-factor authentication may remain enabled alongside authentication context '$AuthenticationContextId', which PIM treats as mutually exclusive: $($PSItem.Exception.Message)"
@@ -451,6 +467,7 @@ function Set-OERGroupPimPolicy {
         } elseif ($WantsMfa -and -not $AcBound) {
             try {
                 $LiveRule = Invoke-OERGraphRequest -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/AuthenticationContext_EndUser_Assignment" -f $PolicyId))
+                if ($null -ne $LiveRule) { $LiveRuleById['AuthenticationContext_EndUser_Assignment'] = $LiveRule }
                 $ConflictParams = @{
                     CallerRequestsMfa               = $true
                     EffectiveAuthContextId          = [string]$LiveRule.claimValue
@@ -635,24 +652,45 @@ function Set-OERGroupPimPolicy {
         # The MFA / authentication-context PATCH order is load-bearing; Get-OERPimRulePatchOrder owns it (see its help).
         if ($null -ne $Rules) { $Rules = @(Get-OERPimRulePatchOrder -Rule @($Rules)) }
 
-        # $Sent tracks the rule ids that actually passed ShouldProcess this run -- a rule declined at
-        # an interactive -Confirm prompt is built (it is in $Rules) but never sent, and must not be
-        # reported as patched (see $Patched below) or counted toward Applied.
-        $Sent = [System.Collections.Generic.List[string]]::new()
-        $Failed = [System.Collections.Generic.List[string]]::new()
-        $Processed = $false
+        $RulesPath = Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules" -f $PolicyId)
+
+        # Every rule is confirmed before any is sent. $Sent tracks the rule ids that actually passed
+        # ShouldProcess this run -- a rule declined at an interactive -Confirm prompt is built (it is
+        # in $Rules) but never sent, and must not be reported as patched (see $Patched below) or
+        # counted toward Applied.
+        $ToSend = [System.Collections.Generic.List[object]]::new()
         foreach ($Rule in $Rules) {
-            if ($PSCmdlet.ShouldProcess("PIM policy $PolicyId", "Patch rule $($Rule.id)")) {
-                $Processed = $true
-                $Sent.Add($Rule.id)
-                try {
-                    Invoke-OERGraphRequest -Method PATCH -Uri (Get-OERPimGroupsGraphPath -Path ("policies/roleManagementPolicies/{0}/rules/{1}" -f $PolicyId, $Rule.id)) -Body $Rule | Out-Null
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $Failed.Add($Rule.id)
-                    Write-Warning "Rule '$($Rule.id)' was not applied: $($PSItem.Exception.Message)"
-                }
+            if ($PSCmdlet.ShouldProcess("PIM policy $PolicyId", "Patch rule $($Rule.id)")) { $ToSend.Add($Rule) }
+        }
+        $Sent = [System.Collections.Generic.List[string]]::new()
+        foreach ($Rule in $ToSend) { $Sent.Add([string]$Rule.id) }
+        $Processed = $Sent.Count -gt 0
+
+        # When both halves of the MFA / authentication-context pair are sent, Send-OERPimRulePatch
+        # needs the live value of the first (in patch order) to put it back should Microsoft Graph
+        # reject the second. A reconcile above may already have read it; otherwise it is read here,
+        # once, before the first PATCH. A failed read only costs the put-back, so it is a warning,
+        # written now -- before any PATCH, so a -WarningAction Stop caller stops with nothing sent.
+        $SentPair = @($Sent | Where-Object { $_ -in @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment') })
+        if ($SentPair.Count -eq 2 -and -not $LiveRuleById.ContainsKey($SentPair[0])) {
+            try {
+                $FirstLive = Invoke-OERGraphRequest -Uri ('{0}/{1}' -f $RulesPath, $SentPair[0])
+                if ($null -ne $FirstLive) { $LiveRuleById[$SentPair[0]] = $FirstLive }
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                Write-Warning "Could not read the live rule '$($SentPair[0])' of PIM policy '$PolicyId' before the update, so it cannot be put back should Microsoft Graph reject '$($SentPair[1])': $($PSItem.Exception.Message)"
             }
+        }
+
+        # Send-OERPimRulePatch owns the per-rule PATCH and the pair put-back (see its help). It writes
+        # nothing itself: its messages are written here, once every rule and the put-back were sent,
+        # so a -WarningAction Stop caller is never stopped half-way through the rule set.
+        $SendResult = $null
+        $Failed = [System.Collections.Generic.List[string]]::new()
+        if ($ToSend.Count -gt 0) {
+            $SendResult = Send-OERPimRulePatch -Rule $ToSend.ToArray() -RulesPath $RulesPath -LiveRule @($LiveRuleById.Values) -PolicyLabel "PIM policy '$PolicyId'"
+            foreach ($Message in $SendResult.Warning) { Write-Warning $Message }
+            $Failed.AddRange([string[]]$SendResult.Failed)
         }
 
         # A per-rule -Confirm decline can accept one half of a reconciled pair and refuse the other,
@@ -678,26 +716,29 @@ function Set-OERGroupPimPolicy {
         # requirement that was never sent reads as "MFA is now required"). A field the caller never
         # bound is still absent entirely -- a null or false here reads as an authoritative policy
         # value and is not one (the run patched a subset of rules; Get-OERGroupPimPolicy is the
-        # authority on the resulting state).
+        # authority on the resulting state). A rule Send-OERPimRulePatch put back to its live value
+        # was sent, but did not change, so $Reported is $Sent without it.
+        $Reported = [System.Collections.Generic.List[string]]::new($Sent)
+        if ($SendResult.Restored) { [void]$Reported.Remove([string]$SendResult.Restored) }
         $Patched = [ordered]@{}
-        if ($Sent.Contains('Expiration_EndUser_Assignment'))            { $Patched.ActivationMaxHours = $ActivationMaxHours }
-        if ($Sent.Contains('AuthenticationContext_EndUser_Assignment')) { $Patched.AuthenticationContextId = $AuthenticationContextIdReported }
-        if ($Sent.Contains('Enablement_EndUser_Assignment'))            { $Patched.ActivationEnabledRules = $ActivationEnabledRulesReported }
-        if ($Sent.Contains('Enablement_Admin_Assignment'))              { $Patched.ActiveEnabledRules = $ActiveEnabledRules }
-        if ($Sent.Contains('Expiration_Admin_Eligibility'))             { $Patched.EligibleDurationDays = $EligibleDurationDaysReported }
-        if ($Sent.Contains('Expiration_Admin_Assignment'))              { $Patched.ActiveDurationDays = $ActiveDurationDaysReported }
+        if ($Reported.Contains('Expiration_EndUser_Assignment'))            { $Patched.ActivationMaxHours = $ActivationMaxHours }
+        if ($Reported.Contains('AuthenticationContext_EndUser_Assignment')) { $Patched.AuthenticationContextId = $AuthenticationContextIdReported }
+        if ($Reported.Contains('Enablement_EndUser_Assignment'))            { $Patched.ActivationEnabledRules = $ActivationEnabledRulesReported }
+        if ($Reported.Contains('Enablement_Admin_Assignment'))              { $Patched.ActiveEnabledRules = $ActiveEnabledRules }
+        if ($Reported.Contains('Expiration_Admin_Eligibility'))             { $Patched.EligibleDurationDays = $EligibleDurationDaysReported }
+        if ($Reported.Contains('Expiration_Admin_Assignment'))              { $Patched.ActiveDurationDays = $ActiveDurationDaysReported }
         # The expiration rule is a unit (see the $RuleParams build above): binding either the
         # duration or the permanence switch sends BOTH fields to Graph on the SAME rule, so both are
         # gated on whether that one rule id was actually sent, not on $RuleParams alone.
-        if ($Sent.Contains('Expiration_Admin_Eligibility'))             { $Patched.AllowPermanentEligibility = [bool]$AllowPermanentEligibility }
-        if ($Sent.Contains('Expiration_Admin_Assignment'))              { $Patched.AllowPermanentActive = [bool]$AllowPermanentActive }
-        if ($Sent.Contains('Notification_Admin_Admin_Eligibility'))     { $Patched.EligibleAlertRecipient = $EligibleAlertRecipient }
-        if ($Sent.Contains('Notification_Admin_Admin_Assignment'))      { $Patched.ActiveAlertRecipient = $ActiveAlertRecipient }
-        if ($Sent.Contains('Notification_Admin_EndUser_Assignment'))    { $Patched.ActivationAlertRecipient = $ActivationAlertRecipient }
+        if ($Reported.Contains('Expiration_Admin_Eligibility'))             { $Patched.AllowPermanentEligibility = [bool]$AllowPermanentEligibility }
+        if ($Reported.Contains('Expiration_Admin_Assignment'))              { $Patched.AllowPermanentActive = [bool]$AllowPermanentActive }
+        if ($Reported.Contains('Notification_Admin_Admin_Eligibility'))     { $Patched.EligibleAlertRecipient = $EligibleAlertRecipient }
+        if ($Reported.Contains('Notification_Admin_Admin_Assignment'))      { $Patched.ActiveAlertRecipient = $ActiveAlertRecipient }
+        if ($Reported.Contains('Notification_Admin_EndUser_Assignment'))    { $Patched.ActivationAlertRecipient = $ActivationAlertRecipient }
         # The effective values, not the parameters: approval is reported as it was sent (true when
         # approvers were supplied), and both approver sides as the object ids sent, the carried side
         # included.
-        if ($Sent.Contains('Approval_EndUser_Assignment')) {
+        if ($Reported.Contains('Approval_EndUser_Assignment')) {
             $Patched.RequireApproval = $EffRequired
             if ($ApproversBound) {
                 $Patched.ApproverUser = @($EffUser)
@@ -719,11 +760,21 @@ function Set-OERGroupPimPolicy {
         # non-terminating error AFTER the summary object so a caller that traps the error has still
         # received the object describing what did apply.
         if ($Failed.Count -gt 0) {
+            $Message = "PIM policy '$PolicyId' for group '$GroupId' was only partially applied. " +
+                "Graph rejected $($Failed.Count) of $($Sent.Count) rule(s): $($Failed -join ', ')."
+            if ($SendResult.Restored) {
+                $Message += " Rule '$($SendResult.Restored)', which Microsoft Graph had accepted, was put back to its value before " +
+                    "this call, since it and '$($SendResult.PairSecond)' together decide whether activation requires multi-factor " +
+                    'authentication or an authentication context: activation keeps the protection it had before the call.'
+            } elseif ($SendResult.RestoreError) {
+                $Message += " Rule '$($SendResult.PairFirst)' had been accepted, and putting it back to its value before this call " +
+                    "failed too ($($SendResult.RestoreError)), so it stays changed: activation may now require neither " +
+                    'multi-factor authentication nor an authentication context. Run the same command again, or run ' +
+                    'Set-OERGroupPimPolicy with -ActivationEnabledRules or -AuthenticationContextId set to the protection this group needs.'
+            }
+            $Message += " Run Get-OERGroupPimPolicy -Group '$Group' -AccessType $AccessType to read the resulting state."
             Write-CmdletError `
-                -Message ([System.Exception]::new(
-                    "PIM policy '$PolicyId' for group '$GroupId' was only partially applied. " +
-                    "Graph rejected $($Failed.Count) of $($Sent.Count) rule(s): $($Failed -join ', '). " +
-                    "Run Get-OERGroupPimPolicy -Group '$Group' -AccessType $AccessType to read the resulting state.")) `
+                -Message ([System.Exception]::new($Message)) `
                 -ErrorId 'PolicyRulesRejected' `
                 -Category WriteError `
                 -TargetObject $PolicyId `

@@ -179,6 +179,16 @@ BeforeAll {
 
         $GraphWrites = [bool]@($Transports | Where-Object { $_.Transport -eq 'Graph' -and $_.Method -ne 'GET' }).Count
 
+        <#
+            Send-OERPimRulePatch PATCHes a PIM rule set on its caller's behalf, but it receives the
+            rules path from that caller and carries no URI literal of its own: the literal stays in
+            the CALLING function. So a call to it counts as a Graph write by the caller. Without this,
+            Set-OERGroupPimPolicy and Set-OERDirectoryRoleManagementPolicy -- which make no write of
+            their own any more -- would have their policy endpoints marked read-only, and the gate
+            would accept a read scope for a cmdlet that writes the policy.
+        #>
+        if (@($Commands | Where-Object { $_.GetCommandName() -eq 'Send-OERPimRulePatch' }).Count) { $GraphWrites = $true }
+
         $script:localFacts[$Name] = [PSCustomObject]@{
             CallsGraph = [bool]@($Transports | Where-Object Transport -EQ 'Graph').Count
             CallsArm   = [bool]@($Transports | Where-Object Transport -EQ 'Arm').Count

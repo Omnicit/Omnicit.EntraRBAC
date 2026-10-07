@@ -473,74 +473,41 @@ function Set-OERDirectoryRoleManagementPolicy {
         $ToSend = @(Get-OERPimRulePatchOrder -Rule @(@($Plan.Rules) | Where-Object { $ChangedIds -contains [string]$_.id }))
         $SendIds = @($ToSend | ForEach-Object { [string]$_.id })
 
-        # 11. One confirmation for the call, then one PATCH per rule. A rejected rule does not stop
-        #     the others.
+        # 11. One confirmation for the call, then every changed rule through Send-OERPimRulePatch,
+        #     the single owner of the per-rule PATCH: a rejected rule does not stop the others.
         if ($PSCmdlet.ShouldProcess("directory role management policy '$ResolvedPolicyId'", "Update rules: $($SendIds -join ', ')")) {
             $LiveById = @{}
             foreach ($LiveRule in $Rules) { if ($LiveRule.id) { $LiveById[[string]$LiveRule.id] = $LiveRule } }
 
             # The authentication-context rule and the activation enablement rule together decide
             # whether activation requires MFA or an authentication context, so when both are sent
-            # they are applied together or not at all. Should Microsoft Graph accept the first (in
-            # patch order) and reject the second, the first is PATCHed straight back to its live
-            # version: left half-applied, the pair can leave activation with NEITHER control -- a
-            # context disabled for an MFA flag that never arrived, or MFA cleared for a context that
-            # never arrived. Every changed rule is a clone of a live one (the patch builder refuses a
-            # rule the policy lacks), so the live version is always there to send back. A rejected
-            # FIRST half needs nothing: the second was then validated against an unchanged policy.
-            $PairIds = @($SendIds | Where-Object { $_ -in @('AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment') })
-            $PairFirst = $null
-            $PairSecond = $null
-            if ($PairIds.Count -eq 2) {
-                $PairFirst = $PairIds[0]
-                $PairSecond = $PairIds[1]
-            }
-            $Restored = $null
-            $RestoreError = $null
-
-            $Accepted = [System.Collections.Generic.List[string]]::new()
-            $Failed = [System.Collections.Generic.List[string]]::new()
-            foreach ($Rule in $ToSend) {
-                $RuleId = [string]$Rule.id
-                # Invoke-OERGraphRequest takes a [hashtable] body and the builder's changed rules are
-                # PSCustomObject clones, so each is converted with a JSON round-trip (the same idiom
-                # Enable-OERGroupPermanentEligibility uses for a single-rule PATCH).
-                $Body = $Rule | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
-                try {
-                    Invoke-OERGraphRequest -Method PATCH -Uri ('v1.0/policies/roleManagementPolicies/{0}/rules/{1}' -f $ResolvedPolicyId, $RuleId) -Body $Body | Out-Null
-                    $Accepted.Add($RuleId)
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    $Failed.Add($RuleId)
-                    Write-Warning "Rule '$RuleId' of directory role management policy '$ResolvedPolicyId' was not applied: $($PSItem.Exception.Message)"
-                }
-
-                if ($RuleId -eq $PairSecond -and $Failed.Contains($RuleId) -and $Accepted.Contains($PairFirst)) {
-                    $LiveBody = $LiveById[$PairFirst] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable
-                    try {
-                        Invoke-OERGraphRequest -Method PATCH -Uri ('v1.0/policies/roleManagementPolicies/{0}/rules/{1}' -f $ResolvedPolicyId, $PairFirst) -Body $LiveBody | Out-Null
-                        [void]$Accepted.Remove($PairFirst)
-                        $Restored = $PairFirst
-                    } catch {
-                        Remove-OERErrorRecord -Record $PSItem
-                        $RestoreError = $PSItem.Exception.Message
-                        Write-Warning "Rule '$PairFirst' of directory role management policy '$ResolvedPolicyId' could not be put back to its value before this call: $RestoreError"
-                    }
-                }
-            }
+            # they are applied together or not at all: should Microsoft Graph accept the first (in
+            # patch order) and reject the second, the helper PATCHes the first straight back to its
+            # live version. Every changed rule is a clone of a live one (the patch builder refuses a
+            # rule the policy lacks), so the live version is always in $Rules to send back.
+            $SendResult = Send-OERPimRulePatch -Rule $ToSend -RulesPath ('v1.0/policies/roleManagementPolicies/{0}/rules' -f $ResolvedPolicyId) -LiveRule $Rules -PolicyLabel "directory role management policy '$ResolvedPolicyId'"
+            # The helper writes no warning itself, so a -WarningAction Stop caller is never stopped
+            # half-way: its messages are written here, once every rule and the put-back were sent.
+            foreach ($Message in $SendResult.Warning) { Write-Warning $Message }
+            $Accepted = [string[]]$SendResult.Accepted
+            $Failed = [string[]]$SendResult.Failed
+            $Restored = $SendResult.Restored
+            $RestoreError = $SendResult.RestoreError
+            $PairFirst = $SendResult.PairFirst
+            $PairSecond = $SendResult.PairSecond
 
             # What was accepted, overlaid on the live rules: a rejected rule, and a rule put back
             # above, keeps its live version.
             $Effective = @(foreach ($PlannedRule in @($Plan.Rules)) {
                     $PlannedId = [string]$PlannedRule.id
-                    if (($Failed.Contains($PlannedId) -or $PlannedId -eq $Restored) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
+                    if (($Failed -contains $PlannedId -or $PlannedId -eq $Restored) -and $LiveById.ContainsKey($PlannedId)) { $LiveById[$PlannedId] } else { $PlannedRule }
                 })
             $ConvertParams = @{
                 Rules         = $Effective
                 PolicyId      = $ResolvedPolicyId
                 Scope         = '/'
                 ApproverShape = 'Graph'
-                ChangedRuleId = $Accepted.ToArray()
+                ChangedRuleId = $Accepted
             }
             if ($PSCmdlet.ParameterSetName -eq 'ByRole') {
                 $ConvertParams.RoleName = $RoleNameOut
