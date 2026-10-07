@@ -13,14 +13,14 @@ function New-OEREligibleRoleAssignment {
     Supports -WhatIf/-Confirm. Requires an ARM token; authentication is
     ensured via Initialize-OERAuth -IncludeARM. A permanent grant that needs the role management
     policy opened opens it only once the assignment itself is confirmed (declining the prompt
-    weakens nothing, while -WhatIf still plans the policy change). A grant that then fails rolls the
-    policy back first, then reports a PolicyOpenedButGrantFailed error naming the policy, whether
-    the rollback succeeded and how the request failed, and only then re-publishes the grant's own
-    error, so a caller running with -ErrorAction Stop is stopped by PolicyOpenedButGrantFailed after
-    the rollback. The rollback is not asked again, even under -Confirm: it puts back this
-    invocation's own change, which the operator already confirmed. Principal resolution runs BEFORE
-    scope resolution, so a call supplying both an unresolvable principal and an invalid scope
-    reports the principal error, not InvalidScope.
+    weakens nothing, while -WhatIf still plans the policy change). A grant that is then refused
+    rolls the policy back first, then reports a PolicyOpenedButGrantFailed error naming the
+    policy, whether the rollback succeeded and how the request failed, and only then re-publishes
+    the grant's own error, so a caller running with -ErrorAction Stop is stopped by
+    PolicyOpenedButGrantFailed after the rollback. The rollback is not asked again, even under
+    -Confirm: it puts back this invocation's own change, which the operator already confirmed.
+    Principal resolution runs BEFORE scope resolution, so a call supplying both an unresolvable
+    principal and an invalid scope reports the principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -332,8 +332,9 @@ function New-OEREligibleRoleAssignment {
             # invocation's own open, which the operator already confirmed, and under an explicit
             # -Confirm a declined nested prompt would emit nothing and throw nothing, so the policy
             # would stay open while the record said it was rolled back. $Reverted is taken from a call
-            # that did not throw, never from its output: a rollback that finds nothing to change may
-            # emit nothing.
+            # that did not throw, never from its output: the rollback cannot be declined
+            # (-Confirm:$false), and under -ErrorAction Stop every failure of it, NoChange included,
+            # throws, so a call that returns is a rollback written.
             $RollBackOpenedPolicy = {
                 $Reverted = $false
                 try {

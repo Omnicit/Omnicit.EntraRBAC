@@ -15,7 +15,10 @@ function Test-OERScheduleRequestFailed {
     Remove-OERActiveDirectoryRoleAssignment, New- and Remove-OEREligibleRoleAssignment, New- and
     Remove-OERActiveRoleAssignment, and Enable- and Disable-OEREligibleRoleAssignment -- and by the
     two new-group replication waits in Sync-OERStructureGroup. Nothing else in the module compares a
-    status with a Failed literal; the cohort check in this function's unit test file holds both.
+    status with a Failed literal. The cohort check in this function's unit test file holds that the
+    twelve cmdlet files call this function and that no other file under source/ compares a status
+    with a Failed literal in the shapes it scans; it does not hold the two replication waits, whose
+    behaviour tests in tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1 do.
 
     The documented statuses. Microsoft Graph, on the request resource that
     unifiedRoleEligibilityScheduleRequest, unifiedRoleAssignmentScheduleRequest and
