@@ -13,8 +13,9 @@ tenant's user, group and administrative-unit counts with the low-risk directory 
 uses, the PIM policy of both low-risk directory roles (Message Center Reader and Reports Reader), and
 the member PIM policy of `oer-s96-pim`. It then brings that member policy to the starting state:
 multi-factor authentication on activation, the authentication context off, and eligible assignments
-that must expire. Section 1 applies one document to `oer-s96-pim` and to the chosen low-risk
-directory role: an authentication context on both policies, which clears MFA, and a PERMANENT member
+that must expire. Section 1 first requires MFA on activation for the chosen low-risk directory role
+when neither role carries a pair to reconcile (1.0), then applies one document to `oer-s96-pim` and
+to that role: an authentication context on both policies, which clears MFA, and a PERMANENT member
 eligibility of `oer-s96-user`, which opens the group's policy for permanent eligibility. Section 2
 writes nothing. Section 3 creates the group `oer-s96-new` INTO `oer-s96-au` with `Invoke-OERStructure
 -Prune`. The teardown puts the directory role policy back to its baseline, removes the eligibility,
@@ -213,7 +214,8 @@ function Get-S96DocumentW {
                 eligibility = @([ordered]@{ principal = $UserUpn; accessType = 'member' })
             })
     }
-    if ($RoleForm -eq 'clearMfa') { $Doc.directoryRoleManagementPolicies = @([ordered]@{ role = $Role; authenticationContextId = $ContextId }) }
+    # 'setMfaFirst' is 'clearMfa' once 1.0 has required MFA on activation for the role.
+    if ($RoleForm -in @('clearMfa', 'setMfaFirst')) { $Doc.directoryRoleManagementPolicies = @([ordered]@{ role = $Role; authenticationContextId = $ContextId }) }
     elseif ($RoleForm -eq 'disableContext') { $Doc.directoryRoleManagementPolicies = @([ordered]@{ role = $Role; requireMfaOnActivation = $true }) }
     $Doc | ConvertTo-Json -Depth 10
 }
@@ -349,7 +351,8 @@ Disconnect-OerLive
 **Expect:** a published context (`c` and a number); `oer-s96-pim member policy: MFA on activation:
 True; authentication context: ''; permanent eligibility allowed: False`; for the form `clearMfa`,
 `'<role>' policy: MFA on activation: True; authentication context: ''` (for `disableContext`, a
-context in place); `Eligibility schedules in oer-s96-pim: 0`.
+context in place; for `setMfaFirst`, MFA `False` and no context, which 1.0 changes);
+`Eligibility schedules in oer-s96-pim: 0`.
 **Failure looks like:** no published context -- the authentication-context halves of section 1 are
 class B; a different starting state -- re-run 0.3, or read the prereq's lines.
 
@@ -363,6 +366,37 @@ state each of the three gives one warning in a real run: the group's MFA is clea
 handler, in both modes, ruling R5), the group's policy is opened for permanent eligibility (by
 `Add-OERGroupEligibility` in a real run, by the handler under `-WhatIf`), and the directory role's MFA
 is cleared (by `Set-OERDirectoryRoleManagementPolicy` in a real run, by the handler under `-WhatIf`).
+
+### 1.0. The directory role's starting state: MFA required on activation
+
+- [ ] **1.0** For the form `setMfaFirst` (neither low-risk role carried an MFA / authentication-context pair to reconcile, 0.2), a real run of a one-entry document requiring MFA on activation for the chosen role reports `Updated`, writes no warning, and the role then reads with MFA required; the teardown puts the baseline back. For any other form nothing is written.
+
+```powershell
+Connect-OerLive -Graph
+if ($RoleForm -eq 'setMfaFirst') {
+    Start-S96Fence
+    $D0 = [ordered]@{ version = '1.0'; directoryRoleManagementPolicies = @([ordered]@{ role = $Role; requireMfaOnActivation = $true }) } | ConvertTo-Json -Depth 10
+    $Cap = Invoke-S96Captured -Label '1.0' -Call { Invoke-OERStructure -Json $D0 -Confirm:$false }
+    Write-S96Capture -Label '1.0' -Capture $Cap
+    Write-OerLiveStep "1.0 rows: $(@($Cap.Output | Where-Object { $_.PSObject.Properties['Action'] } | ForEach-Object { $_.Action }) -join ', '); warning lines: $(@($Cap.Lines | Where-Object { $_.StartsWith('WARNING: ', [System.StringComparison]::Ordinal) }).Count); errors: $($Cap.Errors.Count); Graph writes: $($global:S96Writes.Count) ($(@($global:S96Writes) -join ', '))"
+    Stop-S96Fence
+    $Read = { $P = Get-OERDirectoryRoleManagementPolicy -Role $Role -ErrorAction Stop; "MFA on activation $($P.RequireMfaOnActivation), context '$($P.AuthenticationContextId)'" }
+    $Wait = Wait-OerLiveConverged -Activity "'$Role' requires MFA on activation" -Read { & $Read } -Test { $args[0] -eq "MFA on activation True, context ''" }
+    $Steady = @(1..3 | ForEach-Object { Start-Sleep -Seconds 5; & $Read })
+    Write-OerLiveStep "1.0 '$Role' after $($Wait.Attempts) read(s): $($Wait.Value); three reads 5 s apart agree: $(@($Steady | Select-Object -Unique).Count -eq 1)"
+} else {
+    Write-OerLiveStep "1.0 form '$RoleForm': nothing to set."
+}
+Disconnect-OerLive
+```
+
+**Expect:** for `setMfaFirst`: `rows: Updated`; `warning lines: 0`; `errors: 0`; one Graph write
+(`PATCH`, the activation enablement rule); `MFA on activation True, context ''` and three reads that
+agree (`True`).
+**Failure looks like:** a warning -- the plan would then not start from a clean pair; a `Failed` row --
+read its Detail; a 401/403 -- STOP (the identity holds this permission since Sprint 6).
+
+Result:
 
 ### 1.1. -WhatIf: the three warnings, each before its own What if line, and nothing written
 
@@ -378,7 +412,7 @@ $Gid = [string]$Gp.GroupId
 $WantGrp = "WARNING: Policy '$($Gp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx"
 $WantElig = "WARNING: This eligibility requires opening the PIM-for-groups policy for group '$Gid' (member access) to allow PERMANENT eligible assignments"
 $Dp = if ($Role) { Get-OERDirectoryRoleManagementPolicy -Role $Role -ErrorAction Stop }
-$WantDir = if ($RoleForm -eq 'clearMfa') { "WARNING: Policy '$($Dp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx" } elseif ($RoleForm -eq 'disableContext') { "WARNING: Policy '$($Dp.PolicyId)': authentication context '$($Dp.AuthenticationContextId)' disabled" } else { $null }
+$WantDir = if ($RoleForm -in @('clearMfa', 'setMfaFirst')) { "WARNING: Policy '$($Dp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx" } elseif ($RoleForm -eq 'disableContext') { "WARNING: Policy '$($Dp.PolicyId)': authentication context '$($Dp.AuthenticationContextId)' disabled" } else { $null }
 $Cap = Invoke-S96Captured -Label '1.1' -Call { Invoke-OERStructure -Json $W -WhatIf }
 Write-S96Capture -Label '1.1' -Capture $Cap
 $L = $Cap.Lines
@@ -420,7 +454,7 @@ $Gid = [string]$Gp.GroupId
 $WantGrp = "WARNING: Policy '$($Gp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx"
 $WantElig = "WARNING: This eligibility requires opening the PIM-for-groups policy for group '$Gid' (member access) to allow PERMANENT eligible assignments"
 $Dp = if ($Role) { Get-OERDirectoryRoleManagementPolicy -Role $Role -ErrorAction Stop }
-$WantDir = if ($RoleForm -eq 'clearMfa') { "WARNING: Policy '$($Dp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx" } elseif ($RoleForm -eq 'disableContext') { "WARNING: Policy '$($Dp.PolicyId)': authentication context '$($Dp.AuthenticationContextId)' disabled" } else { $null }
+$WantDir = if ($RoleForm -in @('clearMfa', 'setMfaFirst')) { "WARNING: Policy '$($Dp.PolicyId)': mfa cleared: mutually exclusive with authenticationContextId=$Ctx" } elseif ($RoleForm -eq 'disableContext') { "WARNING: Policy '$($Dp.PolicyId)': authentication context '$($Dp.AuthenticationContextId)' disabled" } else { $null }
 $Cap = Invoke-S96Captured -Label '1.2' -Call { Invoke-OERStructure -Json $W -Confirm:$false }
 Write-S96Capture -Label '1.2' -Capture $Cap
 $L = $Cap.Lines
@@ -762,7 +796,9 @@ Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0,
 ```
 
 **Expect:** the teardown's identity lines `True`; `Teardown A: '<role>' at its baseline: True (rules
-differing before: 2: ...)` for the chosen role and `(rules differing before: 0)` for the other;
+differing before: 1 or 2: ...)` for the chosen role (the authentication context rule, and the
+enablement rule unless 1.0 and 1.2 left it as it was) and `(rules differing before: 0)` for the
+other;
 `Teardown B: oer-s96-pim: direct eligibility schedules 1` and its removal, `oer-s96-new: ... 0`;
 `Teardown C: ... restored: True`; the library's step 5 removing both groups and step 6 the user;
 `Teardown E: deleted oer-s96-au`; the sweep empty; the three counts equal to the baseline (`True`);
