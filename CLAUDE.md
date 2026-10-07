@@ -94,7 +94,8 @@ tests/
   Unit/Formats/               # FormatViews.Tests.ps1 -- format-view rendering checks
   Unit/TestHelpers/           # Two helpers and one suite. OERConfirmHost.ps1 hosts a runspace whose
                               #   PSHost answers ShouldProcess prompts -- the only way to test a
-                              #   genuine DECLINE or to read the prompt/target text.
+                              #   genuine DECLINE, to read the prompt/target text, or to see the
+                              #   order of warnings, 'What if:' lines and prompts.
                               #   OERTransportTripwire.ps1 is the transport tripwire every unit test
                               #   file installs; OERTransportTripwire.Tests.ps1 is its known-answer
                               #   suite.
@@ -209,7 +210,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Nine cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Ten cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -237,6 +238,13 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
   asserting every row is `Unchanged`.
+- `Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` -- AST-driven: asserts no
+  `source/Public/*.ps1` file writes a `Write-Warning` after its first `$PSCmdlet.ShouldProcess`,
+  except the warnings its allowlist names with a reason (an entry matching no warning, or two, fails
+  too); pins by name and text the twenty cmdlets that warn before their gate; and proves each moved
+  warning at run time on `OERConfirmHost`, before the `What if:` line and before the `-Confirm`
+  prompt, with no write request. `OER_COHORT_SOURCE_ROOT` points its AST parts at a mutated copy of
+  `source/` and is never set in CI. It imports the module, so it installs the transport tripwire.
 - `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
   the six names, resolution from the module scope, parameter parity, mock precedence, the record
   and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
@@ -798,6 +806,21 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   literals (`$null`, `$true`, `$false`), and the module-scope cache variables (`$script:_OER*`).
 - **One function per file; filename must equal function name.**
 - `[CmdletBinding(SupportsShouldProcess)]` on every state-changing function (create, update, delete).
+- **A warning about a deletion or about widened access stands BEFORE the cmdlet's own
+  `$PSCmdlet.ShouldProcess`**, so `-WhatIf` shows it and a `-Confirm` prompt is answered with it on
+  screen; written inside the gate it prints only after the answer, and never under `-WhatIf`. A
+  warning that needs a value computed only inside the gate moves out with that computation, or is
+  named, with its reason, in the allowlist of `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1`
+  -- an outcome warning, one that depends on what the operator confirmed, or one not about the action
+  at all. That cohort fails every other `Write-Warning` after a public cmdlet's first
+  `$PSCmdlet.ShouldProcess`. In the apply engine a `Sync-OERStructure*` handler writes the same
+  warning before `$Caller.ShouldProcess` only when the cmdlet it calls will not write it, so the plan
+  shows it and a real run never warns twice: under `-WhatIf`, where the cmdlet is never called, and
+  in both modes for the group PIM MFA / authentication-context pair the diff reconciles, since
+  `Set-OERGroupPimPolicy`, given the reconciled parameters, writes none. The handler's tests run each
+  such case as a plan and as a real run with the real cmdlet, from one live state, and hold the same
+  text and exactly one warning in the run.
+  `Why: docs/development/rationale.md#warning-before-confirmation`
 - `[OutputType([PSCustomObject])]` on every function that returns type-tagged objects.
 - **Output tagging is mandatory** -- never return raw hashtables from `Invoke-OERGraphRequest`:
   ```powershell
