@@ -762,7 +762,7 @@ $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'oer-s96-au' -ErrorAction St
 $NewId = [string]@((Invoke-OerLiveGraph -Uri "v1.0/groups?`$filter=displayName eq 'oer-s96-new'&`$select=id").Body['value'])[0]['id']
 $Read = { $R = Invoke-OerLiveGraph -All -Uri "v1.0/directory/administrativeUnits/$($Au.Id)/members?`$select=id"; Assert-OerLiveOk -Response $R -Activity 'Reading the members of oer-s96-au' | Out-Null; , @(@($R.Body['value']) | ForEach-Object { [string]$_['id'] }) }
 $Wait = Wait-OerLiveConverged -Activity 'oer-s96-au lists oer-s96-new' -Read $Read -Test { @($args[0]) -contains $NewId }
-$Steady = @(1..3 | ForEach-Object { Start-Sleep -Seconds 5; @(& $Read) -contains $NewId })
+$Steady = @(1..3 | ForEach-Object { Start-Sleep -Seconds 5; $Ids = & $Read; @($Ids) -contains $NewId })
 Write-OerLiveStep "3.3 oer-s96-au lists oer-s96-new after $($Wait.Attempts) read(s): True; three reads 5 s apart: $($Steady -join ', ')"
 Disconnect-OerLive
 ```
