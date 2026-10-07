@@ -399,3 +399,143 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: a declared approver, m
         }
     }
 }
+
+Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: the plan shows the MFA / authentication context warning a real run gives (BL-17)' {
+    # Set-OERDirectoryRoleManagementPolicy warns, before its own gate, when it clears MFA on activation
+    # or disables the authentication context. Under -WhatIf the engine never calls it, so the handler
+    # takes the same decision from the same inputs and writes the cmdlet's own text before its gate --
+    # and only under -WhatIf: a real run calls the cmdlet, which writes it, and a copy from the handler
+    # would warn twice. The warnings are counted from the stream (3>&1), with -WarningAction Continue
+    # pinned on the call. In the real runs below Set-OERDirectoryRoleManagementPolicy runs for REAL:
+    # only auth, the handler's policy read and the Graph transport are mocked, and the live rules are
+    # built once per test and fed to both the handler's read and the cmdlet's read of the policy.
+    BeforeAll {
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncDrmpWarnViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureDirectoryRoleManagementPolicy -Item $Item -Caller $PSCmdlet
+            }
+            # One run of the handler: its rows, and the text of every warning that reached the stream.
+            function script:Invoke-DrmpWarnCapture {
+                param([PSCustomObject]$Item, [bool]$WhatIfRun)
+                $All = @(Invoke-SyncDrmpWarnViaCaller -Item $Item -WhatIf:$WhatIfRun -Confirm:$false -WarningAction Continue -ErrorAction Stop 3>&1)
+                [PSCustomObject]@{
+                    Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                    Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                }
+            }
+            # The live rules of the policy in the Microsoft Graph v1.0 shape: MFA on activation on or off,
+            # and the authentication context enabled with a claim value, or disabled.
+            function script:New-DrmpWarnRule {
+                param([bool]$Mfa, [string]$ContextId)
+                $Enabled = @('Justification')
+                if ($Mfa) { $Enabled = @('MultiFactorAuthentication', 'Justification') }
+                @(
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyExpirationRule'; id = 'Expiration_EndUser_Assignment'; isExpirationRequired = $true; maximumDuration = 'PT8H' }
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = $Enabled }
+                    @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'
+                        isEnabled = (-not [string]::IsNullOrEmpty($ContextId)); claimValue = $ContextId }
+                )
+            }
+        }
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            Mock Initialize-OERAuth {}
+            Mock Get-OERDirectoryRoleManagementPolicy {
+                ConvertTo-OERRoleManagementPolicy -Rules @($script:DrmpWarnRules) -PolicyId 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010' `
+                    -Scope '/' -RoleName 'Reports Reader' -ApproverShape Graph
+            }
+            # The real cmdlet's read of the policy by id and its PATCHes. Anything else is not simulated
+            # and throws.
+            Mock Invoke-OERGraphRequest {
+                if ($Method -eq 'PATCH') { return @{} }
+                if ($Uri -eq 'v1.0/policies/roleManagementPolicies/DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010?$expand=rules') {
+                    return @{
+                        id        = 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010'
+                        scopeId   = '/'
+                        scopeType = 'DirectoryRole'
+                        rules     = @($script:DrmpWarnRules)
+                    }
+                }
+                throw "unexpected $Method $Uri"
+            }
+        }
+    }
+
+    It 'writes the warning of Set-OERDirectoryRoleManagementPolicy once under -WhatIf, before the gate, and never calls the cmdlet (<Arm>)' -ForEach @(
+        @{ Arm = 'ClearMfa'; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'
+            Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': mfa cleared: mutually exclusive with authenticationContextId=c1" }
+        @{ Arm = 'DisableAuthContext'; Mfa = $false; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'
+            Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': authentication context 'c7' disabled: mutually exclusive with multi-factor authentication on activation" }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Mfa = $Mfa; Ctx = $Ctx; Json = $Json; Expected = $Expected } {
+            param($Mfa, $Ctx, $Json, $Expected)
+            $script:DrmpWarnRules = New-DrmpWarnRule -Mfa $Mfa -ContextId $Ctx
+            Mock Set-OERDirectoryRoleManagementPolicy {}
+            $Out = Invoke-DrmpWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+            # Reached: the gate declined and the plan row was written.
+            @($Out.Rows).Action | Should -Be @('Skipped')
+            $Out.Rows[0].Detail | Should -BeLike "would update directory role management policy for 'Reports Reader' (*"
+            Should -Invoke Set-OERDirectoryRoleManagementPolicy -Times 0
+            $Out.Warnings.Count | Should -Be 1
+            $Out.Warnings[0] | Should -BeExactly $Expected
+        }
+    }
+
+    # The parity matrix: for every combination of the live policy (MFA on activation on or off, the
+    # authentication context enabled as 'c7' or disabled) and the declared change (requireMfaOnActivation
+    # true, authenticationContextId 'c1', authenticationContextId ''), plus one row that turns MFA off
+    # while it enables a context, the handler's -WhatIf warning, or
+    # its absence, is what the REAL Set-OERDirectoryRoleManagementPolicy writes for the same splat and
+    # the same live rules in a real run -- once, with the same text. Expected names the outcome, so a
+    # matrix whose rows all agree on silence cannot pass. A row whose declaration already matches the
+    # live policy is Unchanged and calls nothing in either mode.
+    It 'warns under -WhatIf exactly as the real cmdlet does in a real run: live MFA <LiveMfa>, live context <LiveCtx>, declared <Declared>' -ForEach @(
+        @{ LiveMfa = 'off'; LiveCtx = 'disabled'; Declared = 'requireMfaOnActivation true'; Mfa = $false; Ctx = ''; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'; Action = 'Updated'; Patches = 1; Expected = $null }
+        @{ LiveMfa = 'off'; LiveCtx = 'disabled'; Declared = "authenticationContextId 'c1'"; Mfa = $false; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 1; Expected = $null }
+        @{ LiveMfa = 'off'; LiveCtx = 'disabled'; Declared = "authenticationContextId ''"; Mfa = $false; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "" }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
+        @{ LiveMfa = 'off'; LiveCtx = 'c7'; Declared = 'requireMfaOnActivation true'; Mfa = $false; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'; Action = 'Updated'; Patches = 2
+            Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': authentication context 'c7' disabled: mutually exclusive with multi-factor authentication on activation" }
+        @{ LiveMfa = 'off'; LiveCtx = 'c7'; Declared = "authenticationContextId 'c1'"; Mfa = $false; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 1; Expected = $null }
+        @{ LiveMfa = 'off'; LiveCtx = 'c7'; Declared = "authenticationContextId ''"; Mfa = $false; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "authenticationContextId": "" }'; Action = 'Updated'; Patches = 1; Expected = $null }
+        @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = 'requireMfaOnActivation true'; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
+        @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "authenticationContextId 'c1'"; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2
+            Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': mfa cleared: mutually exclusive with authenticationContextId=c1" }
+        @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "authenticationContextId ''"; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "" }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
+        # MFA turned off in the same change that enables a context: the cmdlet toggles MFA off first, so
+        # nothing is left to clear and neither mode warns.
+        @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "requireMfaOnActivation false and authenticationContextId 'c1'"; Mfa = $true; Ctx = ''
+            Json = '{ "role": "Reports Reader", "requireMfaOnActivation": false, "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2; Expected = $null }
+        @{ LiveMfa = 'on'; LiveCtx = 'c7'; Declared = 'requireMfaOnActivation true'; Mfa = $true; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
+        @{ LiveMfa = 'on'; LiveCtx = 'c7'; Declared = "authenticationContextId 'c1'"; Mfa = $true; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2
+            Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': mfa cleared: mutually exclusive with authenticationContextId=c1" }
+        @{ LiveMfa = 'on'; LiveCtx = 'c7'; Declared = "authenticationContextId ''"; Mfa = $true; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "authenticationContextId": "" }'; Action = 'Updated'; Patches = 1; Expected = $null }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Mfa = $Mfa; Ctx = $Ctx; Json = $Json; Action = $Action; Patches = $Patches; Expected = $Expected } {
+            param($Mfa, $Ctx, $Json, $Action, $Patches, $Expected)
+            $script:DrmpWarnRules = New-DrmpWarnRule -Mfa $Mfa -ContextId $Ctx
+            $Plan = Invoke-DrmpWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+            $PlanAction = if ($Action -eq 'Updated') { 'Skipped' } else { 'Unchanged' }
+            @($Plan.Rows).Action | Should -Be @($PlanAction)
+            Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+            $Run = Invoke-DrmpWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+            @($Run.Rows).Action | Should -Be @($Action)
+            if ($Action -eq 'Updated') {
+                # Reached: the real cmdlet read the policy by its id and sent the changed rules.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Uri -like 'v1.0/policies/roleManagementPolicies/*?$expand=rules' }
+                Should -Invoke Invoke-OERGraphRequest -Times $Patches -Exactly -ParameterFilter { $Method -eq 'PATCH' }
+            }
+            if ($null -eq $Expected) {
+                $Plan.Warnings.Count | Should -Be 0
+                $Run.Warnings.Count | Should -Be 0
+            } else {
+                $Plan.Warnings.Count | Should -Be 1
+                $Plan.Warnings[0] | Should -BeExactly $Expected
+                $Run.Warnings.Count | Should -Be 1 -Because 'a real run must warn once, from the cmdlet, never also from the handler'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+            }
+        }
+    }
+}

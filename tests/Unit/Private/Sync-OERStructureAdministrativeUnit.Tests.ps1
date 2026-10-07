@@ -293,7 +293,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
 
     It 'streams only its own warning for a scopedRole prune, silencing the duplicate the real Remove cmdlet writes' {
         # Remove-OERAdministrativeUnitScopedRole runs for REAL: only auth and the Graph transport are
-        # mocked, so its own "Removing scoped role membership" warning is written inside its gate. The
+        # mocked, so its own "Removing scoped role membership" warning is written, before its own gate. The
         # warning stream itself is captured (3>&1): -WarningVariable would also collect a warning the
         # cmdlet writes under a call-site SilentlyContinue, which never reaches the stream.
         InModuleScope $script:moduleName {
@@ -317,7 +317,8 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
             $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
             @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
-            # The DELETE ran, so the cmdlet passed its own gate and reached its own warning.
+            # The DELETE ran, so the cmdlet ran and wrote its own warning, before its own gate; the
+            # handler's call-site SilentlyContinue kept it off the stream.
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' -and $Uri -like '*/scopedRoleMembers/srm-extra' }
             $Streamed.Count | Should -Be 1
             $Streamed[0] | Should -BeLike "Sync-OERStructureAdministrativeUnit: removing undeclared scopedRole 'User Administrator'*"
@@ -1475,6 +1476,103 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
         }
     }
 
+    # BL-07: a group the groups section created INTO this unit earlier in the same run is a live member
+    # the unit's entry need not list (administrativeUnit never round-trips). Sync-OERStructureGroup
+    # records it in the run-scoped list the engine passes as -CreatedUnitMembership; the member prune
+    # pass withholds it under -Prune and reports it Extra without -Prune, while every other undeclared
+    # member is pruned as before. The live unit holds the created group and one unrecorded user.
+    Context 'a group this run created into the unit (BL-07)' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { '66666666-6666-6666-6666-aaaaaaaaaaaa' }
+                Mock Get-OERAdministrativeUnit {
+                    $GroupMember = [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'grp-new'; Type = 'group' }
+                    $UserMember = [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+                    [PSCustomObject]@{ Id = '66666666-6666-6666-6666-aaaaaaaaaaaa'; Description = $null; Members = @($GroupMember, $UserMember); ScopedRoles = @() }
+                }
+                Mock Remove-OERAdministrativeUnitMember { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) $Reference }
+                Mock Initialize-OERAuth {}
+            }
+        }
+
+        It 'withholds the recorded group''s membership under -Prune and still prunes the unrecorded member, for a record naming the unit <Label>' -ForEach @(
+            @{ Label = 'by its display name, in another case'; Unit = 'au-it' }
+            @{ Label = 'by its object id, in another case'; Unit = '66666666-6666-6666-6666-AAAAAAAAAAAA' }
+            @{ Label = 'by its object id in braces, which New-OERGroup also reads as an id'; Unit = '{66666666-6666-6666-6666-aaaaaaaaaaaa}' }
+            @{ Label = 'by its object id without dashes, which New-OERGroup also reads as an id'; Unit = '66666666666666666666AAAAAAAAAAAA' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
+                param($Unit)
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $All = @(Invoke-SyncAuViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop 3>&1)
+                $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+                # Positive control: the pass reached the removal path, and removed the unrecorded member.
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                @($Records | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared member 'u-extra'" }).Count | Should -Be 1
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0 -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                $Withheld = @($Records | Where-Object { $_.Action -eq 'Skipped' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Section | Should -BeExactly 'administrativeUnits'
+                $Withheld[0].Item | Should -BeExactly 'AU-IT'
+                $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
+                    'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+                    "The next apply with -Prune removes it unless the unit's members name the group.")
+                $Streamed.Count | Should -Be 1
+                $Streamed[0] | Should -BeExactly "Sync-OERStructureAdministrativeUnit: removing undeclared member 'u-extra' from unit 'AU-IT'."
+            }
+        }
+
+        It 'reports the recorded group''s membership Extra without -Prune, as before, and removes nothing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-IT'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $Records = @(Invoke-SyncAuViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member '88888888-8888-8888-8888-888888888888' (use -Prune to remove)" }).Count | Should -Be 1
+                @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member 'u-extra' (use -Prune to remove)" }).Count | Should -Be 1
+            }
+        }
+
+        It 'prunes the group''s membership under -Prune when the record names <Label>' -ForEach @(
+            @{ Label = 'another unit'; Unit = 'AU-Other'; GroupId = '88888888-8888-8888-8888-888888888888' }
+            @{ Label = 'another unit by object id'; Unit = '77777777-7777-7777-7777-777777777777'; GroupId = '88888888-8888-8888-8888-888888888888' }
+            @{ Label = 'another group of this unit'; Unit = 'AU-IT'; GroupId = '99999999-9999-9999-9999-999999999999' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Unit = $Unit; GroupId = $GroupId } {
+                param($Unit, $GroupId)
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = $GroupId; Label = 'grp-other' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $Records = @(Invoke-SyncAuViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
+            }
+        }
+    }
+
     # The directory-role name map is what turns a live scoped role's role id into the name the document
     # declares it by. When that read fails the live roles are NOT nameless, they are unread, and -Prune must
     # not read a declared role as undeclared. These tests run the REAL Get-OERAdministrativeUnit and the REAL
@@ -2240,6 +2338,107 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 }
                 $script:A16Memberships.Count | Should -Be 1
                 [string]$script:A16Memberships[0].id | Should -BeExactly 'srm-seed-1'
+            }
+        }
+    }
+
+    Context 'a membership type change: the plan shows the warning a real run gives, and a run writes it once (BL-17)' {
+        # Set-OERAdministrativeUnit warns about a membership type change. Under -WhatIf the engine never
+        # calls it, so the handler writes the cmdlet's own text before its gate -- and only under -WhatIf:
+        # a real run calls the cmdlet, which writes it, and a copy from the handler would warn twice. The
+        # warnings are counted from the stream (3>&1), with -WarningAction Continue pinned on the call.
+        # In the real runs below Set-OERAdministrativeUnit runs for REAL: only auth, the unit lookup, the
+        # handler's own read and the Graph transport are mocked.
+        BeforeAll {
+            $script:AuWarnText = "Changing the membership type of administrative unit '11111111-1111-1111-1111-1111111111a1' to 'Dynamic'. " +
+                "The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership " +
+                'and members can no longer be added or removed manually.'
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncAuWarnViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet
+                }
+                # One run of the handler: its rows, and the text of every warning that reached the stream.
+                function script:Invoke-AuWarnCapture {
+                    param([PSCustomObject]$Item, [bool]$WhatIfRun)
+                    $All = @(Invoke-SyncAuWarnViaCaller -Item $Item -WhatIf:$WhatIfRun -Confirm:$false -WarningAction Continue -ErrorAction Stop 3>&1)
+                    [PSCustomObject]@{
+                        Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                        Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                    }
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERAdministrativeUnitId { '11111111-1111-1111-1111-1111111111a1' }
+                Mock Get-OERAdministrativeUnit {
+                    $Au = [PSCustomObject]@{
+                        Id                            = '11111111-1111-1111-1111-1111111111a1'
+                        DisplayName                   = 'AU-Warn'
+                        Description                   = 'old'
+                        MembershipType                = 'Assigned'
+                        MembershipRule                = $null
+                        MembershipRuleProcessingState = $null
+                        IsMemberManagementRestricted  = $false
+                        Visibility                    = $null
+                    }
+                    $Au | Add-Member -NotePropertyName Members -NotePropertyValue @() -Force
+                    $Au
+                }
+                # The real cmdlet's PATCH and its read-back. Anything else is not simulated and throws.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'PATCH') { return $null }
+                    if ($Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-1111111111a1') {
+                        return @{ id = '11111111-1111-1111-1111-1111111111a1'; displayName = 'AU-Warn'; membershipType = 'Dynamic' }
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+            }
+        }
+
+        It 'writes the warning of Set-OERAdministrativeUnit once under -WhatIf, before the gate, and never calls the cmdlet' {
+            InModuleScope $script:moduleName -Parameters @{ Expected = $script:AuWarnText } {
+                param($Expected)
+                Mock Set-OERAdministrativeUnit {}
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; dynamic = $true; membershipRule = '(user.department -eq "HR")'; members = $null; scopedRoles = $null }
+                $Out = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                # Reached: the gate declined and the plan row was written.
+                @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would update administrative unit properties (*MembershipType*' }).Count | Should -Be 1
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                $Out.Warnings.Count | Should -Be 1
+                $Out.Warnings[0] | Should -BeExactly $Expected
+            }
+        }
+
+        It 'writes it once in a real run, from the real Set-OERAdministrativeUnit, with the same text as the -WhatIf plan' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; dynamic = $true; membershipRule = '(user.department -eq "HR")'; members = $null; scopedRoles = $null }
+                $Plan = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                # The plan wrote nothing.
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+                $Run = Invoke-AuWarnCapture -Item $Item -WhatIfRun $false
+                # Reached: the real cmdlet passed its own gate and sent the membership type.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Body.membershipType -eq 'Dynamic' }
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                $Plan.Warnings.Count | Should -Be 1
+                $Run.Warnings.Count | Should -Be 1 -Because 'a real run must warn once, from the cmdlet, never also from the handler'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+            }
+        }
+
+        It 'writes no warning in either mode when the membership type does not change' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; description = 'new'; members = $null; scopedRoles = $null }
+                $Plan = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would update administrative unit properties (Description)' }).Count | Should -Be 1
+                $Plan.Warnings.Count | Should -Be 0
+                $Run = Invoke-AuWarnCapture -Item $Item -WhatIfRun $false
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Body.description -eq 'new' }
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                $Run.Warnings.Count | Should -Be 0
             }
         }
     }

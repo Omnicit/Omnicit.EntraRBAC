@@ -164,7 +164,7 @@ function Get-OERStructureSchemaJson {
           "mailNickname": { "type": "string" },
           "administrativeUnit": {
             "type": "string",
-            "description": "Administrative unit (display name or id) the group is created in. Create-only: it is applied when the group is created and is not captured by Get-OERInventory, so it never round-trips. Because of that, the SAME document's administrativeUnits[] entry whose displayName matches this value must also list this group's displayName in its own members array -- otherwise the administrativeUnits section of the SAME apply run (it is dispatched after groups) sees the group as an undeclared member of that unit and -Prune removes the membership the create just added, and every later apply does the same, since nothing re-applies this create-only field to self-heal it."
+            "description": "Administrative unit (display name or id) the group is created in. Create-only: it is applied when the group is created and is not captured by Get-OERInventory, so it never round-trips. Because of that, the SAME document's administrativeUnits[] entry whose displayName, or declared id, matches this value (ignoring case) must also list this group's displayName in its own members array -- otherwise every later apply sees the group as an undeclared member of that unit and -Prune removes the membership, since nothing re-applies this create-only field to self-heal it. Only the apply run that creates the group keeps it: that run withholds the prune of the membership it created (Skipped, prune withheld)."
           },
           "members": {
             "type": [ "array", "null" ],

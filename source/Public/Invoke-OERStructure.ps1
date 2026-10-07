@@ -39,7 +39,8 @@ function Invoke-OERStructure {
     entry that cannot be resolved withholds the prune of its collection: every undeclared live entry
     in it is reported Skipped with a Detail starting "prune withheld:", with or without -Prune,
     instead of being removed or reported Extra. A group's service principal, as a member or an
-    owner, is never removed (see -Prune). An OMITTED members, scopedRoles, resources or
+    owner, is never removed, and the run that creates a group into an administrative unit does not
+    remove that membership (see -Prune). An OMITTED members, scopedRoles, resources or
     resourceRoles key still prunes, so before the first write the engine lists every such key in one
     warning (see -Prune).
 
@@ -147,6 +148,15 @@ function Invoke-OERStructure {
     other member and owner is pruned as described here. Remove one with Remove-OERGroupMember when
     it is meant to go.
 
+    A group the document creates into an administrative unit (a groups[] entry's
+    administrativeUnit) is not removed from that unit by the run that creates it. administrativeUnit
+    is applied only when the group is created and never round-trips, so the unit's
+    administrativeUnits[] entry need not list the group, and the administrativeUnits section runs
+    after groups: with -Prune that membership is reported Skipped with a Detail starting "prune
+    withheld:", with no warning and no ShouldProcess prompt, and without -Prune it is reported Extra.
+    The next apply with -Prune removes it unless the unit's members name the group, and
+    Test-OERStructure reports a Warning finding when it can tell offline that they do not.
+
     A roleAssignments entry whose SCOPE cannot be resolved withholds the prune of the whole
     roleAssignments section, not only of one scope: it may be another spelling of any scope in the
     section, so every undeclared live assignment at every scope is reported Skipped (with or without
@@ -171,7 +181,8 @@ function Invoke-OERStructure {
     fails is reported Failed, and nothing in it is removed or reported Extra.
 
     Five collections are reconciled even when their key is omitted, against an empty declared set,
-    so -Prune removes every live entry in them (a group's service principals excepted, as above):
+    so -Prune removes every live entry in them (a group's service principals excepted, and, in the
+    run that creates it, a group's membership of the unit it was created into, as above):
     groups[].members, administrativeUnits[].members, administrativeUnits[].scopedRoles,
     catalogs[].resources and accessPackages[].resourceRoles. When
     -Prune is set, one warning lists every such omitted key in a section selected by -Include before
@@ -333,6 +344,12 @@ function Invoke-OERStructure {
         # The DirectoryRoleAssignments prune pass is section-wide: it runs once, on the first item.
         $DraReconciled = $false
 
+        # BL-07: the administrative unit memberships this run creates. Sync-OERStructureGroup adds a
+        # record for every group it creates INTO a unit (administrativeUnit never round-trips), and
+        # Sync-OERStructureAdministrativeUnit, dispatched after it, withholds the prune of each such
+        # membership in this run. One list per document; the -EnsureOnly pre-pass does not need it.
+        $CreatedUnitMembership = [System.Collections.Generic.List[object]]::new()
+
         # -- Before the first write: omitted collection keys that -Prune still reconciles ------------
         # Five collections are reconciled against an empty declared set when their key is omitted, so
         # -Prune removes every live entry in them. Get-OEROmittedPruneCollection owns which keys those
@@ -463,6 +480,11 @@ function Invoke-OERStructure {
                     $ExtraParams.DeclaredInSection = $Items
                     $ExtraParams.ReconcileSection  = -not $DraReconciled
                     $DraReconciled = $true
+                }
+                # Groups record the unit memberships they create; AdministrativeUnits withhold their
+                # prune. Both get the same list.
+                if ($Section.IncludeName -eq 'Groups' -or $Section.IncludeName -eq 'AdministrativeUnits') {
+                    $ExtraParams.CreatedUnitMembership = $CreatedUnitMembership
                 }
                 try {
                     $Records = & $Section.Handler -Item $It -Caller $PSCmdlet -Prune:$Prune -TenantAlias $TenantAlias @ExtraParams

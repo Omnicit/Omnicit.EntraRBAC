@@ -5,9 +5,10 @@ function Remove-OERAccessPackage {
 
     .DESCRIPTION
     Deletes an access package through Microsoft Graph. Accepts the package by -Id or -DisplayName
-    (resolved via Resolve-OERAccessPackageId). High-impact: emits an explicit warning and defaults to
-    ConfirmImpact High. Deleting a package with active assignments will fail at Graph; remove assignments
-    first. Supports -WhatIf and -Confirm.
+    (resolved via Resolve-OERAccessPackageId). High-impact: emits an explicit warning before the
+    confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact High.
+    Deleting a package with active assignments will fail at Graph; remove assignments first. Supports
+    -WhatIf and -Confirm.
 
     .PARAMETER Id
     The access package id (GUID) to delete. This value is used as given, with no existence check:
@@ -78,8 +79,9 @@ function Remove-OERAccessPackage {
             return
         }
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Deleting access package '$PackageId'. This is irreversible."
         if ($PSCmdlet.ShouldProcess($PackageId, 'Delete access package')) {
-            Write-Warning "Deleting access package '$PackageId'. This is irreversible."
             try {
                 $null = Invoke-OERGraphRequest -Method DELETE `
                     -Uri ("v1.0/identityGovernance/entitlementManagement/accessPackages/{0}" -f $PackageId)

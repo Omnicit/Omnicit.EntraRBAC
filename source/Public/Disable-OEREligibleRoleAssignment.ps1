@@ -10,9 +10,9 @@ function Disable-OEREligibleRoleAssignment {
     its principal, role definition, and scope. The principal may be given directly as -PrincipalId
     (object id, e.g. piped from Get-OERActiveRoleAssignment) or as a friendly -User/-Group/-ServicePrincipal
     value. roleDefinitionId is the FULL ARM id resolved from -Role.
-    This is a destructive operation (ConfirmImpact High) and emits a warning before the request.
-    Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
-    Initialize-OERAuth -IncludeARM.
+    This is a destructive operation (ConfirmImpact High) and emits a warning before the confirmation
+    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Requires an ARM token;
+    authentication is ensured via Initialize-OERAuth -IncludeARM.
 
     Azure Resource Manager can accept the deactivation request and answer it with a status in the
     Failed family (Failed, FailedAsResourceIsLocked, or any other status that starts with Failed, in
@@ -154,8 +154,9 @@ function Disable-OEREligibleRoleAssignment {
         elseif ($ServicePrincipal) { $ServicePrincipal }
         else { $ResolvedPrincipalId }
         $Target = "active assignment of role '$Role' for principal '$PrincipalLabel' at scope '$TargetScope'"
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Deactivating $Target."
         if ($PSCmdlet.ShouldProcess($Target, 'Deactivate active Azure role assignment')) {
-            Write-Warning "Deactivating $Target."
             $Name = [guid]::NewGuid().ToString()
             try {
                 $Response = Invoke-OERArmRequest -Method PUT -Path "$TargetScope/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/$Name`?api-version=2020-10-01" -Body $Body

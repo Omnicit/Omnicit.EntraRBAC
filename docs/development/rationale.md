@@ -1193,7 +1193,11 @@ composed from friendly parts, which is the job the friendly properties already d
 
 The deliberate exception is the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`,
 which intentionally also accepts braced, parenthesised and dash-less forms that `Test-OERGuid`
-rejects. Do not migrate those two call sites to `Test-OERGuid`.
+rejects. Do not migrate those two call sites to `Test-OERGuid`. Since Sprint 9 step 6 (ruling R14)
+two more read a group's `administrativeUnit` with the same cast, on purpose, so that they decide
+between an object id and a display name exactly as `New-OERGroup` does: the created-membership match
+in `Sync-OERStructureAdministrativeUnit` and the unit placement check (Rule 12) in
+`Test-OERStructureSchema`. Do not migrate them either.
 
 ## mfa-authcontext-exclusion
 
@@ -1232,6 +1236,21 @@ is correct, not a bug: PIM cannot hold the conflicting combination regardless of
 says, so the write path will change that field no matter what. A plan that printed `Unchanged` for
 a field the apply is about to overwrite would be lying to the operator; naming the field it is
 about to change is the honest plan.
+
+**The diff also says why, and the group handler warns with it (Sprint 9 step 6, BL-17).**
+`Resolve-OERGroupPimPolicyChange` returns `ConflictReason`: the resolution's `Reason` when its
+`ClearMfa` arm actually changes the enablement list or its `DisableAuthContext` arm runs, and `$null`
+otherwise, including when the reconciled list is already the live one. Because the diff hands
+`Set-OERGroupPimPolicy` parameters that are already reconciled, the cmdlet finds no conflict and
+writes no warning about the pair, so before this step a real `Invoke-OERStructure` run said what it
+cleared or disabled only in the result row's Detail. `Sync-OERStructureGroup` now writes
+`ConflictReason` as a warning before its `$Caller.ShouldProcess`, in a real run as under `-WhatIf`:
+`Policy 'ID': reason`, with the id of the policy it read, or
+`pimPolicy (ACCESSTYPE) of group 'NAME': reason` when no policy was read. The directory-role handler
+takes the same decision, through `Resolve-OERPimActivationConflict`, under `-WhatIf` only: its diff
+(`Resolve-OERRoleManagementPolicyChange`) does not reconcile the pair, so
+`Set-OERDirectoryRoleManagementPolicy` reconciles it itself and warns in a real run. Why the two
+differ: [#warning-before-confirmation](#warning-before-confirmation), Sprint 9 step 6, ruling R5.
 
 **The schema gate (`Test-OERStructureSchema`) treats the two sections differently on purpose.**
 The `roleManagementPolicies` (Azure PIM) section raises a hard `Error` for the same collision,
@@ -4800,6 +4819,58 @@ principal, applied with `-Prune -Confirm:$false` by that app, would remove it fr
 could cut its own privileges part-way through the run. Under A9 that service principal is never
 removed, so the case does not arise. A delegated user removing themselves through a group prune was
 possible before this fix and still is; this change does not touch it.
+
+**The five kinds of withheld prune `ConvertTo-OERPruneWithheldResult` builds.** One parameter set per
+kind, each a `Skipped` row whose Detail starts `prune withheld:` and carries no warning and no
+ShouldProcess prompt: a declared entry that could not be resolved, which withholds every candidate of
+its collection (`-Unresolved`); an entry whose scope could not be resolved, which withholds every
+candidate of the section (`-UnresolvedScope`, A12 under [#role-assignment-key](#role-assignment-key));
+a live administrative unit scoped role whose name the directory role list did not give, beside a
+role the document declares by a name no live role of that principal matches, which is neither added
+nor removed (`-Declared` with `-UnnamedRoleId`); a group member or owner that is a service principal
+(`-ObjectType`, A9 above); and, since Sprint 9 step 6, a live administrative unit member that is a
+group this run created into the unit (`-CreatedGroup`, BL-07, below). The directory role prune's two
+guards for the signed-in identity, under [#directory-role-assignments](#directory-role-assignments),
+write their own `prune withheld:` rows.
+
+**BL-07: the run that creates a unit membership does not prune it.** A group's `administrativeUnit`
+is applied only when `New-OERGroup -AdministrativeUnit` creates the group, and never round-trips, so
+the unit's own `administrativeUnits[]` entry need not list the group; and `Invoke-OERStructure` runs
+the `administrativeUnits` section after `groups`. Under `-Prune` the unit's prune pass therefore saw
+the new group as an undeclared member and removed, in the same run, the membership the create had
+just made. Now `Sync-OERStructureGroup` records each successful create into a unit -- the unit as
+the document names it, the new group's id and its name -- in a list `Invoke-OERStructure` keeps per
+document and passes to the groups and administrative units handlers as a private parameter (ruling
+R8: a run-scoped list through the handlers' extra parameters, as `roleAssignments` already does). A
+group `New-OERGroup` found already existing is recorded too, which can only withhold. The unit's
+prune pass, straight after the unresolved-entry call, withholds a candidate whose id is a recorded
+group id and whose record names this unit, by its display name or its object id (a reference that
+parses as a GUID, braced and dash-less forms included, is read as the unit's object id and compared
+as a GUID, as `New-OERGroup` reads it -- Sprint 9 step 6, ruling R14): with `-Prune` the
+row is `Skipped` and nothing is removed, without `-Prune` it is `Extra` as before, with the usual
+"use -Prune to remove" hint. Only the creating run withholds it. A later run cannot tell that the
+membership came from the create, since nothing records it in the tenant or the document, and
+withholding every group member of a unit would end the unit prune for groups altogether -- a
+decision this fix does not make. Every later apply with `-Prune` removes the membership unless the
+unit's `members` name the group.
+
+**The validator reports the later removal.** Rule 12 of `Test-OERStructureSchema` (issue #59)
+reports a Warning finding for a group whose `administrativeUnit` names a unit the same document
+reconciles without naming the group in its `members`. Since BL-07 it checks a template-based group
+under the name `Resolve-OERName` computes, as the duplicate check does; matches the unit the way
+`New-OERGroup` reads `administrativeUnit` -- a value that parses as a GUID by the `id` an entry
+declares, any other by `displayName`; and reports a unit named by an object id that no entry
+declares when an entry that may be that unit (one declaring no `id` of its own) reconciles its
+members without naming the group, since offline it cannot tell which unit that is. When the group
+declares no `id` of its own, a member that is an object id may be the group and counts as naming it,
+since an exported inventory lists a group member by its id (Sprint 9 step 6, ruling R9: no false
+finding, at the price of a missed one when that id is another object) -- unless that id is the `id`
+another `groups[]` entry declares, which names that other group (ruling R13). Its
+text says what the engine now does: the creating run withholds the prune, every later apply with
+`-Prune` removes the membership. `Invoke-OERStructure` surfaces no Warning finding -- it joins only
+the Error findings into `StructureValidationFailed`, when it refuses the document -- so this finding
+reaches an operator through `Test-OERStructure`.
+
 ## group-rename
 
 Sprint 6 step 5 made a group renameable through the apply document: `previousDisplayName` names the
@@ -5169,3 +5240,127 @@ prompt weakens nothing while `-WhatIf` still plans the policy change.
 `Add-OERGroupEligibility` keeps its older order, where its grant error is written before
 `PolicyOpenedButGrantFailed`, so under `-ErrorAction Stop` the advice naming the policy it left open
 is not written there. There is no rollback in it to skip, and the order was left alone in this step.
+
+## warning-before-confirmation
+
+Sprint 9 step 6 (BL-18, BL-17) moved the warnings about a deletion or about widened access to where
+an operator can still act on them: ahead of the confirmation gate. This section records rule A4 for
+the public cmdlets and for the apply engine, the rulings taken on it (numbered as in that step's
+ledger, so "ruling R5" below is Sprint 9 step 6's R5, not another section's), and what it does not
+cover. The
+same step's withheld prune of a unit membership the run created (BL-07) is described with the other
+kinds of withheld prune, under [#typed-group-member-read](#typed-group-member-read).
+
+**What was wrong (BL-18).** Sixteen public cmdlets wrote that warning inside
+`if ($PSCmdlet.ShouldProcess(...))`. A `-Confirm` prompt was then answered with no warning on screen,
+the warning printed only once the operator had said yes, and `-WhatIf` never showed it at all. A
+warning seen only after committing is not a guard. Four cmdlets -- `Remove-OERGroup`,
+`Remove-OERAdministrativeUnit`, `Remove-OERAccessReviewDefinition` and
+`Remove-OERAccessPackageAssignmentPolicy` -- already warned before their gate.
+
+**Rule A4 for cmdlets.** The warning stands directly before the cmdlet's own
+`$PSCmdlet.ShouldProcess`, its text unchanged. A warning that needs a value computed only inside the
+gate moves out with that computation, or is named as an exception with its reason; none of the
+sixteen needed either, since every value their texts use was already computed before the gate. The
+warning still comes after the cmdlet's own checks and lookups, so a call the cmdlet refuses before it
+reaches its gate writes its error and never the warning.
+
+**What it changes for a `-WarningAction Stop` caller.** With `-WarningAction Stop`, or
+`$WarningPreference = 'Stop'`, the first warning stops the cmdlet. None of the moved warnings stands
+in a `try`, so under `-WhatIf` such a caller is now stopped at the warning instead of seeing the
+`What if:` line, and under `-Confirm` before the prompt instead of after answering it. Nothing is
+changed either way; it is the direction the rule exists for. The release note says so.
+
+**Ruling R3: the cohort rule is "no warning after the first gate", not "no warning inside the if
+body".** `tests/Unit/Public/WarningBeforeConfirmation.Cohort.Tests.ps1` reads every
+`source/Public/*.ps1` with the AST and fails a `Write-Warning` that starts after the file's first
+`$PSCmdlet.ShouldProcess` call. That is stricter than the defect's own shape: it also catches
+`$Proceed = $PSCmdlet.ShouldProcess(...)` followed by `if ($Proceed) { Write-Warning ... }`, and an
+early `if (-not $PSCmdlet.ShouldProcess(...)) { return }`. A warning that can only follow the gate is
+named in the file's allowlist with its reason, in one of three kinds: an outcome warning, which
+reports what the action did (a read-back that failed after an add, the put-back messages, a removal
+after which the principal still holds the role another way); a warning that depends on what the
+operator confirmed (a declined partner rule, a live rule read only for a pair that will be sent); and
+a warning not about a deletion or widened access at all that stands after the gate only by position
+(`Export-OERInventory`'s apply-schema self-check, which runs on every path). An entry that matches no
+warning, or more than one, fails as well, so the list cannot go stale. If wrong: a future cmdlet with
+a legitimate warning after its gate is named in the list with its reason. Beside the rule the file
+pins the twenty cmdlets that warn before their gate, by name and warning, so a DELETED warning is
+caught and not only a moved one, and it proves each moved warning at run time: on `OERConfirmHost`,
+whose host now records the order of warnings, `What if:` lines and prompts, the warning comes before
+the `What if:` line under `-WhatIf` and before the prompt under `-Confirm` answered No, and no write
+request is sent. The number of gated public cmdlets and the roster are pinned, so a new gated cmdlet
+or a new warning before a gate is added to them on purpose. `OER_COHORT_SOURCE_ROOT` points the AST
+parts at a copy of `source/`, for a mutation proof; it is never set in CI.
+
+**Rule A4 for the apply engine (BL-17).** `Invoke-OERStructure` calls the module's cmdlets from its
+`Sync-OERStructure*` handlers behind its own `$Caller.ShouldProcess`, with `-Confirm:$false`.
+Under `-WhatIf` that gate declines and the cmdlet is never called, so its warning was never written:
+the plan showed the change but not the warning a real run gives. A handler therefore writes the same
+warning before `$Caller.ShouldProcess` only when the cmdlet it calls will not write it, so the plan
+shows it and a real run never warns twice. In four cases the handler does this under `-WhatIf` only,
+deciding from the inputs the cmdlet's own warning uses and writing the cmdlet's text: an
+administrative unit whose membership type changes (`Set-OERAdministrativeUnit`), an ABAC condition
+removed from an Azure role assignment (`Set-OERRoleAssignment`), a permanent group eligibility that
+needs the PIM for Groups policy opened (`Add-OERGroupEligibility`, step 5 of the group handler,
+through the same `Get-OERGroupPermanentEligibilityState` read) and a directory role policy whose MFA /
+authentication context pair the write reconciles (`Set-OERDirectoryRoleManagementPolicy`, through
+`Resolve-OERPimActivationConflict`). The group PIM pair is the fifth case, ruling R5 below.
+
+**Ruling R7: "the same warning" is held by tests, not by a shared message helper.** Each handler's
+tests run the case as a plan and as a real run with the REAL cmdlet, from one live state, and hold
+that the plan's text equals the run's case-sensitively and that the run writes it exactly once. The
+directory role case runs a matrix of live and declared MFA and context states through both. If
+wrong: a message helper can be split out later with no change in behaviour.
+
+**Ruling R4: those four warn only under `-WhatIf`.** The other form -- warn before
+`$Caller.ShouldProcess` always and silence the cmdlet with `-WarningAction SilentlyContinue`, as the
+group handler's eligibility prune already does for `Remove-OERGroupEligibility` -- was weighed and
+rejected: `Set-OERDirectoryRoleManagementPolicy`, `Set-OERGroupPimPolicy` and `Add-OERGroupEligibility`
+write other warnings as well (put-back outcomes, read failures) that silencing would hide, and a
+mixed form would make the rule harder to hold. The cost: under an engine `-Confirm` the prompt for
+one of those four comes before the warning, which the cmdlet writes only once the prompt is accepted,
+and a declined prompt shows the change only in its own text. If wrong: the administrative unit and
+role assignment handlers, whose cmdlets write no other warning, can switch to the silenced form
+locally.
+
+**Ruling R5: group PIM's reconciled pair warns in both modes.** `Resolve-OERGroupPimPolicyChange`
+reconciles the MFA / authentication context pair itself, and `Set-OERGroupPimPolicy`, given the
+reconciled parameters, finds nothing to reconcile and writes no warning about it
+([#mfa-authcontext-exclusion](#mfa-authcontext-exclusion)). Without a handler warning a real run
+would say nothing at all, so the handler writes the diff's `ConflictReason` before
+`$Caller.ShouldProcess` in every mode, after the PIM-onboarding question of
+[#pim-in-use-criterion](#pim-in-use-criterion). A4's purpose holds: the plan shows it and a real run
+writes it once; of the five cases, it is the only one a declined engine prompt also shows.
+Extension: the warning states the diff's decision, not the outcome. `Set-OERGroupPimPolicy` can still
+refuse the call after it -- an authentication context the tenant does not define or has not
+published, a failed policy lookup, an unreadable approval rule -- and the `Failed` row then shows that
+nothing was changed. If wrong: the warning becomes `-WhatIf`-only, and a real run shows the reason
+only in the row's Detail.
+
+**Ruling R6: a time-bound group eligibility has no warning to show.** Step 3 of the group handler
+writes the time-bound entries, and `Add-OERGroupEligibility` warns only for a PERMANENT eligibility
+that needs the policy opened; a time-bound one never opens it. A warning that a first eligibility
+onboards a group to PIM for Groups would be a new warning, not this rule.
+
+**Rulings R10 and R11: the plan decides on the state the run would reach.** A real run reaches step 5
+after step 4 of the same item has applied its changed `pimPolicy`, so the plan cannot simply trust
+the live read. When step 4's gate declined a change that sets `allowPermanentEligibility` for an
+access type, that value stands in for the read's: true plans no warning, false plans it when the
+policy is listed (R10). Whether the policy is listed always comes from the read. Once the warning is
+planned for an access type, that access type counts as open, so a later permanent entry of it plans
+none: in a real run the first entry's `Add-OERGroupEligibility` opens the policy and the later ones
+find it open (R11). Each access type is decided on its own. The plan assumes the open succeeds; if it
+fails (`PolicyOpenFailed`), a real run warns again for the next entry of that access type, which the
+plan cannot know.
+
+**What the engine rule does not cover.** A handler decides from the inputs the cmdlet's warning uses,
+not from every refusal the cmdlet can make before it. Where the real cmdlet refuses first --
+`Set-OERDirectoryRoleManagementPolicy` given an authentication context id not of the `c` plus number
+shape, or a live policy without the pair rule; `Set-OERRoleAssignment` not finding the assignment on
+its own re-read -- the plan shows the warning and the real run the error. When a group's PIM policy
+cannot be read and the document declares only an authentication context while the live rule still
+requires MFA, the diff has no live MFA to see, so `ConflictReason` stays `$null` and the plan shows
+nothing, while the real `Set-OERGroupPimPolicy`, which reads the rule itself, reconciles and warns
+once. Under `-WhatIf` step 5 makes one policy read per changed permanent eligibility that a real
+run makes inside `Add-OERGroupEligibility` anyway, so the permissions it needs are unchanged.

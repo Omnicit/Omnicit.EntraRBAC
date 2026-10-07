@@ -45,11 +45,13 @@ Describe 'Remove-OERResourceGroup' {
         }
     }
 
-    It 'does not warn under -WhatIf, because nothing is destroyed' {
+    It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no DELETE' {
         $Warnings = @()
         Remove-OERResourceGroup -Subscription 'Prod' -Name 'rg-net' -WhatIf `
             -WarningVariable Warnings -WarningAction SilentlyContinue
-        $Warnings.Count | Should -Be 0
+        $Warnings.Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly "Deleting resource group 'rg-net' permanently deletes ALL resources it contains."
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 0
     }
 

@@ -16,7 +16,8 @@ function Remove-OERAdministrativeUnitScopedRole {
     -PrincipalId produces a non-terminating InvalidPrincipalId error naming the friendly alternatives.
     Supports -WhatIf and -Confirm. ConfirmImpact is High -- this revokes a delegated administrator
     privilege, so it prompts under the default $ConfirmPreference; unattended automation must pass
-    -Confirm:$false.
+    -Confirm:$false. The warning that names the membership being revoked is written before the
+    confirmation prompt, so it also appears under -WhatIf.
 
     Because -PrincipalId, -RoleId and -ScopedRoleMembershipId all bind from the pipeline by property
     name, supplying -User or -Group together with piped input is rejected with a non-terminating
@@ -304,8 +305,9 @@ function Remove-OERAdministrativeUnitScopedRole {
             $MembershipId = [string]$Match.id
         }
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Removing scoped role membership '$MembershipId' from administrative unit '$AuId'. This revokes the principal's delegated administrator privilege over that unit."
         if ($PSCmdlet.ShouldProcess($AuId, "Remove scoped role membership '$MembershipId'")) {
-            Write-Warning "Removing scoped role membership '$MembershipId' from administrative unit '$AuId'. This revokes the principal's delegated administrator privilege over that unit."
             try {
                 Invoke-OERGraphRequest -Method DELETE -Uri ("v1.0/directory/administrativeUnits/{0}/scopedRoleMembers/{1}" -f $AuId, $MembershipId) | Out-Null
             } catch {

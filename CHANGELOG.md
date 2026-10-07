@@ -7,42 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Group reads now include service principals, which Microsoft Graph's v1.0 member and owner lists
-leave out: `Get-OERGroup -IncludeMembers -IncludeOwners`, `Get-OERGroupMember`, the inventory export
-and `Invoke-OERStructure` missed them. Each read now also asks for them, and a read that cannot be
-completed leaves the collection unread rather than half-read. An apply document that does not list a
-group's service principals, such as one exported by an earlier version, reports them `Extra`, and
-`-Prune` leaves them in place, as earlier versions did.
-
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name
 (`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope`,
-`New-OERAccessReviewStage`), now refuse with `SignInSuperseded` and send nothing when another
-command in their pipeline signs in to another tenant or identity after they began. In a script
-block they begin only when it runs: name `-TenantId` there. When a command's sign-in is refused, the
-cmdlets it calls are now refused at their own sign-in too (`SignInRefused`), before any token
-request or prompt.
+`New-OERAccessReviewStage`), refuse with `SignInSuperseded` and send nothing when another command in
+their pipeline signs in to another tenant or identity after they began; in a script block they begin
+only when it runs, so name `-TenantId` there. Cmdlets a refused command calls are refused at their
+own sign-in (`SignInRefused`), before any token request or prompt. A tenant named by domain is looked
+up before any token request and each token checked against it: one from another tenant is refused
+with `TenantMismatch`, a domain that names no tenant, or `common`, with the new
+`TenantResolutionFailed`, and the warning after such a sign-in is gone. After a sign-in fails or is
+refused, a command naming no tenant sends nothing (`SignInRefused`) until a sign-in naming its
+tenant, `Connect-OER` or `Disconnect-OER` succeeds. An empty `-TenantId` is refused, by `Connect-OER`
+with the new `InvalidTenantId`, and an Azure token no longer outlives a renewal from another tenant.
 
-A tenant named by domain is now looked up at the cloud's sign-in authority before any token
-request, and each token is checked against it: one from another tenant is refused with
-`TenantMismatch`, a domain that names no tenant, or `common`, with the new `TenantResolutionFailed`,
-and the warning after such a sign-in is gone. After a sign-in fails or is refused, a command naming
-no tenant sends nothing (`SignInRefused`) until a sign-in naming its tenant, `Connect-OER` or
-`Disconnect-OER` succeeds. An empty `-TenantId` is refused, by `Connect-OER` with the new
-`InvalidTenantId`, and an Azure token no longer outlives a renewal from another tenant.
+Sixteen cmdlets, such as `Remove-OERRoleAssignment` and `Set-OERRoleAssignment`, now warn before
+the confirmation prompt rather than after it, so `-WhatIf` and `-Confirm` show the warning; with
+`-WhatIf -WarningAction Stop` they stop at it instead of printing the What if line, changing
+nothing. `Invoke-OERStructure -WhatIf` writes the warning of the cmdlet it would call for an
+administrative unit's membership type change, a removed ABAC condition, a group PIM policy opened
+for permanent eligibility and a reconciled MFA / authentication context pair; a real run now gives
+that last one for a group's policy too.
+
+Group member and owner reads include service principals, which Graph's v1.0 lists omit
+(`Get-OERGroup -IncludeMembers -IncludeOwners`, `Get-OERGroupMember`, the inventory export,
+`Invoke-OERStructure`); a failed read leaves the collection unread, not half-read. A document not
+listing them reports them `Extra`, and `-Prune` leaves them in place. `-Prune` no longer removes, in
+the run that creates a group, the unit membership its `administrativeUnit` gave it (`Skipped`,
+`prune withheld`); every later apply with `-Prune` removes it unless the unit's `members` name the
+group, which `Test-OERStructure` now also checks for a template-named group and a unit named by id.
 
 `Set-OERGroupPimPolicy` puts back the accepted half of the MFA and authentication context pair when
-Graph rejects the other. Neither it nor `Set-OERDirectoryRoleManagementPolicy` warns between its first
-rule update and its last, so `-WarningAction Stop` no longer stops half-way. These two and
+Graph rejects the other, and neither it nor `Set-OERDirectoryRoleManagementPolicy` warns between its
+first rule update and its last, so `-WarningAction Stop` no longer stops half-way. These two and
 `Set-OERRoleManagementPolicy` refuse `-RequireApproval $false` beside an approver parameter
-(`MutuallyExclusiveParameter`), and the last refuses an empty approver list (`ApproverRequired`). In
-`Invoke-OERStructure`, an empty Azure approver side now matches an empty live one.
+(`MutuallyExclusiveParameter`), and the last refuses an empty approver list (`ApproverRequired`); in
+`Invoke-OERStructure` an empty Azure approver side matches an empty live one. Eleven cmdlets that
+send a PIM schedule request treat an accepted request answered with a status starting `Failed` as an
+error, after the request object (`EligibilityRequestFailed`, or the new `AssignmentRequestFailed`),
+so `Invoke-OERStructure` reports the row Failed. `New-OERActiveRoleAssignment` opens a role policy
+for a permanent assignment only once confirmed; it and `New-OEREligibleRoleAssignment` roll it back
+if the assignment fails.
 
-Eleven cmdlets that send a PIM schedule request now treat an accepted request answered with a status
-starting `Failed` as an error, after the request object (`EligibilityRequestFailed`, or the new
-`AssignmentRequestFailed`), so `Invoke-OERStructure` reports the row Failed.
 `Set-OERAccessPackageAssignmentPolicy` refuses a connected-organization scope that names none
-(`InvalidPolicyInput`). `New-OERActiveRoleAssignment` opens a role policy for a permanent assignment
-only once confirmed; it and `New-OEREligibleRoleAssignment` roll it back if the assignment fails.
+(`InvalidPolicyInput`). `Remove-OERActiveDirectoryRoleAssignment` and
+`Remove-OEREligibleDirectoryRoleAssignment`, refusing a piped `Get-OERGroupMember` row
+(`NotDirectAssignment`), now say how to remove that principal's own assignment.
 
 ## [1.1.2] - 2026-10-06
 

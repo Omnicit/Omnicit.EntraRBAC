@@ -12,7 +12,8 @@ function Invoke-OERAccessReviewInstanceDecision {
     under the default $ConfirmPreference: applyDecisions commits real access revocations and
     resetDecisions discards every recorded reviewer decision irreversibly. This is intentional, not
     an oversight -- ConfirmImpact is per-cmdlet, not per-parameter-set. Unattended automation must
-    pass -Confirm:$false for either path.
+    pass -Confirm:$false for either path. The warning that names what the action does is written
+    before the confirmation prompt, so it also appears under -WhatIf.
 
     .PARAMETER Definition
     The access review definition id or display name. Accepts pipeline input by property name via the
@@ -114,12 +115,13 @@ function Invoke-OERAccessReviewInstanceDecision {
             'Apply access review instance decisions'
         }
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        if ($PSCmdlet.ParameterSetName -eq 'Reset') {
+            Write-Warning "Resetting decisions on access review instance '$Instance'. Every recorded reviewer decision is discarded irreversibly and cannot be recovered."
+        } else {
+            Write-Warning "Applying decisions on access review instance '$Instance'. This commits the recorded access revocations."
+        }
         if ($PSCmdlet.ShouldProcess($Instance, $ShouldProcessAction)) {
-            if ($PSCmdlet.ParameterSetName -eq 'Reset') {
-                Write-Warning "Resetting decisions on access review instance '$Instance'. Every recorded reviewer decision is discarded irreversibly and cannot be recovered."
-            } else {
-                Write-Warning "Applying decisions on access review instance '$Instance'. This commits the recorded access revocations."
-            }
             try {
                 $null = Invoke-OERGraphRequest -Method POST -Uri $Uri
             } catch {

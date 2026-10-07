@@ -70,21 +70,23 @@ Describe 'Invoke-OERAccessReviewInstanceDecision' {
         }
 
         It 'warns that reset discards decisions irreversibly, BEFORE the POST fires' {
+            # The warning AND the POST record into the SAME list, so a warning written after the POST
+            # (inside the gate below the request, or after the gate's if block) turns this red.
             $Order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Write-Warning -ParameterFilter { $Message -match 'irreversibl' } -MockWith { $Order.Add('warn') }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { $Order.Add('post') }
-            Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -Reset -Confirm:$false `
-                -WarningVariable Warn -WarningAction SilentlyContinue
-            $Order -join ',' | Should -Be 'post'
-            @($Warn | Where-Object { $_.Message -match 'irreversibl' }).Count | Should -Be 1
+            Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -Reset -Confirm:$false
+            $Order -join ',' | Should -Be 'warn,post'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -match 'irreversibl' }
         }
 
         It 'warns that apply commits revocations, BEFORE the POST fires' {
             $Order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Write-Warning -ParameterFilter { $Message -match 'commits the recorded access revocations' } -MockWith { $Order.Add('warn') }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { $Order.Add('post') }
-            Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -Confirm:$false `
-                -WarningVariable Warn -WarningAction SilentlyContinue
-            $Order -join ',' | Should -Be 'post'
-            @($Warn | Where-Object { $_.Message -match 'appl' }).Count | Should -Be 1
+            Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -Confirm:$false
+            $Order -join ',' | Should -Be 'warn,post'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -match 'commits the recorded access revocations' }
         }
 
         It 'does not POST under -WhatIf (Reset)' {
@@ -92,10 +94,24 @@ Describe 'Invoke-OERAccessReviewInstanceDecision' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'does not warn under -WhatIf (the warning belongs inside the ShouldProcess block)' {
+        It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no POST (Reset)' {
+            $Warn = $null
             Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -Reset -WhatIf `
                 -WarningVariable Warn -WarningAction SilentlyContinue
-            @($Warn).Count | Should -Be 0
+            @($Warn).Count | Should -Be 1
+            $Warn[0].Message | Should -BeExactly ("Resetting decisions on access review instance 'i1'. Every recorded reviewer " +
+                'decision is discarded irreversibly and cannot be recovered.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+        }
+
+        It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no POST (Apply)' {
+            $Warn = $null
+            Invoke-OERAccessReviewInstanceDecision -Definition 'Q3' -Instance 'i1' -WhatIf `
+                -WarningVariable Warn -WarningAction SilentlyContinue
+            @($Warn).Count | Should -Be 1
+            $Warn[0].Message | Should -BeExactly "Applying decisions on access review instance 'i1'. This commits the recorded access revocations."
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
         }
     }
 

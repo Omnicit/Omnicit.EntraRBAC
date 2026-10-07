@@ -137,6 +137,52 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
         $Hit[0].TargetObject | Should -Be 'eeeeeeee-0000-0000-0000-000000000005'
         $Hit[0].Exception.Message | Should -Match ([regex]::Escape("is inherited through a group (MemberType 'Group')"))
         $Hit[0].Exception.Message | Should -Match ([regex]::Escape("Remove the group's own eligible assignment"))
+        # The whole message, unchanged by the group member row wording below.
+        $Hit[0].Exception.Message | Should -BeExactly ("The piped eligible assignment of directory role 'aaaaaaaa-0000-0000-0000-000000000001' " +
+            "for principal 'eeeeeeee-0000-0000-0000-000000000005' is inherited through a group (MemberType 'Group'), not a " +
+            "direct one, so it is not removed: the request names only the role and the principal, and would remove that " +
+            "principal's own direct eligible assignment instead, if one exists. Remove the group's own eligible assignment, " +
+            'or the principal from the group.')
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
+    }
+
+    It 'refuses a piped Get-OERGroupMember row (<Shape>) with NotDirectAssignment saying it is a group member row, before any Graph call' -TestCases @(
+        @{ MemberType = 'Member'; Shape = 'tagged Omnicit.EntraRBAC.GroupMember, MemberType Member'; Tagged = $true; Role = 'Reports Reader'; Note = " (MemberType 'Member')"; Example = "'Reports Reader'" }
+        @{ MemberType = 'Owner'; Shape = 'untagged, MemberType Owner, told apart by MemberType alone'; Tagged = $false; Role = 'Reports Reader'; Note = " (MemberType 'Owner')"; Example = "'Reports Reader'" }
+        @{ MemberType = ''; Shape = 'tagged, no MemberType, told apart by the type name alone, no MemberType parenthesis'; Tagged = $true; Role = 'Reports Reader'; Note = ''; Example = "'Reports Reader'" }
+        @{ MemberType = 'Member'; Shape = 'a role name with an apostrophe, doubled in the example'; Tagged = $true; Role = "Contoso's Reader"; Note = " (MemberType 'Member')"; Example = "'Contoso''s Reader'" }
+    ) {
+        # A Get-OERGroupMember row is no role assignment at all: calling it inherited through a group
+        # was wrong, so the message says what it is and how to remove the principal's own direct
+        # eligibility on purpose. The refusal, its ErrorId, category and target are unchanged.
+        # The guard has two terms, the type name OR a MemberType of Member/Owner; the second and third
+        # case each pass through one term alone. The role name stands verbatim in the prose and with
+        # any single quote doubled in the example, which therefore stays valid as typed.
+        $Row = [PSCustomObject]@{
+            PrincipalId = 'cccccccc-0000-0000-0000-000000000003'
+            DisplayName = 'Row Principal'
+            ObjectType  = 'user'
+            MemberType  = $MemberType
+            GroupId     = 'dddddddd-0000-0000-0000-000000000004'
+        }
+        if (-not $MemberType) { $Row.PSObject.Properties.Remove('MemberType') }
+        if ($Tagged) { $Row.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupMember') }
+        $Err = $null
+        $Row | Remove-OEREligibleDirectoryRoleAssignment -Role $Role -Confirm:$false `
+            -ErrorAction SilentlyContinue -ErrorVariable Err -WarningAction SilentlyContinue | Out-Null
+        $Hit = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'NotDirectAssignment,Remove-OEREligibleDirectoryRoleAssignment' })
+        $Hit.Count | Should -Be 1
+        $Hit[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $Hit[0].TargetObject | Should -Be 'cccccccc-0000-0000-0000-000000000003'
+        $Hit[0].Exception.Message | Should -BeExactly ("The piped object for principal 'cccccccc-0000-0000-0000-000000000003' is a " +
+            "group member row$Note from Get-OERGroupMember, not an eligible assignment of directory role " +
+            "'$Role', so nothing is removed: the request names only the role and the principal, and would remove " +
+            "that principal's own direct eligible assignment, if one exists. To remove that assignment on purpose, name the " +
+            "principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OEREligibleDirectoryRoleAssignment -Role " +
+            "$Example -PrincipalId `$_.PrincipalId }")
+        $Hit[0].Exception.Message | Should -Not -Match 'inherited through a group'
+        $Hit[0].Exception.Message | Should -Not -Match ([regex]::Escape("(MemberType '')"))
         Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERDirectoryRoleDefinitionId -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
     }

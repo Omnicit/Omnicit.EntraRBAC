@@ -5,9 +5,9 @@ function Remove-OERAccessPackageAssignment {
 
     .DESCRIPTION
     Creates an accessPackageAssignmentRequest with requestType adminRemove through Microsoft Graph,
-    revoking the assignment identified by -AssignmentId. High-impact: emits an explicit warning and
-    defaults to ConfirmImpact High. The revocation is processed asynchronously by Graph. Supports -WhatIf
-    and -Confirm.
+    revoking the assignment identified by -AssignmentId. High-impact: emits an explicit warning before
+    the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact High.
+    The revocation is processed asynchronously by Graph. Supports -WhatIf and -Confirm.
 
     .PARAMETER AssignmentId
     The accessPackageAssignment id to remove (as returned by Get-OERAccessPackageAssignment).
@@ -43,8 +43,9 @@ function Remove-OERAccessPackageAssignment {
             requestType = 'adminRemove'
             assignment  = @{ id = $AssignmentId }
         }
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Revoking access package assignment '$AssignmentId'."
         if ($PSCmdlet.ShouldProcess($AssignmentId, 'Revoke access package assignment')) {
-            Write-Warning "Revoking access package assignment '$AssignmentId'."
             try {
                 $null = Invoke-OERGraphRequest -Method POST `
                     -Uri 'v1.0/identityGovernance/entitlementManagement/assignmentRequests' -Body $Body

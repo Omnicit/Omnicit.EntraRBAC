@@ -11,7 +11,8 @@ function Remove-OERRoleAssignment {
     -- a piped non-assignment object's Id produces a clear InvalidRoleAssignmentId error instead of a
     bogus DELETE. A 204 response (ARM's signal that the resource did not exist) surfaces as a
     non-terminating RoleAssignmentNotFound error. This is a high-impact operation: ConfirmImpact
-    High, an explicit warning precedes the destructive call, and -WhatIf/-Confirm are supported.
+    High, an explicit warning precedes the confirmation prompt (so it also appears under -WhatIf),
+    and -WhatIf/-Confirm are supported.
     Requires an ARM token; authentication is ensured at entry via Initialize-OERAuth -IncludeARM.
 
     .PARAMETER Id
@@ -57,8 +58,9 @@ function Remove-OERRoleAssignment {
             return
         }
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Deleting Azure role assignment '$Id'. This removes the principal's access at that scope."
         if ($PSCmdlet.ShouldProcess($Id, 'Delete Azure role assignment')) {
-            Write-Warning "Deleting Azure role assignment '$Id'. This removes the principal's access at that scope."
             try {
                 $Response = Invoke-OERArmRequest -Method DELETE -Path "$Id`?api-version=2022-04-01"
             } catch {

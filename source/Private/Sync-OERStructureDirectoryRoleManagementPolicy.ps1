@@ -52,6 +52,14 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
     Set-OERDirectoryRoleManagementPolicy. Reads always execute even under -WhatIf so the plan is
     available. Every call goes through Microsoft Graph; no Azure Resource Manager token is needed.
 
+    A change that reconciles the MFA / authentication context pair -- a declared non-empty
+    authenticationContextId that clears MFA on activation, or a declared requireMfaOnActivation true
+    that disables a live authentication context -- makes Set-OERDirectoryRoleManagementPolicy warn
+    before its own gate. Under -WhatIf, where that cmdlet is never called, the handler takes the same
+    decision (Resolve-OERPimActivationConflict, from the changed parameters and the live rules the
+    read returned) and writes the cmdlet's warning, "Policy '<policy id>': <reason>", before its gate.
+    A real run leaves the warning to the cmdlet, so it is written once either way.
+
     -Prune and -TenantAlias are accepted for a uniform Sync-OERStructure* signature but are no-ops
     in this handler.
 
@@ -161,6 +169,59 @@ function Sync-OERStructureDirectoryRoleManagementPolicy {
             ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Unchanged' `
                 -Detail "policy already matches for '$($Item.role)'"
             return
+        }
+
+        # -- The warning the write would give, for the plan --------------------------------
+        # Set-OERDirectoryRoleManagementPolicy resolves the MFA / authentication context pair in
+        # Resolve-OERPolicyRulePatch (-ResolveUnrequestedConflict $false) and, before its own gate,
+        # warns when that clears MFA on activation or disables the authentication context. Under
+        # -WhatIf the engine never calls it, so the plan would not show the warning a real run gives:
+        # the decision is taken here, through the same owner, from the inputs the patch builder derives
+        # from this splat and the live rules, and the cmdlet's own warning written before the gate.
+        # Only under -WhatIf -- a real run calls the cmdlet, which writes it, and a second copy here
+        # would warn twice. The live rules are the ones the read above returned (EffectiveRules, the
+        # policy's rules, which the cmdlet reads again by this same policy id).
+        if ($WhatIfPreference) {
+            $LiveRules = @(@($Cur.EffectiveRules) | Where-Object { $null -ne $_ })
+            $LiveEnablement = $LiveRules | Where-Object { [string]$_.id -eq 'Enablement_EndUser_Assignment' } | Select-Object -First 1
+            $LiveContext = $LiveRules | Where-Object { [string]$_.id -eq 'AuthenticationContext_EndUser_Assignment' } | Select-Object -First 1
+
+            # The activation rules once the splat is applied: the live list, with MFA set or cleared by
+            # a splatted RequireMfaOnActivation (the builder's toggle).
+            $EffectiveRules = [System.Collections.Generic.List[string]]::new()
+            foreach ($Entry in @($LiveEnablement.enabledRules)) { if ($Entry) { $EffectiveRules.Add([string]$Entry) } }
+            $RequestsMfa = $SetSplat.ContainsKey('RequireMfaOnActivation') -and [bool]$SetSplat.RequireMfaOnActivation
+            if ($SetSplat.ContainsKey('RequireMfaOnActivation')) {
+                if ($RequestsMfa) {
+                    if (-not $EffectiveRules.Contains('MultiFactorAuthentication')) { $EffectiveRules.Add('MultiFactorAuthentication') }
+                } else {
+                    [void]$EffectiveRules.Remove('MultiFactorAuthentication')
+                }
+            }
+
+            # The context once the splat is applied: the splatted one (non-empty enables it with that
+            # id, empty disables it), otherwise the live rule's.
+            $RequestsContext = $false
+            if ($SetSplat.ContainsKey('AuthenticationContextId')) {
+                $EffectiveContextId = [string]$SetSplat.AuthenticationContextId
+                $EffectiveContextEnabled = -not [string]::IsNullOrEmpty($EffectiveContextId)
+                $RequestsContext = $EffectiveContextEnabled
+            } else {
+                $EffectiveContextId = [string]$LiveContext.claimValue
+                $EffectiveContextEnabled = [bool]$LiveContext.isEnabled
+            }
+
+            $ConflictParams = @{
+                EffectiveAuthContextId          = $EffectiveContextId
+                EffectiveActivationEnabledRules = $EffectiveRules.ToArray()
+            }
+            if ($EffectiveContextEnabled) { $ConflictParams.EffectiveAuthContextEnabled = $true }
+            if ($RequestsContext) { $ConflictParams.CallerRequestsAuthContext = $true }
+            if ($RequestsMfa) { $ConflictParams.CallerRequestsMfa = $true }
+            $Resolution = Resolve-OERPimActivationConflict @ConflictParams
+            if ($Resolution.Action -in @('ClearMfa', 'DisableAuthContext')) {
+                Write-Warning "Policy '$($Cur.PolicyId)': $($Resolution.Reason)"
+            }
         }
 
         # -- Gate the update on ShouldProcess -----------------------------------------------

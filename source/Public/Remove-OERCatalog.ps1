@@ -5,9 +5,10 @@ function Remove-OERCatalog {
 
     .DESCRIPTION
     Deletes an access package catalog through Microsoft Graph. Accepts the catalog by -Id or -DisplayName
-    (resolved via Resolve-OERCatalogId). This is a high-impact operation: it emits an explicit warning and
-    defaults to ConfirmImpact High. Deleting a catalog that still contains access packages will fail at
-    Graph; remove the access packages first. Supports -WhatIf and -Confirm.
+    (resolved via Resolve-OERCatalogId). This is a high-impact operation: it emits an explicit warning
+    before the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact
+    High. Deleting a catalog that still contains access packages will fail at Graph; remove the
+    access packages first. Supports -WhatIf and -Confirm.
 
     .PARAMETER Id
     The catalog id (GUID) to delete.
@@ -73,8 +74,9 @@ function Remove-OERCatalog {
             return
         }
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Deleting catalog '$CatalogId'. This is irreversible and removes the catalog container."
         if ($PSCmdlet.ShouldProcess($CatalogId, 'Delete entitlement management catalog')) {
-            Write-Warning "Deleting catalog '$CatalogId'. This is irreversible and removes the catalog container."
             try {
                 $null = Invoke-OERGraphRequest -Method DELETE `
                     -Uri ("v1.0/identityGovernance/entitlementManagement/catalogs/{0}" -f $CatalogId)

@@ -1,7 +1,7 @@
 function ConvertTo-OERPruneWithheldResult {
     <#
     .SYNOPSIS
-    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, or when a live group member or owner is a service principal.
+    Builds the Skipped record that withholds a prune when a declared entry, or the scope of one, could not be resolved, when a live scoped role's name could not be read, when a live group member or owner is a service principal, or when a live administrative unit member is a group this run created into the unit.
 
     .DESCRIPTION
     The single owner of the apply engine's withhold-prune rule and of its reason text. Every
@@ -60,6 +60,21 @@ function ConvertTo-OERPruneWithheldResult {
     continues with the next candidate when it returns a record: no Write-Warning and no
     ShouldProcess prompt is issued for it.
 
+    A fifth kind is a LIVE administrative unit member that is a group the groups section created INTO
+    that unit earlier in the same run (New-OERGroup -AdministrativeUnit, BL-07). A group's
+    administrativeUnit is applied only when the group is created and never round-trips, so the unit's
+    own entry need not list the group, and the administrativeUnits section runs after the groups
+    section: without this rule -Prune would remove the membership the same run had just created.
+    Sync-OERStructureAdministrativeUnit decides that a candidate is such a group, from the record the
+    group handler kept, and passes the group's name as -CreatedGroup; this helper owns the text. With
+    -Prune it returns exactly one Skipped record whose Detail starts 'prune withheld: ', names the
+    candidate and the group, says the run that creates a membership does not remove it (the module's
+    own guard, not a Graph rejection), and that the next apply with -Prune removes it unless the
+    unit's members name the group. Without -Prune it returns nothing, so the pass reports the
+    candidate Extra as before. The caller calls it straight after the unresolved-entry call and before
+    its -Prune branch, and continues with the next candidate when it returns a record: no
+    Write-Warning and no ShouldProcess prompt is issued for it.
+
     .PARAMETER Section
     The document section the prune pass belongs to (for example groups or administrativeUnits).
 
@@ -74,7 +89,8 @@ function ConvertTo-OERPruneWithheldResult {
 
     .PARAMETER Candidate
     A readable description of the live entry the pass would otherwise report Extra or remove, for
-    example "undeclared member '<id>'". Used by the -Unresolved and the -ObjectType forms.
+    example "undeclared member '<id>'". Used by the -Unresolved, the -ObjectType and the
+    -CreatedGroup forms.
 
     .PARAMETER UnresolvedScope
     The labels of the declared entries of the section whose scope could not be resolved, in document
@@ -97,9 +113,15 @@ function ConvertTo-OERPruneWithheldResult {
     type). Only servicePrincipal returns a record. Not combinable with -Unresolved, -UnresolvedScope,
     -Declared or -UnnamedRoleId.
 
+    .PARAMETER CreatedGroup
+    The name of the group the groups section created into the unit in this run, which the live
+    candidate is (the label the group handler recorded). Mandatory in this form, and not combinable
+    with -Unresolved, -UnresolvedScope, -Declared, -UnnamedRoleId or -ObjectType.
+
     .PARAMETER Prune
     With -ObjectType: whether the caller runs with -Prune. With it the service principal's record is
-    the Skipped "prune withheld:" record; without it, the Extra record.
+    the Skipped "prune withheld:" record; without it, the Extra record. With -CreatedGroup: with it
+    the Skipped "prune withheld:" record; without it nothing, so the caller reports Extra.
 
     .EXAMPLE
     $Withheld = ConvertTo-OERPruneWithheldResult -Section 'groups' -Item 'role_sec_x' -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
@@ -135,6 +157,14 @@ function ConvertTo-OERPruneWithheldResult {
     Emits the service principal's Skipped record (with -Prune) or its Extra record (without), and
     moves on to the next live member, when the member is a service principal; otherwise the pass
     reports or prunes it as usual.
+
+    .EXAMPLE
+    $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' -Candidate "undeclared member '$CurId'" -CreatedGroup 'grp-new' -Prune:$Prune
+    if ($Withheld) { $Withheld; continue }
+
+    Emits the Skipped record and moves on to the next live member under -Prune, for a member that is
+    the group 'grp-new' this run created into the unit; without -Prune it returns nothing and the
+    pass reports the member Extra as usual.
     #>
     [OutputType([PSCustomObject])]
     [CmdletBinding(DefaultParameterSetName = 'Unresolved')]
@@ -143,13 +173,22 @@ function ConvertTo-OERPruneWithheldResult {
         [Parameter(Mandatory)][string]$Item,
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')][AllowEmptyCollection()][AllowEmptyString()][string[]]$Unresolved,
         [Parameter(Mandatory, ParameterSetName = 'Unresolved')]
-        [Parameter(Mandatory, ParameterSetName = 'ObjectType')][string]$Candidate,
+        [Parameter(Mandatory, ParameterSetName = 'ObjectType')]
+        [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')][string]$Candidate,
         [Parameter(ParameterSetName = 'Unresolved')][AllowEmptyCollection()][string[]]$UnresolvedScope = @(),
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string]$Declared,
         [Parameter(Mandatory, ParameterSetName = 'UnreadRoleName')][string[]]$UnnamedRoleId,
         [Parameter(Mandatory, ParameterSetName = 'ObjectType')][AllowNull()][AllowEmptyString()][string]$ObjectType,
-        [Parameter(ParameterSetName = 'ObjectType')][switch]$Prune
+        [Parameter(Mandatory, ParameterSetName = 'CreatedGroup')][string]$CreatedGroup,
+        [Parameter(ParameterSetName = 'ObjectType')]
+        [Parameter(ParameterSetName = 'CreatedGroup')][switch]$Prune
     )
+
+    if ($PSCmdlet.ParameterSetName -eq 'CreatedGroup') {
+        if (-not $Prune) { return }
+        return ConvertTo-OERStructureResult -Section $Section -Item $Item -Action 'Skipped' `
+            -Detail "prune withheld: $Candidate is group '$CreatedGroup', which this run created into this unit, and the run that creates a membership does not remove it (our own guard, not a Graph rejection). The next apply with -Prune removes it unless the unit's members name the group."
+    }
 
     if ($PSCmdlet.ParameterSetName -eq 'ObjectType') {
         if ($ObjectType -ne 'servicePrincipal') { return }

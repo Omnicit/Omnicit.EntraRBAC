@@ -118,7 +118,11 @@ function Sync-OERStructureRoleAssignment {
 
     Every write is gated by $Caller.ShouldProcess. Reads (Resolve-OERStructurePrincipal,
     Resolve-OERRoleDefinitionId, Get-OERRoleAssignment) always execute even under -WhatIf because they
-    provide the diff/plan.
+    provide the diff/plan. An in-place update that removes a live ABAC condition (the document
+    declares condition as an empty string) widens the principal's access, and Set-OERRoleAssignment
+    warns about it; under -WhatIf, where that cmdlet is never called, the handler writes the same
+    warning, with the same text, before its gate. A real run leaves it to the cmdlet, so it is
+    written once either way.
 
     .PARAMETER Item
     One element from the roleAssignments[] array in the structure document, as a PSCustomObject
@@ -437,6 +441,17 @@ function Sync-OERStructureRoleAssignment {
                 # assignment, and only by writing to the SAME assignment id -- which is exactly what
                 # Set-OERRoleAssignment does. The engine never deletes and re-creates a live
                 # high-privilege assignment to apply a field edit.
+                # Removing a condition WIDENS the principal's access, and Set-OERRoleAssignment warns
+                # about it: a live condition and an empty effective one, which is its $ClearingCondition
+                # rule, and the effective condition is the declared one, since it is sent only when
+                # declared. Under -WhatIf the engine never calls that cmdlet, so the plan would not
+                # show the warning a real run gives: it is written here instead, with the cmdlet's own
+                # text, before the gate. Only under -WhatIf -- a real run calls the cmdlet, which
+                # writes it, and a second copy here would warn twice.
+                if ($WhatIfPreference -and $null -ne $DeclaredCondition -and [string]::IsNullOrEmpty($DeclaredCondition) -and
+                    -not [string]::IsNullOrEmpty([string]$Existing.Condition)) {
+                    Write-Warning "Removing the ABAC condition from role assignment '$($Existing.RoleAssignmentId)'. This WIDENS the principal's access at that scope."
+                }
                 if (-not $Caller.ShouldProcess($RawScope, "Update role assignment '$($Item.role)' for '$($Item.principal)' ($($Drift -join '; '))")) {
                     ConvertTo-OERStructureResult -Section $Section -Item $Label -Action 'Skipped' `
                         -Detail "would update role assignment at '$RawScope' -- differs on $($Drift -join '; ')"
