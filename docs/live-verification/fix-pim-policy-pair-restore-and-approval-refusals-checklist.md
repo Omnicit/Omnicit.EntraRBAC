@@ -107,7 +107,7 @@ checks share one.
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -136,13 +136,22 @@ changes; `The worktree's build carries A: True; the C refusal (three cmdlets): 3
 clone; `False`, or a count below the expected one, on the last line -- build the worktree first
 (`./build.ps1 -Tasks build`), never while the gate runs.
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:51 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at 38b3356 (the checklist commit, after the ef4944f build the gate ran on) with 0 tracked changes; the build carries A (Send-OERPimRulePatch: True), the C refusal in the three cmdlets (3) and the D refusal (1).
+
+[oer-s94] The module loads from a worktree that is not the main clone: True
+[oer-s94] Main clone: branch main; HEAD 6817b33
+[oer-s94] Worktree: branch fix/pim-policy-pair-restore-and-approval-refusals; HEAD 38b3356 docs: add the live checklist for the PIM policy pair and approval refusals; tracked changes: 0
+[oer-s94] The worktree's build carries A: True; the C refusal (three cmdlets): 3; the D refusal: 1
+```
 
 ### 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -161,11 +170,27 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:52 UTC: every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, service principal named oer-live-cc and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.3).
+
+[oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] The module is the worktree's build: True
+```
 
 ### 0.2. The prerequisite plan names only oer-s94- objects
 
-- [ ] **0.2** `Initialize-OerS94Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s94-`.
+- [x] **0.2** `Initialize-OerS94Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s94-`.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -189,11 +214,43 @@ since under `-WhatIf` neither object exists yet.
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run.
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:52 UTC: identity check passed; no residue; the sweep finds nothing with the prefix; no baseline yet. The plan: the transcript and the count baseline under raw\s94\, and two tenant targets, oer-s94-grp and oer-s94-rg, both with the prefix (True); no member-policy or Reader-policy baseline under -WhatIf, since neither object exists yet. WhatIf: nothing was created or written. Read and confirmed by the controller before 0.3.
+
+[oer-s94] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s94] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s94] What if: Performing the operation "Start the redacted transcript" on target "raw\s94\prereq-20261007-045212Z.log".
+[oer-s94] [oer-s94] Mode: CREATE or complete. Prefix 'oer-s94-'. Objects (fixed): oer-s94-grp (no member, its member PIM policy baselined); oer-s94-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s94] [oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] [oer-s94] Residue: raw\residue.json holds no rows.
+[oer-s94] [oer-s94] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s94-' is left.
+[oer-s94] [oer-s94] Found: oer-s94-grp exists: False; oer-s94-rg exists: False.
+[oer-s94] [oer-s94] No baseline yet: it is written now, before the first write to the tenant (groups 98; oer-s94-rg exists: False).
+[oer-s94] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s94\baseline-s94.json".
+[oer-s94] What if: Performing the operation "Create a plain security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s94-grp".
+[oer-s94] What if: Performing the operation "Create the resource group in the test subscription (Azure Resource Manager PUT, location 'swedencentral', tag purpose 'Omnicit.EntraRBAC live verification (oer-s94)')" on target "oer-s94-rg".
+[oer-s94] [oer-s94] No member-policy baseline: oer-s94-grp does not exist (WhatIf).
+[oer-s94] [oer-s94] No Reader-policy baseline: oer-s94-rg does not exist (WhatIf).
+[oer-s94] [oer-s94] Summary: oer-s94-grp absent; oer-s94-rg absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s94] [oer-s94] WhatIf: nothing was created, removed or written.
+[oer-s94] [oer-s94] Done.
+[oer-s94] Planned writes: 4; local files under raw\s94\: 2; tenant targets: 2; every tenant target starts with oer-s94-: True
+```
 
 ### 0.3. The prerequisite objects and the policy baselines
 
-- [ ] **0.3** `Initialize-OerS94Prereq.ps1 -Unattended` writes the count baseline when there is none, creates `oer-s94-grp` and `oer-s94-rg`, and records the member-policy baseline of the group and the Reader-policy baseline at the resource group.
+- [x] **0.3** `Initialize-OerS94Prereq.ps1 -Unattended` writes the count baseline when there is none, creates `oer-s94-grp` and `oer-s94-rg`, and records the member-policy baseline of the group and the Reader-policy baseline at the resource group.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -214,7 +271,47 @@ context: ...`) and its baseline written; the Reader policy at `oer-s94-rg` read 
 the member policy not listed within the budget -- run the script again (it completes what is missing,
 and a baseline is written once).
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:52 UTC: identity check passed; the count baseline written (groups 98; oer-s94-rg absent); oer-s94-grp created (201, resolves by its name after 6.3 s) and oer-s94-rg created; the member policy of oer-s94-grp listed at once -- MFA on activation False, Justification, no authentication context -- and its baseline written; the Reader policy at oer-s94-rg is the scope's own (True), 17 rules, approval not required, and its baseline written; summary both present; exit code 0.
+
+[oer-s94] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s94] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s94] [oer-s94] Transcript (redacted): raw\s94\prereq-20261007-045225Z.log; OerLive 1.0.3.
+[oer-s94] [oer-s94] Mode: CREATE or complete. Prefix 'oer-s94-'. Objects (fixed): oer-s94-grp (no member, its member PIM policy baselined); oer-s94-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s94] [oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] [oer-s94] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s94] [oer-s94] Residue: raw\residue.json holds no rows.
+[oer-s94] [oer-s94] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s94-' is left.
+[oer-s94] [oer-s94] Found: oer-s94-grp exists: False; oer-s94-rg exists: False.
+[oer-s94] [oer-s94] No baseline yet: it is written now, before the first write to the tenant (groups 98; oer-s94-rg exists: False).
+[oer-s94] [oer-s94] Wrote the baseline raw\s94\baseline-s94.json and read it back.
+[oer-s94] [oer-s94] Created group oer-s94-grp: 201.
+[oer-s94] [oer-s94] oer-s94-grp resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s94] [oer-s94] oer-s94-grp resolves by its display name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s94] [oer-s94] oer-s94-grp resolves by its display name: converged after 3 read(s), 6.3 s.
+[oer-s94] [oer-s94] Created resource group oer-s94-rg.
+[oer-s94] [oer-s94] oer-s94-grp's member PIM policy is listed: converged after 1 read(s), 0.5 s.
+[oer-s94] [oer-s94] Member policy of oer-s94-grp: MFA on activation: False; other enablement flags: Justification; authentication context: none
+[oer-s94] [oer-s94] Wrote the baseline raw\s94\baseline-s94-grppolicy.json and read it back.
+[oer-s94] [oer-s94] The scope lists its role management policy: converged after 1 read(s), 4.8 s.
+[oer-s94] [oer-s94] The policy listed at the scope is the scope's own: True
+[oer-s94] [oer-s94] Reader policy at oer-s94-rg: rules 17; approval required: False
+[oer-s94] [oer-s94] Wrote the baseline raw\s94\baseline-s94-rgreader.json and read it back.
+[oer-s94] [oer-s94] Summary: oer-s94-grp present; oer-s94-rg present; written to the tenant: True.
+[oer-s94] [oer-s94] Done.
+[oer-s94] Exit code: 0
+```
 
 ## 1. The group cmdlet's pair, both directions, through Invoke-OERStructure (G8)
 
@@ -236,7 +333,7 @@ Two documents for the MEMBER policy of `oer-s94-grp`:
 
 ### 1.0. The authentication context this section uses
 
-- [ ] **1.0** The tenant's authentication contexts are read; the section uses the first published one in id order, or, when there is none, says so and runs the MFA half only.
+- [x] **1.0** The tenant's authentication contexts are read; the section uses the first published one in id order, or, when there is none, says so and runs the MFA half only.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -344,11 +441,29 @@ only, the pair is class B`; the member pair as the prerequisite's baseline recor
 `Get-OERAuthenticationContext`) -- STOP: a missing permission on the app path; the fences `False` --
 nothing was called.
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:53 UTC as oer-live-cc (every identity line True), with the fences resolving for the module (True). The tenant holds 3 authentication contexts, 2 of them published; the section uses 'c1', so the pair runs in both directions and is NOT class B. The member pair before section 1 is the baseline: MFA off, Justification, no context.
+
+[oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s94] 1.0 authentication contexts in the tenant: 3; published: 2; this section uses: 'c1'
+[oer-s94] 1.0 the member pair before section 1: MFA on activation: False; flags: Justification; authentication context: none
+```
 
 ### 1.1. Document M: the start state, multi-factor authentication on activation
 
-- [ ] **1.1** `Invoke-OERStructure -Path` (document M) `-Confirm:$false` leaves the member pair at MFA on and no context: `Updated` when the baseline differs, `Unchanged` when it already matches; no error; and when both rules are sent, the context rule goes first.
+- [x] **1.1** `Invoke-OERStructure -Path` (document M) `-Confirm:$false` leaves the member pair at MFA on and no context: `Updated` when the baseline differs, `Unchanged` when it already matches; no error; and when both rules are sent, the context rule goes first.
 
 ```powershell
 $null = Invoke-S94 -Label '1.1 document M' -Call { Invoke-OERStructure -Path $DocM -Confirm:$false }
@@ -358,17 +473,30 @@ $null = Wait-S94Pair -Activity '1.1 read back' -Mfa $true -Context ''
 **Expect:** `errors: none`; one row `groups | oer-s94-grp | Updated | pimPolicy (member) set: ...` (or
 `Unchanged ... already matches`); `ARM requests: 0`; when the baseline had a context AND no MFA, the
 rule-level requests `GET AuthenticationContext_EndUser_Assignment, PATCH
-AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment`; when only one rule
-differed, one PATCH of that rule and no GET of a single rule; a warning that the group was not found
+AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment`; when only the
+enablement rule differed (the context already off), the cmdlet's MFA / context reconcile, older than
+this branch, reads the context rule (`GET AuthenticationContext_EndUser_Assignment`) and the
+enablement rule is PATCHed alone, with no put-back; a warning that the group was not found
 to use PIM for Groups (its first policy write onboards it) is expected on the first write; the read
 back `three steady reads: True`, `MFA on activation: True`, `authentication context: none`.
 **Failure looks like:** a `Failed` row, an error id, a third PATCH (a put-back) or a 401/403.
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (Expect corrected). Document M: no error; rows Unchanged (group properties) and Updated (pimPolicy member: activationEnablement=[MultiFactorAuthentication,Justification]); Graph requests 10, writes 1; ARM 0. The context was already off, so only the enablement rule differed, and the rule-level requests were GET AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment: the cmdlet's MFA / context reconcile (MFA requested, the context not bound) reads the context rule, finds it disabled and clears nothing, and the enablement rule is PATCHed alone, with no put-back. The first Expect said a one-rule change makes no single-rule GET; that read is the reconcile's, older than this branch and correct, so the Expect is corrected (commit 'record the step 4 live results'). The onboarding warning appeared, as expected on the group's first policy write. Read back: three steady reads True after 12 s; MFA on, Justification, no context.
+
+[oer-s94] 1.1 document M: output objects 2; errors: none; Graph requests: 10 (writes: 1); ARM requests: 0 (writes: 0)
+[oer-s94] 1.1 document M: rule-level requests in order: GET AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment
+[oer-s94] 1.1 document M: row groups | oer-s94-grp | Unchanged | group properties match
+[oer-s94] 1.1 document M: row groups | oer-s94-grp | Updated | pimPolicy (member) set: activationEnablement=[MultiFactorAuthentication,Justification]
+[oer-s94] 1.1 document M: warning -- Sync-OERStructureGroup: group 'oer-s94-grp' was not found to use PIM for Groups (no PIM policy of the group has been modified and no PIM eligibility was counted); applying its pimPolicy onboards it to PIM for Groups, which cannot be undone (Microsoft Graph documentation, 'Onboarding groups to PIM fo ...
+[oer-s94] 1.1 read back: three steady reads: True (after 12 s); MFA on activation: True; flags: Justification,MultiFactorAuthentication; authentication context: none
+```
 
 ### 1.2. Document X: multi-factor authentication to an authentication context -- both rules, enablement first, no put-back
 
-- [ ] **1.2** `Invoke-OERStructure -Path` (document X) `-Confirm:$false` switches the member pair to the context: the enablement rule's live version is read first, then the enablement rule is PATCHed, then the context rule, and nothing else -- no put-back, no error.
+- [x] **1.2** `Invoke-OERStructure -Path` (document X) `-Confirm:$false` switches the member pair to the context: the enablement rule's live version is read first, then the enablement rule is PATCHed, then the context rule, and nothing else -- no put-back, no error.
 
 ```powershell
 $null = Invoke-S94 -Label '1.2 document X' -Call { Invoke-OERStructure -Path $DocX -Confirm:$false }
@@ -384,11 +512,21 @@ back `three steady reads: True`, `MFA on activation: False`, and the context.
 the enablement rule: Graph rejected the context rule -- record its message); a `PolicyRulesRejected`
 error or a `Failed` row; no GET before the PATCHes (the first-half read is missing).
 
-Result:
+Result: 2026-10-07 04:57 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Document X (context 'c1', Justification): no error; Updated (authenticationContextId=c1; activationEnablement=[Justification]); Graph requests 12, writes 2; ARM 0. The rule-level requests were exactly GET Enablement_EndUser_Assignment (the new first-half read, before any PATCH), PATCH Enablement_EndUser_Assignment, PATCH AuthenticationContext_EndUser_Assignment: the enablement rule first, the context rule second, and no put-back. Read back: three steady reads True after 11.9 s; MFA off, Justification, context 'c1'.
+
+[oer-s94] 1.2 document X: output objects 2; errors: none; Graph requests: 12 (writes: 2); ARM requests: 0 (writes: 0)
+[oer-s94] 1.2 document X: rule-level requests in order: GET Enablement_EndUser_Assignment, PATCH Enablement_EndUser_Assignment, PATCH AuthenticationContext_EndUser_Assignment
+[oer-s94] 1.2 document X: row groups | oer-s94-grp | Unchanged | group properties match
+[oer-s94] 1.2 document X: row groups | oer-s94-grp | Updated | pimPolicy (member) set: authenticationContextId=c1; activationEnablement=[Justification]
+[oer-s94] 1.2 read back: three steady reads: True (after 11.9 s); MFA on activation: False; flags: Justification; authentication context: 'c1'
+```
 
 ### 1.3. Document X again: only Unchanged (G8)
 
-- [ ] **1.3** The same document X again: the row is `Unchanged`, no Graph write.
+- [x] **1.3** The same document X again: the row is `Unchanged`, no Graph write.
 
 ```powershell
 $null = Invoke-S94 -Label '1.3 document X again' -Call { Invoke-OERStructure -Path $DocX -Confirm:$false }
@@ -398,11 +536,20 @@ $null = Invoke-S94 -Label '1.3 document X again' -Call { Invoke-OERStructure -Pa
 `writes: 0`; rule-level requests `none`.
 **Failure looks like:** `Updated` again (a declared field never converges); any write.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Document X again: no error; pimPolicy (member) Unchanged, already matches; writes 0; no rule-level request (G8).
+
+[oer-s94] 1.3 document X again: output objects 2; errors: none; Graph requests: 6 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 1.3 document X again: rule-level requests in order: none
+[oer-s94] 1.3 document X again: row groups | oer-s94-grp | Unchanged | group properties match
+[oer-s94] 1.3 document X again: row groups | oer-s94-grp | Unchanged | pimPolicy (member) already matches
+```
 
 ### 1.4. Document M: the authentication context back to multi-factor authentication -- both rules, context first, no put-back
 
-- [ ] **1.4** `Invoke-OERStructure -Path` (document M) `-Confirm:$false` switches the member pair back: the context rule's live version is read first, then the context rule is PATCHed (disabled), then the enablement rule (MFA), and nothing else.
+- [x] **1.4** `Invoke-OERStructure -Path` (document M) `-Confirm:$false` switches the member pair back: the context rule's live version is read first, then the context rule is PATCHed (disabled), then the enablement rule (MFA), and nothing else.
 
 ```powershell
 $null = Invoke-S94 -Label '1.4 document M' -Call { Invoke-OERStructure -Path $DocM -Confirm:$false }
@@ -417,11 +564,21 @@ activation: True`, `authentication context: none`.
 **Failure looks like:** the enablement rule PATCHed first (Graph answers `MfaAndAcrsConflict`, a
 `PolicyRulesRejected`); a third PATCH; a `Failed` row.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Document M: no error; Updated (authenticationContextId=; activationEnablement=[MultiFactorAuthentication,Justification]); Graph requests 11, writes 2; ARM 0. The rule-level requests were exactly GET AuthenticationContext_EndUser_Assignment (the first-half read), PATCH AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment: the context disabled first, then MFA, no MfaAndAcrsConflict, no put-back. Read back: three steady reads True after 11.9 s; MFA on, Justification, no context.
+
+[oer-s94] 1.4 document M: output objects 2; errors: none; Graph requests: 11 (writes: 2); ARM requests: 0 (writes: 0)
+[oer-s94] 1.4 document M: rule-level requests in order: GET AuthenticationContext_EndUser_Assignment, PATCH AuthenticationContext_EndUser_Assignment, PATCH Enablement_EndUser_Assignment
+[oer-s94] 1.4 document M: row groups | oer-s94-grp | Unchanged | group properties match
+[oer-s94] 1.4 document M: row groups | oer-s94-grp | Updated | pimPolicy (member) set: authenticationContextId=; activationEnablement=[MultiFactorAuthentication,Justification]
+[oer-s94] 1.4 read back: three steady reads: True (after 11.9 s); MFA on activation: True; flags: Justification,MultiFactorAuthentication; authentication context: none
+```
 
 ### 1.5. Document M again: only Unchanged (G8), and the documents are removed
 
-- [ ] **1.5** The same document M again: `Unchanged`, no Graph write; the fences are removed and the two documents deleted.
+- [x] **1.5** The same document M again: `Unchanged`, no Graph write; the fences are removed and the two documents deleted.
 
 ```powershell
 $null = Invoke-S94 -Label '1.5 document M again' -Call { Invoke-OERStructure -Path $DocM -Confirm:$false }
@@ -437,7 +594,17 @@ Disconnect-OerLive
 documents deleted: True`.
 **Failure looks like:** `Updated` again; any write.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Document M again: no error; pimPolicy (member) Unchanged, already matches; writes 0; no rule-level request (G8). Fences removed and both documents deleted (True).
+
+[oer-s94] 1.5 document M again: output objects 2; errors: none; Graph requests: 6 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 1.5 document M again: rule-level requests in order: none
+[oer-s94] 1.5 document M again: row groups | oer-s94-grp | Unchanged | group properties match
+[oer-s94] 1.5 document M again: row groups | oer-s94-grp | Unchanged | pimPolicy (member) already matches
+[oer-s94] Fences removed: True; documents deleted: True
+```
 
 ## 2. BL-08: -RequireApproval $false beside an approver is refused, and nothing is sent
 
@@ -449,7 +616,7 @@ Azure role is Reader at `oer-s94-rg`.
 
 ### 2.1. Set-OERGroupPimPolicy
 
-- [ ] **2.1** `Set-OERGroupPimPolicy -Group oer-s94-grp -RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter` and sends no Graph or ARM request.
+- [x] **2.1** `Set-OERGroupPimPolicy -Group oer-s94-grp -RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter` and sends no Graph or ARM request.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -511,11 +678,29 @@ and -ApproverUser/-ApproverGroup contradict each other` and ending `Nothing was 
 **Failure looks like:** any request counted (the refusal came after a lookup); no error (approval was
 turned on or off).
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:54 UTC as oer-live-cc (every identity line True), fences True. Set-OERGroupPimPolicy -Group oer-s94-grp -RequireApproval $false -ApproverGroup oer-s94-grp: no output; MutuallyExclusiveParameter, category InvalidArgument, target oer-s94-grp, the expected message; Graph requests 0 (writes 0), ARM requests 0.
+
+[oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s94] 2.1 Set-OERGroupPimPolicy: output objects 0; errors: MutuallyExclusiveParameter; Graph requests: 0 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 2.1 Set-OERGroupPimPolicy: MutuallyExclusiveParameter; category InvalidArgument; target oer-s94-grp -- -RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was loo ...
+```
 
 ### 2.2. Set-OERDirectoryRoleManagementPolicy, Reports Reader
 
-- [ ] **2.2** `Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter`, sends no Graph or ARM request, and the role's policy is the same before and after.
+- [x] **2.2** `Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter`, sends no Graph or ARM request, and the role's policy is the same before and after.
 
 ```powershell
 $Before = Get-OerLiveDirectoryRolePolicy -RoleName 'Reports Reader'
@@ -529,11 +714,19 @@ target `Reports Reader`; `rules differing after the call: 0`.
 **Failure looks like:** any request counted; a rule differing (stop and restore it by hand from the
 `Before` read before anything else).
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -RequireApproval $false -ApproverGroup oer-s94-grp: no output; MutuallyExclusiveParameter, InvalidArgument, target Reports Reader; Graph 0, ARM 0. The Reports Reader policy read before and after the call (outside the counted call): 0 rules differ.
+
+[oer-s94] 2.2 Set-OERDirectoryRoleManagementPolicy: output objects 0; errors: MutuallyExclusiveParameter; Graph requests: 0 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 2.2 Set-OERDirectoryRoleManagementPolicy: MutuallyExclusiveParameter; category InvalidArgument; target Reports Reader -- -RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was loo ...
+[oer-s94] 2.2 Reports Reader policy: rules differing after the call: 0
+```
 
 ### 2.3. Set-OERRoleManagementPolicy, Reader at oer-s94-rg
 
-- [ ] **2.3** `Set-OERRoleManagementPolicy -Role Reader -Scope` (the `oer-s94-rg` scope) `-RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter` and sends no Graph or ARM request.
+- [x] **2.3** `Set-OERRoleManagementPolicy -Role Reader -Scope` (the `oer-s94-rg` scope) `-RequireApproval $false -ApproverGroup oer-s94-grp -Confirm:$false` writes `MutuallyExclusiveParameter` and sends no Graph or ARM request.
 
 ```powershell
 $null = Invoke-S94 -Label '2.3 Set-OERRoleManagementPolicy' -Call { Set-OERRoleManagementPolicy -Role 'Reader' -Scope $RgScope -RequireApproval $false -ApproverGroup 'oer-s94-grp' -Confirm:$false -ErrorAction Continue }
@@ -543,11 +736,18 @@ $null = Invoke-S94 -Label '2.3 Set-OERRoleManagementPolicy' -Call { Set-OERRoleM
 (writes: 0)`; target `Reader`.
 **Failure looks like:** any request counted.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Set-OERRoleManagementPolicy -Role Reader -Scope (oer-s94-rg) -RequireApproval $false -ApproverGroup oer-s94-grp: no output; MutuallyExclusiveParameter, InvalidArgument, target Reader; Graph 0, ARM 0.
+
+[oer-s94] 2.3 Set-OERRoleManagementPolicy: output objects 0; errors: MutuallyExclusiveParameter; Graph requests: 0 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 2.3 Set-OERRoleManagementPolicy: MutuallyExclusiveParameter; category InvalidArgument; target Reader -- -RequireApproval $false and -ApproverUser/-ApproverGroup contradict each other: approvers apply only when approval is required. Pass -RequireApproval $false alone to turn approval off (the approvers already on the rule are kept), or pass the approvers without -RequireApproval $false. Nothing was loo ...
+```
 
 ### 2.4. The controls: -RequireApproval $false alone is not refused (under -WhatIf)
 
-- [ ] **2.4** The same three cmdlets with `-RequireApproval $false` alone and `-WhatIf` are not refused with `MutuallyExclusiveParameter`: each reads (requests counted above 0) and writes nothing.
+- [x] **2.4** The same three cmdlets with `-RequireApproval $false` alone and `-WhatIf` are not refused with `MutuallyExclusiveParameter`: each reads (requests counted above 0) and writes nothing.
 
 ```powershell
 $null = Invoke-S94 -Label '2.4 group, -RequireApproval $false alone' -Call { Set-OERGroupPimPolicy -Group 'oer-s94-grp' -RequireApproval $false -WhatIf -ErrorAction Continue }
@@ -567,7 +767,18 @@ at the resource group); `Fences removed: True`.
 **Failure looks like:** `MutuallyExclusiveParameter` on a line (the refusal fires without an
 approver); any write.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The controls, under -WhatIf: -RequireApproval $false alone is refused by none of the three. The group cmdlet made 3 Graph reads and wrote nothing; the directory cmdlet made 2 Graph reads and answered NoChange (approval already off on Reports Reader); the Azure cmdlet made 3 ARM reads and answered NoChange (approval already off at oer-s94-rg); writes 0 everywhere; fences removed (True). The group cmdlet's 'What if:' line went to the runner's console instead of its capture -- a ShouldProcess message is written to the host, not to a stream -- so it is not reproduced here; it named the approval rule as the operation. The runner was changed before section 3 to capture the child's whole output.
+
+[oer-s94] 2.4 group, -RequireApproval $false alone: output objects 0; errors: none; Graph requests: 3 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 2.4 directory, -RequireApproval $false alone: output objects 0; errors: NoChange; Graph requests: 2 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 2.4 directory, -RequireApproval $false alone: NoChange; category InvalidArgument; target DirectoryRole_00000000-0000-0000-0000-000000000006_00000000-0000-0000-0000-000000000007 -- No applicable policy rule changed.
+[oer-s94] 2.4 Azure, -RequireApproval $false alone: output objects 0; errors: NoChange; Graph requests: 0 (writes: 0); ARM requests: 3 (writes: 0)
+[oer-s94] 2.4 Azure, -RequireApproval $false alone: NoChange; category InvalidArgument; target /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s94-rg/providers/Microsoft.Authorization/roleManagementPolicies/00000000-0000-0000-0000-000000000005 -- No applicable policy rule changed.
+[oer-s94] Fences removed: True
+```
 
 ## 3. BL-16: an empty approver list on Azure
 
@@ -575,7 +786,7 @@ Result:
 
 ### 3.1. Set-OERRoleManagementPolicy with an empty approver list is refused
 
-- [ ] **3.1** `Set-OERRoleManagementPolicy -Role Reader -Scope` (the `oer-s94-rg` scope) `-ApproverUser @() -Confirm:$false`, and the same with `-ApproverGroup @() -ApproverUser @('')`, each write `ApproverRequired` and send no Graph or ARM request.
+- [x] **3.1** `Set-OERRoleManagementPolicy -Role Reader -Scope` (the `oer-s94-rg` scope) `-ApproverUser @() -Confirm:$false`, and the same with `-ApproverGroup @() -ApproverUser @('')`, each write `ApproverRequired` and send no Graph or ARM request.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -636,11 +847,31 @@ approver: -ApproverUser and -ApproverGroup name no approver`.
 **Failure looks like:** any request counted; an ARM write (an empty approver list sent with approval
 forced on).
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:54 UTC as oer-live-cc (every identity line True), fences True. Set-OERRoleManagementPolicy -Role Reader -Scope (oer-s94-rg) -ApproverUser @(), and -ApproverGroup @() -ApproverUser @(''): no output; ApproverRequired on each, InvalidArgument, target Reader, the expected message; Graph 0, ARM 0 on both.
+
+[oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] The module resolves Invoke-MgGraphRequest and Invoke-WebRequest to the fences: True
+[oer-s94] 3.1 -ApproverUser @(): output objects 0; errors: ApproverRequired; Graph requests: 0 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 3.1 -ApproverUser @(): ApproverRequired; category InvalidArgument; target Reader -- Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or -RequireApproval $false alone to turn approval off. Nothing was looked up or sent.
+[oer-s94] 3.1 -ApproverGroup @() -ApproverUser @(''): output objects 0; errors: ApproverRequired; Graph requests: 0 (writes: 0); ARM requests: 0 (writes: 0)
+[oer-s94] 3.1 -ApproverGroup @() -ApproverUser @(''): ApproverRequired; category InvalidArgument; target Reader -- Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or -RequireApproval $false alone to turn approval off. Nothing was looked up or sent.
+```
 
 ### 3.2. Invoke-OERStructure -WhatIf with a declared empty approver side plans Unchanged
 
-- [ ] **3.2** The Reader policy at `oer-s94-rg` has no approver; `Invoke-OERStructure -WhatIf` with a document declaring that policy with `approvers.groups` `[]` plans `Unchanged`, not an update, and writes nothing.
+- [x] **3.2** The Reader policy at `oer-s94-rg` has no approver; `Invoke-OERStructure -WhatIf` with a document declaring that policy with `approvers.groups` `[]` plans `Unchanged`, not an update, and writes nothing.
 
 ```powershell
 $Live = Get-OERRoleManagementPolicy -Role 'Reader' -Scope $RgScope -ErrorAction Stop
@@ -666,13 +897,22 @@ Disconnect-OerLive
 one blank approver).
 **Failure looks like:** a `Skipped ... would update` row; any write.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The Reader policy at oer-s94-rg: approval not required, 0 approvers. Invoke-OERStructure -WhatIf with a document declaring that policy with approvers.groups []: no error; one row roleManagementPolicies | Reader @ (the scope) | Unchanged | policy already matches; ARM requests 2 (reads), writes 0; Graph 0; fences removed and the document deleted (True). Before this branch the same document planned 'Skipped | would update' on every run (derived from the code at acd049e and the unit tests, not run live).
+
+[oer-s94] 3.2 the Reader policy at oer-s94-rg: approval required: False; approvers: 0
+[oer-s94] 3.2 Invoke-OERStructure -WhatIf: output objects 1; errors: none; Graph requests: 0 (writes: 0); ARM requests: 2 (writes: 0)
+[oer-s94] 3.2 Invoke-OERStructure -WhatIf: row roleManagementPolicies | Reader @ /subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s94-rg | Unchanged | policy already matches for 'Reader' at '/subscriptions/00000000-0000-0000-0000-000000000002/resourceGroups/oer-s94-rg'
+[oer-s94] Fences removed: True; document deleted: True
+```
 
 ## Teardown
 
 ### T.1. The policies are put back, the objects removed, nothing carries the prefix, and the main clone is untouched
 
-- [ ] **T.1** `Initialize-OerS94Prereq.ps1 -Teardown -Unattended` puts the member pair of `oer-s94-grp` back to its baseline, deletes the group, finds the Reader policy at `oer-s94-rg` at its baseline and deletes the resource group; the sweep finds nothing with the prefix; the group count equals the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
+- [x] **T.1** `Initialize-OerS94Prereq.ps1 -Teardown -Unattended` puts the member pair of `oer-s94-grp` back to its baseline, deletes the group, finds the Reader policy at `oer-s94-rg` at its baseline and deletes the resource group; the sweep finds nothing with the prefix; the group count equals the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -691,8 +931,10 @@ $MainBranch = ([string]($List | Where-Object { $_ -like 'branch *' -or $_ -eq 'd
 Write-OerLiveStep "Main clone: branch $MainBranch; HEAD $($MainHead.Substring(0, 7))"
 ```
 
-**Expect:** the teardown's identity lines `True`; `Teardown A: member policy of oer-s94-grp now: ...;
-rules differing from the baseline: N` and, when N is above 0, each rule sent from the baseline (200 or
+**Expect:** the teardown's identity lines `True`; when the member policy carries another id than at the
+baseline -- onboarding a group to PIM for Groups, which section 1's first policy write does, gives its
+policy a new id -- a line that says so, with the old id read once for the record; `Teardown A: member
+policy of oer-s94-grp now: ...; rules differing from the baseline: N` and, when N is above 0, each rule sent from the baseline (200 or
 204) and `restored: True`; the library's step 5 deleting `oer-s94-grp`; `Teardown C: Reader policy at
 oer-s94-rg at its baseline: True (rules differing before: 0)` and `deleted oer-s94-rg`; `Resource
 group oer-s94-rg exists after the teardown: False`; `Counts: groups now N, at the baseline N; equal:
@@ -702,11 +944,86 @@ NOT deleted, and the step stops (G11.5); exit code 3 -- residue in `raw\residue.
 prereq run retries; report each row. A group deleted with 204 can still show in the sweep for a minute
 or two: read back with T.2 before judging.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS on the second run. The first run, 04:55 UTC: identity check passed, no residue, the member policy of oer-s94-grp listed, and then the prerequisite script stopped BEFORE writing anything ('STOP: the member policy of oer-s94-grp is not the one the baseline names; nothing was restored'), exit code 1. The script compared policy ids, and onboarding a group to PIM for Groups -- section 1's first policy write -- gives its policy a new id (Microsoft Graph documentation). Nothing was written; the group kept the state section 1 left. The script (the step's own, outside the repository) was corrected to put the baseline's rules back on the policy the group's own scope lists, as it already looked it up, reading the old id once for the record; the Expect above is corrected to match. The second run, 04:56 UTC: identity check passed; the old id still answers a read with 200; 1 rule differed from the baseline (Enablement_EndUser_Assignment, MFA on); it was sent from the baseline (200) and read back at the baseline after 1 read (MFA off, Justification, no context); oer-s94-grp deleted (204), removed 1, residue 0; the Reader policy at oer-s94-rg had 0 rules differing from its baseline, and oer-s94-rg was deleted; the sweep finds nothing with the prefix; groups 98 equal to the baseline (True); exit code 0; no Graph SDK session and no module session left; the main clone on main at 6817b33, the HEAD S.1 recorded, never switched. The redaction map is cleared and raw\s94\ deleted after this write-up. The second run's output follows, then the first run's.
+
+[oer-s94] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s94] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s94] [oer-s94] Transcript (redacted): raw\s94\teardown-20261007-045547Z.log; OerLive 1.0.3.
+[oer-s94] [oer-s94] Mode: REMOVE. Prefix 'oer-s94-'. Objects (fixed): oer-s94-grp (no member, its member PIM policy baselined); oer-s94-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s94] [oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] [oer-s94] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s94] [oer-s94] Residue: raw\residue.json holds no rows.
+[oer-s94] [oer-s94] oer-s94-grp's member PIM policy is listed: converged after 1 read(s), 0.3 s.
+[oer-s94] [oer-s94] Teardown A: the member policy of oer-s94-grp has another id than when the baseline was recorded (onboarding to PIM for Groups changes it); the baseline's id answers a read with 200 . The baseline's rules are put back on the policy the group's scope lists now.
+[oer-s94] [oer-s94] Teardown A: member policy of oer-s94-grp now: MFA on activation: True; other enablement flags: Justification; authentication context: none; rules differing from the baseline: 1 (Enablement_EndUser_Assignment)
+[oer-s94] [oer-s94] Teardown A: sent rule Enablement_EndUser_Assignment from the baseline: 200.
+[oer-s94] [oer-s94] oer-s94-grp's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s94] [oer-s94] oer-s94-grp's member policy back at its baseline: converged after 1 read(s), 1 s.
+[oer-s94] [oer-s94] Teardown A: member policy of oer-s94-grp restored: True (1 read(s), 1 s); MFA on activation: False; other enablement flags: Justification; authentication context: none
+[oer-s94] [oer-s94] Teardown of 'oer-s94-': users 0, groups 1, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s94] [oer-s94] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s94] [oer-s94] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s94] [oer-s94] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s94] [oer-s94] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s94] [oer-s94] Teardown 5/6: the prefixed groups.
+[oer-s94] [oer-s94] Deleted: group oer-s94-grp (204).
+[oer-s94] [oer-s94] Teardown 6/6: the prefixed users.
+[oer-s94] [oer-s94] Teardown of 'oer-s94-': removed 1, residue 0, unreadable 0.
+[oer-s94] [oer-s94] The scope lists its role management policy: converged after 1 read(s), 3.9 s.
+[oer-s94] [oer-s94] The policy listed at the scope is the scope's own: True
+[oer-s94] [oer-s94] Azure role policy at the scope: rules differing from the baseline: 0
+[oer-s94] [oer-s94] Teardown C: Reader policy at oer-s94-rg at its baseline: True (rules differing before: 0).
+[oer-s94] [oer-s94] oer-s94-rg is gone: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s94] [oer-s94] oer-s94-rg is gone: converged after 2 read(s), 2.6 s.
+[oer-s94] [oer-s94] Teardown C: deleted oer-s94-rg.
+[oer-s94] [oer-s94] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s94-' is left.
+[oer-s94] [oer-s94] Resource group oer-s94-rg exists after the teardown: False
+[oer-s94] [oer-s94] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s94] [oer-s94] Done.
+[oer-s94] Teardown exit code: 0
+[oer-s94] A Graph SDK session is left: False; the module holds a session: False
+[oer-s94] Main clone: branch main; HEAD 6817b33
+
+--- first run ---
+[oer-s94] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s94] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s94] [oer-s94] Transcript (redacted): raw\s94\teardown-20261007-045506Z.log; OerLive 1.0.3.
+[oer-s94] [oer-s94] Mode: REMOVE. Prefix 'oer-s94-'. Objects (fixed): oer-s94-grp (no member, its member PIM policy baselined); oer-s94-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s94] [oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] [oer-s94] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s94] [oer-s94] Residue: raw\residue.json holds no rows.
+[oer-s94] [oer-s94] oer-s94-grp's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s94] [oer-s94] Stopped before anything was written: STOP: the member policy of oer-s94-grp is not the one the baseline names; nothing was restored.
+[oer-s94] [oer-s94] Stopped at: at Restore-S94GroupPolicy, VAULT\Initialize-OerS94Prereq.ps1: line 346 <- at Invoke-S94Teardown, VAULT\Initialize-OerS94Prereq.ps1: line 393 <- at <ScriptBlock>, VAULT\Initialize-OerS94Prereq.ps1: line 425
+[oer-s94] Teardown exit code: 1
+[oer-s94] A Graph SDK session is left: False; the module holds a session: False
+[oer-s94] Main clone: branch main; HEAD 6817b33
+```
 
 ### T.2. Read back, a few minutes later
 
-- [ ] **T.2** `Initialize-OerS94Prereq.ps1 -ReadBack` finds no object with the prefix, no resource group `oer-s94-rg`, the group count equal to the baseline and no residue row.
+- [x] **T.2** `Initialize-OerS94Prereq.ps1 -ReadBack` finds no object with the prefix, no resource group `oer-s94-rg`, the group count equal to the baseline and no residue row.
 
 ```powershell
 $VaultDir = $env:OER_LIVE_DIR
@@ -724,4 +1041,29 @@ baseline N; equal: True`; `Read-back: prefixed objects left: 0; unread collectio
 `raw\s94\` deleted.
 **Failure looks like:** a prefixed object or a residue row -- report it in the step's report.
 
-Result:
+Result: 2026-10-07 04:58 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 04:57 UTC, about a minute after the teardown: identity check passed; the sweep finds nothing starting with oer-s94- in any collection; oer-s94-rg exists: False; groups 98 equal to the baseline (True); prefixed objects left 0, unread collections 0, residue rows 0; exit code 0.
+
+[oer-s94] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s94] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s94] [oer-s94] Transcript (redacted): raw\s94\readback-20261007-045700Z.log; OerLive 1.0.3.
+[oer-s94] [oer-s94] Mode: READ BACK. Prefix 'oer-s94-'. Objects (fixed): oer-s94-grp (no member, its member PIM policy baselined); oer-s94-rg (tagged, empty, its Reader policy baselined). OerLive 1.0.3.
+[oer-s94] [oer-s94] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg4\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s94] [oer-s94] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s94] [oer-s94] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s94-' is left.
+[oer-s94] [oer-s94] Read-back: resource group oer-s94-rg exists: False
+[oer-s94] [oer-s94] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s94] [oer-s94] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s94] [oer-s94] Done.
+[oer-s94] Read-back exit code: 0
+```
