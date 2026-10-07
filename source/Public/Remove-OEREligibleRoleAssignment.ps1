@@ -10,8 +10,8 @@ function Remove-OEREligibleRoleAssignment {
     -PrincipalId (object id, e.g. piped from Get-OEREligibleRoleAssignment) or as a friendly
     -User/-Group/-ServicePrincipal value. roleDefinitionId is the FULL ARM id resolved from -Role.
     This is a destructive operation (ConfirmImpact High) and emits a warning before the confirmation
-    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
-    Initialize-OERAuth -IncludeARM.
+    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Requires an ARM token;
+    authentication is ensured via Initialize-OERAuth -IncludeARM.
 
     Azure Resource Manager can accept the removal request and answer it with a status in the Failed
     family (Failed, FailedAsResourceIsLocked, or any other status that starts with Failed, in any

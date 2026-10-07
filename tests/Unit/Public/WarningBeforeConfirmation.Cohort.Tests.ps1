@@ -7,9 +7,12 @@
 # already answered, and never under -WhatIf -- a warning seen only after committing is not a guard.
 #
 #   A. The AST rule over every source/Public/*.ps1 file: no Write-Warning may START after the file's
-#      first $PSCmdlet.ShouldProcess call, except a named OUTCOME warning (one that reports what the
-#      action did, or depends on what the operator confirmed, and so cannot be known before the
-#      prompt), each listed below with its reason. Stricter than "not inside the if body": it also
+#      first $PSCmdlet.ShouldProcess call, except a warning named in the allowlist below with its
+#      reason. An entry is one of three kinds: an OUTCOME warning (it reports what the action did, so
+#      it cannot be known before the prompt); a warning that depends on what the operator confirmed;
+#      or a warning that is not about a deletion or widened access at all and stands after the gate
+#      for another reason (for example a check that runs on every path, -WhatIf included, and sits
+#      after the gate only by position). Stricter than "not inside the if body": it also
 #      catches $Proceed = $PSCmdlet.ShouldProcess(...) followed by if ($Proceed) { Write-Warning ... }
 #      and an early if (-not $PSCmdlet.ShouldProcess(...)) { return }. Known-answer tests run the same
 #      checker on fixture text, and an allowlist entry that matches no warning or more than one fails.
@@ -140,10 +143,12 @@ BeforeDiscovery {
             Warning    = "Changing the membership type of administrative unit '$Object' to 'Assigned'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually."
         }
         @{
-            # The live read (a GET, answered by the fake below with a condition) runs before the gate.
+            # The live read (a GET, answered by the fake below with a condition) runs before the gate,
+            # in both phases; recorded, it is also the positive control that the call recorder records.
             Cmdlet     = 'Set-OERRoleAssignment'
             Invocation = "Set-OERRoleAssignment -Id '$RoleAssignmentId' -Condition ''"
             Warning    = "Removing the ABAC condition from role assignment '$RoleAssignmentId'. This WIDENS the principal's access at that scope."
+            Reads      = @("ARM GET $($RoleAssignmentId)?api-version=2022-04-01")
         }
         @{
             Cmdlet     = 'Stop-OERAccessReviewInstance'
@@ -151,6 +156,11 @@ BeforeDiscovery {
             Warning    = "Stopping access review instance 'instance-1'. An instance cannot be restarted once stopped."
         }
     )
+    # Reads: the exact read requests each phase makes before its gate. Every other case reads nothing,
+    # since its ids short-circuit the resolvers.
+    foreach ($Case in $script:RuntimeCases) {
+        if (-not $Case.ContainsKey('Reads')) { $Case.Reads = @() }
+    }
 }
 
 BeforeAll {
@@ -168,10 +178,11 @@ BeforeAll {
         Write-Host "OER_COHORT_SOURCE_ROOT is set: parts A and B scan $env:OER_COHORT_SOURCE_ROOT instead of the repository source."
     }
 
-    # Part A allowlist: the OUTCOME warnings that may stand after a cmdlet's first ShouldProcess. Each
-    # entry names its file, a distinctive fragment of the Write-Warning command's source text, and why
-    # it cannot be written before the prompt. An entry must match exactly one such warning.
-    $script:OutcomeAllowlist = @(
+    # Part A allowlist: the warnings that may stand after a cmdlet's first ShouldProcess, of the three
+    # kinds the header names. Each entry names its file, a distinctive fragment of the Write-Warning
+    # command's source text, and why it stands after the gate. An entry must match exactly one such
+    # warning.
+    $script:AfterGateAllowlist = @(
         @{
             File     = 'Add-OERCatalogResource.ps1'
             Fragment = 'but reading it back failed'
@@ -180,12 +191,12 @@ BeforeAll {
         @{
             File     = 'Export-OERInventory.ps1'
             Fragment = 'did not pass apply-schema validation'
-            Reason   = 'The apply-schema self-check of the bundle just written; it exists only once the write has run.'
+            Reason   = 'Not about the action: the apply-schema self-check of the in-memory inventory document, which is not gated and runs on every path (also under -WhatIf and after a declined prompt); it stands after the gate only by position.'
         }
         @{
             File     = 'Export-OERInventory.ps1'
             Fragment = 'Could not run the apply-schema self-check'
-            Reason   = 'The self-check of the bundle just written could not run; it exists only once the write has run.'
+            Reason   = 'Not about the action: the same ungated self-check could not run; it runs on every path (also under -WhatIf and after a declined prompt) and stands after the gate only by position.'
         }
         @{
             File     = 'Remove-OERActiveDirectoryRoleAssignment.ps1'
@@ -230,7 +241,8 @@ BeforeAll {
         start and After otherwise; with no such call, every warning is Before. An After warning is a
         Violation unless its source text contains the Fragment of an allowlist entry for this File. An
         allowlist entry for this File that is contained in no After warning, or in more than one, is an
-        AllowlistProblem (stale or ambiguous).
+        AllowlistProblem (stale or ambiguous). Text the parser reports errors for throws, naming the
+        file and the first error, so a file that does not parse can never pass as one without a gate.
         #>
         param(
             [Parameter(Mandatory)]
@@ -244,6 +256,10 @@ BeforeAll {
         $Tokens = $null
         $Errors = $null
         $Ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$Tokens, [ref]$Errors)
+        if (@($Errors).Count -gt 0) {
+            $First = @($Errors)[0]
+            throw ('{0} does not parse (line {1}): {2}' -f $File, $First.Extent.StartLineNumber, $First.Message)
+        }
         $Gate = @($Ast.FindAll({
                     param($Node)
                     $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
@@ -334,6 +350,22 @@ $Host.UI.WriteLine('PHASE: Confirm')
 'END'
 '@
         [scriptblock]::Create($Text.Replace('#INVOCATION#', $Invocation))
+    }
+
+    # The transport calls the scenario recorded in one phase ('WHATIF' or 'CONFIRM'), as
+    # '<GRAPH|ARM> <Method> <path>' strings.
+    function Get-ScenarioCall {
+        param([Parameter(Mandatory)]$Run, [Parameter(Mandatory)][ValidateSet('WHATIF', 'CONFIRM')][string]$Phase)
+        $Prefix = "$Phase-CALLS:"
+        $Line = [string](@($Run.Output | Where-Object { [string]$_ -like "$Prefix*" })[0])
+        if (-not $Line) { throw "The scenario printed no $Prefix line." }
+        @($Line.Substring($Prefix.Length) -split ';' | Where-Object { $_ })
+    }
+
+    # The recorded calls that are a write request: every method but GET.
+    function Select-WriteCall {
+        param([string[]]$Calls)
+        @($Calls | Where-Object { $_ -notmatch '^(GRAPH|ARM) GET ' })
     }
 
     # The events of one phase: from that phase's marker line to the next marker (or the end).
@@ -458,6 +490,19 @@ function Remove-Fixture {
         $Scan.AllowlistProblems[0] | Should -BeLike '*(stale)'
     }
 
+    It 'fails the scan for text that does not parse, rather than reading it as a file without a gate' {
+        # The gate is unclosed: read leniently, the partial AST could lose the gate (or the warning) and
+        # the file would pass part A without being checked at all.
+        $Text = @'
+function Remove-Fixture {
+    [CmdletBinding(SupportsShouldProcess)]
+    param()
+    if ($PSCmdlet.ShouldProcess('target', 'action')) {
+        Write-Warning 'Deleting the fixture.'
+'@
+        { Get-WarningGateScan -Text $Text -File 'Broken.ps1' } | Should -Throw -ExpectedMessage 'Broken.ps1 does not parse (line *'
+    }
+
     It 'reports an allowlist entry that matches two warnings after the gate as ambiguous' {
         $Text = @'
 function Remove-Fixture {
@@ -486,23 +531,23 @@ Describe 'Warnings before the confirmation gate: every public cmdlet (A, BL-18)'
         $Gated.Count | Should -Be 59
     }
 
-    It 'no public cmdlet writes a Write-Warning after its first $PSCmdlet.ShouldProcess, except the named outcome warnings' {
+    It 'no public cmdlet writes a Write-Warning after its first $PSCmdlet.ShouldProcess, except the named allowlisted warnings' {
         $Violations = @(Get-PublicSourceFile | ForEach-Object {
-                (Get-WarningGateScan -Text (Get-Content -Raw -LiteralPath $_.FullName) -File $_.Name -Allowlist $script:OutcomeAllowlist).Violations
+                (Get-WarningGateScan -Text (Get-Content -Raw -LiteralPath $_.FullName) -File $_.Name -Allowlist $script:AfterGateAllowlist).Violations
             })
         ($Violations -join [Environment]::NewLine) | Should -BeExactly '' -Because (
-            'a warning written inside or after the gate never shows under -WhatIf and shows under -Confirm only after the ' +
-            'answer; move it ahead of the gate, or name it in the outcome allowlist with a reason')
+            'a warning written inside or after the gate shows under -WhatIf, if at all, only after the What if: line, and ' +
+            'under -Confirm only after the answer; move it ahead of the gate, or name it in the allowlist with a reason')
     }
 
-    It 'every outcome allowlist entry matches exactly one warning after its file''s first ShouldProcess' {
-        $Problems = @(foreach ($FileName in @($script:OutcomeAllowlist | ForEach-Object { $_.File } | Sort-Object -Unique)) {
+    It 'every allowlist entry matches exactly one warning after its file''s first ShouldProcess' {
+        $Problems = @(foreach ($FileName in @($script:AfterGateAllowlist | ForEach-Object { $_.File } | Sort-Object -Unique)) {
                 $Path = Join-Path -Path (Join-Path -Path $script:CohortSourceRoot -ChildPath 'Public') -ChildPath $FileName
                 if (-not (Test-Path -LiteralPath $Path)) { "${FileName}: no such public file"; continue }
-                (Get-WarningGateScan -Text (Get-Content -Raw -LiteralPath $Path) -File $FileName -Allowlist $script:OutcomeAllowlist).AllowlistProblems
+                (Get-WarningGateScan -Text (Get-Content -Raw -LiteralPath $Path) -File $FileName -Allowlist $script:AfterGateAllowlist).AllowlistProblems
             })
         ($Problems -join [Environment]::NewLine) | Should -BeExactly ''
-        @($script:OutcomeAllowlist).Count | Should -Be 9
+        @($script:AfterGateAllowlist).Count | Should -Be 9
     }
 }
 
@@ -562,8 +607,11 @@ Describe 'Warnings before the confirmation gate: -WhatIf and -Confirm show each 
             $WhatIf | Should -BeGreaterOrEqual 0 -Because 'the cmdlet must reach its gate, so the missing warning below is not a cmdlet that stopped early'
             @($Events | Where-Object { $_ -ceq $script:Expected }).Count | Should -Be 1
             [array]::IndexOf([string[]]$Events, $script:Expected) | Should -BeLessThan $WhatIf
-            $Calls = @(@($script:Run.Output | Where-Object { $_ -like 'WHATIF-CALLS:*' })[0].Substring(13) -split ';' | Where-Object { $_ })
-            @($Calls | Where-Object { $_ -notmatch '^(GRAPH|ARM) GET ' }) | Should -BeNullOrEmpty
+            $Calls = @(Get-ScenarioCall -Run $script:Run -Phase 'WHATIF')
+            @(Select-WriteCall -Calls $Calls) | Should -BeNullOrEmpty
+            # The reads are pinned exactly: none for most cases, the live read for Set-OERRoleAssignment,
+            # which proves the recorder records what the cmdlet sends.
+            (@($Calls) -join '|') | Should -BeExactly (@($Reads) -join '|')
         }
 
         It 'under -Confirm answered No writes the warning before the prompt, and sends no write request' {
@@ -572,8 +620,25 @@ Describe 'Warnings before the confirmation gate: -WhatIf and -Confirm show each 
             $Prompt | Should -BeGreaterOrEqual 0 -Because 'the cmdlet must reach its prompt, so the missing warning below is not a cmdlet that stopped early'
             @($Events | Where-Object { $_ -ceq $script:Expected }).Count | Should -Be 1
             [array]::IndexOf([string[]]$Events, $script:Expected) | Should -BeLessThan $Prompt
-            $Calls = @(@($script:Run.Output | Where-Object { $_ -like 'CONFIRM-CALLS:*' })[0].Substring(14) -split ';' | Where-Object { $_ })
-            @($Calls | Where-Object { $_ -notmatch '^(GRAPH|ARM) GET ' }) | Should -BeNullOrEmpty
+            $Calls = @(Get-ScenarioCall -Run $script:Run -Phase 'CONFIRM')
+            @(Select-WriteCall -Calls $Calls) | Should -BeNullOrEmpty
+            (@($Calls) -join '|') | Should -BeExactly (@($Reads) -join '|')
+        }
+    }
+}
+
+Describe 'Warnings before the confirmation gate: the part C call recorder (known answer)' {
+    It 'records a write sent through either faked transport in each phase, and the write filter catches it' {
+        # The positive control for every "sends no write request" assertion above: the same scenario,
+        # with an invocation that sends a Graph DELETE and an ARM PUT through the fakes, must see both,
+        # in both phases, and Select-WriteCall must return both.
+        $Invocation = "& `$Module { Invoke-OERGraphRequest -Method 'DELETE' -Uri 'v1.0/known-answer'; Invoke-OERArmRequest -Method 'PUT' -Path '/known-answer' }"
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&No' -Script (New-WarningGateScenario -Invocation $Invocation)
+        @($Run.Output) | Should -Contain 'END'
+        foreach ($Phase in 'WHATIF', 'CONFIRM') {
+            $Calls = @(Get-ScenarioCall -Run $Run -Phase $Phase)
+            ($Calls -join '|') | Should -BeExactly 'GRAPH DELETE v1.0/known-answer|ARM PUT /known-answer'
+            @(Select-WriteCall -Calls $Calls).Count | Should -Be 2
         }
     }
 }

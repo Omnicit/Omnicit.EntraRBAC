@@ -14,9 +14,10 @@ function Set-OERAdministrativeUnit {
     supplied without -MembershipRule and the live unit has no rule of its own, a non-terminating
     MembershipRuleRequired error is emitted and no PATCH is sent. When both are supplied they travel in
     the same PATCH, so the unit is never momentarily dynamic with no rule. Changing -MembershipType emits
-    a warning before the confirmation prompt, so it also appears under -WhatIf: Microsoft Graph documents that the existing membership might change based
-    on the rule supplied for dynamic membership, and on a dynamic unit the rule owns the membership --
-    members can no longer be added or removed manually at all.
+    a warning before the confirmation prompt, so it also appears under -WhatIf: Microsoft Graph
+    documents that the existing membership might change based on the rule supplied for dynamic
+    membership, and on a dynamic unit the rule owns the membership -- members can no longer be added
+    or removed manually at all.
 
     Microsoft Graph documents administrativeUnit.visibility as either null (public) or HiddenMembership;
     'Public' is not a REST value, so -Visibility Public is translated to a JSON null, which is what

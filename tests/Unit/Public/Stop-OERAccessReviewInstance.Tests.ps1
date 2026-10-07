@@ -62,12 +62,14 @@ Describe 'Stop-OERAccessReviewInstance' {
         }
 
         It 'warns BEFORE the POST fires' {
+            # The warning AND the POST record into the SAME list, so a warning written after the POST
+            # (inside the gate below the request, or after the gate's if block) turns this red.
             $Order = [System.Collections.Generic.List[string]]::new()
+            Mock -ModuleName Omnicit.EntraRBAC Write-Warning -ParameterFilter { $Message -match 'cannot be restarted' } -MockWith { $Order.Add('warn') }
             Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -MockWith { $Order.Add('post') }
-            Stop-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -Confirm:$false `
-                -WarningVariable Warn -WarningAction SilentlyContinue
-            $Order -join ',' | Should -Be 'post'
-            @($Warn | Where-Object { $_.Message -match 'restarted' }).Count | Should -Be 1
+            Stop-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -Confirm:$false
+            $Order -join ',' | Should -Be 'warn,post'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Write-Warning -Times 1 -Exactly -ParameterFilter { $Message -match 'cannot be restarted' }
         }
 
         It 'does not POST under -WhatIf (destructive guard)' {

@@ -6,8 +6,8 @@ function Remove-OERAccessPackageAssignment {
     .DESCRIPTION
     Creates an accessPackageAssignmentRequest with requestType adminRemove through Microsoft Graph,
     revoking the assignment identified by -AssignmentId. High-impact: emits an explicit warning before
-    the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact High. The revocation is processed asynchronously by Graph. Supports -WhatIf
-    and -Confirm.
+    the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact High.
+    The revocation is processed asynchronously by Graph. Supports -WhatIf and -Confirm.
 
     .PARAMETER AssignmentId
     The accessPackageAssignment id to remove (as returned by Get-OERAccessPackageAssignment).

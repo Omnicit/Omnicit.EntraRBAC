@@ -18,6 +18,11 @@
 # the parent's definitions, shares the parent's hit list with it, and after the scenario records a
 # hit for every name that no longer resolves there -- so the parent's root AfterAll check covers the
 # answering runspace too. A run without an installed tripwire is refused.
+#
+# The host also keeps one ORDERED Events list -- 'Warning: <text>' for each warning, 'Line: <text>'
+# for each host line (the 'What if:' line among them) and 'Prompt: <caption> <message>' for each
+# confirmation prompt, in the order they reached the host -- which Invoke-OERWithConfirmAnswer
+# returns as Events, so a test can prove a warning came before the 'What if:' line or the prompt.
 
 class OERAnsweringHostUI : System.Management.Automation.Host.PSHostUserInterface {
     [string]$Answer = '&No'
@@ -143,10 +148,13 @@ function Invoke-OERWithConfirmAnswer {
     Runs a scriptblock in a runspace whose host answers every confirmation prompt the same way.
     .DESCRIPTION
     Creates a runspace on a PSHost whose PromptForChoice returns the choice labelled -Answer, runs
-    -Script in it, and returns the output plus the warning and error streams and the text of every
-    confirmation prompt that was answered. Used to exercise a genuinely declined ShouldProcess,
-    which no in-process Pester construct can produce, and to assert on the ShouldProcess target
-    text, which goes straight to the host and so survives no stream redirection. The scriptblock is
+    -Script in it, and returns the output plus the warning and error streams, the text of every
+    confirmation prompt that was answered, and an ordered Events list (warnings, host lines
+    including the 'What if:' line, and prompts, in the order they reached the host). Used to
+    exercise a genuinely declined ShouldProcess, which no in-process Pester construct can produce,
+    to assert on the ShouldProcess target text, which goes straight to the host and so survives no
+    stream redirection, and to assert that a warning came before the 'What if:' line or the prompt,
+    an order no stream shows. The scriptblock is
     transported as text, so it must be self-contained -- it cannot close over variables from the
     calling test. The transport tripwire is installed in the answering runspace from the parent's
     definitions and shares the parent's hit list, and a run without an installed tripwire is refused.

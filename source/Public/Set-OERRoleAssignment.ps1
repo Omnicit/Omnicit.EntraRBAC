@@ -22,8 +22,9 @@ function Set-OERRoleAssignment {
     the parameter was bound, never on whether its value is truthy, because an empty string is
     meaningful: passing -Condition '' REMOVES the condition, and it clears conditionVersion with it.
     Removing a condition WIDENS the principal's access, so the cmdlet warns explicitly before the
-    confirmation prompt (so the warning also appears under -WhatIf) and carries ConfirmImpact High. Supplying -Condition on an assignment that had none defaults
-    conditionVersion to 2.0, matching the ARM default.
+    confirmation prompt (so the warning also appears under -WhatIf) and carries ConfirmImpact High.
+    Supplying -Condition on an assignment that had none defaults conditionVersion to 2.0, matching the
+    ARM default.
 
     A condition is cleared by OMITTING both keys from the PUT body, not by sending them empty. The REST
     documentation says to set both to "either an empty string or null", but ARM rejects an empty

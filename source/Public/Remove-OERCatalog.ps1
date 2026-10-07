@@ -6,8 +6,9 @@ function Remove-OERCatalog {
     .DESCRIPTION
     Deletes an access package catalog through Microsoft Graph. Accepts the catalog by -Id or -DisplayName
     (resolved via Resolve-OERCatalogId). This is a high-impact operation: it emits an explicit warning
-    before the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact High. Deleting a catalog that still contains access packages will fail at
-    Graph; remove the access packages first. Supports -WhatIf and -Confirm.
+    before the confirmation prompt (so it also appears under -WhatIf) and defaults to ConfirmImpact
+    High. Deleting a catalog that still contains access packages will fail at Graph; remove the
+    access packages first. Supports -WhatIf and -Confirm.
 
     .PARAMETER Id
     The catalog id (GUID) to delete.

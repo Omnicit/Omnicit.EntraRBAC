@@ -11,8 +11,8 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     be given directly as -PrincipalId (object id, for example piped from
     Get-OEREligibleDirectoryRoleAssignment) or as a friendly -User/-Group/-ServicePrincipal value.
     This is a destructive operation (ConfirmImpact High) and emits a warning before the confirmation
-    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Authentication is ensured via Initialize-OERAuth (no ARM token is
-    acquired; this is a Graph-only cmdlet).
+    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Authentication is ensured
+    via Initialize-OERAuth (no ARM token is acquired; this is a Graph-only cmdlet).
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -149,17 +149,20 @@ function Remove-OEREligibleDirectoryRoleAssignment {
         # request names only the role and the principal, so it would remove that principal's own
         # DIRECT eligible assignment (if one exists) instead of the piped row. Refused before any
         # Graph call. A piped object without MemberType (not Get- output) is left to the request as
-        # before. An eligibility has no AssignmentType, so the Active twin's activation branch has
-        # no counterpart here. A row from Get-OERGroupMember (MemberType Member or Owner) is no role
-        # assignment at all, so its refusal says that instead of calling it inherited, and shows how
-        # to remove the principal's own eligibility on purpose.
+        # before, unless it is a Get-OERGroupMember row. An eligibility has no AssignmentType, so the
+        # Active twin's activation branch has no counterpart here. A Get-OERGroupMember row (tagged
+        # Omnicit.EntraRBAC.GroupMember, or MemberType Member or Owner) is no role assignment at all,
+        # so its refusal says that instead of calling it inherited, and shows how to remove the
+        # principal's own eligibility on purpose; the role name in that example is quoted with any
+        # single quote doubled, so the example stays valid as typed.
         if ($PSCmdlet.MyInvocation.ExpectingInput) {
             $NotDirectReason = $null
             $NotDirectAdvice = $null
             $NotDirectMessage = $null
             if (($PSItem.PSObject.TypeNames -contains 'Omnicit.EntraRBAC.GroupMember') -or
                 ([string]$PSItem.MemberType -in @('Member', 'Owner'))) {
-                $NotDirectMessage = "The piped object for principal '$($PSItem.PrincipalId)' is a group member row (MemberType '$($PSItem.MemberType)') from Get-OERGroupMember, not an eligible assignment of directory role '$Role', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct eligible assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OEREligibleDirectoryRoleAssignment -Role '$Role' -PrincipalId `$_.PrincipalId }"
+                $MemberTypeNote = if ([string]$PSItem.MemberType) { " (MemberType '$($PSItem.MemberType)')" } else { '' }
+                $NotDirectMessage = "The piped object for principal '$($PSItem.PrincipalId)' is a group member row$MemberTypeNote from Get-OERGroupMember, not an eligible assignment of directory role '$Role', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct eligible assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OEREligibleDirectoryRoleAssignment -Role '$($Role.Replace("'", "''"))' -PrincipalId `$_.PrincipalId }"
             } elseif ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
                 $NotDirectReason = "is inherited through a group (MemberType '$($PSItem.MemberType)'), not a direct one"
                 $NotDirectAdvice = " Remove the group's own eligible assignment, or the principal from the group."
