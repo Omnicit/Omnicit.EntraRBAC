@@ -2243,4 +2243,106 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             }
         }
     }
+
+    Context 'a membership type change: the plan shows the warning a real run gives, and a run writes it once (BL-17)' {
+        # Set-OERAdministrativeUnit warns about a membership type change. Under -WhatIf the engine never
+        # calls it, so the handler writes the cmdlet's own text before its gate -- and only under -WhatIf:
+        # a real run calls the cmdlet, which writes it, and a copy from the handler would warn twice. The
+        # warnings are counted from the stream (3>&1), with -WarningAction Continue pinned on the call.
+        # In the real runs below Set-OERAdministrativeUnit runs for REAL: only auth, the unit lookup, the
+        # handler's own read and the Graph transport are mocked.
+        BeforeAll {
+            $script:AuWarnId = '11111111-1111-1111-1111-1111111111a1'
+            $script:AuWarnText = "Changing the membership type of administrative unit '11111111-1111-1111-1111-1111111111a1' to 'Dynamic'. " +
+                "The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership " +
+                'and members can no longer be added or removed manually.'
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncAuWarnViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet
+                }
+                # One run of the handler: its rows, and the text of every warning that reached the stream.
+                function script:Invoke-AuWarnCapture {
+                    param([PSCustomObject]$Item, [bool]$WhatIfRun)
+                    $All = @(Invoke-SyncAuWarnViaCaller -Item $Item -WhatIf:$WhatIfRun -Confirm:$false -WarningAction Continue -ErrorAction Stop 3>&1)
+                    [PSCustomObject]@{
+                        Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                        Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                    }
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERAdministrativeUnitId { '11111111-1111-1111-1111-1111111111a1' }
+                Mock Get-OERAdministrativeUnit {
+                    $Au = [PSCustomObject]@{
+                        Id                            = '11111111-1111-1111-1111-1111111111a1'
+                        DisplayName                   = 'AU-Warn'
+                        Description                   = 'old'
+                        MembershipType                = 'Assigned'
+                        MembershipRule                = $null
+                        MembershipRuleProcessingState = $null
+                        IsMemberManagementRestricted  = $false
+                        Visibility                    = $null
+                    }
+                    $Au | Add-Member -NotePropertyName Members -NotePropertyValue @() -Force
+                    $Au
+                }
+                # The real cmdlet's PATCH and its read-back. Anything else is not simulated and throws.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'PATCH') { return $null }
+                    if ($Uri -eq 'v1.0/directory/administrativeUnits/11111111-1111-1111-1111-1111111111a1') {
+                        return @{ id = '11111111-1111-1111-1111-1111111111a1'; displayName = 'AU-Warn'; membershipType = 'Dynamic' }
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+            }
+        }
+
+        It 'writes the warning of Set-OERAdministrativeUnit once under -WhatIf, before the gate, and never calls the cmdlet' {
+            InModuleScope $script:moduleName -Parameters @{ Expected = $script:AuWarnText } {
+                param($Expected)
+                Mock Set-OERAdministrativeUnit {}
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; dynamic = $true; membershipRule = '(user.department -eq "HR")'; members = $null; scopedRoles = $null }
+                $Out = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                # Reached: the gate declined and the plan row was written.
+                @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would update administrative unit properties (*MembershipType*' }).Count | Should -Be 1
+                Should -Invoke Set-OERAdministrativeUnit -Times 0
+                $Out.Warnings.Count | Should -Be 1
+                $Out.Warnings[0] | Should -BeExactly $Expected
+            }
+        }
+
+        It 'writes it once in a real run, from the real Set-OERAdministrativeUnit, with the same text as the -WhatIf plan' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; dynamic = $true; membershipRule = '(user.department -eq "HR")'; members = $null; scopedRoles = $null }
+                $Plan = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                # The plan wrote nothing.
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PATCH' }
+                $Run = Invoke-AuWarnCapture -Item $Item -WhatIfRun $false
+                # Reached: the real cmdlet passed its own gate and sent the membership type.
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Body.membershipType -eq 'Dynamic' }
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                $Plan.Warnings.Count | Should -Be 1
+                $Run.Warnings.Count | Should -Be 1 -Because 'a real run must warn once, from the cmdlet, never also from the handler'
+                ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+            }
+        }
+
+        It 'writes no warning in either mode when the membership type does not change' {
+            InModuleScope $script:moduleName {
+                $Item = [PSCustomObject]@{ displayName = 'AU-Warn'; description = 'new'; members = $null; scopedRoles = $null }
+                $Plan = Invoke-AuWarnCapture -Item $Item -WhatIfRun $true
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would update administrative unit properties (Description)' }).Count | Should -Be 1
+                $Plan.Warnings.Count | Should -Be 0
+                $Run = Invoke-AuWarnCapture -Item $Item -WhatIfRun $false
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PATCH' -and $Body.description -eq 'new' }
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+                $Run.Warnings.Count | Should -Be 0
+            }
+        }
+    }
 }

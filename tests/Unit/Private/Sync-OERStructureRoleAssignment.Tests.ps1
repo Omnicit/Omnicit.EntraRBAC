@@ -1617,3 +1617,127 @@ Describe 'Sync-OERStructureRoleAssignment with an ambiguous service principal di
         }
     }
 }
+
+Describe 'Sync-OERStructureRoleAssignment: removing an ABAC condition, the plan shows the warning a real run gives (BL-17)' {
+    # Removing a live condition WIDENS the principal's access, and Set-OERRoleAssignment warns about it.
+    # Under -WhatIf the engine never calls that cmdlet, so the handler writes the cmdlet's own text
+    # before its gate -- and only under -WhatIf: a real run calls the cmdlet, which writes it, and a
+    # copy from the handler would warn twice. The warnings are counted from the stream (3>&1), with
+    # -WarningAction Continue pinned on the call. In the real runs below Set-OERRoleAssignment runs for
+    # REAL: only auth, the handler's own lookups and read, and the ARM transport are mocked.
+    BeforeAll {
+        $script:RaWarnText = "Removing the ABAC condition from role assignment '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra-cond'. " +
+            "This WIDENS the principal's access at that scope."
+        InModuleScope $script:moduleName {
+            function script:Invoke-SyncRaWarnViaCaller {
+                [CmdletBinding(SupportsShouldProcess)]
+                param([PSCustomObject]$Item)
+                Sync-OERStructureRoleAssignment -Item $Item -Caller $PSCmdlet -ResolvedScope '/subscriptions/s1'
+            }
+            # One run of the handler: its rows, and the text of every warning that reached the stream.
+            function script:Invoke-RaWarnCapture {
+                param([PSCustomObject]$Item, [bool]$WhatIfRun)
+                $All = @(Invoke-SyncRaWarnViaCaller -Item $Item -WhatIf:$WhatIfRun -Confirm:$false -WarningAction Continue -ErrorAction Stop 3>&1)
+                [PSCustomObject]@{
+                    Rows     = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                    Warnings = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { [string]$_.Message })
+                }
+            }
+        }
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName {
+            Mock Initialize-OERAuth {}
+            Mock Resolve-OERStructurePrincipal { 'p-1' }
+            Mock Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1' }
+            # The live condition, which the handler's read and the cmdlet's read of the same assignment
+            # both answer with. A test that needs none sets it to $null.
+            $script:RaWarnLiveCondition = "@Resource[x] StringEquals 'y'"
+            Mock Get-OERRoleAssignment {
+                @([PSCustomObject]@{
+                        PrincipalId      = 'p-1'
+                        RoleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1'
+                        Scope            = '/subscriptions/s1'
+                        RoleAssignmentId = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra-cond'
+                        Condition        = $script:RaWarnLiveCondition
+                        ConditionVersion = $(if ($script:RaWarnLiveCondition) { '2.0' } else { $null })
+                        Description      = 'd'
+                    })
+            }
+            # The real cmdlet's read (GET) and write (PUT). Anything else is not simulated and throws.
+            Mock Invoke-OERArmRequest {
+                if ($Path -ne '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra-cond?api-version=2022-04-01') { throw "unexpected $Method $Path" }
+                $Props = @{
+                    scope            = '/subscriptions/s1'
+                    roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd-1'
+                    principalId      = 'p-1'
+                    principalType    = 'User'
+                    description      = 'd'
+                }
+                if ($Method -eq 'PUT') {
+                    $Props = $Body.properties
+                } elseif ($script:RaWarnLiveCondition) {
+                    $Props.condition = $script:RaWarnLiveCondition
+                    $Props.conditionVersion = '2.0'
+                }
+                @{ id = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignments/ra-cond'; name = 'ra-cond'; properties = $Props }
+            }
+        }
+    }
+
+    It 'writes the warning of Set-OERRoleAssignment once under -WhatIf, before the gate, and never calls the cmdlet' {
+        InModuleScope $script:moduleName -Parameters @{ Expected = $script:RaWarnText } {
+            param($Expected)
+            Mock Set-OERRoleAssignment {}
+            $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = '' }
+            $Out = Invoke-RaWarnCapture -Item $Item -WhatIfRun $true
+            # Reached: the gate declined and the plan row was written.
+            @($Out.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would update role assignment at '/subscriptions/s1' -- differs on condition*" }).Count | Should -Be 1
+            Should -Invoke Set-OERRoleAssignment -Times 0
+            $Out.Warnings.Count | Should -Be 1
+            $Out.Warnings[0] | Should -BeExactly $Expected
+        }
+    }
+
+    It 'writes it once in a real run, from the real Set-OERRoleAssignment, with the same text as the -WhatIf plan' {
+        InModuleScope $script:moduleName {
+            $Item = [PSCustomObject]@{ scope = '/subscriptions/s1'; role = 'Reader'; principal = 'person17@example.com'; condition = '' }
+            $Plan = Invoke-RaWarnCapture -Item $Item -WhatIfRun $true
+            # The plan wrote nothing.
+            Should -Invoke Invoke-OERArmRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+            $Run = Invoke-RaWarnCapture -Item $Item -WhatIfRun $false
+            # Reached: the real cmdlet passed its own gate and sent the assignment without a condition.
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' -and -not $Body.properties.ContainsKey('condition') }
+            @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+            $Plan.Warnings.Count | Should -Be 1
+            $Run.Warnings.Count | Should -Be 1 -Because 'a real run must warn once, from the cmdlet, never also from the handler'
+            ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+        }
+    }
+
+    # Only the description changes in each case below, so the update path is reached in both modes and
+    # the real cmdlet PUTs: a kept or undeclared condition is carried, and no live condition stays none.
+    It 'writes no warning in either mode when <Case>' -ForEach @(
+        @{ Case = 'the condition is declared as it is live'; Live = "@Resource[x] StringEquals 'y'"
+            Json = '{ "scope": "/subscriptions/s1", "role": "Reader", "principal": "person17@example.com", "condition": "@Resource[x] StringEquals ''y''", "description": "new" }' }
+        @{ Case = 'the condition is not declared'; Live = "@Resource[x] StringEquals 'y'"
+            Json = '{ "scope": "/subscriptions/s1", "role": "Reader", "principal": "person17@example.com", "description": "new" }' }
+        @{ Case = 'an empty condition is declared and none is live'; Live = $null
+            Json = '{ "scope": "/subscriptions/s1", "role": "Reader", "principal": "person17@example.com", "condition": "", "description": "new" }' }
+    ) {
+        InModuleScope $script:moduleName -Parameters @{ Live = $Live; Json = $Json } {
+            param($Live, $Json)
+            $script:RaWarnLiveCondition = $Live
+            $Plan = Invoke-RaWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+            @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would update role assignment at '/subscriptions/s1' -- differs on description*" }).Count | Should -Be 1
+            $Plan.Warnings.Count | Should -Be 0
+            $Run = Invoke-RaWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+            # Reached: the real cmdlet sent the description, and the live condition (or none) with it.
+            Should -Invoke Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.properties.description -eq 'new' -and [string]$Body.properties.condition -ceq [string]$script:RaWarnLiveCondition
+            }
+            @($Run.Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 1
+            $Run.Warnings.Count | Should -Be 0
+        }
+    }
+}

@@ -116,6 +116,13 @@ function Sync-OERStructureGroup {
        (member/owner) and every later step still run. The row carries ApproverNotFound for an
        approver that matches nothing, AmbiguousApproverName (naming the candidate ids) for a group
        display name several groups share, and the lookup's own error for a lookup that failed.
+       When the diff reconciles the MFA / authentication context pair (Resolve-OERGroupPimPolicyChange
+       clears MultiFactorAuthentication, or disables the authentication context, and reports why in
+       ConflictReason), Set-OERGroupPimPolicy -- called with the reconciled parameters -- has nothing
+       left to resolve and writes no warning. The handler therefore writes it, before the ShouldProcess
+       gate and in every mode, so -WhatIf shows it and a real run writes it once: "Policy '<id>':
+       <reason>", the text the cmdlet writes for a direct call, with the id of the policy it read, or
+       "pimPolicy (<accessType>) of group '<name>': <reason>" when no policy was read.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -139,6 +146,13 @@ function Sync-OERStructureGroup {
        pimPolicy has been set to allow permanent eligibility. Matched and diffed the same way, so a
        time-bound eligibility that the document declares permanent is re-issued as permanent, again
        selecting adminAssign or adminUpdate from the diff reason as in step 3.
+       Add-OERGroupEligibility warns, before its own gate, when the group's policy must be opened to
+       allow permanent eligible assignments (affecting ALL eligibility of that access type). Under
+       -WhatIf, where the cmdlet is never called, the handler makes the same read
+       (Get-OERGroupPermanentEligibilityState) before its gate and writes the cmdlet's warning, with the
+       same text, when the policy has not been opened yet; a failed read writes nothing, as in the
+       cmdlet. A real run leaves the warning to the cmdlet, so it is written once either way. Step 3
+       has no such warning: a time-bound eligibility never opens the policy.
        For a group THIS RUN created, the entry first waits, from the same shared budget, until
        Microsoft Graph lists that access type's policy AND that policy answers its read, as step 4
        does: Get-OERPimGroupPolicyId -NotFoundAsUnlisted, then Get-OERListedGroupPimPolicy, a 404 from
@@ -214,9 +228,11 @@ function Sync-OERStructureGroup {
     reconciles normally.
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
-    emits Skipped records instead of calling child cmdlets. When the group itself does not exist and
-    its creation is skipped under -WhatIf, no child read or write calls are made. A rename under
-    -WhatIf is reported Skipped ("would rename group '<previous>' to '<new>'"), and the group found
+    emits Skipped records instead of calling child cmdlets, and writes the warning a child cmdlet
+    would have written for a permanent eligibility that opens the policy (step 5). When the group
+    itself does not exist and its creation is skipped under -WhatIf, no child read or write calls
+    are made. A rename under -WhatIf is reported Skipped ("would rename group '<previous>' to
+    '<new>'"), and the group found
     under its previous name is still read, so its children are planned against it. A rename that
     neither name resolves, and a rename conflict, are Failed under -WhatIf too: both are decided
     before any ShouldProcess gate.
@@ -1153,6 +1169,17 @@ function Sync-OERStructureGroup {
                     }
                 }
 
+                # The diff resolves the MFA / authentication context pair itself and sends the
+                # reconciled rule, so Set-OERGroupPimPolicy, called with those parameters, has nothing
+                # left to resolve and never writes its own warning about the pair. The warning is
+                # written here instead, before the gate and in EVERY mode (Ruling R5), with the text the
+                # cmdlet writes for a direct call: the plan shows it, and a real run writes it once.
+                # The policy id is the one the read above gave; without a read policy the item names it.
+                if ($Change.ConflictReason) {
+                    $ConflictTarget = if ($CurrentPolicy -and $CurrentPolicy.PolicyId) { "Policy '$($CurrentPolicy.PolicyId)'" } else { "pimPolicy ($AccessType) of group '$Name'" }
+                    Write-Warning "${ConflictTarget}: $($Change.ConflictReason)"
+                }
+
                 if ($Caller.ShouldProcess($Name, "Set PIM policy ($AccessType): $($Change.Changes -join '; ')")) {
                     try {
                         $SetSplat = $Change.SetParams
@@ -1201,6 +1228,27 @@ function Sync-OERStructureGroup {
             }
 
             $EAction = if ($EChange.Reason -eq 'Absent') { 'adminAssign' } else { 'adminUpdate' }
+            # A permanent eligibility may need the group's policy opened to allow permanent eligible
+            # assignments, which affects ALL eligibility of that access type, and Add-OERGroupEligibility
+            # reads that (Get-OERGroupPermanentEligibilityState) and warns about it before its own gate.
+            # Under -WhatIf the engine never calls that cmdlet, so the plan would not show the warning a
+            # real run gives: the same read is made here, before the gate, and the cmdlet's own warning
+            # written when the policy must be opened. A failed read writes nothing, as in the cmdlet.
+            # Only under -WhatIf -- a real run calls the cmdlet, which writes it, and a second copy here
+            # would warn twice. Under -WhatIf a group this run would create is never reached here (its
+            # creation is skipped and the handler returns), so the group always exists already.
+            if ($WhatIfPreference) {
+                $PermanentState = $null
+                try {
+                    $PermanentState = Get-OERGroupPermanentEligibilityState -GroupId $Gid -AccessType $EChange.AccessType
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                    Write-Verbose "Sync-OERStructureGroup: could not read whether the $($EChange.AccessType) policy of group '$Name' allows permanent eligibility ($($PSItem.Exception.Message)); the plan cannot say whether it would be opened."
+                }
+                if ($PermanentState -and $PermanentState.HasPolicy -and -not $PermanentState.PermanentAllowed) {
+                    Write-Warning "This eligibility requires opening the PIM-for-groups policy for group '$Gid' ($($EChange.AccessType) access) to allow PERMANENT eligible assignments, which affects ALL $($EChange.AccessType) eligibility for this group."
+                }
+            }
             if ($Caller.ShouldProcess($Name, "Add permanent $($EChange.AccessType) eligibility for '$EPrinId'")) {
                 if ($CreatedThisRun) {
                     # A group THIS RUN created may not be known to PIM for Groups yet. Unlike step 3 this

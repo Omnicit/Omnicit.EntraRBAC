@@ -430,3 +430,62 @@ Describe 'Resolve-OERGroupPimPolicyChange approval (requireApproval, approvers)'
         }
     }
 }
+
+Describe 'Resolve-OERGroupPimPolicyChange ConflictReason (BL-17)' {
+    # The handler warns from ConflictReason, since Set-OERGroupPimPolicy, called with the reconciled
+    # SetParams, has nothing left to resolve. It carries the reason only when a reconcile arm actually
+    # added its change.
+    It 'carries the reason when MFA is cleared from the enablement rules' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ authenticationContextId = 'c1' }
+            $Current  = [pscustomobject]@{ AuthenticationContextId = ''; ActivationEnabledRules = @('MultiFactorAuthentication', 'Justification') }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            @($R.SetParams.ActivationEnabledRules) | Should -Be @('Justification')
+            $R.ConflictReason | Should -BeExactly 'mfa cleared: mutually exclusive with authenticationContextId=c1'
+        }
+    }
+
+    It 'carries the reason when the live authentication context is disabled' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ activationEnablement = @('MultiFactorAuthentication') }
+            $Current  = [pscustomobject]@{ AuthenticationContextId = 'c7'; ActivationEnabledRules = @('Justification') }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.SetParams.AuthenticationContextId | Should -BeExactly ''
+            $R.ConflictReason | Should -BeExactly "authentication context 'c7' disabled: mutually exclusive with multi-factor authentication on activation"
+        }
+    }
+
+    It 'carries the reason when no policy was read and both sides are declared' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ authenticationContextId = 'c1'; activationEnablement = @('MultiFactorAuthentication', 'Justification') }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $null
+            @($R.SetParams.ActivationEnabledRules) | Should -Be @('Justification')
+            $R.ConflictReason | Should -BeExactly 'mfa cleared: mutually exclusive with authenticationContextId=c1'
+        }
+    }
+
+    It 'is null when the reconciled list is already the live one, so nothing is cleared' {
+        InModuleScope $script:moduleName {
+            # Both sides declared, MFA already off live: the reconcile decides ClearMfa but adds nothing.
+            $Declared = [pscustomobject]@{ authenticationContextId = 'c1'; activationEnablement = @('MultiFactorAuthentication', 'Justification') }
+            $Current  = [pscustomobject]@{ AuthenticationContextId = 'c1'; ActivationEnabledRules = @('Justification') }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeFalse
+            $R.SetParams.ContainsKey('ActivationEnabledRules') | Should -BeFalse
+            $R.PSObject.Properties.Name | Should -Contain 'ConflictReason'
+            $R.ConflictReason | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'is null when the change reconciles nothing' {
+        InModuleScope $script:moduleName {
+            $Declared = [pscustomobject]@{ authenticationContextId = 'c1' }
+            $Current  = [pscustomobject]@{ AuthenticationContextId = ''; ActivationEnabledRules = @('Justification') }
+            $R = Resolve-OERGroupPimPolicyChange -Declared $Declared -Current $Current
+            $R.Changed | Should -BeTrue
+            $R.SetParams.AuthenticationContextId | Should -BeExactly 'c1'
+            $R.PSObject.Properties.Name | Should -Contain 'ConflictReason'
+            $R.ConflictReason | Should -BeNullOrEmpty
+        }
+    }
+}

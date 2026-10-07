@@ -24,7 +24,12 @@ function Resolve-OERGroupPimPolicyChange {
     exclusion: because the platform cannot hold both at once, reconciling them can add an
     ActivationEnabledRules or an AuthenticationContextId the document never declared -- a plan that
     printed "unchanged" for a field the apply then overwrites would be lying. See
-    docs/development/rationale.md#mfa-authcontext-exclusion.
+    docs/development/rationale.md#mfa-authcontext-exclusion. When that reconciliation actually adds
+    its change -- MultiFactorAuthentication cleared from ActivationEnabledRules, or the authentication
+    context disabled -- the result's ConflictReason holds the reason Resolve-OERPimActivationConflict
+    gives; it is $null otherwise, a reconciled list the policy already has included. Set-OERGroupPimPolicy,
+    called with the reconciled SetParams, has nothing left to resolve and writes no warning about the
+    pair, so the handler writes one from ConflictReason.
 
     Declared approver values (approvers.users, approvers.groups) are ALREADY resolved to object ids by
     the time this diff sees them -- the caller (Sync-OERStructureGroup) resolves a declared UPN or
@@ -266,6 +271,11 @@ function Resolve-OERGroupPimPolicyChange {
     }
     $Resolution = Resolve-OERPimActivationConflict @ConflictParams
 
+    # The reason for a reconciled change, returned as ConflictReason so the handler can warn about it:
+    # Set-OERGroupPimPolicy, called with the reconciled parameters below, has nothing left to resolve
+    # and never writes its own warning about the pair. Set only when an arm below actually adds its
+    # change; a ClearMfa whose reconciled list the policy already has changes nothing and says nothing.
+    $ConflictReason = $null
     if ($Resolution.Action -eq 'ClearMfa') {
         # Re-decide the enablement entry from scratch: the per-field comparison above may already
         # have queued the DECLARED list (which still carries MFA), and on the second apply run the
@@ -278,18 +288,21 @@ function Resolve-OERGroupPimPolicyChange {
         if ($null -eq $Current -or -not (Test-SetEqual $Reconciled $CurrentAer)) {
             $SetParams.ActivationEnabledRules = $Reconciled
             $Changes.Add("activationEnablement=[$($Reconciled -join ',')] ($($Resolution.Reason))")
+            $ConflictReason = $Resolution.Reason
         } elseif ($SetParams.ContainsKey('ActivationEnabledRules')) {
             [void]$SetParams.Remove('ActivationEnabledRules')
         }
     } elseif ($Resolution.Action -eq 'DisableAuthContext') {
         $SetParams.AuthenticationContextId = ''
         $Changes.Add("authenticationContextId='' ($($Resolution.Reason))")
+        $ConflictReason = $Resolution.Reason
     }
 
     $Out = [PSCustomObject]@{
-        Changed   = ($SetParams.Keys.Count -gt 0)
-        SetParams = $SetParams
-        Changes   = $Changes.ToArray()
+        Changed        = ($SetParams.Keys.Count -gt 0)
+        SetParams      = $SetParams
+        Changes        = $Changes.ToArray()
+        ConflictReason = $ConflictReason
     }
     $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GroupPimPolicyChange')
     $Out

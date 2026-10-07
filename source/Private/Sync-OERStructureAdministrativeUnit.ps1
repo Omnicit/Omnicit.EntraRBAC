@@ -108,7 +108,11 @@ function Sync-OERStructureAdministrativeUnit {
 
     Every write is gated by $Caller.ShouldProcess. Under -WhatIf that returns $false; the handler
     emits Skipped records instead of calling child cmdlets. When the unit itself does not exist and
-    its creation is skipped under -WhatIf, no child read or write calls are made.
+    its creation is skipped under -WhatIf, no child read or write calls are made. A membershipType
+    change on an existing unit makes Set-OERAdministrativeUnit warn that the unit's membership can
+    change; under -WhatIf, where that cmdlet is never called, the handler writes the same warning,
+    with the same text, before its gate. A real run leaves that warning to the cmdlet, so it is
+    written once either way.
 
     -EnsureOnly short-circuits all of the above to existence only: it creates the unit when absent
     (emitting a single Created record) and returns immediately without reconciling members, scoped
@@ -460,6 +464,14 @@ function Sync-OERStructureAdministrativeUnit {
             }
 
             if ($UpdateParams.Count -gt 0) {
+                # A membership type change is not a metadata edit, and Set-OERAdministrativeUnit warns
+                # about it. Under -WhatIf the engine never calls that cmdlet, so the plan would not show
+                # the warning a real run gives: it is written here instead, with the cmdlet's own text,
+                # before the gate. Only under -WhatIf -- a real run calls the cmdlet, which writes it,
+                # and a second copy here would warn twice.
+                if ($WhatIfPreference -and $UpdateParams.ContainsKey('MembershipType')) {
+                    Write-Warning "Changing the membership type of administrative unit '$Auid' to '$($UpdateParams.MembershipType)'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually."
+                }
                 if ($Caller.ShouldProcess($Name, "Update administrative unit properties ($($UpdateParams.Keys -join ', '))")) {
                     try {
                         Set-OERAdministrativeUnit -Id $Auid @UpdateParams -Confirm:$false -ErrorAction Stop | Out-Null
