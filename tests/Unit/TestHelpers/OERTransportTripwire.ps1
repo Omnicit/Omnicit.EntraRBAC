@@ -4,7 +4,7 @@
 # network. Mocking Initialize-OERAuth is not enough: with no auth state Invoke-OERArmRequest falls
 # back to https://management.azure.com and sends a real, unauthenticated Invoke-WebRequest. So every
 # unit test file installs, in its root BeforeAll and AFTER Import-Module, a GLOBAL replacement for
-# each of the five commands through which module code reaches the transport, and checks and removes
+# each of the six commands through which module code reaches the transport, and checks and removes
 # them in its root AfterAll. tests/QA/testhygiene.tests.ps1 proves every file does.
 #
 # Why this works: source/ never module-qualifies these calls, and a function outranks a cmdlet in
@@ -18,8 +18,9 @@
 # Why built from the real cmdlet's metadata: Pester builds a mock's parameter block from the command
 # it resolves, which is now this function, so the function must have exactly the cmdlet's parameters
 # and no dynamicparam block (a Pester mock of a dynamicparam proxy fails; see
-# docs/development/rationale.md#bearer-scrub-tests). None of the five declares dynamic parameters
-# (measured 2026-10-05); New-OERTransportTripwireDefinition refuses one that starts to.
+# docs/development/rationale.md#bearer-scrub-tests). None of the six declares dynamic parameters
+# (measured 2026-10-05; Invoke-RestMethod, added 2026-10-06 for the tenant lookup, measured on
+# PowerShell 7.6.6); New-OERTransportTripwireDefinition refuses one that starts to.
 #
 # Not a source/ check and not a build step, on purpose (A13): a check in source/ would publish a
 # test switch to the Gallery, and a build step would not cover a single Invoke-Pester run.
@@ -27,7 +28,7 @@
 function Get-OERTransportTripwireName {
     <#
     .SYNOPSIS
-    The five commands through which module code reaches a tenant or the network.
+    The six commands through which module code reaches a tenant or the network.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -37,6 +38,7 @@ function Get-OERTransportTripwireName {
     'Disconnect-MgGraph'
     'Invoke-MgGraphRequest'
     'Invoke-WebRequest'
+    'Invoke-RestMethod'
 }
 
 function Test-OERTransportTripwireFunction {
@@ -98,7 +100,7 @@ end {
 function Install-OERTransportTripwire {
     <#
     .SYNOPSIS
-    Defines the five global replacements and starts an empty hit list. Call it after Import-Module.
+    Defines the six global replacements and starts an empty hit list. Call it after Import-Module.
     #>
     [CmdletBinding()]
     param()
@@ -146,7 +148,7 @@ function Assert-OERTransportTripwire {
 function Uninstall-OERTransportTripwire {
     <#
     .SYNOPSIS
-    Removes the five global replacements and the definitions.
+    Removes the six global replacements and the definitions.
     #>
     [CmdletBinding()]
     param()

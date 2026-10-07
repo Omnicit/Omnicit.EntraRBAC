@@ -35,6 +35,7 @@ function Remove-OERAccessPackageResourceRole {
         [Alias('Id')]
         [string]$ResourceRoleScopeId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

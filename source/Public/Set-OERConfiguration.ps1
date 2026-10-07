@@ -67,6 +67,7 @@ function Set-OERConfiguration {
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
         [string]$TenantAlias,
         [Parameter(ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
         [Parameter(ValueFromPipelineByPropertyName)]
         [hashtable]$Naming,

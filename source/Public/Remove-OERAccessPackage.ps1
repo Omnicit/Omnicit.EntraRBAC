@@ -37,6 +37,7 @@ function Remove-OERAccessPackage {
         [Parameter(ParameterSetName = 'ByName', Mandatory)]
         [string]$DisplayName,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

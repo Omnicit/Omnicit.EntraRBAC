@@ -98,6 +98,7 @@ function Get-OERGroup {
         [switch]$IncludeMembers,
         [switch]$IncludePimEligibility,
         [switch]$IncludeOwners,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

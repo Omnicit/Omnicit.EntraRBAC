@@ -69,11 +69,19 @@ function Connect-OER {
     its own, it signs in as before. An OER command whose sign-in another command in the same
     pipeline later replaced with a different tenant or identity sends nothing more either: each
     request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
-    tenant with one identity, so run such commands as separate statements.
+    tenant with one identity, so run such commands as separate statements. And after a sign-in that
+    failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
+    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may still belong
+    to the tenant before it, so a later OER command that names no tenant sends nothing: its sign-in is
+    refused with a SignInRefused error that says so. A command that names its tenant with -TenantId, a
+    successful Connect-OER, or Disconnect-OER makes the module send again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with
-    -TenantAlias.
+    -TenantAlias. An empty, whitespace or $null -TenantId -- typed, or read from data such as an empty
+    CSV cell -- is rejected with an InvalidTenantId error rather than read as no tenant, and leaves the
+    session uncertain like any other refused sign-in. Omit -TenantId and -TenantAlias altogether to
+    sign in to the current session's tenant.
 
     .PARAMETER TenantAlias
     The alias of a stored Tenant Profile from which the tenant id is resolved. Combines with any
@@ -81,7 +89,8 @@ function Connect-OER {
     client certificate parameters) and is mutually exclusive with -TenantId. Accepts pipeline input
     by property name, so Get-OERConfiguration | Connect-OER binds automatically. The alias becomes a
     file name on disk, so it is restricted to letters, digits, dot, underscore and hyphen; anything
-    else is rejected with an InvalidTenantAlias error.
+    else is rejected with an InvalidTenantAlias error. An empty alias, typed or piped, is rejected
+    with InvalidTenantAlias too, and leaves the session uncertain like any other refused sign-in.
 
     .PARAMETER Interactive
     Use interactive browser sign-in (delegated). This is the default when no credential is supplied.
@@ -259,6 +268,33 @@ function Connect-OER {
         [switch]$Force
     )
     process {
+        # SEC (A10, BL-89): mark the session uncertain first thing. Connect-OER's own refusals before the
+        # sign-in -- InvalidTenantId, AmbiguousTenant, InvalidTenantAlias, TenantAliasNotFound -- leave the
+        # session an earlier sign-in left in place, and outside any try the script carries on, so they leave
+        # the session uncertain too; a successful sign-in clears it (Initialize-OERAuth).
+        $null = Set-OERSessionUncertain -Value $true
+
+        # SEC (A12, BL-94): BOUND, not truthy, as for -TenantAlias below. An empty, whitespace or $null
+        # -TenantId -- typed, or read from a CSV cell -- used to name no tenant: Connect-OER signed in to the
+        # current session's tenant and, as Connect-OER's sign-in, cleared the session-uncertain marker, so in
+        # a loop over tenants the next command that named no tenant applied its row's document in the
+        # previous row's tenant. Refused here, after the marker is set, and not with
+        # [ValidateNotNullOrEmpty()] as on every other public cmdlet: a parameter binding error never reaches
+        # this block, so it would leave the marker as the previous sign-in left it. Connect-OER with neither
+        # -TenantId nor -TenantAlias bound still names no tenant, as before.
+        if ($PSBoundParameters.ContainsKey('TenantId') -and [string]::IsNullOrWhiteSpace($TenantId)) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    "The tenant ID is empty. Name the tenant to sign in to with its tenant ID (a GUID) or a " +
+                    "verified domain, or use -TenantAlias: an empty -TenantId is refused rather than read as no " +
+                    "tenant, which would sign in to the current session's tenant.")) `
+                -ErrorId 'InvalidTenantId' `
+                -Category InvalidArgument `
+                -TargetObject $TenantId `
+                -Cmdlet $PSCmdlet
+            return
+        }
+
         if ($TenantId -and $TenantAlias) {
             Write-CmdletError `
                 -Message ([System.Exception]::new(
@@ -272,12 +308,24 @@ function Connect-OER {
         }
 
         $ResolvedTenant = $TenantId
-        if ($TenantAlias) {
+        # SEC (A10, BL-89; final review I1): BOUND, not truthy. An empty, whitespace or $null alias --
+        # typed, or read from a profile list or a CSV cell, by the pipeline too -- used to skip this block,
+        # so Connect-OER named no tenant: it signed in to the current session's tenant and, as Connect-OER's
+        # sign-in, cleared the session-uncertain marker, and in a loop over tenant profiles the next command
+        # that named no tenant applied its row's document in the previous row's tenant. A bound alias always
+        # reaches the check below, which refuses a blank one, as a blank -TenantId is refused above (A12).
+        if ($PSBoundParameters.ContainsKey('TenantAlias')) {
             if (-not (Test-OERTenantAlias -Value $TenantAlias)) {
+                [string]$AliasProblem = if ([string]::IsNullOrWhiteSpace($TenantAlias)) {
+                    "The tenant alias is empty. Name the stored Tenant Profile to sign in with, or name the " +
+                    "tenant with -TenantId: an empty alias is refused rather than read as no alias, which would " +
+                    "sign in to the current session's tenant."
+                } else {
+                    "Tenant alias '$TenantAlias' is not a valid profile name. Use only letters, digits, " +
+                    "dot, underscore and hyphen (no path separators and no '..')."
+                }
                 Write-CmdletError `
-                    -Message ([System.Exception]::new(
-                        "Tenant alias '$TenantAlias' is not a valid profile name. Use only letters, digits, " +
-                        "dot, underscore and hyphen (no path separators and no '..').")) `
+                    -Message ([System.Exception]::new($AliasProblem)) `
                     -ErrorId 'InvalidTenantAlias' `
                     -Category InvalidArgument `
                     -TargetObject $TenantAlias `

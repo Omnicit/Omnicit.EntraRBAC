@@ -60,6 +60,34 @@ Describe 'Disconnect-OER' {
         Disconnect-OER -Confirm:$false
         Should -Invoke -ModuleName $script:moduleName Disconnect-AzAccount -Times 0 -Exactly
     }
+
+    # A10 (BL-89): after a refused sign-in the module's session is uncertain, and a command that names no
+    # tenant is refused. Disconnect-OER leaves no session at all, so nothing is uncertain any more.
+    It 'clears the session-uncertain marker' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x' }
+            $script:_OERSessionUncertain = $true
+        }
+
+        Disconnect-OER -Confirm:$false
+
+        InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeFalse
+        InModuleScope $script:moduleName { $null -eq $script:_OERSessionUncertain } | Should -BeFalse -Because 'the marker is cleared to $false, not removed'
+    }
+
+    It 'leaves the session-uncertain marker under -WhatIf, as it leaves the state' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x' }
+            $script:_OERSessionUncertain = $true
+        }
+
+        Disconnect-OER -WhatIf
+
+        # Positive proof that -WhatIf skipped the whole block: the state is still there.
+        InModuleScope $script:moduleName { $script:_OERAuthState.TenantId } | Should -BeExactly 'x'
+        InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0
+    }
 }
 
 # -------------------------------------------------------------------------------------------------

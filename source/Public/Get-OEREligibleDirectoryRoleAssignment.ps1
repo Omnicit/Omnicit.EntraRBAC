@@ -68,6 +68,7 @@ function Get-OEREligibleDirectoryRoleAssignment {
         [string]$ServicePrincipal,
         [string]$PrincipalId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

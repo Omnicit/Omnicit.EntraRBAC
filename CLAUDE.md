@@ -209,7 +209,7 @@ tenant-switch verdict per sign-in type and on the device-code known limitation. 
 NOT bind the surrounding prose -- the sovereign-cloud, tenant-profile and permissions sections are
 rewritten per medium on purpose.
 
-**Test files named after no single function.** Eight cross-cutting suites exist. Do **NOT** delete
+**Test files named after no single function.** Nine cross-cutting suites exist. Do **NOT** delete
 any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 - `Unit/Private/BasePathDefault.Cohort.Tests.ps1` -- asserts all seven `-BasePath`/`-ProfileBasePath`
@@ -228,12 +228,17 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 - `Unit/Public/AdministrativeUnitAliasOrder.Cohort.Tests.ps1` -- the same AST-driven pattern for every
   `-AdministrativeUnit` parameter, so a piped member's own `Id`/`DisplayName` can never mis-bind as
   the piped parent unit.
+- `Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` -- AST-driven: asserts every public cmdlet that
+  declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, except `Connect-OER`, whose
+  `-TenantId` must carry no validation so its own `InvalidTenantId` refusal runs after the
+  session-uncertain marker is set (A12, BL-94); it also drives the binding refusal for the cmdlets
+  the live checklist uses. It imports the module, so it installs the transport tripwire.
 - `Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` -- exports the two directory sections
   (`directoryRoleManagementPolicies`, `directoryRoleAssignments`) from a mocked live state with
   `Get-OERInventory` and applies them back through `Invoke-OERStructure`, with and without `-Prune`,
   asserting every row is `Unchanged`.
 - `Unit/TestHelpers/OERTransportTripwire.Tests.ps1` -- the transport tripwire's known-answer suite:
-  the five names, resolution from the module scope, parameter parity, mock precedence, the record
+  the six names, resolution from the module scope, parameter parity, mock precedence, the record
   and the refusal, a re-import, the `AfterAll` check, the answering runspace and the uninstall.
 
 ---
@@ -517,7 +522,9 @@ included, and so does `Invoke-OERGraphRequest` before every Graph call; a sessio
 `Connect-MgGraph` started is refused with `GraphSessionChanged`. Only `Connect-OER` passes
 `-ReclaimGraphSession`, which takes the session back. Never add a second reclaim caller, and never
 make the module switch the session back by itself: either one moves the other session's Graph calls
-to this module's tenant.
+to this module's tenant. Since A10 the switch also gets past the session-uncertain refusal and clears
+that marker without a tenant, so gate 10 of `tests/QA/sourcehygiene.tests.ps1` holds the NAME
+`ReclaimGraphSession` to `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 `Why: docs/development/rationale.md#auth-state`
 
 **A command whose sign-in is refused sends nothing -- no Graph and no ARM request.** A terminating
@@ -561,8 +568,8 @@ command's sign-in switched to: `New-OERGroup -TenantId A ... | Add-OERGroupMembe
 created the group in B. Both sign-ins succeed, so neither the latch nor the session gate sees it. So
 where `Initialize-OERAuth` succeeds -- exactly where `Unlock-OERSignIn` releases the latch --
 `Register-OERSignInIdentity` remembers, keyed weakly on the calling command's invocation, the
-identity the state carries: tenant, method, client and cloud, the terms `$ArmIdentityUnchanged`
-compares, never a token. `Get-OERSignInIdentity` is the single owner of that identity. Both
+identity the state carries: tenant, method, client and cloud, never a token. `Get-OERSignInIdentity`
+is the single owner of that identity. Both
 transports ask `Get-OERSignInSupersession` before every request and refuse it with
 `SignInSuperseded` (`New-OERSignInSupersededError` owns the id and the message) while ANY frame on
 the call stack remembers another identity than the state now carries. So an outer command whose
@@ -596,11 +603,17 @@ sign-in for the session it began with: `Invoke-OERStructure`'s document, `-Prune
 applies to the downstream command's tenant, and a builder looks its names up there -- an open gap,
 older than BL-76. So never call `Invoke-OERStructure` or a name-looking builder without `-TenantId`
 inside a script block or function in a pipeline that signs in to another tenant or identity. The
-identity's tenant term is the tenant as NAMED, so one tenant named by GUID on one command and by
-domain on another -- or not named at all before the module holds a session, which is recorded as
-`organizations` -- is two identities, to the snapshot as to the memory, and that pipeline is
-refused (fail-safe; README's "Name the tenant explicitly and consistently", the about topic's
-equivalent under SOVEREIGN CLOUDS). The order is fixed: in the Graph wrapper the session gate, then
+identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when that is a
+GUID, and the tenant as NAMED otherwise, never the ARM token's (BL-77): since a named tenant is
+checked against that token (within `TenantMismatch`'s limits, below), one tenant named by GUID on one
+command and by domain on another -- or not named at all -- is ONE identity, to the snapshot as to the
+memory, whenever the token reports a GUID tenant. Never key the identity on the name again, and never
+on the ARM tenant, which is not always acquired. The session CACHE is still
+keyed on the tenant as named, so a command naming its tenant differently from the session inherits
+nothing and signs in again -- interactively when it names no credential, a browser prompt on an
+app-only session and an identity that differs in method -- which is why README's "Name the tenant
+explicitly and consistently", and the about topic's equivalent under SOVEREIGN CLOUDS, stand. The
+order is fixed: in the Graph wrapper the session gate, then
 the latch gate, then the supersession gate; in the ARM wrapper the latch gate, then the
 supersession gate. A command with no memory is not compared by that gate. A pipeline must not span
 tenants or identities: run the commands as separate statements, for example collecting into a
@@ -609,6 +622,52 @@ Never call `Register-OERSignInIdentity` outside `Initialize-OERAuth` or anywhere
 an `Unlock-OERSignIn` with the same invocation, and never read the supersession outside the two
 transports.
 `Why: docs/development/rationale.md#auth-state`
+
+**A tenant named by domain is looked up before any token request, and checked like a GUID
+(BL-12).** `Initialize-OERAuth` resolves every requested tenant that is neither a GUID nor
+`organizations` through `Resolve-OERTenantDomain` -- after the cached return and the credential
+checks, before the AzAuth trackers move and before any token call -- and both `TenantMismatch`
+checks, Graph and ARM, compare the granted tenant with the tenant ID it returns (a granted tenant
+that is not a GUID is not compared, the limit below). A failed lookup
+refuses the sign-in with `TenantResolutionFailed` (raised after the lookup's `try`, never inside its
+`catch`), and no token is requested; `common` names no tenant and is refused the same way. The token
+request still names the tenant as given. `organizations` is never looked up or compared. Never call
+`Resolve-OERTenantDomain` outside `Initialize-OERAuth`, never move the lookup above the cached return
+or the credential checks, and never exempt another non-GUID value the way `organizations` is.
+`Why: docs/development/rationale.md#switching-tenants-in-one-process`
+
+**A refused sign-in leaves the session uncertain (A10, BL-89).** A sign-in that fails or is refused
+leaves the previous tenant's session in place, and outside any `try` the script carries on: the next
+command, naming no tenant, used to act on the previous tenant -- in a loop of
+`Connect-OER -TenantAlias X` and `Invoke-OERStructure -Prune`, X's document applied to the tenant
+before it. So `Initialize-OERAuth` sets the marker directly after `Lock-OERSignIn`, and refuses with
+`SignInRefused` (`New-OERSignInRefusedError -SessionUncertain`), after the `GraphSessionChanged`
+refusal and before the cached return and every token call, a call that names no tenant -- no
+`-TenantId`, or `-TenantId organizations` -- while the marker it found was set, unless the call is
+`Connect-OER`'s (`-ReclaimGraphSession`). The caller stays latched, so it sends nothing. At each
+success end, directly after `Register-OERSignInIdentity`, it clears the marker when the call named
+its tenant and is not a transport's own refresh (`-ForceRefresh` or `-ClaimsChallenge`), or is
+`Connect-OER`'s, and otherwise puts back the value it found. `Connect-OER` sets the marker first
+thing in `process`, so its own refusals before any sign-in count; `Disconnect-OER` clears it inside
+its `ShouldProcess`.
+`Set-OERSessionUncertain` is the single owner of `$script:_OERSessionUncertain`: never read or write
+the variable anywhere else, never call the helper outside `Initialize-OERAuth`, `Connect-OER` and
+`Disconnect-OER`, never let a transport's refresh clear the marker, and never count `organizations`
+as naming a tenant. A command that names its tenant is never refused by the marker; a parameter
+binding error of `Connect-OER` never reaches it (known limit). `Connect-OER` sends every BOUND
+`-TenantAlias` to its alias check, so an empty, whitespace or `$null` alias is refused with
+`InvalidTenantAlias` and leaves the marker set, and every BOUND `-TenantId` that is empty, whitespace
+or `$null` is refused the same way, in `process` after the marker is set, with `InvalidTenantId`
+(A12, BL-94); never test either for truthiness there, and never give either
+`[ValidateNotNullOrEmpty()]`, whose binding error marks nothing. Every OTHER public cmdlet that
+declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty value stops that
+command at parameter binding and it sends nothing, instead of acting on the current session's tenant
+as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with
+`Connect-OER` the one named exception; a new public `-TenantId` takes the attribute. An internal call
+passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value -- except
+`Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither `-TenantId` nor
+`-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
+`Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
 |---|---|---|
@@ -640,9 +699,25 @@ credential reused after a successful sign-in passing it on for a silent re-acqui
 (inferred), and a client secret credential refuses a different tenant until `-Force` rebuilds it
 (or, with `AZURE_IDENTITY_DISABLE_MULTITENANTAUTH` set, silently requests the token from the previous
 tenant; measured).
-`Initialize-OERAuth` warns when it can see a switch did not take effect and never refuses the
-sign-in itself (a `-WarningAction Stop`/`$WarningPreference = 'Stop'` caller does still stop it, at
-the `Write-Warning` call); `Connect-OER -Force` is the only public lever. Never "fix" a switch by
+`Initialize-OERAuth` refuses, with `TenantMismatch`, a token issued for another tenant than the one
+named -- by GUID or, through the lookup above, by domain -- so a switch that did not take effect does
+not become a session, within two limits: a token whose tenant AzAuth does not report as a GUID (one
+without a `tid` claim) is not compared, and `organizations` names no tenant, so its tokens are
+compared with no requested tenant -- an ARM token a sign-in acquires under it is compared with the
+session's Graph token (`TokenTenantId`) instead, when both are GUIDs, and refused with the same
+`TenantMismatch` when they differ. A state rebuild -- a renewal of the Graph token, or a transport's
+refresh -- carries the cached ARM token into the new state only when, besides the unchanged tenant
+label, identity and cloud (`$ArmIdentityUnchanged`), its `ArmTokenTenantId` equals the new Graph
+token's tenant, both GUIDs (`$ArmTokenKept`, A13, BL-95); otherwise it is dropped, the ARM step of
+that same call runs under `-IncludeARM`, and the new ARM token is compared as above. Never carry it
+on the label alone: `organizations` stays `organizations` when a renewal is answered from another
+tenant (`Why: docs/development/rationale.md#requested-tenant-vs-granted-tenant`). Before the
+call it only
+warns, for a client secret switch it can predict will not take effect (a
+`-WarningAction Stop`/`$WarningPreference = 'Stop'` caller is stopped at that `Write-Warning`, before
+any token request). The post-call warning that compared granted tenants is
+retired with its tracker; do not bring it back. `Connect-OER -Force` is the only public lever that
+makes a switch take effect. Never "fix" a switch by
 adding an automatic `-Force` without a new decision -- and weigh one knowing that, measured, a
 device-code sign-in without `-Force` that reuses a credential which has already completed a sign-in
 and names a different tenant never returns.
@@ -846,6 +921,18 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   a changed policy onboards an existing group. Never re-implement the check inline. The criterion is
   documented, not yet measured live, and misses a group used only through PIM active assignments.
   `Why: docs/development/rationale.md#pim-in-use-criterion`
+- **`Resolve-OERTenantDomain` is the single owner of the module's one network call outside the
+  Microsoft Graph and Azure Resource Manager transports** -- the deliberately unauthenticated OpenID
+  discovery lookup of a tenant named by domain at the cloud's Microsoft Entra ID authority, the host
+  read from `Get-OERCloudEndpoint` -- and the only caller of `Invoke-RestMethod`.
+  The call carries `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction` and nothing else: never a
+  header, a credential or a splat, never a second sender. It caches a tenant ID per cloud and
+  lower-cased domain for the process and never caches a failure.
+  `Why: docs/development/rationale.md#switching-tenants-in-one-process`
+- **`Set-OERSessionUncertain` is the single owner of the session-uncertain marker**
+  (`$script:_OERSessionUncertain`), called only by `Initialize-OERAuth`, `Connect-OER` and
+  `Disconnect-OER` (see **Authentication Architecture**).
+  `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 ---
 
@@ -1022,12 +1109,15 @@ bug.
   `BeforeAll`, directly after `Import-Module`, it dot-sources `TestHelpers/OERTransportTripwire.ps1`
   and calls `Install-OERTransportTripwire`; it ends with a root
   `AfterAll { try { Assert-OERTransportTripwire } finally { Uninstall-OERTransportTripwire } }`. An
-  unmocked call that still reaches `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`,
-  `Invoke-MgGraphRequest` or `Invoke-WebRequest` is recorded and refused, and fails the file even when
-  module code swallowed the refusal. `tests/QA/testhygiene.tests.ps1` holds it. Never delete a
-  transport-named function with an unqualified `Remove-Item 'function:...'` unless the local stub is
-  certain to exist -- with none left, it walks up and removes the global replacement. A
-  scope-qualified path (`function:script:...`, `function:global:...`) removes nothing at all.
+  unmocked call that still reaches one of the six names -- `Get-AzToken`, `Connect-MgGraph`,
+  `Disconnect-MgGraph`, `Invoke-MgGraphRequest`, `Invoke-WebRequest` or `Invoke-RestMethod` (the
+  tenant lookup) -- is recorded and refused, and fails the file even when module code swallowed the
+  refusal. A test that reaches the real `Initialize-OERAuth` with a tenant named by domain mocks
+  `Resolve-OERTenantDomain` (or `Invoke-RestMethod` in module scope).
+  `tests/QA/testhygiene.tests.ps1` holds it. Never delete a transport-named function with an
+  unqualified `Remove-Item 'function:...'` unless the local stub is certain to exist -- with none
+  left, it walks up and removes the global replacement. A scope-qualified path
+  (`function:script:...`, `function:global:...`) removes nothing at all.
   `Why: docs/development/rationale.md#bearer-scrub-tests`
 - **A `Mock -ModuleName` covers only calls made from inside the module.** A command the test body
   calls itself runs for real unless it has its own test-scope `Mock`. No test may reach the real
@@ -1066,8 +1156,17 @@ bug.
   `Initialize-OERAuth` (whose one call, before `Lock-OERSignIn`, its unit tests place -- this gate
   checks the file only), `Get-OERSignInSupersession` only in the two transport wrappers,
   `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
-  `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper and
-  `Invoke-WebRequest` only in the ARM wrapper, every listed owner really calling it; every
+  `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
+  `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
+  `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`, and
+  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`, every
+  listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
+  read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
+  `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and
+  the statement directly after each `Register-OERSignInIdentity`; the name `ReclaimGraphSession`
+  (a parameter, a prefix of it on an `Initialize-OERAuth` call, a variable, a member, a hashtable key
+  or any string) only in `Connect-OER` and `Initialize-OERAuth`, both really naming it; every
   `Register-OERSignInIdentity` call the statement directly after an `Unlock-OERSignIn` call with the
   same `-Invocation`, as many of the one as of the other; every send a wrapper makes in the body of
   a try that holds exactly one call path (in the Graph transport one `Invoke-MgGraphRequest` and one
@@ -1102,8 +1201,9 @@ non-negotiable:
    operator has enabled that identity for the run, and never with any other sign-in.
 2. **Every unit test that reaches authentication or one of the module's transport wrappers mocks it
    at the module boundary, and the transport tripwire records and refuses the rest: any call that
-   still reaches `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest` or
-   `Invoke-WebRequest`.** Nothing in CI or tests authenticates for real.
+   still reaches `Get-AzToken`, `Connect-MgGraph`, `Disconnect-MgGraph`, `Invoke-MgGraphRequest`,
+   `Invoke-WebRequest` or `Invoke-RestMethod`.** Nothing in CI or tests authenticates for real, and
+   no test sends the tenant lookup either.
 3. **Destructive cmdlets must support `-Confirm` and `-WhatIf`** via
    `[CmdletBinding(SupportsShouldProcess)]`.
 4. **Deletions of high-value objects** (groups, access packages, etc.) use
@@ -1175,6 +1275,8 @@ Do not add other `Microsoft.Graph.*` SDK modules. The module intentionally uses 
    - A `Get-OERRequiredScopeMap` row naming the LEAST-privilege scope the new cmdlet needs, gated by
      `requiredscope.tests.ps1` -- a new Graph path may also need a new endpoint rule there.
    - A `Set-OER*` cmdlet joins `NothingToUpdate.Cohort.Tests.ps1`.
+   - A `-TenantId` parameter carries `[ValidateNotNullOrEmpty()]`, which
+     `TenantIdNotEmpty.Cohort.Tests.ps1` holds, and its count of carriers moves by one.
    - A public call site of an ambiguity-refusing `Resolve-OER*Id` helper joins
      `AmbiguousName.Guard.Tests.ps1`.
    - A new `Sync-OERStructure*` handler, or a `Resolve-*Change` helper taking a `-Declared` document

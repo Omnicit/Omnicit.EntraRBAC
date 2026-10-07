@@ -45,6 +45,7 @@ function Get-OERAuthenticationContext {
 
         [switch]$Available,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

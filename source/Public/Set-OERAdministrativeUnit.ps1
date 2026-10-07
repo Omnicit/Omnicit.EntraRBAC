@@ -93,6 +93,7 @@ function Set-OERAdministrativeUnit {
         [ValidateSet('On', 'Paused')]
         [string]$MembershipRuleProcessingState,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared LAST: this module has no Position attributes, so declaration order is positional

@@ -72,6 +72,7 @@ function Get-OERRoleDefinition {
         [Alias('ManagementGroupName')]
         [string]$ManagementGroup,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -29,6 +29,7 @@ function Remove-OERAccessPackageAssignmentPolicy {
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
         [string]$Id,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

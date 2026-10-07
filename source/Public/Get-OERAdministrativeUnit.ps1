@@ -85,6 +85,7 @@ function Get-OERAdministrativeUnit {
 
         [switch]$IncludeMembers,
         [switch]$IncludeScopedRoles,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

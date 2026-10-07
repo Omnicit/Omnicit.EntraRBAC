@@ -50,6 +50,7 @@ function New-OERConfiguration {
         [Parameter(Mandatory)]
         [string]$TenantAlias,
         [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
         [hashtable]$Naming,
         [hashtable]$Defaults,

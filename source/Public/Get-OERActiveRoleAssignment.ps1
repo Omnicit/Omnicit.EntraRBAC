@@ -82,6 +82,7 @@ function Get-OERActiveRoleAssignment {
         [string]$ServicePrincipal,
         [switch]$AtScope,
         [switch]$AsTarget,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

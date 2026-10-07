@@ -113,6 +113,7 @@ function Remove-OERActiveDirectoryRoleAssignment {
         [string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -90,6 +90,7 @@ function Add-OERCatalogResource {
         [Parameter(ParameterSetName = 'SharePointSite', Mandatory)]
         [string]$SharePointSite,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

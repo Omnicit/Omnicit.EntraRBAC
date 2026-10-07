@@ -110,6 +110,7 @@ function Get-OERRoleManagementPolicy {
         [Alias('Id')]
         [string]$PolicyId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

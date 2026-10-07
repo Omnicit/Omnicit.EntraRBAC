@@ -64,6 +64,7 @@ function Remove-OERAdministrativeUnitMember {
         [Alias('PrincipalId')]
         [string[]]$MemberId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

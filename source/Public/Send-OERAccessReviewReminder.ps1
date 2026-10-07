@@ -41,6 +41,7 @@ function Send-OERAccessReviewReminder {
         [Alias('AccessReviewInstanceId', 'InstanceId')]
         [string]$Instance,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

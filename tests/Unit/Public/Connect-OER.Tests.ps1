@@ -123,6 +123,148 @@ Describe 'Connect-OER' {
         Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
     }
 
+    Context 'the session-uncertain marker (A10, BL-89)' {
+        # A Connect-OER that does not sign in leaves the module's session as the previous sign-in left
+        # it, and outside any try the script carries on: in a loop over tenant profiles the next command
+        # that names no tenant would act on the previous tenant. Connect-OER therefore marks the session
+        # uncertain first thing in its process block; Initialize-OERAuth clears the marker when the
+        # sign-in succeeds. Initialize-OERAuth is mocked here, so only Connect-OER's own set is seen.
+        BeforeEach {
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain = $null }
+        }
+
+        It 'leaves the session uncertain when its own refusal <Id> comes before any sign-in' -ForEach @(
+            @{ Id = 'TenantAliasNotFound'; Parameters = @{ TenantAlias = 'missing' } }
+            @{ Id = 'InvalidTenantAlias'; Parameters = @{ TenantAlias = '../../../evil' } }
+            @{ Id = 'AmbiguousTenant'; Parameters = @{ TenantId = 'x'; TenantAlias = 'corp' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            # No profile is found: nothing is read from disk.
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the refusal named was reached, and that no sign-in was made.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq "$Id,Connect-OER" }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'marks the session uncertain before it signs in' {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth {
+                $script:MarkerAtSignIn = & (Get-Module Omnicit.EntraRBAC) { $script:_OERSessionUncertain }
+            }
+            $script:MarkerAtSignIn = $null
+
+            Connect-OER -TenantId '44444444-4444-4444-4444-444444444444' -Interactive
+
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+            # Set before the sign-in, which is the one that clears it when it succeeds.
+            $script:MarkerAtSignIn | Should -BeTrue
+        }
+
+        # Final review I1 (Ruling F1): an alias that is BOUND but empty -- typed, or read from a profile
+        # list or a CSV row -- used to skip the alias block, so Connect-OER signed in to the current
+        # session's tenant and, as Connect-OER's sign-in, cleared the marker. In the loop over tenant
+        # profiles the next Invoke-OERStructure then applied its document, prune included, in the
+        # previous row's tenant. A bound alias now always reaches the alias check, whatever its value.
+        It 'refuses a bound <Name> -TenantAlias with InvalidTenantAlias before any profile read or sign-in, and leaves the session uncertain' -ForEach @(
+            @{ Name = 'empty'; Parameters = @{ TenantAlias = '' } }
+            @{ Name = 'whitespace'; Parameters = @{ TenantAlias = '  ' } }
+            @{ Name = 'null'; Parameters = @{ TenantAlias = $null } }
+            @{ Name = 'empty, with a -TenantId beside it,'; Parameters = @{ TenantId = '44444444-4444-4444-4444-444444444444'; TenantAlias = '' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-f1-not-a-file.pfx' -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the alias check was reached and refused the value, not some other check.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantAlias,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Err[0].Exception.Message | Should -Match 'empty'
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'refuses an empty TenantAlias read from a piped object with InvalidTenantAlias, and leaves the session uncertain' {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            [pscustomobject]@{ TenantAlias = '' } | Connect-OER -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantAlias,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        # A12 (BL-94): a -TenantId that is BOUND but empty, whitespace or $null -- typed, or read from a
+        # CSV cell or a profile list in a loop -- used to name no tenant: Connect-OER signed in to the
+        # current session's tenant and, as Connect-OER's sign-in, cleared the marker, so the loop's next
+        # command that named no tenant applied its row's document in the previous row's tenant. Bound,
+        # not truthy, decides; the refusal stands in the process block, after the marker is set, since a
+        # parameter binding error would skip the function and leave the marker as it was.
+        It 'refuses a bound <Name> -TenantId with InvalidTenantId before any profile read or sign-in, and leaves the session uncertain' -ForEach @(
+            @{ Name = 'empty'; Parameters = @{ TenantId = '' } }
+            @{ Name = 'whitespace'; Parameters = @{ TenantId = " `t " } }
+            @{ Name = 'null'; Parameters = @{ TenantId = $null } }
+            @{ Name = 'empty, with a -TenantAlias beside it,'; Parameters = @{ TenantId = ''; TenantAlias = 'corp' } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            Mock -ModuleName $script:moduleName Get-OERConfiguration { }
+            $Err = $null
+
+            Connect-OER @Parameters -ClientId '33333333-3333-3333-3333-333333333333' -CertificatePath 'oer-a12-not-a-file.pfx' -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            # Positive proof that the tenant ID check was reached and refused the value, not some other check.
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantId,Connect-OER' }).Count | Should -Be 1
+            @($Err).Count | Should -Be 1
+            $Err[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Err[0].Exception.Message | Should -Match 'tenant ID is empty'
+            Should -Invoke -ModuleName $script:moduleName Get-OERConfiguration -Times 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'refuses an empty -TenantId with InvalidTenantId on the <Set> parameter set too' -ForEach @(
+            @{ Set = 'Interactive'; Parameters = @{ Interactive = $true } }
+            @{ Set = 'DeviceCode'; Parameters = @{ DeviceCode = $true } }
+            @{ Set = 'ManagedIdentity'; Parameters = @{ ManagedIdentity = $true } }
+            @{ Set = 'ClientSecret'; Parameters = @{ ClientId = 'cid'; ClientSecret = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-a12' -AsPlainText -Force) } }
+        ) {
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            $Err = $null
+
+            Connect-OER -TenantId '' @Parameters -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'InvalidTenantId,Connect-OER' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 0
+            InModuleScope $script:moduleName { $script:_OERSessionUncertain } | Should -BeTrue
+        }
+
+        It 'still signs in to the current session''s tenant when neither -TenantId nor -TenantAlias is bound' {
+            # The unchanged half of A12: only a BOUND blank -TenantId is refused. A Connect-OER that names
+            # no tenant at all passes an empty tenant on, which Initialize-OERAuth reads as the current
+            # session's tenant, or 'organizations' with no session.
+            Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+            $Err = $null
+
+            Connect-OER -Interactive -ErrorVariable Err -ErrorAction SilentlyContinue
+
+            @($Err).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter {
+                $TenantId -eq '' -and $ReclaimGraphSession
+            }
+        }
+    }
+
     It 'binds -TenantAlias from the pipeline by property name (Get-OERConfiguration | Connect-OER)' {
         Mock -ModuleName $script:moduleName Initialize-OERAuth {}
         $Base = Join-Path $TestDrive 'PipeProfiles'
@@ -351,8 +493,11 @@ Describe 'Connect-OER' {
                 $script:_OERAuthState = $null
                 $script:_OERLastAuthorityHost = $null
                 $script:_OERLastTokenRequest = $null
-                $script:_OERLastIssuedSession = $null
             }
+            # BL-12: a tenant named by anything but a GUID or 'organizations' is looked up before any
+            # token is requested. The tokens in this Context carry no tenant, so the mocked lookup
+            # answers with any tenant ID.
+            Mock -ModuleName $script:moduleName Resolve-OERTenantDomain { '11111111-1111-1111-1111-111111111111' }
         }
 
         It 'reuses the cached tenant-A session from cache instead of resetting to organizations' {
@@ -677,7 +822,6 @@ Describe 'Connect-OER over the Graph SDK session (A18)' {
             $script:_OERAuthState = $null
             $script:_OERLastAuthorityHost = $null
             $script:_OERLastTokenRequest = $null
-            $script:_OERLastIssuedSession = $null
         }
         $script:CurrentContext = $null
         $script:OwnContext = [pscustomobject]@{

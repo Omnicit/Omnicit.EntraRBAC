@@ -59,6 +59,7 @@ function Get-OERGroupMember {
 
         [switch]$Owners,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

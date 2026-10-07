@@ -30,6 +30,7 @@ function Remove-OERAccessPackageAssignment {
         [Alias('Id')]
         [string]$AssignmentId,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

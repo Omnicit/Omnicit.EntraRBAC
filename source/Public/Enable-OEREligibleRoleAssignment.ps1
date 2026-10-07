@@ -113,6 +113,7 @@ function Enable-OEREligibleRoleAssignment {
         [string]$Justification,
         [string]$TicketNumber,
         [string]$TicketSystem,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

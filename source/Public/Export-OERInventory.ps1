@@ -177,6 +177,7 @@ function Export-OERInventory {
         [string]$ManagementGroup,
         [string]$Scope,
         [switch]$Force,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -99,6 +99,7 @@ function New-OERAccessReviewStage {
 
         [string[]]$FallbackReviewerGroup,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

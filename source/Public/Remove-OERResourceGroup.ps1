@@ -39,6 +39,7 @@ function Remove-OERResourceGroup {
         [Alias('ResourceGroup')]
         [string]$Name,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -195,16 +195,20 @@ SWITCHING TENANTS
 
         Client secret      Reuses the credential built for the earlier tenant, so the
                             switching sign-in fails by default -- or, with
-                            AZURE_IDENTITY_DISABLE_MULTITENANTAUTH set, silently reaches
-                            the earlier tenant instead -- until you run Connect-OER ...
+                            AZURE_IDENTITY_DISABLE_MULTITENANTAUTH set, requests its
+                            token from the earlier tenant, and the module refuses that
+                            token (TenantMismatch) -- until you run Connect-OER ...
                             -Force
         Device code         Does not send the tenant you name; its token may
                             come from the signed-in account's own tenant when
                             that account cannot obtain one in the tenant you
-                            name -- and the switching call may not return at
-                            all: see the known limitation below
+                            name, and the module then refuses it
+                            (TenantMismatch) -- and the switching call may not
+                            return at all: see the known limitation below
         Managed identity    Does not send the tenant you name; its token
-                            normally comes from the identity's own tenant
+                            normally comes from the identity's own tenant, and
+                            the module refuses it when that is not the tenant
+                            you name (TenantMismatch)
         Interactive         Signs in to the tenant you name
         Certificate         Signs in to the tenant you name
 
@@ -223,46 +227,52 @@ SWITCHING TENANTS
     different application and so leaves AzAuth holding a freshly built
     credential.
 
-    The module warns in two cases. It warns before a client secret sign-in
-    for the same application when the tenant you name differs from the one
-    the credential AzAuth is currently holding for that application was built
-    for, and no Force is on the call: you did not pass -Force, and the module
-    did not add Force itself for a sovereign-cloud switch. AzAuth only
-    rebuilds that credential for -Force, for a different application, or for
-    a different kind of sign-in -- a plain retry of the same switch, with none
-    of those, reuses the same credential and keeps warning every time, whether
-    the earlier attempt was silently answered from the old tenant or refused
-    outright. This is the module's own view: a Get-AzToken call made outside
-    the module does not update it, and it resets only when Omnicit.EntraRBAC
-    itself is re-imported.
+    The module checks each token against the tenant you name, whether you
+    named it by its tenant ID or by a domain, and refuses a token issued for
+    another tenant with TenantMismatch before it is used. For a domain it
+    first looks the tenant ID up at the cloud's Microsoft Entra ID authority:
+    one unauthenticated request per domain and cloud, remembered for as long
+    as the module stays imported, and asked again at the next sign-in if it
+    fails. A domain the authority does not resolve to a tenant is refused
+    with TenantResolutionFailed, and no token is requested. A tenant is a
+    GUID or a verified domain: any other value is looked up the same way and
+    refused when it names no tenant, 'common' among them. 'organizations',
+    which the module uses when no tenant is named and there is no session,
+    names no tenant and is not checked against one. When a sign-in under it
+    acquires an Azure Resource Manager token, that token must come from the
+    same tenant as the session's Microsoft Graph token, or it is refused with
+    TenantMismatch. When only the Microsoft Graph token is renewed, the
+    session keeps its Azure Resource Manager token only if the renewed
+    Microsoft Graph token comes from the same tenant; otherwise it drops it
+    and, as soon as a command needs Azure Resource Manager, acquires a new
+    one, checked the same way.
 
-    It also warns after a sign-in of any type that names a tenant by domain,
-    when that tenant differs from the one named by the last session this
-    module established in the process and the token was issued by the same
-    tenant that issued that session's token. That comparison survives
-    Disconnect-OER, so disconnecting and reconnecting to another tenant is
-    still checked, but it does not fire for a sign-in that names no tenant,
-    and it cannot check the very first sign-in in a process or the first one
-    after Omnicit.EntraRBAC is re-imported.
+    The module also warns before a client secret sign-in for the same
+    application when the tenant you name differs from the one the credential
+    AzAuth is currently holding for that application was built for, and no
+    Force is on the call: you did not pass -Force, and the module did not add
+    Force itself for a sovereign-cloud switch. AzAuth only rebuilds that
+    credential for -Force, for a different application, or for a different
+    kind of sign-in -- a plain retry of the same switch, with none of those,
+    reuses the same credential and keeps warning every time, whether the
+    earlier attempt's token came from the old tenant or was refused outright.
+    This is the module's own view: a Get-AzToken call made outside the module
+    does not update it, and it resets only when Omnicit.EntraRBAC itself is
+    re-imported.
 
-    Neither warning stops the sign-in, but under -WarningAction Stop (or
-    $WarningPreference = 'Stop') either one does -- the pre-call warning before
-    any token is requested, the post-call warning before the session is created
-    -- the same safe direction as the module's existing ambient
+    The warning does not stop the sign-in, but under -WarningAction Stop (or
+    $WarningPreference = 'Stop') it does, before any token is requested --
+    the same safe direction as the module's existing ambient
     AZURE_AUTHORITY_HOST warning.
 
     Disconnect-OER clears this module's own session state and closes the
     Graph SDK session; it does not clear the credential AzAuth keeps for the
-    process, and the tenant-switch check above does not depend on that
-    state -- it keeps its own record, so disconnecting and reconnecting to
-    another tenant is still checked. Connect-OER -Force is the supported
-    way, inside the same PowerShell process, to move a client secret sign-in
-    to a new tenant.
+    process. Connect-OER -Force is the supported way, inside the same
+    PowerShell process, to move a client secret sign-in to a new tenant.
 
-    Name tenants by their tenant ID (a GUID) -- including a Tenant
-    Profile's TenantId -- rather than by domain: with a GUID the module
-    refuses a token issued for another tenant outright, where a
-    domain-named request can only be warned about.
+    Name a tenant by its tenant ID (a GUID) or by a verified domain -- a
+    Tenant Profile's TenantId included. Both are checked, and a token issued
+    for another tenant is refused either way; a GUID saves the lookup.
 
         # Move a client secret sign-in for the same application to
         # another tenant
@@ -298,6 +308,37 @@ GRAPH SDK SESSION
     gets GraphSessionChanged; run each tenant in its own process instead, with
     Start-Job or a separate PowerShell process.
 
+    A sign-in that fails or is refused usually leaves the module's session as
+    it was -- the previous tenant's, or none -- and a script carries on past
+    the error. From then on the module sends nothing for a command that names
+    no tenant: such a command (no -TenantId, or -TenantId organizations) is
+    refused with SignInRefused before it requests a token, and so are its
+    requests and the sign-ins of the cmdlets it calls. A command that names
+    its tenant signs in as usual. A successful sign-in by a command that names
+    its tenant, a successful Connect-OER with or without a tenant, or
+    Disconnect-OER makes the module send again. Before this release, when a
+    Connect-OER in this loop failed, the Invoke-OERStructure after it applied
+    that alias's document, -Prune included, in the previous tenant; now it
+    sends nothing:
+
+        foreach ($Alias in $Aliases) {
+            Connect-OER -TenantAlias $Alias -ClientId $AppId -CertificatePath $Pfx
+            Invoke-OERStructure -Path "$Alias.json" -Prune
+        }
+
+    Invoke-OERStructure without -TenantId likewise refuses every document
+    piped to it after one whose sign-in was refused. A Connect-OER whose
+    parameters PowerShell cannot bind never runs, so it leaves nothing behind
+    for the module to see. An empty -TenantAlias, typed or piped, is refused
+    with InvalidTenantAlias, and an empty, whitespace or $null -TenantId with
+    InvalidTenantId; both count as a refused sign-in. Every other cmdlet
+    refuses an empty or $null -TenantId while PowerShell binds its
+    parameters, so that command never runs and sends nothing: an empty cell
+    in a loop over tenants no longer stands for the current session's
+    tenant. On any other cmdlet, a -TenantId of spaces is looked up like any
+    value that is not a tenant ID, and refused with TenantResolutionFailed
+    when it names no tenant.
+
     One OER pipeline works in one tenant with one identity. If commands in the
     same pipeline sign in to different tenants or identities, a command whose
     sign-in another one replaced sends nothing more: every request made while
@@ -307,10 +348,13 @@ GRAPH SDK SESSION
     processes input, so that is usually the first command. A cmdlet that
     reports a failed lookup under an error of its own carries the refusal's
     message in that error instead -- New-OERGroup's GroupResolveFailed, for
-    one. A tenant counts by the name you give it: its GUID, its domain, and no
-    -TenantId at all before the module holds a session (which it records as
-    'organizations') are three different sign-ins. A pipeline that names one
-    tenant two ways is therefore refused too; name it the same way on every
+    one. A tenant counts by the tenant its token was issued for, so naming one
+    tenant by its GUID on one command and by its domain on another, or not
+    naming it at all, is not refused for that alone. But a command that names
+    the tenant differently from the session inherits nothing from it and
+    signs in again -- interactively, when it names no credential, which on an
+    app-only session means a browser prompt and another identity, and the
+    pipeline is then refused as above. So name it the same way on every
     command, as "Name the tenant explicitly and consistently" under SOVEREIGN
     CLOUDS below says. Invoke-OERStructure signs in when it processes its
     document, not before, but without -TenantId it acts only under the
@@ -388,9 +432,11 @@ SOVEREIGN CLOUDS
     The cloud then resets to Global and that call signs in at the commercial authority.
     Its token and its endpoints stay consistent with each other, so nothing crosses a
     cloud boundary, but the sign-in fails at the authority with an error that names the
-    tenant and never the cloud, which makes it easy to misread. Pass the same -TenantId
-    spelling on every call, or use a Tenant Profile whose Environment key carries the
-    cloud for you.
+    tenant and never the cloud, which makes it easy to misread. (A tenant named by
+    domain is looked up at that same authority first, and may be refused there instead,
+    with TenantResolutionFailed, whose message does mention -Environment.) Pass the same
+    -TenantId spelling on every call, or use a Tenant Profile whose Environment key
+    carries the cloud for you.
 
     Known limitation: PIM-for-Groups is pinned to the Microsoft Graph beta endpoint (see
     PERMISSIONS above), and beta endpoint availability in US Government and China clouds

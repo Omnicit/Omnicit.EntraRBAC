@@ -50,6 +50,7 @@ function New-OERResourceGroup {
 
         [hashtable]$Tag,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

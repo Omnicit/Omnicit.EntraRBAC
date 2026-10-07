@@ -41,6 +41,7 @@ function Remove-OERRoleAssignment {
         [string]$Id,
 
         [switch]$PassThru,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

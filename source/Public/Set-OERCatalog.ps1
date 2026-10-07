@@ -55,6 +55,7 @@ function Set-OERCatalog {
         [string]$NewDisplayName,
         [string]$Description,
         [switch]$ExternallyVisible,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

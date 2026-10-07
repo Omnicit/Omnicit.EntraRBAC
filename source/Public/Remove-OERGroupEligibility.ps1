@@ -88,6 +88,7 @@ function Remove-OERGroupEligibility {
 
         [string]$Justification = 'Omnicit.EntraRBAC: remove PIM-for-groups eligibility',
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId,
 
         # Declared after the pre-existing parameters so their positional binding is unchanged.

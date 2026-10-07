@@ -103,6 +103,7 @@ function Get-OERAccessReviewDefinition {
         [switch]$All,
 
         [switch]$IncludeInstances,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

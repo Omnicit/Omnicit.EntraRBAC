@@ -45,6 +45,7 @@ function Remove-OERCatalogResource {
         [Alias('CatalogId')]
         [string]$Catalog,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

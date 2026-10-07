@@ -9,10 +9,10 @@ function Get-OERSignInSupersession {
     stack from the innermost frame outwards and returns, for the first frame whose invocation the
     module's sign-in memory holds with a different identity, the name of that command -- or 'a script
     block' when that frame carries no command name. The comparison is PowerShell's case-insensitive
-    -eq, as Initialize-OERAuth's ARM identity predicate compares the same terms, and no state at all
-    differs from every remembered identity. A frame the memory does not hold is not compared: unit
-    tests that mock Initialize-OERAuth remember nothing. Returns nothing when no frame differs, and
-    returns at once, without reading the call stack, when the memory table was never created.
+    -eq, and no state at all differs from every remembered identity. A frame the memory does not hold
+    is not compared: unit tests that mock Initialize-OERAuth remember nothing. Returns nothing when no
+    frame differs, and returns at once, without reading the call stack, when the memory table was never
+    created.
 
     Initialize-OERAuth remembers, for each command whose sign-in succeeded, the identity it signed in
     as (Register-OERSignInIdentity). In a pipeline every begin block runs first, so in

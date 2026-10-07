@@ -50,6 +50,7 @@ function Get-OERManagementGroup {
 
         [switch]$Expand,
         [switch]$Recurse,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

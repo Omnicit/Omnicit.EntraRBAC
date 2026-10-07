@@ -73,6 +73,7 @@ function Get-OERResource {
         [string]$ResourceType,
         [switch]$IncludeRoleAssignments,
         [switch]$ResolveNames,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -14,6 +14,7 @@ BeforeDiscovery {
         @{ Name = 'Disconnect-MgGraph'; Arguments = @{} }
         @{ Name = 'Invoke-MgGraphRequest'; Arguments = @{ Method = 'GET'; Uri = 'v1.0/oer-tripwire-known-answer' } }
         @{ Name = 'Invoke-WebRequest'; Arguments = @{ Uri = 'https://oer-tripwire.invalid/known-answer' } }
+        @{ Name = 'Invoke-RestMethod'; Arguments = @{ Uri = 'https://oer-tripwire.invalid/known-answer' } }
     )
 }
 
@@ -66,8 +67,8 @@ Describe 'OERTransportTripwire' {
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
     }
 
-    It 'the helper names exactly the expected five commands' -ForEach @(@{ ExpectedNames = @($script:Expected | ForEach-Object { $_.Name }) }) {
-        @($ExpectedNames).Count | Should -Be 5 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
+    It 'the helper names exactly the expected six commands' -ForEach @(@{ ExpectedNames = @($script:Expected | ForEach-Object { $_.Name }) }) {
+        @($ExpectedNames).Count | Should -Be 6 -Because 'the known-answer list itself must not be empty or short, or the comparison below proves nothing'
         (@(Get-OERTransportTripwireName) | Sort-Object) -join ',' | Should -Be ((@($ExpectedNames) | Sort-Object) -join ',')
     }
 
@@ -160,7 +161,7 @@ Describe 'OERTransportTripwire' {
         [object]::ReferenceEquals($Old, $New) | Should -BeFalse -Because 'the check below has to run against a NEW module instance'
         Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
 
-        @($ExpectedNames).Count | Should -Be 5
+        @($ExpectedNames).Count | Should -Be 6
         foreach ($Name in $ExpectedNames) {
             $Resolved = Resolve-TripwireKnownAnswerCommand -Name $Name
             $Resolved | Should -BeOfType ([System.Management.Automation.FunctionInfo])
@@ -265,7 +266,7 @@ Describe 'OERTransportTripwire' {
 
     # LAST in the file: it uninstalls, and puts the tripwire back in a finally.
     It 'uninstall restores the cmdlets, and install puts the tripwire back' -ForEach @(@{ ExpectedNames = @($script:Expected | ForEach-Object { $_.Name }) }) {
-        @($ExpectedNames).Count | Should -Be 5
+        @($ExpectedNames).Count | Should -Be 6
         $Carried = @($global:OERTransportTripwireHits)
         try {
             Uninstall-OERTransportTripwire

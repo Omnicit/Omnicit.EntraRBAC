@@ -43,11 +43,13 @@ BeforeAll {
     # credential-acquisition commands are in the set for exactly that reason: a failed Get-AzToken,
     # Connect-MgGraph or Connect-AzAccount record is as sensitive as a failed Graph call, and
     # source/Private/Initialize-OERAuth.ps1 -- the module's token-handling file -- reaches nothing
-    # else.
+    # else. Invoke-RestMethod joined the set with the tenant lookup (Resolve-OERTenantDomain): it
+    # carries no credential, but it is the module's one network call outside the two transports, and
+    # a record from a failed request can carry the request message, so its catch scrubs like any other.
     # =====================================================================================
     $script:transportCommands = @(
         'Invoke-OERGraphRequest', 'Invoke-OERArmRequest', 'Invoke-MgGraphRequest', 'Invoke-WebRequest',
-        'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
+        'Invoke-RestMethod', 'Get-AzToken', 'Connect-MgGraph', 'Connect-AzAccount'
     )
 
     # Catch clauses that legitimately do NOT scrub. Keyed by file, but a file entry alone is NOT
@@ -1420,6 +1422,37 @@ BeforeAll {
         the drift this rule exists to stop. Checkpoint-OERSignIn's own callers get no row: the
         snapshot is a value a command keeps in its own variable, never a gate in front of a
         request. Invoke-MgGraphRequest and Invoke-WebRequest are called only by their wrapper.
+        Invoke-RestMethod, which sends the module's one network call outside the two transports and
+        its one deliberately unauthenticated call (the tenant lookup of a tenant named by domain), is
+        called only by Resolve-OERTenantDomain, and Resolve-OERTenantDomain only by
+        Initialize-OERAuth, which compares the tenant ID it returns with the tenant each token was
+        issued for. The lookup carries no credential of any kind: a second sender could add one, or
+        send a secret to a request that needs none, so the call's own parameters are held as well.
+        Set-OERSessionUncertain, the single owner of the session-uncertain marker (A10, BL-89), is
+        called only by Initialize-OERAuth, which sets the marker at every entry past its BL-74 check and
+        puts it back or clears it at its two success ends, Connect-OER, which sets it first thing, and
+        Disconnect-OER, which clears it: a fourth caller could clear the marker for a session whose last
+        sign-in was refused, and a command that names no tenant would then act on the previous tenant.
+        The marker's variable, $script:_OERSessionUncertain, is read and written in no file but the
+        helper's own.
+
+        WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
+        is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the
+        session-uncertain refusal (A10), and the one key that clears the marker without a tenant. No
+        command is called to pass it, so it is held as a NAME: ReclaimGraphSession appears under source/
+        only in Connect-OER.ps1, which passes it, and Initialize-OERAuth.ps1, which declares and reads
+        it, and both must really name it. A parameter of that name on any command, a prefix of it on an
+        Initialize-OERAuth call (PowerShell binds -R to it), a variable or parameter declaration in any
+        scope, and a string constant or expandable string holding it -- a member name, a hashtable key,
+        an index -- each count; comments do not, since the AST never sees them.
+
+        THE MARKER IS SET WHERE THE LATCH IS SET, AND PUT BACK WHERE IT IS RELEASED. In
+        Initialize-OERAuth exactly three Set-OERSessionUncertain calls stand, each a statement of its own
+        (an assignment counts): one directly after the Lock-OERSignIn statement, and one directly after
+        each Register-OERSignInIdentity statement, in the same block. Set before the BL-74 check, the
+        BL-74 refusal would mark the session for a command that never signed in; set later than
+        directly after the latch, a refusal between the two would leave the session marked certain; and
+        a success end that does not put the marker back leaves it as the entry set it.
 
         THE IDENTITY IS REMEMBERED WHERE THE LATCH IS RELEASED. In Initialize-OERAuth every
         Register-OERSignInIdentity call is the statement directly after an Unlock-OERSignIn call in
@@ -1454,10 +1487,12 @@ BeforeAll {
         success end leaves the remaining pair matched: the exact count of two pairs is what catches
         that, so a new success end is a deliberate edit of that number. A command name built at run
         time (a call through a variable) is invisible to GetCommandName(), the same limit the Az
-        context gate records. The ownership scan resolves a module-qualified name and the three
-        Invoke-WebRequest aliases and nothing else; Invoke-RestMethod is not scanned, since the
-        module calls it nowhere. A bearer read spelled any other way (`.Item('ArmToken')`, a key
-        held in a variable) is not a marker.
+        context gate records. The ownership scan resolves a module-qualified name, the three
+        Invoke-WebRequest aliases and the Invoke-RestMethod alias irm, and nothing else. A bearer read
+        spelled any other way (`.Item('ArmToken')`, a key held in a variable) is not a marker. The
+        reclaim rule cannot see a name built at run time ('Reclaim' + 'GraphSession'), an abbreviated
+        key in a hashtable splatted into Initialize-OERAuth (@{ Recl = $true }, which binds), or a
+        call of Connect-OER itself from another source file, which passes the switch on its own.
         =====================================================================================
     #>
     $script:transportGateGraphPath = 'source\Private\Invoke-OERGraphRequest.ps1'
@@ -1470,6 +1505,7 @@ BeforeAll {
     # directly after it, and Unlock-OERSignIn and Register-OERSignInIdentity at each of its two
     # successful ends.
     $script:signInMemoryPath = 'source\Private\Initialize-OERAuth.ps1'
+    $script:tenantLookupPath = 'source\Private\Resolve-OERTenantDomain.ps1'
     $script:transportGateOwners = @(
         [PSCustomObject]@{ Command = 'Get-MgContext'; Owners = @('source\Private\Get-OERGraphSessionFingerprint.ps1') }
         [PSCustomObject]@{ Command = 'Lock-OERSignIn'; Owners = @($script:signInMemoryPath) }
@@ -1482,11 +1518,14 @@ BeforeAll {
                 'source\Private\Checkpoint-OERSignIn.ps1') }
         [PSCustomObject]@{ Command = 'Invoke-MgGraphRequest'; Owners = @($script:transportGateGraphPath) }
         [PSCustomObject]@{ Command = 'Invoke-WebRequest'; Owners = @($script:transportGateArmPath) }
+        [PSCustomObject]@{ Command = 'Invoke-RestMethod'; Owners = @($script:tenantLookupPath) }
+        [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
+        [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
     )
-    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest' }
+    $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
 
     # The command a call really names: a module-qualified call (Microsoft.PowerShell.Utility\Invoke-WebRequest)
-    # is the same command, and so is one of the Invoke-WebRequest aliases.
+    # is the same command, and so is one of the Invoke-WebRequest aliases or irm, the Invoke-RestMethod alias.
     function Resolve-OERTransportCommandName {
         param([string]$Name)
 
@@ -1511,6 +1550,46 @@ BeforeAll {
         foreach ($Call in $Found) {
             if ((Get-OERCallName -CommandAst $Call) -in $Name) { $Call }
         }
+    }
+
+    # THE TENANT LOOKUP CARRIES NO CREDENTIAL. Resolve-OERTenantDomain's one Invoke-RestMethod call goes
+    # to the Microsoft Entra ID authority with nothing to authenticate it, and must stay that way: a
+    # credential on it would send a secret to a request that needs none. Two lists, both read from the
+    # call's own parameter names, both case-insensitive. The DENIED list is every credential-carrying
+    # parameter of the cmdlet. It cannot stand alone: PowerShell binds an abbreviated name (-Head for
+    # -Headers, -Cred for -Credential), and a parameter added to the cmdlet later is on no list, so the
+    # ALLOWED list pins the call to exactly the four parameters the lookup is specified to send.
+    $script:tenantLookupDeniedParameters = @(
+        'Headers', 'Authentication', 'Token', 'Credential', 'UseDefaultCredentials', 'WebSession',
+        'SessionVariable', 'Certificate', 'CertificateThumbprint', 'PreserveAuthorizationOnRedirect',
+        'AllowUnencryptedAuthentication'
+    )
+    $script:tenantLookupAllowedParameters = @('Uri', 'Method', 'TimeoutSec', 'ErrorAction')
+
+    # One report per tree: how many Invoke-RestMethod calls (an alias or a module-qualified name
+    # included), and which of them name a denied parameter, a parameter outside the allowed list, or
+    # pass a splatted variable -- a splat hides its parameter names from this scan, so it is refused.
+    function Get-OERTenantLookupReport {
+        param($Ast)
+
+        $Calls = @(Find-OERCallNamed -Ast $Ast -Name 'Invoke-RestMethod')
+        $Report = [PSCustomObject]@{
+            Calls      = $Calls.Count
+            Denied     = [System.Collections.Generic.List[string]]::new()
+            Unexpected = [System.Collections.Generic.List[string]]::new()
+            Splats     = 0
+        }
+        foreach ($Call in $Calls) {
+            foreach ($Element in $Call.CommandElements) {
+                if ($Element -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    if ($Element.ParameterName -in $script:tenantLookupDeniedParameters) { $Report.Denied.Add($Element.ParameterName) }
+                    if ($Element.ParameterName -notin $script:tenantLookupAllowedParameters) { $Report.Unexpected.Add($Element.ParameterName) }
+                } elseif ($Element -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Splatted) {
+                    $Report.Splats++
+                }
+            }
+        }
+        return $Report
     }
 
     # True when the first clause body of the if holds a throw of the named error factory that is
@@ -2064,6 +2143,49 @@ BeforeAll {
         }
     }
 
+    # --- The tenant lookup's call, from the text of its owner file already read into $script:hygieneFiles. ---
+    $script:tenantLookupReport = $null
+    $TenantLookupFile = @($script:hygieneFiles | Where-Object {
+            ($_.RelativePath -replace '/', '\') -eq $script:tenantLookupPath
+        })[0]
+    if ($TenantLookupFile) {
+        $TenantLookupTokens = $null
+        $TenantLookupErrors = $null
+        $TenantLookupAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $TenantLookupFile.Text, $TenantLookupFile.Path, [ref]$TenantLookupTokens, [ref]$TenantLookupErrors)
+        if ($TenantLookupErrors.Count -eq 0) {
+            $script:tenantLookupReport = Get-OERTenantLookupReport -Ast $TenantLookupAst
+        }
+    }
+
+    # Known answers: the checker above must reach each verdict below, or a green gate proves nothing.
+    # Each case is the text of a miniature, and the counts it must report as Calls/Denied/Unexpected/Splats.
+    $script:tenantLookupKnownAnswers = @(
+        @{ Case = 'the specified call'; Expect = '1/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Method Get -TimeoutSec 30 -ErrorAction Stop }' }
+        @{ Case = 'no call at all'; Expect = '0/0/0/0'; Text = 'function F { Get-Date }' }
+        @{ Case = 'two calls'; Expect = '2/0/0/0'; Text = 'function F { Invoke-RestMethod -Uri $A; Invoke-RestMethod -Uri $B }' }
+        @{ Case = 'the alias irm'; Expect = '1/0/0/0'; Text = 'function F { irm -Uri $Uri }' }
+        @{ Case = 'a module-qualified name'; Expect = '1/0/0/0'; Text = 'function F { Microsoft.PowerShell.Utility\Invoke-RestMethod -Uri $Uri }' }
+        @{ Case = 'a header'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Headers @{} }' }
+        @{ Case = 'a credential'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Credential $C }' }
+        @{ Case = 'a denied name in lower case'; Expect = '1/1/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -token $T }' }
+        @{ Case = 'an abbreviated header parameter'; Expect = '1/0/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -Head @{} }' }
+        @{ Case = 'a parameter on no list'; Expect = '1/0/1/0'; Text = 'function F { Invoke-RestMethod -Uri $Uri -UserAgent x }' }
+        @{ Case = 'a splatted argument'; Expect = '1/0/0/1'; Text = 'function F { Invoke-RestMethod @Params }' }
+    )
+    $script:tenantLookupKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:tenantLookupKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $CaseReport = Get-OERTenantLookupReport -Ast $CaseAst
+        $Got = '{0}/{1}/{2}/{3}' -f $CaseReport.Calls, $CaseReport.Denied.Count, $CaseReport.Unexpected.Count, $CaseReport.Splats
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:tenantLookupKnownAnswerFailures.Add(('{0} -- expected {1} (calls/denied/unexpected/splats), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
     # --- Where Initialize-OERAuth remembers a sign-in: its whole file, from the tree Pass 1 parsed. ---
     $script:signInMemoryReport = $null
     $MemoryUnit = @($script:sourceUnits | Where-Object { $_.RelativePath -eq $script:signInMemoryPath })[0]
@@ -2071,6 +2193,275 @@ BeforeAll {
         $MemoryRoot = $MemoryUnit.Definition
         while ($null -ne $MemoryRoot.Parent) { $MemoryRoot = $MemoryRoot.Parent }
         $script:signInMemoryReport = Get-OERSignInMemoryReport -Ast $MemoryRoot -FileLabel $script:signInMemoryPath
+    }
+
+    # --- The session-uncertain marker (A10, BL-89; see THE MARKER IS SET WHERE THE LATCH IS SET in the
+    # Pass 9 comment). ---
+    # The statement a call stands in, when it stands alone in a block: a pipeline of that call only, or
+    # an assignment whose right-hand side is such a pipeline ([bool]$X = Set-..., $null = Set-...).
+    # $null for a call that is piped, nested in an expression, or part of any other statement.
+    function Get-OERCallOrAssignmentStatement {
+        param($Call)
+
+        $Pipeline = $Call.Parent
+        if ($Pipeline -isnot [System.Management.Automation.Language.PipelineAst]) { return $null }
+        if (@($Pipeline.PipelineElements).Count -ne 1) { return $null }
+        $Statement = $Pipeline
+        if ($Pipeline.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) {
+            if (-not [System.Object]::ReferenceEquals($Pipeline.Parent.Right, $Pipeline)) { return $null }
+            $Statement = $Pipeline.Parent
+        }
+        if ($Statement.Parent -isnot [System.Management.Automation.Language.StatementBlockAst] -and
+            $Statement.Parent -isnot [System.Management.Automation.Language.NamedBlockAst]) { return $null }
+        return $Statement
+    }
+
+    # Every Set-OERSessionUncertain call in the tree must be the statement directly after a
+    # Lock-OERSignIn statement or a Register-OERSignInIdentity statement in the same block. Returns the
+    # number of Set calls, how many follow the Lock and how many follow a Register, and one line per
+    # violation. A statement has one predecessor, so a Set counted after a Register follows a Register
+    # no other Set follows: two after Registers, with two Registers, means every Register has its Set.
+    function Get-OERSessionUncertainPositionReport {
+        param($Ast, [string]$FileLabel)
+
+        $Sets = @(Find-OERCallNamed -Ast $Ast -Name 'Set-OERSessionUncertain')
+        $Report = [PSCustomObject]@{
+            Sets          = $Sets.Count
+            AfterLock     = 0
+            AfterRegister = 0
+            Violations    = [System.Collections.Generic.List[string]]::new()
+        }
+        $Anchors = [System.Collections.Generic.List[object]]::new()
+        foreach ($Kind in 'Lock-OERSignIn', 'Register-OERSignInIdentity') {
+            foreach ($Call in @(Find-OERCallNamed -Ast $Ast -Name $Kind)) {
+                $Statement = Get-OERCallOrAssignmentStatement -Call $Call
+                if ($null -ne $Statement) { $Anchors.Add([PSCustomObject]@{ Kind = $Kind; Statement = $Statement }) }
+            }
+        }
+        foreach ($Set in $Sets) {
+            $Statement = Get-OERCallOrAssignmentStatement -Call $Set
+            $Reason = $null
+            if ($null -eq $Statement) {
+                $Reason = 'is not a statement of its own (it is piped, or part of another statement or expression)'
+            } else {
+                $Siblings = @($Statement.Parent.Statements)
+                $Index = [System.Array]::IndexOf($Siblings, $Statement)
+                $Anchor = $null
+                if ($Index -gt 0) {
+                    $Anchor = @($Anchors | Where-Object { [System.Object]::ReferenceEquals($_.Statement, $Siblings[$Index - 1]) })[0]
+                }
+                if ($null -eq $Anchor) {
+                    $Reason = 'is not the statement directly after the Lock-OERSignIn statement or a Register-OERSignInIdentity statement in the same block'
+                } elseif ($Anchor.Kind -eq 'Lock-OERSignIn') {
+                    $Report.AfterLock++
+                } else {
+                    $Report.AfterRegister++
+                }
+            }
+            if ($Reason) {
+                $Report.Violations.Add(('{0}:{1} -- Set-OERSessionUncertain {2}: {3}' -f
+                        $FileLabel, $Set.Extent.StartLineNumber, $Reason, $Set.Extent.Text.Trim()))
+            }
+        }
+        return $Report
+    }
+
+    $script:sessionUncertainPositionReport = $null
+    if ($MemoryUnit -and $MemoryUnit.Definition) {
+        $script:sessionUncertainPositionReport = Get-OERSessionUncertainPositionReport -Ast $MemoryRoot -FileLabel $script:signInMemoryPath
+    }
+
+    # Known answers: each miniature carries the counts it must report as Sets/AfterLock/AfterRegister/Violations.
+    $FixtureEntry = '$C = Lock-OERSignIn; [bool]$W = Set-OERSessionUncertain -Value $true'
+    $FixtureCached = 'if ($Hit) { Unlock-OERSignIn -Invocation $C; Register-OERSignInIdentity -Invocation $C; $null = Set-OERSessionUncertain -Value $W; return }'
+    $FixtureEnd = 'try { Unlock-OERSignIn -Invocation $C; Register-OERSignInIdentity -Invocation $C; $null = Set-OERSessionUncertain -Value $W } finally { }'
+    $script:sessionUncertainPositionKnownAnswers = @(
+        @{ Case = 'the specified shape'; Expect = '3/1/2/0'; Text = "function F { $FixtureEntry; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'the set before the latch'; Expect = '3/0/2/1'; Text = "function F { [bool]`$W = Set-OERSessionUncertain -Value `$true; `$C = Lock-OERSignIn; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'a statement between the latch and the set'; Expect = '3/0/2/1'; Text = "function F { `$C = Lock-OERSignIn; `$X = 1; [bool]`$W = Set-OERSessionUncertain -Value `$true; $FixtureCached; $FixtureEnd }" }
+        @{ Case = 'a success end that does not put it back'; Expect = '2/1/1/0'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C } finally { } }" }
+        @{ Case = 'the put-back in a nested block'; Expect = '3/1/1/1'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C; if (`$Y) { `$null = Set-OERSessionUncertain -Value `$W } } finally { } }" }
+        @{ Case = 'a piped put-back'; Expect = '3/1/1/1'; Text = "function F { $FixtureEntry; $FixtureCached; try { Unlock-OERSignIn -Invocation `$C; Register-OERSignInIdentity -Invocation `$C; Set-OERSessionUncertain -Value `$W | Out-Null } finally { } }" }
+        @{ Case = 'a fourth set'; Expect = '4/1/2/1'; Text = "function F { $FixtureEntry; $FixtureCached; $FixtureEnd; `$null = Set-OERSessionUncertain -Value `$false }" }
+    )
+    $script:sessionUncertainPositionKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:sessionUncertainPositionKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $CaseReport = Get-OERSessionUncertainPositionReport -Ast $CaseAst -FileLabel $Case.Case
+        $Got = '{0}/{1}/{2}/{3}' -f $CaseReport.Sets, $CaseReport.AfterLock, $CaseReport.AfterRegister, $CaseReport.Violations.Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:sessionUncertainPositionKnownAnswerFailures.Add(('{0} -- expected {1} (sets/after lock/after register/violations), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # The marker's variable: every reference to _OERSessionUncertain, in any scope ($script:, a bare
+    # name, which reads the module scope's variable from inside a function, or ${...}), whatever the
+    # letter case. A file whose text never names the variable cannot hold a reference to it, so only the
+    # files that do are parsed again. KNOWN LIMIT: a reference the AST cannot see -- Get-Variable or
+    # Set-Variable with the name as a string, or a name built at run time -- is not found.
+    function Find-OERSessionUncertainVariable {
+        param($Ast)
+
+        $Ast.FindAll({
+                $args[0] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                (($args[0].VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq '_OERSessionUncertain')
+            }, $true)
+    }
+
+    $script:sessionUncertainOwnerPath = 'source\Private\Set-OERSessionUncertain.ps1'
+    $script:sessionUncertainVariableOwnerSites = 0
+    $script:sessionUncertainVariableFiles = 0
+    $script:sessionUncertainVariableViolations = [System.Collections.Generic.List[string]]::new()
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -notmatch '^source[\\/]') { continue }
+        if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
+        if ($File.Text -notmatch '_OERSessionUncertain') { continue }
+        $script:sessionUncertainVariableFiles++
+        $Relative = $File.RelativePath -replace '/', '\'
+        $VariableTokens = $null
+        $VariableErrors = $null
+        $VariableAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            $File.Text, $File.Path, [ref]$VariableTokens, [ref]$VariableErrors)
+        if ($VariableErrors.Count -gt 0) {
+            $script:sessionUncertainVariableViolations.Add(('{0} -- names _OERSessionUncertain and does not parse, so its references cannot be placed' -f $Relative))
+            continue
+        }
+        foreach ($Reference in @(Find-OERSessionUncertainVariable -Ast $VariableAst)) {
+            if ($Relative -eq $script:sessionUncertainOwnerPath) {
+                $script:sessionUncertainVariableOwnerSites++
+            } else {
+                $script:sessionUncertainVariableViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+            }
+        }
+    }
+
+    # Known answers for the variable scan: the number of references each miniature must report.
+    $script:sessionUncertainVariableKnownAnswers = @(
+        @{ Case = 'a script-scoped write'; Expect = 1; Text = '$script:_OERSessionUncertain = $true' }
+        @{ Case = 'a bare read'; Expect = 1; Text = 'if ($_OERSessionUncertain) { }' }
+        @{ Case = 'a braced name in another letter case'; Expect = 1; Text = '${SCRIPT:_oerSessionUncertain}' }
+        @{ Case = 'a read inside an expandable string'; Expect = 1; Text = '"$script:_OERSessionUncertain"' }
+        @{ Case = 'a longer name'; Expect = 0; Text = '$script:_OERSessionUncertainty = 1' }
+        @{ Case = 'the name as a string'; Expect = 0; Text = 'Get-Variable -Name _OERSessionUncertain -Scope Script' }
+    )
+    $script:sessionUncertainVariableKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:sessionUncertainVariableKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $Got = @(Find-OERSessionUncertainVariable -Ast $CaseAst).Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:sessionUncertainVariableKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
+    }
+
+    # --- The session reclaim (final review I2, Ruling F2; see WHO MAY NAME THE RECLAIM in the Pass 9
+    # comment). ---
+    # Every place a tree names ReclaimGraphSession: a variable or a parameter declaration, in any scope
+    # and letter case; a command parameter of that name on any command, or a shorter prefix of it on a
+    # call of Initialize-OERAuth, which PowerShell binds to the same switch (-R is enough); and a string
+    # constant or an expandable string whose text holds the name -- a member name, a hashtable key, an
+    # index, a quoted or a bareword string. A comment is a token, never an AST node, so help text and
+    # comments naming the switch are not references.
+    function Find-OERReclaimGraphSessionName {
+        param($Ast)
+
+        $Ast.FindAll({
+                $Node = $args[0]
+                if ($Node -is [System.Management.Automation.Language.VariableExpressionAst]) {
+                    return (($Node.VariablePath.UserPath -replace '^[A-Za-z]+:', '') -eq 'ReclaimGraphSession')
+                }
+                if ($Node -is [System.Management.Automation.Language.CommandParameterAst]) {
+                    if ($Node.ParameterName -eq 'ReclaimGraphSession') { return $true }
+                    return ($Node.ParameterName.Length -gt 0 -and
+                        $Node.Parent -is [System.Management.Automation.Language.CommandAst] -and
+                        (Resolve-OERTransportCommandName -Name $Node.Parent.GetCommandName()) -eq 'Initialize-OERAuth' -and
+                        'ReclaimGraphSession'.StartsWith($Node.ParameterName, [System.StringComparison]::OrdinalIgnoreCase))
+                }
+                if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                    $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+                    return ($Node.Value -match 'ReclaimGraphSession')
+                }
+                return $false
+            }, $true)
+    }
+
+    # A file whose text names ReclaimGraphSession is parsed again and searched whole. Any other file can
+    # bind the switch only through an abbreviated parameter on an Initialize-OERAuth call, so only the
+    # call nodes Pass 1 kept for the sign-in call-site rule are searched there.
+    $script:reclaimOwnerPaths = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1')
+    $script:reclaimOwnerSites = @{}
+    foreach ($Owner in $script:reclaimOwnerPaths) { $script:reclaimOwnerSites[$Owner] = 0 }
+    $script:reclaimViolations = [System.Collections.Generic.List[string]]::new()
+    $script:reclaimFilesSearched = 0
+    $ReclaimUnits = @{}
+    foreach ($Unit in $script:sourceUnits) { $ReclaimUnits[$Unit.RelativePath] = $Unit }
+    foreach ($File in $script:hygieneFiles) {
+        if ($File.RelativePath -notmatch '^source[\\/]') { continue }
+        if ($File.Extension -notin '.ps1', '.psm1', '.psd1') { continue }
+        $Relative = $File.RelativePath -replace '/', '\'
+        $References = @()
+        if ($File.Text -match 'ReclaimGraphSession') {
+            $script:reclaimFilesSearched++
+            $ReclaimTokens = $null
+            $ReclaimErrors = $null
+            $ReclaimAst = [System.Management.Automation.Language.Parser]::ParseInput(
+                $File.Text, $File.Path, [ref]$ReclaimTokens, [ref]$ReclaimErrors)
+            if ($ReclaimErrors.Count -gt 0) {
+                $script:reclaimViolations.Add(('{0} -- names ReclaimGraphSession and does not parse, so its references cannot be placed' -f $Relative))
+                continue
+            }
+            $References = @(Find-OERReclaimGraphSessionName -Ast $ReclaimAst)
+        } elseif ($ReclaimUnits.ContainsKey($Relative)) {
+            $References = @(foreach ($Call in $ReclaimUnits[$Relative].SignInCalls) { Find-OERReclaimGraphSessionName -Ast $Call })
+        }
+        foreach ($Reference in $References) {
+            if ($script:reclaimOwnerSites.ContainsKey($Relative)) {
+                $script:reclaimOwnerSites[$Relative]++
+            } else {
+                $script:reclaimViolations.Add(('{0}:{1} -- {2}' -f $Relative, $Reference.Extent.StartLineNumber, $Reference.Extent.Text))
+            }
+        }
+    }
+    $script:reclaimStale = [System.Collections.Generic.List[string]]::new()
+    foreach ($Owner in $script:reclaimOwnerPaths) {
+        if ($script:reclaimOwnerSites[$Owner] -gt 0) { continue }
+        $script:reclaimStale.Add(('{0} -- listed as an owner of ReclaimGraphSession, but names it nowhere (or is not among the scanned files)' -f $Owner))
+    }
+
+    # Known answers for the reclaim scan: the number of references each miniature must report.
+    $script:reclaimKnownAnswers = @(
+        @{ Case = 'the switch on an Initialize-OERAuth call'; Expect = 1; Text = 'Initialize-OERAuth -TenantId $T -ReclaimGraphSession' }
+        @{ Case = 'the switch with a value, on another command'; Expect = 1; Text = 'Connect-Something -ReclaimGraphSession:$true' }
+        @{ Case = 'an abbreviated switch on an Initialize-OERAuth call'; Expect = 1; Text = 'Initialize-OERAuth -IncludeARM -Reclaim' }
+        @{ Case = 'a one-letter switch in lower case on a module-qualified call'; Expect = 1; Text = 'Omnicit.EntraRBAC\Initialize-OERAuth -r' }
+        @{ Case = 'a member assignment'; Expect = 1; Text = '$AuthParams.ReclaimGraphSession = $true' }
+        @{ Case = 'a hashtable key'; Expect = 1; Text = '$P = @{ ReclaimGraphSession = $true }' }
+        @{ Case = 'a quoted hashtable key in another letter case'; Expect = 1; Text = '$P = @{ ''reclaimgraphsession'' = $true }' }
+        @{ Case = 'an index string'; Expect = 1; Text = '$P[''ReclaimGraphSession''] = $true' }
+        @{ Case = 'a parameter declaration'; Expect = 1; Text = 'function F { param([switch]$ReclaimGraphSession) }' }
+        @{ Case = 'a scope-qualified variable'; Expect = 1; Text = 'if ($script:ReclaimGraphSession) { }' }
+        @{ Case = 'an expandable string'; Expect = 1; Text = '$Line = "-ReclaimGraphSession:$Value"' }
+        @{ Case = 'a comment'; Expect = 0; Text = "# Initialize-OERAuth -ReclaimGraphSession`n`$X = 1" }
+        @{ Case = 'help text'; Expect = 0; Text = "function F {`n<#`n.PARAMETER ReclaimGraphSession`nNot code.`n#>`nparam() }" }
+        @{ Case = 'an abbreviation on another command'; Expect = 0; Text = 'Get-ChildItem -R' }
+        @{ Case = 'another switch of Initialize-OERAuth'; Expect = 0; Text = 'Initialize-OERAuth -IncludeARM -ForceRefresh' }
+        @{ Case = 'a longer variable name'; Expect = 0; Text = '$ReclaimGraphSessionAfter = 1' }
+    )
+    $script:reclaimKnownAnswerFailures = [System.Collections.Generic.List[string]]::new()
+    foreach ($Case in $script:reclaimKnownAnswers) {
+        $CaseTokens = $null
+        $CaseErrors = $null
+        $CaseAst = [System.Management.Automation.Language.Parser]::ParseInput($Case.Text, [ref]$CaseTokens, [ref]$CaseErrors)
+        $Got = @(Find-OERReclaimGraphSessionName -Ast $CaseAst).Count
+        if ($CaseErrors.Count -gt 0 -or $Got -ne $Case.Expect) {
+            $script:reclaimKnownAnswerFailures.Add(('{0} -- expected {1} reference(s), got {2}{3}' -f
+                    $Case.Case, $Case.Expect, $Got, $(if ($CaseErrors.Count -gt 0) { ' with a parse error' } else { '' })))
+        }
     }
 
     # --- Known answers: the checker above must refuse each way of leaving a statement ungated. ---
@@ -3223,6 +3614,85 @@ statement directly after its Unlock, passing the same -Invocation variable.
             'each of the two success ends holds an Unlock-OERSignIn and, as the statement directly after it, a Register-OERSignInIdentity passing the same invocation')
     }
 
+    It 'sets and clears the session-uncertain marker with Set-OERSessionUncertain only in Initialize-OERAuth, Connect-OER and Disconnect-OER' {
+        $script:transportOwnerStale['Set-OERSessionUncertain'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Initialize-OERAuth, Connect-OER and Disconnect-OER must each really call Set-OERSessionUncertain; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Set-OERSessionUncertain'] -join "`n" | Should -BeNullOrEmpty -Because @'
+The session-uncertain marker (A10, BL-89) says that the last sign-in did not succeed, so the module's
+session may still belong to the tenant before it; while it is set, Initialize-OERAuth refuses a sign-in
+that names no tenant. Initialize-OERAuth sets it at every entry and clears it only for a sign-in that
+named its tenant or was Connect-OER's, Connect-OER sets it first thing, and Disconnect-OER clears it. A
+fourth caller can clear it after a refused sign-in, and the next command that names no tenant then acts
+on the previous tenant -- the loop over tenant profiles that applied one tenant's document, prune
+included, in another. Change the marker only in those three files.
+'@
+    }
+
+    It 'reads and writes $script:_OERSessionUncertain only in Set-OERSessionUncertain.ps1' {
+        $script:sessionUncertainVariableKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the variable scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
+        @($script:sessionUncertainVariableKnownAnswers).Count | Should -Be 6 -Because (
+            'the known-answer table holds six cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:sessionUncertainVariableOwnerSites | Should -BeGreaterThan 0 -Because (
+            'Set-OERSessionUncertain.ps1 must really read and write the variable, or this rule has nothing to be the only owner of')
+        $script:sessionUncertainVariableViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+Set-OERSessionUncertain is the single owner of the session-uncertain marker: it is the one reader and
+the one writer of $script:_OERSessionUncertain, and it returns what the marker was. A second reader can
+decide differently from Initialize-OERAuth whether the session is uncertain; a second writer can set or
+clear the marker where the ownership rule above cannot see a call, which is the very hole that rule
+closes. Read and change the marker through Set-OERSessionUncertain.
+'@
+    }
+
+    It 'sets the marker directly after Lock-OERSignIn and puts it back directly after each Register-OERSignInIdentity in Initialize-OERAuth' {
+        $script:sessionUncertainPositionReport | Should -Not -BeNullOrEmpty -Because (
+            'Initialize-OERAuth.ps1 must be among the parsed source files, or the position rule judges nothing')
+        @($script:sessionUncertainPositionKnownAnswers).Count | Should -Be 7 -Because (
+            'the position known-answer table holds seven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:sessionUncertainPositionKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because @'
+The position checker no longer reaches the verdict a known-answer case requires. Each line names the
+case and the counts it expected. Fix the checker rather than the case; a case is changed only when the
+rule it models changed.
+'@
+
+        $script:sessionUncertainPositionReport.Violations -join "`n" | Should -BeNullOrEmpty -Because @'
+Initialize-OERAuth marks the session uncertain at the statement directly after it latches its caller
+(Lock-OERSignIn), so every refusal from there on -- the credential checks, the tenant lookup, the token
+calls, GraphSessionChanged and ArmTokenAcquisitionFailed included -- leaves the marker set, while the
+BL-74 refusal before the latch, which concerns a sign-in that was never attempted, leaves it as it was.
+It puts the marker back, or clears it, at the statement directly after each
+Register-OERSignInIdentity, which stands where a sign-in succeeded. Put each Set-OERSessionUncertain
+call back as a statement of its own in one of those three places.
+'@
+        $script:sessionUncertainPositionReport.Sets | Should -Be 3 -Because (
+            'Initialize-OERAuth sets the marker once at its entry and puts it back at its two success ends; a different count means a call was added or removed, and the expected number here is then updated deliberately')
+        $script:sessionUncertainPositionReport.AfterLock | Should -Be 1 -Because (
+            'the marker is set by the statement directly after the Lock-OERSignIn statement')
+        $script:sessionUncertainPositionReport.AfterRegister | Should -Be 2 -Because (
+            'each of the two Register-OERSignInIdentity statements, one per success end, is followed directly by the statement that puts the marker back')
+    }
+
+    It 'names ReclaimGraphSession only in Connect-OER.ps1 and Initialize-OERAuth.ps1' {
+        $script:reclaimKnownAnswerFailures -join "`n" | Should -BeNullOrEmpty -Because (
+            'the reclaim scan no longer reaches the count a known-answer case requires, so a green result below would prove nothing; fix the scan rather than the case')
+        @($script:reclaimKnownAnswers).Count | Should -Be 16 -Because (
+            'the known-answer table holds sixteen cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+        $script:reclaimStale -join "`n" | Should -BeNullOrEmpty -Because (
+            'Connect-OER, which passes the switch, and Initialize-OERAuth, which declares and reads it, must each really name it; an owner listed here that names it nowhere is a stale rule, not a pass')
+        $script:reclaimFilesSearched | Should -BeGreaterThan 1 -Because (
+            'at least the two owner files name ReclaimGraphSession in their text; fewer files searched means the scan lost them')
+        $script:reclaimViolations -join "`n" | Should -BeNullOrEmpty -Because @'
+-ReclaimGraphSession is the one way past two of Initialize-OERAuth's refusals: the Graph SDK session gate
+(A18), which refuses a session another Connect-MgGraph started, and the session-uncertain refusal (A10,
+BL-89), which refuses a sign-in that names no tenant after a refused one. It is also the one key that
+clears the session-uncertain marker without naming a tenant. Connect-OER passes it, as the operator's
+explicit instruction to sign in, and Initialize-OERAuth declares and reads it. A third file that names
+it -- passing it, abbreviating it on an Initialize-OERAuth call, setting it in a splat or forwarding it --
+lets a command that names no tenant take another session back, or act on the previous tenant after a
+refused sign-in, with every other gate green. Pass it only from Connect-OER.
+'@
+    }
+
     It 'reads the sign-in latch with Get-OERSignInRefusal only in the two transport wrappers and in Initialize-OERAuth' {
         $script:transportOwnerStale['Get-OERSignInRefusal'] -join "`n" | Should -BeNullOrEmpty -Because (
             'both transport wrappers must really call Get-OERSignInRefusal for their latch gates, and Initialize-OERAuth for its BL-74 check; an owner listed here that calls it nowhere is a stale rule, not a pass')
@@ -3281,6 +3751,60 @@ gate, the supersession gate, the bearer scrub and the retry logic live, so a cal
 or Invoke-WebRequest from any other file sends a request past all of them. Route the call through the
 wrapper.
 '@
+    }
+
+    It 'looks a tenant up with Invoke-RestMethod only in Resolve-OERTenantDomain.ps1, and calls that only in Initialize-OERAuth.ps1' {
+        $script:transportOwnerSites['Invoke-RestMethod'] | Should -BeGreaterThan 0 -Because (
+            'Resolve-OERTenantDomain must really call Invoke-RestMethod, or this rule has nothing to be the only owner of')
+        $script:transportOwnerStale['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Resolve-OERTenantDomain must really call Invoke-RestMethod; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Invoke-RestMethod'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Resolve-OERTenantDomain is the single owner of the module's one network call outside the Microsoft Graph
+and Azure Resource Manager transports, and its one deliberately unauthenticated call: the OpenID
+discovery GET that turns a tenant named by domain into its tenant ID. Every other request goes through
+Invoke-OERGraphRequest or Invoke-OERArmRequest, where the gates, the bearer scrub and the retry logic
+live, so an Invoke-RestMethod anywhere else is a second sender no check stands in front of -- and one a
+credential could be added to, sending a secret to a request that needs none. Call Resolve-OERTenantDomain
+instead, or route a Graph or ARM request through its wrapper.
+'@
+        $script:transportOwnerViolations['Resolve-OERTenantDomain'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Initialize-OERAuth is the one caller of Resolve-OERTenantDomain: it asks for the tenant ID of a tenant
+named by domain before any token is requested, and compares the answer with the tenant each token was
+issued for (TenantMismatch). A second caller is a second place that turns a name into a tenant ID by a
+network call, with its own cache use and its own idea of what a failure means, and the comparison
+Initialize-OERAuth makes is the only one that holds the answer against a token. Resolve the tenant
+through Initialize-OERAuth.
+'@
+        # Last on purpose: until Initialize-OERAuth calls the helper, this is the one assertion that is
+        # red, and it must not hide the ones above.
+        $script:transportOwnerStale['Resolve-OERTenantDomain'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Initialize-OERAuth must really call Resolve-OERTenantDomain, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
+    }
+
+    It 'sends the tenant lookup with no credential' {
+        $script:tenantLookupReport | Should -Not -BeNullOrEmpty -Because (
+            'Resolve-OERTenantDomain.ps1 must be among the parsed source files, or this rule judges nothing')
+        $script:tenantLookupKnownAnswerFailures.Count | Should -Be 0 -Because (
+            'the checker no longer reaches the verdict a known-answer case requires: {0}' -f ($script:tenantLookupKnownAnswerFailures -join '; '))
+        @($script:tenantLookupKnownAnswers).Count | Should -Be 11 -Because (
+            'the known-answer table holds eleven cases; a lower count means cases stopped running, and a higher one means the expected number here is updated deliberately')
+
+        $script:tenantLookupReport.Calls | Should -Be 1 -Because (
+            'Resolve-OERTenantDomain holds exactly one Invoke-RestMethod call; a second one is a send path this rule does not place')
+        $script:tenantLookupReport.Denied -join ', ' | Should -BeNullOrEmpty -Because @'
+The tenant lookup is an unauthenticated GET to the Microsoft Entra ID authority: it needs no secret and
+must carry none. A credential on it -- a header, a token, a credential object, a certificate, the
+default credentials or a session -- would send that secret to a request that has no use for it, and to
+whatever answers it, a redirect included. Remove the parameter.
+'@
+        $script:tenantLookupReport.Unexpected -join ', ' | Should -BeNullOrEmpty -Because @'
+The tenant lookup sends exactly four parameters: Uri, Method, TimeoutSec and ErrorAction. Any other
+parameter is either a credential under a name the denied list does not know (PowerShell binds an
+abbreviated parameter name, -Head for -Headers, and a cmdlet gains parameters over time) or a change to
+what the module sends that needs a decision of its own. Remove it, or widen this list deliberately.
+'@
+        $script:tenantLookupReport.Splats | Should -Be 0 -Because (
+            'a splatted argument hides its parameter names from this scan, so a credential could be passed through it unseen; write the parameters out')
     }
 
     It 'precedes every Graph transport statement with the session gate, the latch gate and the supersession gate, in that order' {

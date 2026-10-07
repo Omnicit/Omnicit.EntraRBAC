@@ -76,6 +76,7 @@ function Set-OERRoleAssignment {
         [string]$Description,
         [string]$Condition,
         [string]$ConditionVersion,
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

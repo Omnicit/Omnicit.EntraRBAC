@@ -54,6 +54,7 @@ function Get-OERAccessReviewInstanceDecision {
         [Alias('AccessReviewStageId', 'StageId')]
         [string]$Stage,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {

@@ -42,6 +42,7 @@ function Get-OERAccessPackageResourceRole {
         [Alias('Id')]
         [string]$AccessPackage,
 
+        [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
     begin {
