@@ -5134,28 +5134,45 @@ Describe 'Sync-OERStructureAccessPackage -- every Microsoft Graph v1.0 requestor
     }
 
     Context 'SpecificConnectedOrganizationUsers on update (R5)' {
-        It 'measured: the real Set sends a built SpecificConnectedOrganizationUsers scope with no target, and keeps the live target when -RequestorScope is omitted' {
-            # The measurement that decided the engine guard below, kept at the cmdlet layer: the
-            # builder has no connected organization targets to give, and Set PUTs the declared scope
-            # whole, so the live target is dropped; with -RequestorScope omitted it is carried forward.
+        It 'the real Set refuses a built SpecificConnectedOrganizationUsers scope with no target and sends nothing, and keeps the live target when -RequestorScope is omitted' {
+            # The measurement that decided the engine guard below, kept at the cmdlet layer. Before
+            # Sprint 9 step 5 (BL-50) the first Set call PUT the built scope: the builder has no
+            # connected organization targets to give, and Set PUTs the declared scope whole, so the
+            # live target was dropped. Now the cmdlet refuses that scope itself, so a direct caller is
+            # protected too; the engine guard below stays as it was and still stops the apply path
+            # before the cmdlet is ever called. With -RequestorScope omitted the live target is still
+            # carried forward, which is the remedy the refusal names.
             $Raw = New-Bl11RawPolicy -AllowedTargetScope 'specificConnectedOrganizationUsers' -SpecificAllowedTargets @(New-Bl11ConnectedOrgTarget)
             InModuleScope $script:moduleName -Parameters @{ Raw = $Raw } { param($Raw) $script:OERTestBl11Live = @($Raw) }
             $Scope = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers -ErrorAction Stop
+
+            $Refused = $null
             Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' `
-                -Description 'new description' -RequestorScope $Scope -Confirm:$false -ErrorAction Stop | Out-Null
+                -Description 'new description' -RequestorScope $Scope -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Refused | Out-Null
+            $SentAfterRefusal = @(InModuleScope $script:moduleName { @($script:OERTestBl11Sent) })
+
+            # Positive proof that the refusal was reached rather than a path that never ran: the cmdlet
+            # read the live policy, once, and wrote its own InvalidPolicyInput record.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Uri -like '*entitlementManagement/assignmentPolicies/11111111-1111-1111-1111-111111111111*'
+            }
+            @($Refused).Count | Should -Be 1
+            @($Refused)[0].FullyQualifiedErrorId | Should -Be 'InvalidPolicyInput,Set-OERAccessPackageAssignmentPolicy'
+            @($Refused)[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $SentAfterRefusal.Count | Should -Be 0
+
             Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' `
                 -Description 'new description' -Confirm:$false -ErrorAction Stop | Out-Null
-            $Sent = InModuleScope $script:moduleName { @($script:OERTestBl11Sent) }
+            # Wrapped in @(): a single recorded request would otherwise arrive as the bare hashtable,
+            # whose .Count is its number of keys.
+            $Sent = @(InModuleScope $script:moduleName { @($script:OERTestBl11Sent) })
 
-            $Sent.Count | Should -Be 2
+            $Sent.Count | Should -Be 1
             $Sent[0].Method | Should -Be 'PUT'
             $Sent[0].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
-            @($Sent[0].Body.specificAllowedTargets).Count | Should -Be 0 -Because 'a declared scope replaces the live targets and the builder has none for connected organizations'
-            $Sent[1].Method | Should -Be 'PUT'
-            $Sent[1].Body.allowedTargetScope | Should -BeExactly 'specificConnectedOrganizationUsers'
-            @($Sent[1].Body.specificAllowedTargets).Count | Should -Be 1
-            $Sent[1].Body.specificAllowedTargets[0].'@odata.type' | Should -Be '#microsoft.graph.connectedOrganizationMembers'
-            $Sent[1].Body.specificAllowedTargets[0].connectedOrganizationId | Should -Be 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            @($Sent[0].Body.specificAllowedTargets).Count | Should -Be 1
+            $Sent[0].Body.specificAllowedTargets[0].'@odata.type' | Should -Be '#microsoft.graph.connectedOrganizationMembers'
+            $Sent[0].Body.specificAllowedTargets[0].connectedOrganizationId | Should -Be 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
         }
 
         It 'refuses an update that declares requestorScope SpecificConnectedOrganizationUsers before ShouldProcess, and sends nothing (WhatIf: <UseWhatIf>)' -ForEach @(
