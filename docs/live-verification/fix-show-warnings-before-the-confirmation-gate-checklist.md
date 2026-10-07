@@ -186,7 +186,7 @@ function Invoke-S96Captured {
 
 function Get-S96LineIndex {
     # The index of the first captured line that starts with the given prefix and contains the text, or -1.
-    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines, [Parameter(Mandatory)][string]$Prefix, [Parameter(Mandatory)][string]$Text)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Lines, [Parameter(Mandatory)][string]$Prefix, [Parameter(Mandatory)][AllowEmptyString()][string]$Text)
     for ($I = 0; $I -lt $Lines.Count; $I++) { if ($Lines[$I].StartsWith($Prefix, [System.StringComparison]::Ordinal) -and $Lines[$I].Contains($Text)) { return $I } }
     -1
 }
