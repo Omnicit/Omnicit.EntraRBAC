@@ -9,8 +9,8 @@ function Remove-OEREligibleRoleAssignment {
     identified by its principal, role definition, and scope. The principal may be given directly as
     -PrincipalId (object id, e.g. piped from Get-OEREligibleRoleAssignment) or as a friendly
     -User/-Group/-ServicePrincipal value. roleDefinitionId is the FULL ARM id resolved from -Role.
-    This is a destructive operation (ConfirmImpact High) and emits a warning before the request.
-    Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
+    This is a destructive operation (ConfirmImpact High) and emits a warning before the confirmation
+    prompt, so it also appears under -WhatIf. Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
     Initialize-OERAuth -IncludeARM.
 
     Azure Resource Manager can accept the removal request and answer it with a status in the Failed
@@ -153,8 +153,9 @@ function Remove-OEREligibleRoleAssignment {
         elseif ($ServicePrincipal) { $ServicePrincipal }
         else { $ResolvedPrincipalId }
         $Target = "eligible role '$Role' for principal '$PrincipalLabel' at scope '$TargetScope'"
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Removing $Target."
         if ($PSCmdlet.ShouldProcess($Target, 'Remove eligible Azure role assignment')) {
-            Write-Warning "Removing $Target."
             $Name = [guid]::NewGuid().ToString()
             try {
                 $Response = Invoke-OERArmRequest -Method PUT -Path "$TargetScope/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/$Name`?api-version=2020-10-01" -Body $Body

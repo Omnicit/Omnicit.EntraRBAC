@@ -75,10 +75,14 @@ Describe 'Stop-OERAccessReviewInstance' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'POST' }
         }
 
-        It 'does not warn under -WhatIf (the warning belongs inside the ShouldProcess block)' {
+        It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no POST' {
+            $Warn = $null
             Stop-OERAccessReviewInstance -Definition 'Q3' -Instance 'i1' -WhatIf `
                 -WarningVariable Warn -WarningAction SilentlyContinue
-            @($Warn).Count | Should -Be 0
+            @($Warn).Count | Should -Be 1
+            $Warn[0].Message | Should -BeExactly "Stopping access review instance 'i1'. An instance cannot be restarted once stopped."
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERAccessReviewDefinitionId -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0
         }
     }
 

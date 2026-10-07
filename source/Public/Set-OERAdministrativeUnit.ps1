@@ -14,7 +14,7 @@ function Set-OERAdministrativeUnit {
     supplied without -MembershipRule and the live unit has no rule of its own, a non-terminating
     MembershipRuleRequired error is emitted and no PATCH is sent. When both are supplied they travel in
     the same PATCH, so the unit is never momentarily dynamic with no rule. Changing -MembershipType emits
-    a warning before the PATCH: Microsoft Graph documents that the existing membership might change based
+    a warning before the confirmation prompt, so it also appears under -WhatIf: Microsoft Graph documents that the existing membership might change based
     on the rule supplied for dynamic membership, and on a dynamic unit the rule owns the membership --
     members can no longer be added or removed manually at all.
 
@@ -57,7 +57,7 @@ function Set-OERAdministrativeUnit {
     Membership type for the administrative unit: Assigned for manually managed members, or Dynamic for
     rule-driven membership. Converting to Dynamic requires a membership rule, either supplied through
     -MembershipRule in the same call or already present on the unit. Changing this can change the unit's
-    existing membership, so the cmdlet warns before sending the PATCH.
+    existing membership, so the cmdlet warns before the confirmation prompt (and under -WhatIf).
 
     .EXAMPLE
     Set-OERAdministrativeUnit -AdministrativeUnit 'au_hr' -Description 'Human Resources unit'
@@ -187,14 +187,15 @@ function Set-OERAdministrativeUnit {
             }
         }
 
+        # Changing the membership type is not a metadata edit: Microsoft Graph documents that the
+        # existing membership might change based on the rule supplied for dynamic membership, and a
+        # dynamic unit's members can no longer be added or removed manually at all. Warn loudly (the
+        # cmdlet's ConfirmImpact stays put -- raising it would prompt on every unrelated edit).
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        if ($PSBoundParameters.ContainsKey('MembershipType')) {
+            Write-Warning "Changing the membership type of administrative unit '$AuId' to '$MembershipType'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually."
+        }
         if ($PSCmdlet.ShouldProcess($AuId, 'Update administrative unit properties')) {
-            # Changing the membership type is not a metadata edit: Microsoft Graph documents that the
-            # existing membership might change based on the rule supplied for dynamic membership, and a
-            # dynamic unit's members can no longer be added or removed manually at all. Warn loudly (the
-            # cmdlet's ConfirmImpact stays put -- raising it would prompt on every unrelated edit).
-            if ($PSBoundParameters.ContainsKey('MembershipType')) {
-                Write-Warning "Changing the membership type of administrative unit '$AuId' to '$MembershipType'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually."
-            }
             try {
                 Invoke-OERGraphRequest -Method PATCH -Uri ("v1.0/directory/administrativeUnits/{0}" -f $AuId) -Body $Body | Out-Null
                 $Updated = Invoke-OERGraphRequest -Uri ("v1.0/directory/administrativeUnits/{0}" -f $AuId)

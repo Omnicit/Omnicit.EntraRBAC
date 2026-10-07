@@ -402,11 +402,16 @@ Describe 'Remove-OERAdministrativeUnitScopedRole' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
         }
 
-        It 'does not warn under -WhatIf (the warning belongs inside the ShouldProcess block)' {
+        It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no DELETE' {
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -ParameterFilter { $Method -eq 'DELETE' } -MockWith { }
+            $Warn = $null
             Remove-OERAdministrativeUnitScopedRole -Id 'auau0000-0000-0000-0000-00000000000b' `
                 -ScopedRoleMembershipId 'srm-guard' -WhatIf `
                 -WarningVariable Warn -WarningAction SilentlyContinue
-            @($Warn | Where-Object { $_.Message -match 'revokes the principal' }).Count | Should -Be 0
+            @($Warn).Count | Should -Be 1
+            $Warn[0].Message | Should -BeExactly ("Removing scoped role membership 'srm-guard' from administrative unit " +
+                "'auau0000-0000-0000-0000-00000000000b'. This revokes the principal's delegated administrator privilege over that unit.")
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'DELETE' }
         }
     }
 

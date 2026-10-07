@@ -9,6 +9,8 @@ function Stop-OERAccessReviewInstance {
     Resolve-OERAccessReviewDefinitionId. Supports -WhatIf and -Confirm. No output is returned on
     success (HTTP 204). ConfirmImpact is High -- a stopped instance cannot be restarted, so this
     prompts under the default $ConfirmPreference; unattended automation must pass -Confirm:$false.
+    The warning that the instance cannot be restarted is written before the confirmation prompt, so
+    it also appears under -WhatIf.
 
     .PARAMETER Definition
     The access review definition id or display name. Accepts pipeline input by property name via the
@@ -88,8 +90,9 @@ function Stop-OERAccessReviewInstance {
 
         $Uri = "v1.0/identityGovernance/accessReviews/definitions/$DefId/instances/$Instance/stop"
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Stopping access review instance '$Instance'. An instance cannot be restarted once stopped."
         if ($PSCmdlet.ShouldProcess($Instance, 'Stop access review instance')) {
-            Write-Warning "Stopping access review instance '$Instance'. An instance cannot be restarted once stopped."
             try {
                 $null = Invoke-OERGraphRequest -Method POST -Uri $Uri
             } catch {

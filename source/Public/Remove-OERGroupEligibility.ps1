@@ -12,6 +12,8 @@ function Remove-OERGroupEligibility {
     -Group is the TARGET group whose access is granted, while -GroupPrincipal is the group whose
     eligibility is revoked. The request body is built by the private New-OERGroupEligibilityBody helper.
     The result is a tagged Omnicit.EntraRBAC.GroupEligibility object. Supports -WhatIf and -Confirm.
+    The warning that the principal loses the eligibility is written before the confirmation prompt,
+    so it also appears under -WhatIf.
 
     Microsoft Graph can accept the removal request and answer it with a status in the Failed family
     (Failed, or any status that starts with Failed, in any letter case), which removes nothing. The
@@ -167,8 +169,9 @@ function Remove-OERGroupEligibility {
             -Action       'adminRemove' `
             -Justification $Justification
 
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Removing PIM $AccessType eligibility for principal '$ResolvedPrincipalId' from group '$GroupId'. The principal loses the ability to activate this $AccessType access."
         if ($PSCmdlet.ShouldProcess($GroupId, "Remove PIM $AccessType eligibility from '$ResolvedPrincipalId'")) {
-            Write-Warning "Removing PIM $AccessType eligibility for principal '$ResolvedPrincipalId' from group '$GroupId'. The principal loses the ability to activate this $AccessType access."
             try {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri (Get-OERPimGroupsGraphPath -Path 'identityGovernance/privilegedAccess/group/eligibilityScheduleRequests') -Body $Body
             } catch {

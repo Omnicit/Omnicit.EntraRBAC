@@ -235,11 +235,15 @@ Describe 'Remove-OERGroupEligibility' {
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
 
-        It 'does not warn under -WhatIf (the warning belongs inside the ShouldProcess block)' {
+        It 'warns under -WhatIf too, since the warning stands ahead of the ShouldProcess gate, and sends no POST' {
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+            $Warn = $null
             Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -WhatIf `
                 -WarningVariable Warn -WarningAction SilentlyContinue | Out-Null
-            @($Warn | Where-Object { $_.Message -match 'eligibility' }).Count | Should -Be 0
+            @($Warn).Count | Should -Be 1
+            $Warn[0].Message | Should -BeExactly ("Removing PIM member eligibility for principal '11111111-1111-1111-1111-111111111111' " +
+                "from group 'gid-1'. The principal loses the ability to activate this member access.")
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
     }
 

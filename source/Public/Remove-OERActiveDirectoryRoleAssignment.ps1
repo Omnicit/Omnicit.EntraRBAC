@@ -13,8 +13,9 @@ function Remove-OERActiveDirectoryRoleAssignment {
     a standing (Assigned) active assignment can be removed this way; an activation (AssignmentType
     Activated) of an eligible assignment ends on its own schedule or through the eligible
     assignment's own removal. This is a destructive operation (ConfirmImpact High) and emits a
-    warning before the request. Supports -WhatIf/-Confirm. Authentication is ensured via
-    Initialize-OERAuth (no ARM token is acquired; this is a Graph-only cmdlet).
+    warning before the confirmation prompt, so it also appears under -WhatIf. Supports
+    -WhatIf/-Confirm. Authentication is ensured via Initialize-OERAuth (no ARM token is acquired;
+    this is a Graph-only cmdlet).
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -29,7 +30,10 @@ function Remove-OERActiveDirectoryRoleAssignment {
     Graph call: the request names only the role and the principal, so it would remove that
     principal's own direct active assignment instead, if one exists. Remove the group's own
     assignment, or the member from the group; an activation ends on its own schedule or through the
-    eligible assignment's removal.
+    eligible assignment's removal. A row from Get-OERGroupMember (MemberType Member or Owner) is no
+    role assignment at all and is refused with the same NotDirectAssignment error, whose message
+    says so: to remove that principal's own direct active assignment on purpose, name it with
+    -PrincipalId, for example inside ForEach-Object.
 
     For least privilege, RoleAssignmentSchedule.ReadWrite.Directory is enough for the write and
     RoleManagement.Read.Directory resolves -Role; the module's default sign-in scope list already
@@ -151,11 +155,17 @@ function Remove-OERActiveDirectoryRoleAssignment {
         # the activating principal's; the adminRemove request names only the role and the principal,
         # so either would remove that principal's own DIRECT, standing active assignment (if one
         # exists) instead of the piped row. Refused before any Graph call. A piped object with neither
-        # property (not Get- output) is left to the request as before.
+        # property (not Get- output) is left to the request as before. A row from Get-OERGroupMember
+        # (MemberType Member or Owner) is no role assignment at all, so its refusal says that instead
+        # of calling it inherited, and shows how to remove the principal's own assignment on purpose.
         if ($PSCmdlet.MyInvocation.ExpectingInput) {
             $NotDirectReason = $null
             $NotDirectAdvice = $null
-            if ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
+            $NotDirectMessage = $null
+            if (($PSItem.PSObject.TypeNames -contains 'Omnicit.EntraRBAC.GroupMember') -or
+                ([string]$PSItem.MemberType -in @('Member', 'Owner'))) {
+                $NotDirectMessage = "The piped object for principal '$($PSItem.PrincipalId)' is a group member row (MemberType '$($PSItem.MemberType)') from Get-OERGroupMember, not an active assignment of directory role '$Role', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct active assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OERActiveDirectoryRoleAssignment -Role '$Role' -PrincipalId `$_.PrincipalId }"
+            } elseif ($PSItem.MemberType -and [string]$PSItem.MemberType -ne 'Direct') {
                 $NotDirectReason = "is inherited through a group (MemberType '$($PSItem.MemberType)'), not a direct one"
                 $NotDirectAdvice = " Remove the group's own active assignment, or the principal from the group."
             } elseif ([string]$PSItem.AssignmentType -eq 'Activated') {
@@ -163,8 +173,11 @@ function Remove-OERActiveDirectoryRoleAssignment {
                 $NotDirectAdvice = ' It ends when its window closes, or when the eligible assignment is removed.'
             }
             if ($NotDirectReason) {
+                $NotDirectMessage = "The piped active assignment of directory role '$Role' for principal '$($PSItem.PrincipalId)' $NotDirectReason, so it is not removed: the request names only the role and the principal, and would remove that principal's own direct active assignment instead, if one exists.$NotDirectAdvice"
+            }
+            if ($NotDirectMessage) {
                 Write-CmdletError `
-                    -Message ([System.Exception]::new("The piped active assignment of directory role '$Role' for principal '$($PSItem.PrincipalId)' $NotDirectReason, so it is not removed: the request names only the role and the principal, and would remove that principal's own direct active assignment instead, if one exists.$NotDirectAdvice")) `
+                    -Message ([System.Exception]::new($NotDirectMessage)) `
                     -ErrorId 'NotDirectAssignment' -Category InvalidArgument -TargetObject $PSItem.PrincipalId -Cmdlet $PSCmdlet
                 return
             }
@@ -213,8 +226,9 @@ function Remove-OERActiveDirectoryRoleAssignment {
         $Body = New-OERDirectoryRoleScheduleRequestBody @BodyParams
 
         $Target = "active directory role '$Role' for principal '$PrincipalLabel' at directory scope '/'"
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        Write-Warning "Removing $Target."
         if ($PSCmdlet.ShouldProcess($Target, 'Remove active directory role assignment')) {
-            Write-Warning "Removing $Target."
             try {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri 'v1.0/roleManagement/directory/roleAssignmentScheduleRequests' -Body $Body
             } catch {

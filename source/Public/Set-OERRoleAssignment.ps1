@@ -21,8 +21,8 @@ function Set-OERRoleAssignment {
     Overlay contract: an omitted parameter PRESERVES the live value. Every overlay is gated on whether
     the parameter was bound, never on whether its value is truthy, because an empty string is
     meaningful: passing -Condition '' REMOVES the condition, and it clears conditionVersion with it.
-    Removing a condition WIDENS the principal's access, so the cmdlet warns explicitly before that call
-    and carries ConfirmImpact High. Supplying -Condition on an assignment that had none defaults
+    Removing a condition WIDENS the principal's access, so the cmdlet warns explicitly before the
+    confirmation prompt (so the warning also appears under -WhatIf) and carries ConfirmImpact High. Supplying -Condition on an assignment that had none defaults
     conditionVersion to 2.0, matching the ARM default.
 
     A condition is cleared by OMITTING both keys from the PUT body, not by sending them empty. The REST
@@ -171,10 +171,11 @@ function Set-OERRoleAssignment {
         }
 
         $ClearingCondition = (-not [string]::IsNullOrEmpty($LiveCondition)) -and [string]::IsNullOrEmpty($EffectiveCondition)
+        # This warning stands ahead of ShouldProcess so -WhatIf and the -Confirm prompt show it.
+        if ($ClearingCondition) {
+            Write-Warning "Removing the ABAC condition from role assignment '$Id'. This WIDENS the principal's access at that scope."
+        }
         if ($PSCmdlet.ShouldProcess($Id, 'Update Azure role assignment description/condition')) {
-            if ($ClearingCondition) {
-                Write-Warning "Removing the ABAC condition from role assignment '$Id'. This WIDENS the principal's access at that scope."
-            }
             try {
                 $Response = Invoke-OERArmRequest -Method PUT -Path "$Id`?api-version=2022-04-01" -Body $Body
             } catch {
