@@ -120,4 +120,72 @@ Describe 'ConvertTo-OERInventory' {
             @($Out.RoleManagementPolicies).Count | Should -Be 0
         }
     }
+
+    Context 'tenantId (BL-88, A14)' {
+        It 'emits tenantId directly after version when -TenantId is a GUID' {
+            InModuleScope $script:moduleName {
+                $Out = ConvertTo-OERInventory -TenantId '44444444-4444-4444-4444-444444444444'
+                $Out.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+                $Names = @($Out.PSObject.Properties.Name)
+                $Names[0..2] | Should -Be @('version', 'tenantId', 'groups')
+                $Names.Count | Should -Be 11
+            }
+        }
+
+        It 'keeps the nine sections in their existing order after tenantId' {
+            InModuleScope $script:moduleName {
+                $Out = ConvertTo-OERInventory -TenantId '44444444-4444-4444-4444-444444444444'
+                @($Out.PSObject.Properties.Name) | Should -Be @('version', 'tenantId', 'groups', 'administrativeUnits',
+                    'catalogs', 'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies',
+                    'directoryRoleAssignments', 'roleAssignments', 'roleManagementPolicies')
+            }
+        }
+
+        It 'stores tenantId in the schema spelling, once' {
+            InModuleScope $script:moduleName {
+                $Names = @((ConvertTo-OERInventory -TenantId '44444444-4444-4444-4444-444444444444').PSObject.Properties.Name)
+                $Names -ccontains 'tenantId' | Should -Be $true
+                $Names -ccontains 'TenantId' | Should -Be $false -Because 'a second stored copy would violate additionalProperties:false'
+            }
+        }
+
+        It 'still tags the object Omnicit.EntraRBAC.Inventory and carries the sections it was given' {
+            InModuleScope $script:moduleName {
+                $Out = ConvertTo-OERInventory -TenantId '44444444-4444-4444-4444-444444444444' `
+                    -Groups @([PSCustomObject]@{ displayName = 'g1' })
+                $Out.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
+                $Out.Version | Should -Be '1.0'
+                @($Out.Groups).Count | Should -Be 1
+                $Out.Groups[0].displayName | Should -Be 'g1'
+            }
+        }
+
+        It 'leaves tenantId out when -TenantId is <Label>' -ForEach @(
+            @{ Label = 'not given'; Splat = @{} }
+            @{ Label = 'empty'; Splat = @{ TenantId = '' } }
+            @{ Label = 'a domain'; Splat = @{ TenantId = 'contoso.onmicrosoft.com' } }
+            @{ Label = 'organizations'; Splat = @{ TenantId = 'organizations' } }
+            @{ Label = 'a braced GUID'; Splat = @{ TenantId = '{44444444-4444-4444-4444-444444444444}' } }
+            @{ Label = 'a dash-less GUID'; Splat = @{ TenantId = '44444444444444444444444444444444' } }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Splat = $Splat } {
+                param($Splat)
+                $Out = ConvertTo-OERInventory @Splat
+                $Out.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+                @($Out.PSObject.Properties.Name).Count | Should -Be 10
+                @($Out.PSObject.Properties.Name)[0..1] | Should -Be @('version', 'groups')
+            }
+        }
+
+        It 'serializes with tenantId to a document that validates against the shipped schema.json' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+            InModuleScope $script:moduleName {
+                $Out = ConvertTo-OERInventory -TenantId '44444444-4444-4444-4444-444444444444' `
+                    -Groups @([PSCustomObject]@{ displayName = 'role_sec_identity_reader' })
+                $Json = $Out | ConvertTo-Json -Depth 32
+                $Json | Should -Match '"tenantId":\s*"44444444-4444-4444-4444-444444444444"'
+                Test-Json -Json $Json -Schema (Get-OERStructureSchemaJson) -ErrorAction SilentlyContinue |
+                    Should -Be $true
+            }
+        }
+    }
 }

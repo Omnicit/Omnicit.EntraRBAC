@@ -278,6 +278,9 @@ function Get-OERInventory {
         if ($TenantId) { $AuthParams.TenantId = $TenantId }
         if ($IncludeARM) { $AuthParams.IncludeARM = $true }
         Initialize-OERAuth @AuthParams
+        # BL-88 (A14): the tenant this inventory names, captured here under the session this command
+        # signed in under, never read again where the document is assembled.
+        $DocumentTenantId = Get-OERInventoryTenantId
     }
     process {
         $PrincipalNameCache = @{}   # per-invocation id -> name cache (Groups eligibility + AccessReviews reviewers)
@@ -1937,6 +1940,7 @@ function Get-OERInventory {
         # Select-UniqueNamedEntry runs while these arguments are evaluated, which is before the
         # InventoryPartial check below, so the objects it leaves out are reported with the rest.
         ConvertTo-OERInventory `
+            -TenantId $DocumentTenantId `
             -Groups @(Select-UniqueNamedEntry -Entry $Groups.ToArray() -Section 'groups' -KeyOf { param($E) $E.displayName }) `
             -AdministrativeUnits @(Select-UniqueNamedEntry -Entry $AdministrativeUnits.ToArray() -Section 'administrativeUnits' -KeyOf { param($E) $E.displayName }) `
             -Catalogs @(Select-UniqueNamedEntry -Entry $Catalogs.ToArray() -Section 'catalogs' -KeyOf { param($E) $E.displayName }) `

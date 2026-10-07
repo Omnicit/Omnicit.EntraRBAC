@@ -2130,3 +2130,132 @@ Describe 'Export-OERInventory (the group roster that could not be read is partia
         @($ExWarn | Where-Object { "$_" -like '*Could not read the group roster*' }).Count | Should -Be 0
     }
 }
+
+Describe 'Export-OERInventory tenantId (BL-88, A14)' {
+    # inventory.json names the tenant the session's Graph token was issued for, so Invoke-OERStructure
+    # can refuse a document exported from another tenant. The mocked sign-in sets the module's auth
+    # state the way the real one does (the tenant as named, and the tenant the token was issued for).
+    # Test-OERStructureSchema is NOT mocked: the export's own self-check must accept the key.
+    BeforeAll {
+        # The real converter, taken before any test mocks it, so a mock can call through to it.
+        $script:RealConvert = InModuleScope $script:moduleName { Get-Command ConvertTo-OERInventory -CommandType Function }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId      = 'contoso.onmicrosoft.com'
+                    TokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERConfiguration {}
+        Mock -ModuleName $script:moduleName Get-OERGroup {}
+        Mock -ModuleName $script:moduleName Resolve-OERInventoryScopeTree {
+            [PSCustomObject]@{
+                Scopes    = @()
+                Hierarchy = [PSCustomObject]@{ managementGroups = @(); subscriptions = @() }
+            }
+        }
+        Mock -ModuleName $script:moduleName Get-OERInventoryAzureEligibility {
+            [PSCustomObject]@{ Eligibilities = @(); SkippedScopes = @() }
+        }
+        # What Get-OERInventory hands back here carries no tenantId: the export writes its OWN capture.
+        Mock -ModuleName $script:moduleName Get-OERInventory { & $script:RealConvert }
+    }
+
+    AfterAll {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    It 'writes the tenant the Graph token was issued for as inventory.json tenantId, and the self-check accepts it' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-groups') -Include Groups `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: the bundle was written, and the real self-check ran over it.
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        Test-Path (Join-Path $Result.BundlePath 'inventory.json') | Should -BeTrue
+        Test-Path (Join-Path $Result.BundlePath 'schema.json') | Should -BeTrue
+
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        @($Inv.PSObject.Properties.Name)[0..2] | Should -Be @('version', 'tenantId', 'groups')
+        @($Inv.PSObject.Properties.Name).Count | Should -Be 11
+        @($Warn | Where-Object { "$_" -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+        @($Warn | Where-Object { "$_" -like '*Could not run the apply-schema self-check*' }).Count | Should -Be 0
+    }
+
+    It 'names the granted tenant in the file while the bundle folder and summary keep the tenant as named' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-label') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        $Result.TenantId | Should -BeExactly 'contoso.onmicrosoft.com'
+        (Split-Path $Result.BundlePath -Leaf) | Should -BeLike 'oer-inventory-contoso.onmicrosoft.com-*'
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+    }
+
+    It 'still carries tenantId when no Entra ID section is read (the Azure-only export)' {
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-azure') -Include RoleAssignments `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proofs: the Azure walk ran (it asked for an ARM token), and no Entra read was made.
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM }
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 0
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        @($Inv.PSObject.Properties.Name)[0..2] | Should -Be @('version', 'tenantId', 'groups')
+        @($Warn | Where-Object { "$_" -like '*did not pass apply-schema validation*' }).Count | Should -Be 0
+    }
+
+    It 'passes the capture to both ConvertTo-OERInventory calls, the Azure-only branch and the canonical one' {
+        Mock -ModuleName $script:moduleName ConvertTo-OERInventory { & $script:RealConvert @PesterBoundParameters }
+        Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-both') -Include RoleAssignments `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue | Out-Null
+
+        # The branch with no Entra section builds its empty document, then the canonical document is built.
+        Should -Invoke -ModuleName $script:moduleName ConvertTo-OERInventory -Times 2 -Exactly
+        Should -Invoke -ModuleName $script:moduleName ConvertTo-OERInventory -Times 2 -Exactly -ParameterFilter {
+            $TenantId -eq '44444444-4444-4444-4444-444444444444'
+        }
+    }
+
+    It 'writes its own capture, not the tenantId of the inventory Get-OERInventory returned' {
+        Mock -ModuleName $script:moduleName Get-OERInventory { & $script:RealConvert -TenantId '77777777-7777-7777-7777-777777777777' }
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-own') -Include Groups `
+            -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERInventory -Times 1 -Exactly
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+    }
+
+    It 'leaves tenantId out, with no warning, when the token reported no tenant ID' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{ TenantId = '11111111-1111-1111-1111-111111111111'; TokenTenantId = $null }
+            }
+        }
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-none') -Include Groups `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Test-Path (Join-Path $Result.BundlePath 'inventory.json') | Should -BeTrue
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+        @($Inv.PSObject.Properties.Name)[0..1] | Should -Be @('version', 'groups')
+        @($Warn).Count | Should -Be 0
+    }
+
+    It 'leaves tenantId out when the session holds no state' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        $Result = Export-OERInventory -OutputPath (Join-Path $TestDrive 'tid-nostate') -Include Groups `
+            -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Test-Path (Join-Path $Result.BundlePath 'inventory.json') | Should -BeTrue
+        $Inv = Get-Content (Join-Path $Result.BundlePath 'inventory.json') -Raw | ConvertFrom-Json
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+        @($Warn).Count | Should -Be 0
+    }
+}

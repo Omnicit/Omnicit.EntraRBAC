@@ -192,6 +192,10 @@ function Export-OERInventory {
             $AuthParams.IncludeARM = $true
         }
         Initialize-OERAuth @AuthParams
+        # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
+        # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
+        # Get-OERInventory returns, so the document is assembled with the one value in both calls.
+        $DocumentTenantId = Get-OERInventoryTenantId
     }
     process {
         # --- Gather the Entra ID sections (names only, for portability) ---
@@ -236,7 +240,7 @@ function Export-OERInventory {
             if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
             Get-OERInventory @InvParams
         } else {
-            ConvertTo-OERInventory
+            ConvertTo-OERInventory -TenantId $DocumentTenantId
         }
         $IncompleteReads = [System.Collections.Generic.List[string]]::new()
         foreach ($IErr in @($InventoryReadErrors)) {
@@ -478,6 +482,7 @@ function Export-OERInventory {
         # apply-schema validation ("'role' is required at directoryRoleManagementPolicies[0]")
         # instead of writing a genuinely empty section, same footgun $AllGroups above guards against.
         $Canonical = ConvertTo-OERInventory `
+            -TenantId $DocumentTenantId `
             -Groups $DetailedGroups `
             -AdministrativeUnits @($Inv.AdministrativeUnits) `
             -Catalogs @($Inv.Catalogs) `
