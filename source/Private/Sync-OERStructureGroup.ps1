@@ -160,9 +160,13 @@ function Sync-OERStructureGroup {
        and its gate declined that change, its value stands in for what the read says about permanent
        eligibility (true: no warning; false: the warning when the policy is listed), since a real run
        applies step 4 before the cmdlet reads the policy. Otherwise the read decides, and whether the
-       policy is listed always comes from the read. A real run leaves the warning to the cmdlet, so it
-       is written once either way. Step 3 has no such warning: a time-bound eligibility never opens
-       the policy.
+       policy is listed always comes from the read. The plan also follows the state each entry leaves:
+       once it has planned the warning for an access type, a later permanent entry of the same access
+       type plans none, since in a real run the first entry's Add-OERGroupEligibility opens the policy
+       and the later ones find it open; each access type is decided on its own. A real run leaves the
+       warning to the cmdlet, so it is never written twice for one entry, and the plan writes it as
+       often as a run in which the policy opens. Step 3 has no such warning: a time-bound eligibility
+       never opens the policy.
        For a group THIS RUN created, the entry first waits, from the same shared budget, until
        Microsoft Graph lists that access type's policy AND that policy answers its read, as step 4
        does: Get-OERPimGroupPolicyId -NotFoundAsUnlisted, then Get-OERListedGroupPimPolicy, a 404 from
@@ -866,6 +870,8 @@ function Sync-OERStructureGroup {
         # The permanent-eligibility setting step 4 of this item would have written, by access type, when
         # its gate declined the write (under -WhatIf). Step 5's plan reads the live policy, which that
         # unapplied write has not changed yet, so it decides on the value step 4 WOULD leave instead.
+        # Step 5's plan also records an access type here as allowing permanent eligibility once it has
+        # planned the warning for it, since the real run's first entry opens the policy for the rest.
         $PlannedPermanentAllowed = @{}
 
         # ONE wait budget per group item (at most 30 s of waiting in total: 2 + 4 + 8 + 16), shared by
@@ -1263,9 +1269,13 @@ function Sync-OERStructureGroup {
             # that value stands in for the read's PermanentAllowed (true: no warning; false: the warning
             # when the policy is listed), since a real run applies it before the cmdlet reads the policy.
             # Otherwise the read decides. Whether the policy is listed (HasPolicy) always comes from the
-            # read. Only under -WhatIf -- a real run calls the cmdlet, which writes it, and a second copy
-            # here would warn twice. Under -WhatIf a group this run would create is never reached here
-            # (its creation is skipped and the handler returns), so the group always exists already.
+            # read. Once the warning is planned for an access type, that access type is recorded as
+            # allowing permanent eligibility, so a later permanent entry of the same access type plans
+            # none: in a real run the first entry's Add-OERGroupEligibility opens the policy, and the
+            # later ones find it open. Only under -WhatIf -- a real run calls the cmdlet, which writes
+            # it, and a second copy here would warn twice. Under -WhatIf a group this run would create is
+            # never reached here (its creation is skipped and the handler returns), so the group always
+            # exists already.
             if ($WhatIfPreference) {
                 $PermanentState = $null
                 try {
@@ -1280,6 +1290,8 @@ function Sync-OERStructureGroup {
                 }
                 if ($PermanentState -and $PermanentState.HasPolicy -and -not $PermanentAllowed) {
                     Write-Warning "This eligibility requires opening the PIM-for-groups policy for group '$Gid' ($($EChange.AccessType) access) to allow PERMANENT eligible assignments, which affects ALL $($EChange.AccessType) eligibility for this group."
+                    # The policy this entry opens in a real run stays open for the next entry.
+                    $PlannedPermanentAllowed[[string]$EChange.AccessType] = $true
                 }
             }
             if ($Caller.ShouldProcess($Name, "Add permanent $($EChange.AccessType) eligibility for '$EPrinId'")) {
