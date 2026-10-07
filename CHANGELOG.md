@@ -11,9 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 (`New-OERAccessPackageApprovalStage`, `New-OERAccessPackageRequestorScope`,
 `New-OERAccessReviewStage`), refuse with `SignInSuperseded` and send nothing when another command in
 their pipeline signs in to another tenant or identity after they began; in a script block they begin
-only when it runs, so name `-TenantId` there unless the document names its tenant. An export now
-names its tenant (`tenantId`), and `Invoke-OERStructure` refuses a document naming another tenant
-than `-TenantId` or the session with the new `DocumentTenantMismatch`, reading and writing nothing;
+only when it runs, so name `-TenantId` there. `Get-OERInventory` and `Export-OERInventory` now name
+their tenant (`tenantId`), and `Invoke-OERStructure` refuses a document naming another tenant than
+`-TenantId` or the session with the new `DocumentTenantMismatch`, reading and writing nothing;
 change or remove the key to apply it elsewhere. Cmdlets a refused command calls are refused at their
 sign-in (`SignInRefused`), before any token request or prompt. A tenant named by domain is looked up
 before any token request and checked against each token: one from another tenant is refused with

@@ -3165,20 +3165,22 @@ or written for that document, and the next piped document is tried on its own. I
 `InvalidOperation` and its target the document's path, or the parameter set's name, as
 `InvalidStructureDocument`'s is (Ruling R5; if wrong, change both before this step merges, since
 every merge publishes and a change after it is a published change). The message names the
-document's tenant and the tenant it was compared with, says that nothing was read or written for
-the document -- signed in to, read or written, before the sign-in -- and tells the operator to name
-that tenant with `-TenantId` or, to use the document as a template for another tenant, to change or
-remove its `tenantId`. It holds no token, account or credential.
+document's tenant and, when there is one, the tenant it was compared with; with no state, or a
+token tenant that is not a GUID, it says instead that the session holds no Microsoft Graph (or
+Azure Resource Manager) token whose tenant can be compared with it. It says that nothing was read or
+written for the document -- signed in to, read or written, before the sign-in -- and tells the
+operator to name that tenant with `-TenantId` or, to use the document as a template for another
+tenant, to change or remove its `tenantId`. It holds no token, account or credential.
 
-**One comparison per document (Ruling R1).** The spec's "before every section, the administrative
-unit pre-pass included" is read as ONE comparison directly after the sign-in, before the first
-thing that reads or writes for the document: the same sentence says the whole document is refused
-and nothing read or written for it, which a check between sections could not honour once the first
-section had run. A session that changes between sections is refused by the supersession gate (A20)
-instead: `Invoke-OERStructure`'s frame remembers the identity its own sign-in gave it, whose tenant
-term is `TokenTenantId` (BL-77) -- the tenant just compared with the document -- so a later switch
-differs from it and every request after it is refused. If wrong: add a comparison before each
-section in the dispatch loop.
+**One comparison after the sign-in, not one per section (Ruling R1).** The spec's "before every
+section, the administrative unit pre-pass included" is read as ONE comparison directly after the
+sign-in, before the first thing that reads or writes for the document: the same sentence says the
+whole document is refused and nothing read or written for it, which a check between sections could
+not honour once the first section had run. A session that changes between sections is refused by
+the supersession gate (A20) instead: `Invoke-OERStructure`'s frame remembers the identity its own
+sign-in gave it, whose tenant term is `TokenTenantId` (BL-77) -- the tenant just compared with the
+document -- so a later switch differs from it and every request after it is refused. If wrong: add
+a comparison before each section in the dispatch loop.
 
 **Why never the tenant as named.** The tenant the caller named (`TenantId` in the state) can be a
 domain, `organizations` or nothing at all, so an export that wrote it would often name no tenant ID

@@ -607,8 +607,8 @@ browser prompt (A6). The snapshot is taken when the command's own `begin` runs, 
 command that stands in the pipeline itself and not one called inside a script block or a function
 in a pipeline -- `ForEach-Object { Invoke-OERStructure ... }`. Such a command begins only when the
 block runs, after every `begin` block of the outer pipeline, so it takes a downstream command's
-sign-in for the session it began with. For a document that names its tenant (`tenantId`, which
-`Get-OERInventory` and `Export-OERInventory` write) that gap is closed (BL-88):
+sign-in for the session it began with. The gap this leaves is closed for a document that names its
+tenant (BL-88; `tenantId`, which `Get-OERInventory` and `Export-OERInventory` write):
 `Get-OERDocumentTenantMismatch` refuses the document in any other tenant with
 `DocumentTenantMismatch`, whatever session the command began with. It stays open, older than BL-76,
 for a document without `tenantId` -- applied, `-Prune` included, in the downstream command's
@@ -1006,9 +1006,11 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never the tenant as
   named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
   call it in `begin`, directly after their own sign-in. `Invoke-OERStructure` calls the comparison
-  twice per document: before the sign-in when `-TenantId` is a canonical GUID, and after the sign-in
-  against `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is
-  taken again and before anything is read or written for the document. A present `tenantId` that is
+  twice per document: before the sign-in whenever `-TenantId` is bound -- where the owner compares
+  only a canonical GUID and leaves any other name (a domain, `organizations`) to the second call;
+  keep that GUID test in the owner, never in the caller -- and after the sign-in against
+  `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
+  again and before anything is read or written for the document. A present `tenantId` that is
   not a canonical GUID, `null` included, fails validation; a document without the key is applied
   exactly as before. Never sign in WITH the document's tenant (A6), never compare it inline, and
   never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
