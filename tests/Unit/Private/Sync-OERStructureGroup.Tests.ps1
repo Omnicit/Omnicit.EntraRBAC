@@ -2202,6 +2202,134 @@ Describe 'Sync-OERStructureGroup' {
         }
     }
 
+    # BL-07: a group created INTO an administrative unit is recorded in the run-scoped list the engine
+    # passes as -CreatedUnitMembership, so the administrativeUnits section does not prune the
+    # membership in the same run. Only a real create with a unit records; -WhatIf, a failed create and
+    # a create without a unit record nothing.
+    Context 'the administrative unit membership a create records (BL-07)' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERGroupId { $null }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+            }
+        }
+
+        It 'records the unit as declared, the new group id and the group name after a create into a unit named <Label>' -ForEach @(
+            @{ Label = 'by display name'; Unit = 'AU-1' }
+            @{ Label = 'by object id'; Unit = '66666666-6666-6666-6666-666666666666' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
+                param($Unit)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ template = 'grp-{Region}'; tokens = [PSCustomObject]@{ Region = 'EU' }; administrativeUnit = $Unit; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+                $Created.Count | Should -Be 1
+                $Created[0].AdministrativeUnit | Should -BeExactly $Unit
+                $Created[0].GroupId | Should -BeExactly '88888888-8888-8888-8888-888888888888'
+                $Created[0].Label | Should -BeExactly 'grp-EU'
+            }
+        }
+
+        It 'records nothing under -WhatIf, where the group is not created' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-1'; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -WhatIf -ErrorAction Stop)
+                @($r | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create group grp-new' }).Count | Should -Be 1
+                Should -Invoke New-OERGroup -Times 0
+                $Created.Count | Should -Be 0
+            }
+        }
+
+        It 'records nothing when the create fails' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                }
+                Mock New-OERGroup {
+                    throw [System.Management.Automation.ErrorRecord]::new(
+                        [System.Exception]::new('No administrative unit found for ''AU-1''.'),
+                        'AdministrativeUnitNotFound', [System.Management.Automation.ErrorCategory]::ObjectNotFound, 'AU-1')
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-1'; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -ErrorAction SilentlyContinue)
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -like 'group creation failed:*' }).Count | Should -Be 1
+                $Created.Count | Should -Be 0
+            }
+        }
+
+        It 'records nothing when New-OERGroup returns no object' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                }
+                Mock New-OERGroup { }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-1'; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Failed' -and $_.Detail -eq 'New-OERGroup returned no object' }).Count | Should -Be 1
+                $Created.Count | Should -Be 0
+            }
+        }
+
+        It 'creates a group into a unit with no error when no list is given, as a direct call does' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+                $Item = [PSCustomObject]@{ displayName = 'grp-new'; administrativeUnit = 'AU-1'; members = @() }
+                $r = @(Invoke-SyncGroupViaCaller -Item $Item -ErrorAction Stop)
+                Should -Invoke New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'AU-1' }
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+            }
+        }
+
+        It 'records nothing for a group created without a unit: <Label>' -ForEach @(
+            @{ Label = 'administrativeUnit omitted'; Json = '{ "displayName": "grp-new", "members": [] }' }
+            @{ Label = 'administrativeUnit blank, which New-OERGroup ignores'; Json = '{ "displayName": "grp-new", "administrativeUnit": "", "members": [] }' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+                param($Json)
+                function Invoke-SyncGroupViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet -CreatedUnitMembership $Created
+                }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $r = @(Invoke-SyncGroupViaCaller -Item ($Json | ConvertFrom-Json) -Created $Created -ErrorAction Stop)
+                Should -Invoke New-OERGroup -Times 1 -Exactly
+                @($r | Where-Object Action -eq 'Created').Count | Should -Be 1
+                $Created.Count | Should -Be 0
+            }
+        }
+    }
+
     Context 'eligibility accessType, time-bound entries (site 565)' {
         It 'uses the declared accessType for a time-bound entry when declared with a value' {
             InModuleScope $script:moduleName {

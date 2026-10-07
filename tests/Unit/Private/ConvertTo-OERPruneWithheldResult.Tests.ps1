@@ -255,4 +255,44 @@ Describe 'ConvertTo-OERPruneWithheldResult' {
             }
         }
     }
+
+    # A fifth kind (BL-07, Sprint 9 step 6): a LIVE administrative unit member that is a group the
+    # groups section created INTO this unit in the same run (New-OERGroup -AdministrativeUnit).
+    # administrativeUnit never round-trips, so the unit's own entry need not list the group, and the
+    # run that created the membership must not remove it. The caller decides that the candidate is
+    # such a group; the helper owns the text: under -Prune one Skipped record, without -Prune nothing,
+    # so the pass reports Extra exactly as before.
+    Context 'with a group created into the unit in this run (-CreatedGroup)' {
+        It 'returns one Skipped StructureResult under -Prune, with the exact reason' {
+            InModuleScope $script:moduleName {
+                $R = @(ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' `
+                        -Candidate "undeclared member '88888888-8888-8888-8888-888888888888'" -CreatedGroup 'grp-new' -Prune)
+                $R.Count | Should -Be 1
+                $R[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.StructureResult'
+                $R[0].Section | Should -BeExactly 'administrativeUnits'
+                $R[0].Item | Should -BeExactly 'AU-IT'
+                $R[0].Action | Should -BeExactly 'Skipped'
+                $R[0].Error | Should -BeNullOrEmpty
+                $R[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
+                    'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+                    "The next apply with -Prune removes it unless the unit's members name the group.")
+            }
+        }
+
+        It 'returns nothing without -Prune, so the pass reports the candidate Extra as before' {
+            InModuleScope $script:moduleName {
+                @(ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' `
+                        -Candidate "undeclared member '88888888-8888-8888-8888-888888888888'" -CreatedGroup 'grp-new').Count | Should -Be 0
+                @(ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' `
+                        -Candidate "undeclared member '88888888-8888-8888-8888-888888888888'" -CreatedGroup 'grp-new' -Prune:$false).Count | Should -Be 0
+            }
+        }
+
+        It 'refuses a call that mixes -CreatedGroup with -ObjectType' {
+            InModuleScope $script:moduleName {
+                { ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item 'AU-IT' -Candidate 'c' -CreatedGroup 'grp-new' `
+                        -ObjectType 'servicePrincipal' -Prune -ErrorAction Stop } | Should -Throw -ErrorId 'AmbiguousParameterSet*'
+            }
+        }
+    }
 }

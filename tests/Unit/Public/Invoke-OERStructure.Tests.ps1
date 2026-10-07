@@ -555,6 +555,84 @@ Describe 'Invoke-OERStructure -Prune and a group''s service principals (A9)' {
     }
 }
 
+Describe 'Invoke-OERStructure -Prune and a group created into an administrative unit (BL-07)' {
+    # A groups[] entry's administrativeUnit is applied only when the group is created and never
+    # round-trips, and the administrativeUnits section runs after groups. The document below creates
+    # grp-new into AU-IT, whose members do not list it: the run that creates the membership must not
+    # remove it, while an unrecorded undeclared member of the same unit is still pruned. The real
+    # engine and the real handlers run; the cmdlets they call are mocked, and the live unit holds the
+    # new group and one other member.
+    BeforeAll {
+        $script:Bl07Doc = ('{ "version": "1.0", ' +
+            '"groups": [ { "displayName": "grp-new", "administrativeUnit": "AU-IT", "members": [] } ], ' +
+            '"administrativeUnits": [ { "displayName": "AU-IT", "members": [], "scopedRoles": null } ] }')
+    }
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { $null }
+        Mock -ModuleName $script:moduleName New-OERGroup { [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = $DisplayName } }
+        Mock -ModuleName $script:moduleName Resolve-OERAdministrativeUnitId { '66666666-6666-6666-6666-aaaaaaaaaaaa' }
+        Mock -ModuleName $script:moduleName Get-OERAdministrativeUnit {
+            [PSCustomObject]@{
+                Id = '66666666-6666-6666-6666-aaaaaaaaaaaa'; Description = $null; ScopedRoles = @()
+                Members = @(
+                    [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'grp-new'; Type = 'group' }
+                    [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+                )
+            }
+        }
+        Mock -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember { }
+        Mock -ModuleName $script:moduleName Resolve-OERStructurePrincipal { param($Reference) $Reference }
+        Mock -ModuleName $script:moduleName Resolve-OERStructureDefault { $null }
+    }
+
+    It 'creates the group into the unit and gives the Skipped "prune withheld" row, not a removal, under -Prune -Confirm:$false' {
+        $Rows = @(Invoke-OERStructure -Json $script:Bl07Doc -Prune -Confirm:$false -ErrorAction Stop `
+                -WarningAction SilentlyContinue -WarningVariable PruneWarnings)
+        Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly -ParameterFilter { $AdministrativeUnit -eq 'AU-IT' }
+        @($Rows | Where-Object { $_.Section -eq 'groups' -and $_.Action -eq 'Created' }).Count | Should -Be 1
+        # Positive control: the members pass ran under -Prune and removed the unrecorded member.
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 0 -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+        $Withheld = @($Rows | Where-Object { $_.Section -eq 'administrativeUnits' -and $_.Action -eq 'Skipped' })
+        $Withheld.Count | Should -Be 1
+        $Withheld[0].Item | Should -BeExactly 'AU-IT'
+        $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
+            'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+            "The next apply with -Prune removes it unless the unit's members name the group.")
+        @($Rows | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
+        @($PruneWarnings | Where-Object { "$_" -match '88888888-8888-8888-8888-888888888888' }).Count | Should -Be 0
+        @($PruneWarnings | Where-Object { "$_" -match "removing undeclared member 'u-extra'" }).Count | Should -Be 1
+    }
+
+    It 'hands the administrativeUnits pass the same list the groups pass recorded into: one record in a real run, none under -WhatIf' {
+        InModuleScope $script:moduleName -Parameters @{ Doc = $script:Bl07Doc } {
+            param($Doc)
+            Mock Sync-OERStructureAdministrativeUnit {
+                param($Item, $Caller, $Prune, $TenantAlias, $EnsureOnly, $CreatedUnitMembership)
+                if (-not $EnsureOnly) {
+                    $script:Bl07SeenList = $CreatedUnitMembership
+                    $script:Bl07SeenCount = if ($null -ne $CreatedUnitMembership) { $CreatedUnitMembership.Count } else { -1 }
+                }
+            }
+            $script:Bl07SeenList = $null
+            $null = Invoke-OERStructure -Json $Doc -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue
+            $script:Bl07SeenCount | Should -Be 1
+            $script:Bl07SeenList[0].GroupId | Should -BeExactly '88888888-8888-8888-8888-888888888888'
+            $script:Bl07SeenList[0].AdministrativeUnit | Should -BeExactly 'AU-IT'
+            $script:Bl07SeenList[0].Label | Should -BeExactly 'grp-new'
+
+            $script:Bl07SeenList = $null
+            $script:Bl07SeenCount = $null
+            $Rows = @(Invoke-OERStructure -Json $Doc -Prune -WhatIf -ErrorAction Stop -WarningAction SilentlyContinue)
+            @($Rows | Where-Object { $_.Section -eq 'groups' -and $_.Action -eq 'Skipped' -and $_.Detail -eq 'would create group grp-new' }).Count | Should -Be 1
+            Should -Invoke New-OERGroup -Times 1 -Exactly
+            $script:Bl07SeenCount | Should -Be 0
+        }
+    }
+}
+
 Describe 'Invoke-OERStructure directoryRoleManagementPolicies section' {
     # The directory-role policy section is Graph-only: it is dispatched after accessReviews and before
     # the two Azure sections, and it never asks Initialize-OERAuth for an ARM token.

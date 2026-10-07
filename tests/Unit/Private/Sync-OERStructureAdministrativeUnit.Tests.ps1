@@ -317,7 +317,8 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
             $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
             $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
             @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 1
-            # The DELETE ran, so the cmdlet passed its own gate and reached its own warning.
+            # The DELETE ran, so the cmdlet ran and wrote its own warning, before its own gate; the
+            # handler's call-site SilentlyContinue kept it off the stream.
             Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'DELETE' -and $Uri -like '*/scopedRoleMembers/srm-extra' }
             $Streamed.Count | Should -Be 1
             $Streamed[0] | Should -BeLike "Sync-OERStructureAdministrativeUnit: removing undeclared scopedRole 'User Administrator'*"
@@ -1471,6 +1472,100 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
                 { Invoke-SyncAuViaCaller -Item $Item -Prune -WarningAction SilentlyContinue -ErrorAction SilentlyContinue } |
                     Should -Throw -ExpectedMessage '*Graph 503*'
                 Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+            }
+        }
+    }
+
+    # BL-07: a group the groups section created INTO this unit earlier in the same run is a live member
+    # the unit's entry need not list (administrativeUnit never round-trips). Sync-OERStructureGroup
+    # records it in the run-scoped list the engine passes as -CreatedUnitMembership; the member prune
+    # pass withholds it under -Prune and reports it Extra without -Prune, while every other undeclared
+    # member is pruned as before. The live unit holds the created group and one unrecorded user.
+    Context 'a group this run created into the unit (BL-07)' {
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Resolve-OERAdministrativeUnitId { '66666666-6666-6666-6666-aaaaaaaaaaaa' }
+                Mock Get-OERAdministrativeUnit {
+                    $GroupMember = [PSCustomObject]@{ Id = '88888888-8888-8888-8888-888888888888'; DisplayName = 'grp-new'; Type = 'group' }
+                    $UserMember = [PSCustomObject]@{ Id = 'u-extra'; DisplayName = 'Extra'; Type = 'user' }
+                    [PSCustomObject]@{ Id = '66666666-6666-6666-6666-aaaaaaaaaaaa'; Description = $null; Members = @($GroupMember, $UserMember); ScopedRoles = @() }
+                }
+                Mock Remove-OERAdministrativeUnitMember { }
+                Mock Resolve-OERStructurePrincipal { param($Reference) $Reference }
+                Mock Initialize-OERAuth {}
+            }
+        }
+
+        It 'withholds the recorded group''s membership under -Prune and still prunes the unrecorded member, for a record naming the unit <Label>' -ForEach @(
+            @{ Label = 'by its display name, in another case'; Unit = 'au-it' }
+            @{ Label = 'by its object id, in another case'; Unit = '66666666-6666-6666-6666-AAAAAAAAAAAA' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
+                param($Unit)
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $All = @(Invoke-SyncAuViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop 3>&1)
+                $Records = @($All | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+                $Streamed = @($All | Where-Object { $_ -is [System.Management.Automation.WarningRecord] } | ForEach-Object { $_.Message })
+                # Positive control: the pass reached the removal path, and removed the unrecorded member.
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                @($Records | Where-Object { $_.Action -eq 'Removed' -and $_.Detail -eq "removed undeclared member 'u-extra'" }).Count | Should -Be 1
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0 -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                $Withheld = @($Records | Where-Object { $_.Action -eq 'Skipped' })
+                $Withheld.Count | Should -Be 1
+                $Withheld[0].Section | Should -BeExactly 'administrativeUnits'
+                $Withheld[0].Item | Should -BeExactly 'AU-IT'
+                $Withheld[0].Detail | Should -BeExactly ("prune withheld: undeclared member '88888888-8888-8888-8888-888888888888' is group 'grp-new', which this run created into this unit, " +
+                    'and the run that creates a membership does not remove it (our own guard, not a Graph rejection). ' +
+                    "The next apply with -Prune removes it unless the unit's members name the group.")
+                $Streamed.Count | Should -Be 1
+                $Streamed[0] | Should -BeExactly "Sync-OERStructureAdministrativeUnit: removing undeclared member 'u-extra' from unit 'AU-IT'."
+            }
+        }
+
+        It 'reports the recorded group''s membership Extra without -Prune, as before, and removes nothing' {
+            InModuleScope $script:moduleName {
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = 'AU-IT'; GroupId = '88888888-8888-8888-8888-888888888888'; Label = 'grp-new' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $Records = @(Invoke-SyncAuViaCaller -Item $Item -Created $Created -ErrorAction Stop)
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 0
+                @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member '88888888-8888-8888-8888-888888888888' (use -Prune to remove)" }).Count | Should -Be 1
+                @($Records | Where-Object { $_.Action -eq 'Extra' -and $_.Detail -eq "undeclared member 'u-extra' (use -Prune to remove)" }).Count | Should -Be 1
+            }
+        }
+
+        It 'prunes the group''s membership under -Prune when the record names <Label>' -ForEach @(
+            @{ Label = 'another unit'; Unit = 'AU-Other'; GroupId = '88888888-8888-8888-8888-888888888888' }
+            @{ Label = 'another group of this unit'; Unit = 'AU-IT'; GroupId = '99999999-9999-9999-9999-999999999999' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Unit = $Unit; GroupId = $GroupId } {
+                param($Unit, $GroupId)
+                function Invoke-SyncAuViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item, [switch]$Prune, [System.Collections.Generic.List[object]]$Created)
+                    Sync-OERStructureAdministrativeUnit -Item $Item -Caller $PSCmdlet -Prune:$Prune -CreatedUnitMembership $Created
+                }
+                $Created = [System.Collections.Generic.List[object]]::new()
+                $Created.Add([PSCustomObject]@{ AdministrativeUnit = $Unit; GroupId = $GroupId; Label = 'grp-other' })
+                $Item = [PSCustomObject]@{ displayName = 'AU-IT'; members = @(); scopedRoles = $null }
+                $Records = @(Invoke-SyncAuViaCaller -Item $Item -Prune -Created $Created -ErrorAction Stop -WarningAction SilentlyContinue)
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+                Should -Invoke Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+                @($Records | Where-Object { $_.Action -eq 'Skipped' }).Count | Should -Be 0
+                @($Records | Where-Object { $_.Action -eq 'Removed' }).Count | Should -Be 2
             }
         }
     }

@@ -69,6 +69,20 @@ function Sync-OERStructureAdministrativeUnit {
     prune that already completed stands with no Removed row, and an unresolved entry's Failed row is
     lost; warnings and errors already written remain.
 
+    A group created into this unit in the same run (BL-07): a groups[] entry's administrativeUnit is
+    applied only when Sync-OERStructureGroup creates the group (New-OERGroup -AdministrativeUnit) and
+    never round-trips, so this unit's members need not list the group, and the engine runs the
+    administrativeUnits section after the groups section. The group handler records each such
+    membership in the run-scoped list the engine passes to both handlers as -CreatedUnitMembership.
+    In the member Extra/prune pass, straight after the unresolved-entry rule above and before the
+    -Prune branch, a live member whose id is a recorded group's id, recorded for this unit by its
+    display name (compared ignoring case) or its object id, is withheld under -Prune: it is reported
+    Skipped with a Detail that starts "prune withheld:", with no warning, no ShouldProcess prompt and
+    no Remove-OERAdministrativeUnitMember call (ConvertTo-OERPruneWithheldResult owns the text).
+    Without -Prune it is reported Extra as before. Every other undeclared member is pruned as usual,
+    and the next apply with -Prune removes the group's membership unless the unit's members name the
+    group.
+
     Unnamed live scoped role: the directory role list that names each live role is read in full, but
     the reader does not check that every membership's role id is listed. A role id the list does not
     name gets an empty RoleName, with its RoleId kept; that has not been seen live, and this guard keeps
@@ -147,7 +161,9 @@ function Sync-OERStructureAdministrativeUnit {
     without this switch. A lookup that throws aborts the item instead, before that collection's prune.
     A principal's live scoped role whose name the directory role list did not give is never removed,
     and never duplicated by an add, while the document declares a role by name for that principal
-    that no live role matches: the declared entry gets one Skipped record instead.
+    that no live role matches: the declared entry gets one Skipped record instead. A live member
+    that is a group the groups section created into this unit in the same run is not removed by
+    that run: with this switch it is reported Skipped ("prune withheld:"), without it Extra.
 
     .PARAMETER TenantAlias
     Optional Tenant Profile alias forwarded for context. Currently unused by this handler but
@@ -160,6 +176,13 @@ function Sync-OERStructureAdministrativeUnit {
     unit exists before a declared group is created into it, ahead of the normal groups-before-
     administrativeUnits dispatch order. Every other Sync-OERStructure* handler signature is unchanged
     by this switch.
+
+    .PARAMETER CreatedUnitMembership
+    The run-scoped list Invoke-OERStructure creates once per document and passes to this handler and
+    to Sync-OERStructureGroup, which adds one record (AdministrativeUnit, GroupId, Label) for every
+    group it creates into an administrative unit. The member Extra/prune pass withholds a recorded
+    group's membership of this unit under -Prune; see the BL-07 paragraph above. Optional: without
+    it no member is withheld on this account. The -EnsureOnly pre-pass does not need it.
 
     .EXAMPLE
     Sync-OERStructureAdministrativeUnit -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
@@ -186,7 +209,8 @@ function Sync-OERStructureAdministrativeUnit {
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
         [string]$TenantAlias,
-        [switch]$EnsureOnly
+        [switch]$EnsureOnly,
+        [System.Collections.Generic.List[object]]$CreatedUnitMembership
     )
     process {
         # A property that is present but NULL counts as UNDECLARED, exactly as the offline validator's
@@ -583,6 +607,20 @@ function Sync-OERStructureAdministrativeUnit {
                     if ($DeclaredMemberIds -notcontains $CurId) {
                         $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Unresolved $MemberUnresolved -Candidate "undeclared member '$CurId'"
                         if ($Withheld) { $Withheld; continue }
+                        # BL-07: a group the groups section created INTO this unit earlier in this run
+                        # (New-OERGroup -AdministrativeUnit) need not be listed here, since
+                        # administrativeUnit never round-trips, and the run that created the membership
+                        # does not remove it. The record names the unit as the group declared it: this
+                        # unit's display name or its object id. Under -Prune the candidate is withheld;
+                        # without -Prune the helper returns nothing and it is reported Extra as before.
+                        $CreatedHere = @($CreatedUnitMembership | Where-Object {
+                                $_.GroupId -ieq $CurId -and ($_.AdministrativeUnit -ieq $Name -or $_.AdministrativeUnit -ieq $Auid)
+                            })
+                        if ($CreatedHere.Count -gt 0) {
+                            $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Candidate "undeclared member '$CurId'" `
+                                -CreatedGroup ([string]$CreatedHere[0].Label) -Prune:$Prune
+                            if ($Withheld) { $Withheld; continue }
+                        }
                         if ($Prune) {
                             $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                             Write-Warning "Sync-OERStructureAdministrativeUnit: $PruneVerb undeclared member '$CurId' from unit '$Name'."

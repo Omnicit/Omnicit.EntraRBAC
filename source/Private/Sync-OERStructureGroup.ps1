@@ -202,6 +202,16 @@ function Sync-OERStructureGroup {
     empty array) -- an omitted eligibility key leaves live eligibility alone entirely, unlike an
     omitted members key, which still reconciles against an empty declared set.
 
+    A group created into an administrative unit (BL-07): administrativeUnit is passed to New-OERGroup
+    -AdministrativeUnit when the group is created and never round-trips, so the unit's own
+    administrativeUnits[] entry need not list the group. Right after New-OERGroup returns the group,
+    the handler adds a record -- the unit as the document declares it (a display name or an object
+    id), the new group's id and its name -- to the run-scoped list the engine passes as
+    -CreatedUnitMembership. Sync-OERStructureAdministrativeUnit, which the engine runs after this
+    section, then withholds the prune of that membership in the same run. Nothing is recorded under
+    -WhatIf (nothing is created), for a failed create, or for a group created without a unit; a group
+    New-OERGroup found already existing is recorded too, which can only withhold a prune.
+
     Service principals (decision A9): a live member or owner whose ObjectType is servicePrincipal is
     never removed from the group. Microsoft Graph's v1.0 member and owner lists leave service
     principals out, so before Get-OERGroupRelation added the typed read no version saw one in a
@@ -283,6 +293,12 @@ function Sync-OERStructureGroup {
     Sync-OERStructure* handlers that Invoke-OERStructure drives uniformly. This handler does not
     currently consult a tenant default for any field.
 
+    .PARAMETER CreatedUnitMembership
+    The run-scoped list Invoke-OERStructure creates once per document and passes to this handler and
+    to Sync-OERStructureAdministrativeUnit. When the handler creates a group into an administrative
+    unit it adds one record (AdministrativeUnit, GroupId, Label) to it; see the BL-07 paragraph above.
+    Optional: without it nothing is recorded.
+
     .EXAMPLE
     Sync-OERStructureGroup -Item $DocItem -Caller $PSCmdlet -Prune -TenantAlias 'omnicit'
     Reconciles one group entry from the document, pruning undeclared members. -TenantAlias is accepted
@@ -300,7 +316,8 @@ function Sync-OERStructureGroup {
         [Parameter(Mandatory)][PSCustomObject]$Item,
         [Parameter(Mandatory)][System.Management.Automation.PSCmdlet]$Caller,
         [switch]$Prune,
-        [string]$TenantAlias
+        [string]$TenantAlias,
+        [System.Collections.Generic.List[object]]$CreatedUnitMembership
     )
     process {
         # -- Resolve the display name (template or literal) ---------------------------------
@@ -459,6 +476,21 @@ function Sync-OERStructureGroup {
 
             $Gid = $Created.Id
             $CreatedThisRun = $true
+
+            # BL-07: a group created INTO an administrative unit is a member that unit's own entry need
+            # not list, since administrativeUnit is applied only here and never round-trips, and the
+            # administrativeUnits section runs after this one. Record the membership this run created,
+            # so that section does not prune it in the same run. A group New-OERGroup found already
+            # existing is recorded too: the record only withholds a prune. The condition is
+            # New-OERGroup's own: a blank unit creates the group at the top level.
+            if ($null -ne $CreatedUnitMembership -and $NewParams.AdministrativeUnit) {
+                $CreatedUnitMembership.Add([PSCustomObject]@{
+                        AdministrativeUnit = [string]$NewParams.AdministrativeUnit
+                        GroupId            = [string]$Gid
+                        Label              = [string]$Name
+                    })
+            }
+
             ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Created' -Detail "created group $Name ($Gid)"
 
             # After create: current state is empty
