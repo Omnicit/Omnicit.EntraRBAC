@@ -241,7 +241,7 @@ function Get-S96DocumentP {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -267,13 +267,26 @@ stands before its gate in the build).
 clone; a `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-07 13:5x UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at b6ee101 with 0 tracked changes (the build is of 7ae5a98's source; every later commit changes only Markdown); the build carries A (Remove-OERCatalog's warning stands before its gate: True), B (ConflictReason: True) and C (the fifth withheld kind: True).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s96] The module loads from a worktree that is not the main clone: True
+[oer-s96] Main clone: branch main; HEAD 6817b33
+[oer-s96] Worktree: branch fix/show-warnings-before-the-confirmation-gate; HEAD b6ee101 docs: add the live checklist for warnings before the confirmation gate; tracked changes: 0
+[oer-s96] The worktree's build carries A: True; B: True; C: True
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -288,11 +301,31 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the second run. Every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, the service principal and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build. The first run signed in with Connect-OerLive -Graph, which passes the same identity check for the Graph SDK session but does not sign the MODULE in; that is what made 0.4's first run fall back to an interactive sign-in (see 0.4). Every block now signs in with -Arm and installs the no-prompt fence.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s96] The module is the worktree's build: True
+```
 
 ### 0.2. The prerequisite plan names only oer-s96- objects
 
-- [ ] **0.2** `Initialize-OerS96Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s96-`.
+- [x] **0.2** `Initialize-OerS96Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s96-`.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS96Prereq.ps1') -WhatIf 2>&1 | ForEach-Object { "$_" })
@@ -315,11 +348,52 @@ exist yet.
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run; no role with a form -- the directory role part of section 1 is class B.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the second run (the first was identical except that it found no role with a form; the prereq then gained the form setMfaFirst). Identity check passed; no residue; the sweep finds nothing with the prefix; no baseline yet. Message Center Reader and Reports Reader both have MFA on activation False and the authentication context off, so the checklist uses Message Center Reader in the form setMfaFirst (1.0 requires MFA first). The plan: 4 local files under raw\s96\ (the transcript and three baselines) and 4 tenant targets, oer-s96-user, oer-s96-pim, oer-s96-pim: member oer-s96-user and oer-s96-au, every one with the prefix (True); WhatIf: nothing was created or written. Read and confirmed by the controller before 0.3.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s96] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s96] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s96] What if: Performing the operation "Start the redacted transcript" on target "raw\s96\prereq-20261007-140024Z.log".
+[oer-s96] [oer-s96] Mode: CREATE or complete. Prefix 'oer-s96-'. Objects (fixed): oer-s96-user (disabled); oer-s96-pim (its one member oer-s96-user, its member PIM policy baselined and set to the starting state); oer-s96-au (assigned, no member); oer-s96-new is the checklist's own. The low-risk directory roles' policies are baselined. OerLive 1.0.3.
+[oer-s96] [oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s96] [oer-s96] Residue: raw\residue.json holds no rows.
+[oer-s96] [oer-s96] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s96-' is left.
+[oer-s96] [oer-s96] Found: oer-s96-user exists: False; oer-s96-pim exists: False; oer-s96-au exists: False; oer-s96-new exists: False.
+[oer-s96] [oer-s96] Directory role 'Message Center Reader': MFA on activation: False; authentication context enabled: False; form: none.
+[oer-s96] [oer-s96] Directory role 'Reports Reader': MFA on activation: False; authentication context enabled: False; form: none.
+[oer-s96] [oer-s96] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98, administrative units 1; the checklist's directory role: 'Message Center Reader', form setMfaFirst).
+[oer-s96] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s96\baseline-s96.json".
+[oer-s96] [oer-s96] The policy baseline of 'Message Center Reader' is written now (rules 17).
+[oer-s96] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s96\baseline-s96-dirrole-mcr.json".
+[oer-s96] [oer-s96] The policy baseline of 'Reports Reader' is written now (rules 17).
+[oer-s96] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s96\baseline-s96-dirrole-rr.json".
+[oer-s96] What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s96-user".
+[oer-s96] What if: Performing the operation "Create a plain security group (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s96-pim".
+[oer-s96] What if: Performing the operation "Add the user as a member of the group (Graph v1.0 POST groups/members/$ref)" on target "oer-s96-pim: member oer-s96-user".
+[oer-s96] What if: Performing the operation "Create an administrative unit (Graph v1.0 POST directory/administrativeUnits: assigned, public, not restricted)" on target "oer-s96-au".
+[oer-s96] [oer-s96] No member-policy baseline and no starting state: oer-s96-pim does not exist (WhatIf).
+[oer-s96] [oer-s96] Summary: oer-s96-user absent; oer-s96-pim absent; oer-s96-au absent; oer-s96-new absent (the checklist creates it); written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s96] [oer-s96] WhatIf: nothing was created, removed or written.
+[oer-s96] [oer-s96] Done.
+[oer-s96] Planned writes: 8; local files under raw\s96\: 4; tenant targets: 4; every tenant target starts with oer-s96-: True
+```
 
 ### 0.3. The prerequisite objects, the baselines and the starting state
 
-- [ ] **0.3** `Initialize-OerS96Prereq.ps1 -Unattended` writes the baselines, creates the user, the group with its one member and the unit, records the group's member-policy baseline and brings that policy to the starting state.
+- [x] **0.3** `Initialize-OerS96Prereq.ps1 -Unattended` writes the baselines, creates the user, the group with its one member and the unit, records the group's member-policy baseline and brings that policy to the starting state.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS96Prereq.ps1') -Unattended 2>&1 | ForEach-Object { "$_" })
@@ -337,11 +411,72 @@ assignments must expire: True`; exit code 0.
 **Failure looks like:** exit code 1 -- read the `Stopped` lines; nothing outside the prefix was
 written, and `-Teardown` removes what was.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The baselines were written before the first write to the tenant (users 23, groups 98, administrative units 1; Message Center Reader, form setMfaFirst; both role policies, 17 rules each). Created oer-s96-user (disabled, 201), oer-s96-pim (201), added the user as its member (204), created oer-s96-au (201). The group's member-policy baseline: MFA on activation False, Justification, no context, eligible assignments must expire True; the script sent Enablement_EndUser_Assignment (200) and the policy read at the starting state after 1 read (MFA True, no context, must expire True). Exit code 0.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s96] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s96] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s96] [oer-s96] Transcript (redacted): raw\s96\prereq-20261007-140041Z.log; OerLive 1.0.3.
+[oer-s96] [oer-s96] Mode: CREATE or complete. Prefix 'oer-s96-'. Objects (fixed): oer-s96-user (disabled); oer-s96-pim (its one member oer-s96-user, its member PIM policy baselined and set to the starting state); oer-s96-au (assigned, no member); oer-s96-new is the checklist's own. The low-risk directory roles' policies are baselined. OerLive 1.0.3.
+[oer-s96] [oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s96] [oer-s96] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s96] [oer-s96] Residue: raw\residue.json holds no rows.
+[oer-s96] [oer-s96] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s96-' is left.
+[oer-s96] [oer-s96] Found: oer-s96-user exists: False; oer-s96-pim exists: False; oer-s96-au exists: False; oer-s96-new exists: False.
+[oer-s96] [oer-s96] Directory role 'Message Center Reader': MFA on activation: False; authentication context enabled: False; form: none.
+[oer-s96] [oer-s96] Directory role 'Reports Reader': MFA on activation: False; authentication context enabled: False; form: none.
+[oer-s96] [oer-s96] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98, administrative units 1; the checklist's directory role: 'Message Center Reader', form setMfaFirst).
+[oer-s96] [oer-s96] Wrote the baseline raw\s96\baseline-s96.json and read it back.
+[oer-s96] [oer-s96] The policy baseline of 'Message Center Reader' is written now (rules 17).
+[oer-s96] [oer-s96] Wrote the baseline raw\s96\baseline-s96-dirrole-mcr.json and read it back.
+[oer-s96] [oer-s96] The policy baseline of 'Reports Reader' is written now (rules 17).
+[oer-s96] [oer-s96] Wrote the baseline raw\s96\baseline-s96-dirrole-rr.json and read it back.
+[oer-s96] [oer-s96] Created user oer-s96-user (disabled): 201.
+[oer-s96] [oer-s96] oer-s96-user resolves by its user principal name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s96] [oer-s96] oer-s96-user resolves by its user principal name: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s96] [oer-s96] oer-s96-user resolves by its user principal name: converged after 3 read(s), 6.2 s.
+[oer-s96] [oer-s96] Created group oer-s96-pim: 201.
+[oer-s96] [oer-s96] oer-s96-pim resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s96] [oer-s96] oer-s96-pim resolves by its display name: not yet (read 2, 2.1 s, likely replication delay) -- reading again in 4 s.
+[oer-s96] [oer-s96] oer-s96-pim resolves by its display name: not yet (read 3, 6.2 s, likely replication delay) -- reading again in 8 s.
+[oer-s96] [oer-s96] oer-s96-pim resolves by its display name: converged after 4 read(s), 14.3 s.
+[oer-s96] [oer-s96] Added oer-s96-user to oer-s96-pim: 204 after 1 attempt(s).
+[oer-s96] [oer-s96] oer-s96-pim lists oer-s96-user as a member: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s96] [oer-s96] oer-s96-pim lists oer-s96-user as a member: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s96] [oer-s96] oer-s96-pim lists oer-s96-user as a member: not yet (read 3, 6.4 s, likely replication delay) -- reading again in 8 s.
+[oer-s96] [oer-s96] oer-s96-pim lists oer-s96-user as a member: converged after 4 read(s), 14.5 s.
+[oer-s96] [oer-s96] Created administrative unit oer-s96-au: 201.
+[oer-s96] [oer-s96] oer-s96-au is readable by its id: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s96] [oer-s96] oer-s96-au is readable by its id: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s96] [oer-s96] oer-s96-au is readable by its id: converged after 3 read(s), 6.2 s.
+[oer-s96] [oer-s96] oer-s96-pim's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s96] [oer-s96] Member policy of oer-s96-pim (baseline): MFA on activation: False; other enablement flags: Justification; authentication context: none; eligible assignments must expire: True
+[oer-s96] [oer-s96] Wrote the baseline raw\s96\baseline-s96-grppolicy.json and read it back.
+[oer-s96] [oer-s96] Sent rule Enablement_EndUser_Assignment of oer-s96-pim's member policy: 200.
+[oer-s96] [oer-s96] oer-s96-pim's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s96] [oer-s96] oer-s96-pim's member policy at the starting state: converged after 1 read(s), 2.3 s.
+[oer-s96] [oer-s96] Member policy of oer-s96-pim at the starting state: True (1 read(s), 2.3 s); MFA on activation: True; other enablement flags: Justification; authentication context: none; eligible assignments must expire: True
+[oer-s96] [oer-s96] Summary: oer-s96-user present; oer-s96-pim present; oer-s96-au present; oer-s96-new absent (the checklist creates it); written to the tenant: True.
+[oer-s96] [oer-s96] Done.
+[oer-s96] Setup exit code: 0
+```
 
 ### 0.4. The starting state as the module reads it, and the authentication context
 
-- [ ] **0.4** The module reads `oer-s96-pim`'s member policy and the chosen directory role's policy in the starting state, `oer-s96-user` holds no eligibility in the group, and the tenant has a published authentication context.
+- [x] **0.4** The module reads `oer-s96-pim`'s member policy and the chosen directory role's policy in the starting state, `oer-s96-user` holds no eligibility in the group, and the tenant has a published authentication context.
 
 ```powershell
 Connect-OerLive -Arm
@@ -367,7 +502,30 @@ context in place; for `setMfaFirst`, MFA `False` and no context, which 1.0 chang
 **Failure looks like:** no published context -- the authentication-context halves of section 1 are
 class B; a different starting state -- re-run 0.3, or read the prereq's lines.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the third run. INCIDENT on the first run: the block signed in with Connect-OerLive -Graph (the Graph SDK only), so Get-OERAuthenticationContext's Initialize-OERAuth found no module session and fell back to an interactive Get-AzToken, which timed out after 120 s; nothing authenticated and nothing was written. The checklist was corrected (Connect-OerLive -Arm and a fence that refuses any token request without the certificate). The second run read an empty context id (the helper read Id; the property is AuthenticationContextId), also corrected. Third run: the published context c1; oer-s96-pim's member policy MFA True, no context, permanent eligibility not allowed; Message Center Reader MFA False and no context (form setMfaFirst, which 1.0 changes); no eligibility in oer-s96-pim.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.4 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s96] Published authentication context used by this file: c1; the chosen directory role: 'Message Center Reader', form setMfaFirst
+[oer-s96] oer-s96-pim member policy: MFA on activation: True; authentication context: ''; permanent eligibility allowed: False
+[oer-s96] 'Message Center Reader' policy: MFA on activation: False; authentication context: ''
+[oer-s96] Eligibility schedules in oer-s96-pim: 0
+```
 
 ## 1. BL-17: the plan shows the warnings a real run gives (Invoke-OERStructure)
 
@@ -380,7 +538,7 @@ is cleared (by `Set-OERDirectoryRoleManagementPolicy` in a real run, by the hand
 
 ### 1.0. The directory role's starting state: MFA required on activation
 
-- [ ] **1.0** For the form `setMfaFirst` (neither low-risk role carried an MFA / authentication-context pair to reconcile, 0.2), a real run of a one-entry document requiring MFA on activation for the chosen role reports `Updated`, writes no warning, and the role then reads with MFA required; the teardown puts the baseline back. For any other form nothing is written.
+- [x] **1.0** For the form `setMfaFirst` (neither low-risk role carried an MFA / authentication-context pair to reconcile, 0.2), a real run of a one-entry document requiring MFA on activation for the chosen role reports `Updated`, writes no warning, and the role then reads with MFA required; the teardown puts the baseline back. For any other form nothing is written.
 
 ```powershell
 Connect-OerLive -Arm
@@ -408,11 +566,38 @@ agree (`True`).
 **Failure looks like:** a warning -- the plan would then not start from a clean pair; a `Failed` row --
 read its Detail; a 401/403 -- STOP (the identity holds this permission since Sprint 6).
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. A real run of a one-entry document requiring MFA on activation for Message Center Reader: rows Updated; 0 warning lines; 0 errors; 1 Graph write (PATCH); the role read with MFA on activation True and no context after 1 read, and three reads 5 s apart agree (True).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.0 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 1.0
+### END 1.0
+[oer-s96] 1.0 host: ### END 1.0
+[oer-s96] 1.0 host: ### BEGIN 1.0
+[oer-s96] 1.0 row: directoryRoleManagementPolicies | Message Center Reader | Updated | updated directory role management policy for 'Message Center Reader' (requireMfaOnActivation=True)
+[oer-s96] 1.0 rows: Updated; warning lines: 0; errors: 0; Graph writes: 1 (PATCH)
+[oer-s96] 'Message Center Reader' requires MFA on activation: converged after 1 read(s), 0.7 s.
+[oer-s96] 1.0 'Message Center Reader' after 1 read(s): MFA on activation True, context ''; three reads 5 s apart agree: True
+```
 
 ### 1.1. -WhatIf: the three warnings, each before its own What if line, and nothing written
 
-- [ ] **1.1** `Invoke-OERStructure -Json $W -WhatIf` writes each of the three warnings exactly once and before the `What if:` line of the change it belongs to, reports the three changes `Skipped`, and sends no Graph write.
+- [x] **1.1** `Invoke-OERStructure -Json $W -WhatIf` writes each of the three warnings exactly once and before the `What if:` line of the change it belongs to, reports the three changes `Skipped`, and sends no Graph write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -451,11 +636,53 @@ Disconnect-OerLive
 defect); a count of `2` -- the handler and the cmdlet both warned; `before its What if line: False` --
 the warning is written after the gate; a Graph write above 0 -- STOP.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the second run. In the first run the runner redirected all of the child script's streams (*>), so the three warnings went to the file instead of the host and the transcript could not see their order (their texts were present); the runner now redirects the child process's output, so warnings reach the host. Second run: the group MFA warning, the permanent eligibility warning and the directory role warning each counted 1 and stood before the What if line of their own change (True, True, True); rows Unchanged and Extra (the group's undeclared member, no -Prune) and three Skipped; 0 errors; 0 Graph writes.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 1.1
+WARNING: Policy 'Group_00000000-0000-0000-0000-000000000002_00000000-0000-0000-0000-000000000005': mfa cleared: mutually exclusive with authenticationContextId=c1
+What if: Performing the operation "Set PIM policy (member): authenticationContextId=c1; activationEnablement=[Justification] (mfa cleared: mutually exclusive with authenticationContextId=c1)" on target "oer-s96-pim".
+WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000002' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+What if: Performing the operation "Add permanent member eligibility for '00000000-0000-0000-0000-000000000007'" on target "oer-s96-pim".
+WARNING: Policy 'DirectoryRole_00000000-0000-0000-0000-000000000008_00000000-0000-0000-0000-000000000009': mfa cleared: mutually exclusive with authenticationContextId=c1
+What if: Performing the operation "Update directory role management policy" on target "Message Center Reader".
+### END 1.1
+[oer-s96] 1.1 host: WARNING: Policy 'Group_00000000-0000-0000-0000-000000000002_00000000-0000-0000-0000-000000000005': mfa cleared: mutually exclusive with authenticationContextId=c1
+[oer-s96] 1.1 host: What if: Performing the operation "Set PIM policy (member): authenticationContextId=c1; activationEnablement=[Justification] (mfa cleared: mutually exclusive with authenticationContextId=c1)" on target "oer-s96-pim".
+[oer-s96] 1.1 host: WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000002' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s96] 1.1 host: What if: Performing the operation "Add permanent member eligibility for '00000000-0000-0000-0000-000000000007'" on target "oer-s96-pim".
+[oer-s96] 1.1 host: WARNING: Policy 'DirectoryRole_00000000-0000-0000-0000-000000000008_00000000-0000-0000-0000-000000000009': mfa cleared: mutually exclusive with authenticationContextId=c1
+[oer-s96] 1.1 host: What if: Performing the operation "Update directory role management policy" on target "Message Center Reader".
+[oer-s96] 1.1 row: groups | oer-s96-pim | Unchanged | group properties match
+[oer-s96] 1.1 row: groups | oer-s96-pim | Extra | undeclared member '00000000-0000-0000-0000-000000000007' (use -Prune to remove)
+[oer-s96] 1.1 row: groups | oer-s96-pim | Skipped | would set pimPolicy (member): authenticationContextId=c1; activationEnablement=[Justification] (mfa cleared: mutually exclusive with authenticationContextId=c1)
+[oer-s96] 1.1 row: groups | oer-s96-pim | Skipped | would set permanent member eligibility for 'oer-s96-user@example.com': permanent member eligibility is absent
+[oer-s96] 1.1 row: directoryRoleManagementPolicies | Message Center Reader | Skipped | would update directory role management policy for 'Message Center Reader' (authenticationContextId=c1)
+[oer-s96] 1.1 group MFA warning: count 1, before its What if line: True
+[oer-s96] 1.1 permanent eligibility warning: count 1, before its What if line: True
+[oer-s96] 1.1 directory role warning: count 1, before its What if line: True
+[oer-s96] 1.1 rows: Unchanged, Extra, Skipped, Skipped, Skipped; errors: 0; Graph writes: 0
+```
 
 ### 1.2. The same document for real: each warning once, the same texts
 
-- [ ] **1.2** `Invoke-OERStructure -Json $W -Confirm:$false` writes each of the three warnings exactly once, with the texts 1.1 planned, reports `Updated` for the group's member policy, the permanent eligibility and the directory role policy, and the policies then read in the new state.
+- [x] **1.2** `Invoke-OERStructure -Json $W -Confirm:$false` writes each of the three warnings exactly once, with the texts 1.1 planned, reports `Updated` for the group's member policy, the permanent eligibility and the directory role policy, and the policies then read in the new state.
 
 ```powershell
 Connect-OerLive -Arm
@@ -501,11 +728,48 @@ role MFA False, context '<ctx>'` (form `clearMfa`), and three reads that agree (
 the cmdlet); a count of `0` -- the run gives no warning, and the plan in 1.1 showed one it does not
 give; any `Failed` row -- read its Detail.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The real run wrote the same three warnings as 1.1, each exactly once (warning lines in all: 3): the group MFA warning from the handler (ruling R5), the permanent eligibility warning from Add-OERGroupEligibility, and the directory role warning from Set-OERDirectoryRoleManagementPolicy. Rows: Unchanged, Extra, and Updated for the member policy, the permanent eligibility and the directory role policy; 0 errors; 6 Graph writes (the group's two rules, the eligibility rule the cmdlet opened, the eligibility request, the role's two rules). The state read as applied after 1 read: group MFA False, context c1, permanent eligibility allowed; oer-s96-user's eligibility 1; Message Center Reader MFA False, context c1; three reads 5 s apart agree.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 1.2
+WARNING: Policy 'Group_00000000-0000-0000-0000-000000000002_00000000-0000-0000-0000-000000000005': mfa cleared: mutually exclusive with authenticationContextId=c1
+WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000002' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+WARNING: Policy 'DirectoryRole_00000000-0000-0000-0000-000000000008_00000000-0000-0000-0000-000000000009': mfa cleared: mutually exclusive with authenticationContextId=c1
+### END 1.2
+[oer-s96] 1.2 host: WARNING: Policy 'Group_00000000-0000-0000-0000-000000000002_00000000-0000-0000-0000-000000000005': mfa cleared: mutually exclusive with authenticationContextId=c1
+[oer-s96] 1.2 host: WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000002' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s96] 1.2 host: WARNING: Policy 'DirectoryRole_00000000-0000-0000-0000-000000000008_00000000-0000-0000-0000-000000000009': mfa cleared: mutually exclusive with authenticationContextId=c1
+[oer-s96] 1.2 row: groups | oer-s96-pim | Unchanged | group properties match
+[oer-s96] 1.2 row: groups | oer-s96-pim | Extra | undeclared member '00000000-0000-0000-0000-000000000007' (use -Prune to remove)
+[oer-s96] 1.2 row: groups | oer-s96-pim | Updated | pimPolicy (member) set: authenticationContextId=c1; activationEnablement=[Justification] (mfa cleared: mutually exclusive with authenticationContextId=c1)
+[oer-s96] 1.2 row: groups | oer-s96-pim | Updated | set permanent member eligibility for 'oer-s96-user@example.com': permanent member eligibility is absent
+[oer-s96] 1.2 row: directoryRoleManagementPolicies | Message Center Reader | Updated | updated directory role management policy for 'Message Center Reader' (authenticationContextId=c1)
+[oer-s96] 1.2 group MFA warning: count 1; permanent eligibility warning: count 1; directory role warning: count 1; warning lines in all: 3
+[oer-s96] 1.2 rows: Unchanged, Extra, Updated, Updated, Updated; errors: 0; Graph writes: 6 (PATCH, PATCH, PATCH, POST, PATCH, PATCH)
+[oer-s96] the section 1 state reads as applied: converged after 1 read(s), 1.8 s.
+[oer-s96] 1.2 state after 1 read(s): group MFA False, context 'c1', permanent allowed True; eligibility of oer-s96-user 1; role MFA False, context 'c1'
+[oer-s96] 1.2 three reads 5 s apart agree: True
+```
 
 ### 1.3. The same document again: only Unchanged, and no warning (G8)
 
-- [ ] **1.3** A second real run of document W reports only `Unchanged`, writes no warning and sends no Graph write.
+- [x] **1.3** A second real run of document W reports only `Unchanged`, writes no warning and sends no Graph write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -525,11 +789,38 @@ may appear: the document declares no members and runs without `-Prune`); `warnin
 **Failure looks like:** an `Updated` row -- the write path does not converge; a warning -- the plan
 or the run warns about a change that is not made.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The second real run of document W: rows Unchanged (group, member policy, permanent eligibility, directory role policy) and the group's Extra member; 0 warning lines; 0 errors; 0 Graph writes (G8).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 1.3
+### END 1.3
+[oer-s96] 1.3 row: groups | oer-s96-pim | Unchanged | group properties match
+[oer-s96] 1.3 row: groups | oer-s96-pim | Extra | undeclared member '00000000-0000-0000-0000-000000000007' (use -Prune to remove)
+[oer-s96] 1.3 row: groups | oer-s96-pim | Unchanged | pimPolicy (member) already matches
+[oer-s96] 1.3 row: groups | oer-s96-pim | Unchanged | permanent eligibility for 'oer-s96-user@example.com' (member) already matches
+[oer-s96] 1.3 row: directoryRoleManagementPolicies | Message Center Reader | Unchanged | policy already matches for 'Message Center Reader'
+[oer-s96] 1.3 rows: Extra, Unchanged; warning lines: 0; errors: 0; Graph writes: 0
+```
 
 ### 1.4. The plan of an administrative unit made dynamic shows the membership warning (engine case 1)
 
-- [ ] **1.4** `Invoke-OERStructure -WhatIf` with `oer-s96-au` declared `dynamic: true` writes `Set-OERAdministrativeUnit`'s membership-type warning once, before the `What if:` line of the update, and sends no Graph write; the unit stays assigned.
+- [x] **1.4** `Invoke-OERStructure -WhatIf` with `oer-s96-au` declared `dynamic: true` writes `Set-OERAdministrativeUnit`'s membership-type warning once, before the `What if:` line of the update, and sends no Graph write; the unit stays assigned.
 
 ```powershell
 Connect-OerLive -Arm
@@ -552,13 +843,40 @@ Disconnect-OerLive
 type `Assigned`.
 **Failure looks like:** a count of `0` -- the plan does not show the warning; a write -- STOP.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Invoke-OERStructure -WhatIf with oer-s96-au declared dynamic: Set-OERAdministrativeUnit's membership-type warning once, before the What if line of the update (True); row Skipped; 0 Graph writes; the unit is still Assigned.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 1.4
+WARNING: Changing the membership type of administrative unit '00000000-0000-0000-0000-000000000003' to 'Dynamic'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually.
+What if: Performing the operation "Update administrative unit properties (MembershipType, MembershipRule)" on target "oer-s96-au".
+### END 1.4
+[oer-s96] 1.4 host: WARNING: Changing the membership type of administrative unit '00000000-0000-0000-0000-000000000003' to 'Dynamic'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually.
+[oer-s96] 1.4 host: What if: Performing the operation "Update administrative unit properties (MembershipType, MembershipRule)" on target "oer-s96-au".
+[oer-s96] 1.4 row: administrativeUnits | oer-s96-au | Skipped | would update administrative unit properties (MembershipType, MembershipRule)
+[oer-s96] 1.4 warning count: 1; before its What if line: True; Graph writes: 0; the unit's membership type now: Assigned
+```
 
 ## 2. BL-18: a direct -WhatIf shows the warning before the What if line
 
 ### 2.1. Remove-OERGroupEligibility -WhatIf
 
-- [ ] **2.1** `Remove-OERGroupEligibility -Group oer-s96-pim -User oer-s96-user -AccessType member -WhatIf` writes its warning before the `What if:` line and sends nothing; the eligibility 1.2 created is still listed.
+- [x] **2.1** `Remove-OERGroupEligibility -Group oer-s96-pim -User oer-s96-user -AccessType member -WhatIf` writes its warning before the `What if:` line and sends nothing; the eligibility 1.2 created is still listed.
 
 ```powershell
 Connect-OerLive -Arm
@@ -579,11 +897,37 @@ schedules still listed: 1`.
 **Failure looks like:** `False` with the warning after the `What if:` line or missing -- the old
 place inside the gate; a write -- STOP.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Remove-OERGroupEligibility -WhatIf: the warning on the host line before the What if line (warning at 0, What if at 1); 0 errors; 0 Graph writes; the eligibility from 1.2 still listed (1).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 2.1
+WARNING: Removing PIM member eligibility for principal '00000000-0000-0000-0000-000000000007' from group '00000000-0000-0000-0000-000000000002'. The principal loses the ability to activate this member access.
+What if: Performing the operation "Remove PIM member eligibility from '00000000-0000-0000-0000-000000000007'" on target "00000000-0000-0000-0000-000000000002".
+### END 2.1
+[oer-s96] 2.1 host: WARNING: Removing PIM member eligibility for principal '00000000-0000-0000-0000-000000000007' from group '00000000-0000-0000-0000-000000000002'. The principal loses the ability to activate this member access.
+[oer-s96] 2.1 host: What if: Performing the operation "Remove PIM member eligibility from '00000000-0000-0000-0000-000000000007'" on target "00000000-0000-0000-0000-000000000002".
+[oer-s96] 2.1 warning before the What if line: True (warning at 0, What if at 1); errors: 0; Graph writes: 0; eligibility schedules still listed: 1
+```
 
 ### 2.2. Set-OERAdministrativeUnit -MembershipType -WhatIf
 
-- [ ] **2.2** `Set-OERAdministrativeUnit -AdministrativeUnit oer-s96-au -MembershipType Dynamic -MembershipRule ... -WhatIf` writes the membership-type warning before the `What if:` line and sends nothing; the unit stays assigned.
+- [x] **2.2** `Set-OERAdministrativeUnit -AdministrativeUnit oer-s96-au -MembershipType Dynamic -MembershipRule ... -WhatIf` writes the membership-type warning before the `What if:` line and sends nothing; the unit stays assigned.
 
 ```powershell
 Connect-OerLive -Arm
@@ -602,11 +946,37 @@ Disconnect-OerLive
 **Expect:** `warning before the What if line: True`; `errors: 0`; `Graph writes: 0`; `Assigned`.
 **Failure looks like:** as in 2.1.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Set-OERAdministrativeUnit -MembershipType Dynamic -WhatIf: the warning before the What if line (0, 1); 0 errors; 0 Graph writes; the unit still Assigned.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 2.2
+WARNING: Changing the membership type of administrative unit '00000000-0000-0000-0000-000000000003' to 'Dynamic'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually.
+What if: Performing the operation "Update administrative unit properties" on target "00000000-0000-0000-0000-000000000003".
+### END 2.2
+[oer-s96] 2.2 host: WARNING: Changing the membership type of administrative unit '00000000-0000-0000-0000-000000000003' to 'Dynamic'. The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership and members can no longer be added or removed manually.
+[oer-s96] 2.2 host: What if: Performing the operation "Update administrative unit properties" on target "00000000-0000-0000-0000-000000000003".
+[oer-s96] 2.2 warning before the What if line: True (warning at 0, What if at 1); errors: 0; Graph writes: 0; the unit's membership type now: Assigned
+```
 
 ### 2.3. Remove-OERActiveDirectoryRoleAssignment -WhatIf
 
-- [ ] **2.3** `Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -Group oer-s96-pim -WhatIf` writes its warning before the `What if:` line and sends nothing.
+- [x] **2.3** `Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -Group oer-s96-pim -WhatIf` writes its warning before the `What if:` line and sends nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -625,11 +995,37 @@ Disconnect-OerLive
 **Expect:** `warning before the What if line: True`; `errors: 0`; `Graph writes: 0`.
 **Failure looks like:** as in 2.1.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Remove-OERActiveDirectoryRoleAssignment -Role 'Message Center Reader' -Group oer-s96-pim -WhatIf: the warning before the What if line (0, 1); 0 errors; 0 Graph writes.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 2.3
+WARNING: Removing active directory role 'Message Center Reader' for principal 'oer-s96-pim' at directory scope '/'.
+What if: Performing the operation "Remove active directory role assignment" on target "active directory role 'Message Center Reader' for principal 'oer-s96-pim' at directory scope '/'".
+### END 2.3
+[oer-s96] 2.3 host: WARNING: Removing active directory role 'Message Center Reader' for principal 'oer-s96-pim' at directory scope '/'.
+[oer-s96] 2.3 host: What if: Performing the operation "Remove active directory role assignment" on target "active directory role 'Message Center Reader' for principal 'oer-s96-pim' at directory scope '/'".
+[oer-s96] 2.3 warning before the What if line: True (warning at 0, What if at 1); errors: 0; Graph writes: 0
+```
 
 ### 2.4. A piped Get-OERGroupMember row is refused with a message that says what was piped
 
-- [ ] **2.4** `Get-OERGroupMember -Group oer-s96-pim | Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -WhatIf` is refused with `NotDirectAssignment`, whose message says the piped object is a group member row from `Get-OERGroupMember`; no warning, no `What if:` line, nothing sent.
+- [x] **2.4** `Get-OERGroupMember -Group oer-s96-pim | Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -WhatIf` is refused with `NotDirectAssignment`, whose message says the piped object is a group member row from `Get-OERGroupMember`; no warning, no `What if:` line, nothing sent.
 
 ```powershell
 Connect-OerLive -Arm
@@ -650,13 +1046,41 @@ Disconnect-OerLive
 **Failure looks like:** a message saying the assignment "is inherited through a group" -- the old text
 for this input; a `What if:` line -- the refusal no longer comes first.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Get-OERGroupMember -Group oer-s96-pim piped one row (the user) into Remove-OERActiveDirectoryRoleAssignment -WhatIf: one NotDirectAssignment error whose message says the piped object is a group member row (MemberType 'Member') from Get-OERGroupMember and shows the -PrincipalId form; 0 warning lines; 0 What if lines; 0 Graph writes.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 2.4
+### END 2.4
+[oer-s96] 2.4 host: Remove-OERActiveDirectoryRoleAssignment: REPO\docs\live-verification\raw\s96\child-2.4.ps1:127
+[oer-s96] 2.4 host: Line |
+[oer-s96] 2.4 host:  127 |  … l { $Rows | Remove-OERActiveDirectoryRoleAssignment -Role $R -WhatIf  …
+[oer-s96] 2.4 host:      |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[oer-s96] 2.4 host:      | The piped object for principal '00000000-0000-0000-0000-000000000007' is a group member row (MemberType 'Member') from Get-OERGroupMember, not an active assignment of directory role 'Message Center Reader', so nothing is removed: the request names only the role and the principal, and would remove that principal's own direct active assignment, if one exists. To remove that assignment on purpose, name the principal with -PrincipalId, for example: ... | ForEach-Object { Remove-OERActiveDirectoryRoleAssignment -Role 'Message Center Reader' -PrincipalId $_.PrincipalId }
+[oer-s96] 2.4 error: NotDirectAssignment (InvalidArgument): The piped object for principal '00000000-0000-0000-0000-000000000007' is a group member row (MemberType 'Member') from Get-OERGroupMember, not an active assignment of directory role 'Message Center Reader', so nothing is removed: the request names only the role and the principal, and would remove th ...
+[oer-s96] 2.4 piped rows: 1; NotDirectAssignment errors: 1; the message names a group member row from Get-OERGroupMember: True; warning lines: 0; What if lines: 0; Graph writes: 0
+```
 
 ## 3. BL-07: a group created into an administrative unit is not pruned out of it in the same run
 
 ### 3.1. The validator, offline: a template name, a unit named by id, a member named by object id
 
-- [ ] **3.1** `Test-OERStructure` warns for a template-named group placed in a unit whose members omit it (naming the computed name) and for a group naming its unit by an object id it cannot match, and gives no placement warning when the unit's members name the group by an object id.
+- [x] **3.1** `Test-OERStructure` warns for a template-named group placed in a unit whose members omit it (naming the computed name) and for a group naming its unit by an object id it cannot match, and gives no placement warning when the unit's members name the group by an object id.
 
 ```powershell
 $Docs = [ordered]@{
@@ -683,11 +1107,26 @@ True; placement findings: 0`.
 **Failure looks like:** `placement findings: 0` for the template -- the old rule that skipped a
 template-based group; `1` for the member named by object id -- the old false warning.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Offline, no sign-in: a template-named group placed in a unit whose members omit it gives one placement Warning naming the computed name oer-s96-tpl and saying the creating run withholds the prune and every later apply removes it; a group naming its unit by an object id no entry declares gives one Warning saying the check cannot be made offline; a unit whose members name the group by an object id gives no placement finding. All three documents valid.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.1 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] 3.1 a template name: valid True; placement findings: 1
+[oer-s96] 3.1 a template name: Warning at groups[0].administrativeUnit: Group 'oer-s96-tpl' at groups[0] declares administrativeUnit 'oer-s96-au', but administrativeUnits[0].members does not list 'oer-s96-tpl'. administrativeUnit is applied only when the group is created and never round-trips: the run that creates the group withholds the prune of that membership (Skipped, "prune withheld"), but every later apply with -Prune removes it unless this document's administrativeUnits[0] entry names the group in members.
+[oer-s96] 3.1 a unit named by id: valid True; placement findings: 1
+[oer-s96] 3.1 a unit named by id: Warning at groups[0].administrativeUnit: Group 'oer-s96-idgrp' at groups[0] declares administrativeUnit '00000000-0000-0000-0000-000000000099', an object id that no administrativeUnits[] entry declares as its id, so this check cannot tell offline whether it names a unit whose members do not list 'oer-s96-idgrp' (administrativeUnits[0]). administrativeUnit is applied only when the group is created and never round-trips: if it names one of them, the run that creates the group withholds the prune of that membership (Skipped, "prune withheld"), and every later apply with -Prune removes it. Name the group in that unit's members, or declare the unit's id on its administrativeUnits[] entry.
+[oer-s96] 3.1 a member named by object id: valid True; placement findings: 0
+```
 
 ### 3.2. -Prune in the run that creates the group: Created, and the unit's prune withheld
 
-- [ ] **3.2** `Invoke-OERStructure -Json $P -Prune -Confirm:$false` creates `oer-s96-new` into `oer-s96-au` and reports the unit's prune of it `Skipped` with a Detail starting `prune withheld:`; the fence around the module's transport makes the unit's member read wait until the new group is listed, and refuses (and counts) any removal from the unit -- none is attempted.
+- [x] **3.2** `Invoke-OERStructure -Json $P -Prune -Confirm:$false` creates `oer-s96-new` into `oer-s96-au` and reports the unit's prune of it `Skipped` with a Detail starting `prune withheld:`; the fence around the module's transport makes the unit's member read wait until the new group is listed, and refuses (and counts) any removal from the unit -- none is attempted.
 
 ```powershell
 Connect-OerLive -Arm
@@ -749,11 +1188,37 @@ created (the old defect), stopped only by the fence; `the new group listed when 
 replication outlasted the fence's 240 s, so the guard was not reached: note it and re-run section 3
 after the teardown with a fresh group, never with `-Prune` on this one.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Invoke-OERStructure -Prune -Confirm:$false created oer-s96-new into oer-s96-au (Created) and reported the unit's prune of it Skipped with a Detail starting "prune withheld:" that names the group as created into this unit in this run; administrativeUnits Removed 0; 0 errors. The fence around the module's transport: 1 unit member read, held 1 x 10 s until the new group was listed (True), and 0 removals refused -- the engine never tried to remove the membership.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.2 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 3.2
+### END 3.2
+[oer-s96] 3.2 row: groups | oer-s96-new | Created | created group oer-s96-new (00000000-0000-0000-0000-000000000010)
+[oer-s96] 3.2 row: administrativeUnits | oer-s96-au | Unchanged | administrative unit properties match
+[oer-s96] 3.2 row: administrativeUnits | oer-s96-au | Skipped | prune withheld: undeclared member '00000000-0000-0000-0000-000000000010' is group 'oer-s96-new', which this run created into this unit, and the run that creates a membership does not remove it (our own guard, not a Graph rejection). The next apply with -Prune removes it unless the unit's members name the group.
+[oer-s96] 3.2 groups Created: 1; the unit's prune of the new group withheld: 1; administrativeUnits Removed: 0; errors: 0
+[oer-s96] 3.2 fence: unit member reads 1, waits 1, the new group listed when read: True, removals refused: 0
+```
 
 ### 3.3. The membership is still there after the replication
 
-- [ ] **3.3** `oer-s96-au`'s member list holds `oer-s96-new` in three reads 5 s apart, once it has converged.
+- [x] **3.3** `oer-s96-au`'s member list holds `oer-s96-new` in three reads 5 s apart, once it has converged.
 
 ```powershell
 Connect-OerLive -Arm
@@ -771,11 +1236,32 @@ Disconnect-OerLive
 **Failure looks like:** a `False` -- the membership was removed after all; read 3.2's rows and the
 fence's count.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the second run. The first run converged (the unit lists oer-s96-new) but printed False for the three steady reads: the block wrapped the read's already wrapped list in @() again, so -contains never matched (a checklist bug, corrected; 3.4 showed the member still listed). Second run: listed after 1 read, and three reads 5 s apart True, True, True.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.3 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s96] oer-s96-au lists oer-s96-new: converged after 1 read(s), 0.1 s.
+[oer-s96] 3.3 oer-s96-au lists oer-s96-new after 1 read(s): True; three reads 5 s apart: True, True, True
+```
 
 ### 3.4. The next apply with -Prune would remove it, as the validator says
 
-- [ ] **3.4** `Invoke-OERStructure -Json $P -Prune -WhatIf`, with the group now existing, plans the removal of `oer-s96-new` from `oer-s96-au` (the guard covers only the run that creates the membership) and sends nothing.
+- [x] **3.4** `Invoke-OERStructure -Json $P -Prune -WhatIf`, with the group now existing, plans the removal of `oer-s96-new` from `oer-s96-au` (the guard covers only the run that creates the membership) and sends nothing.
 
 ```powershell
 Connect-OerLive -Arm
@@ -798,13 +1284,42 @@ what the validator's warning says.
 **Failure looks like:** a withheld row -- the guard reaches beyond the creating run (a prune-semantics
 change, G11.1); a write -- STOP.
 
-Result:
+Result: 2026-10-07 14:14 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The same document with -Prune -WhatIf, the group now existing: one planned removal of oer-s96-new from oer-s96-au (Skipped "would remove undeclared member"), the prune warning before its What if line (True), 0 withheld rows, 0 Graph writes. The guard covers only the creating run, as the validator's warning says; the document was not run for real again.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 3.4 ===
+[oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s96] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+### BEGIN 3.4
+WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000010' from unit 'oer-s96-au'.
+What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000010'" on target "oer-s96-au".
+### END 3.4
+[oer-s96] 3.4 host: WARNING: Sync-OERStructureAdministrativeUnit: would remove undeclared member '00000000-0000-0000-0000-000000000010' from unit 'oer-s96-au'.
+[oer-s96] 3.4 host: What if: Performing the operation "Remove undeclared member '00000000-0000-0000-0000-000000000010'" on target "oer-s96-au".
+[oer-s96] 3.4 row: groups | oer-s96-new | Unchanged | group properties match
+[oer-s96] 3.4 row: administrativeUnits | oer-s96-au | Unchanged | administrative unit properties match
+[oer-s96] 3.4 row: administrativeUnits | oer-s96-au | Skipped | would remove undeclared member '00000000-0000-0000-0000-000000000010'
+[oer-s96] 3.4 planned removals from oer-s96-au: 1; the prune warning before its What if line: True; withheld rows: 0; Graph writes: 0
+```
 
 ## Teardown
 
 ### T.1. The policies are put back, the objects removed, nothing carries the prefix, and the main clone is untouched
 
-- [ ] **T.1** `Initialize-OerS96Prereq.ps1 -Teardown -Unattended` puts the chosen directory role's policy back to its baseline, removes `oer-s96-user`'s eligibility, puts `oer-s96-pim`'s member policy back, removes `oer-s96-new`, `oer-s96-pim` and `oer-s96-user`, and deletes `oer-s96-au`; the sweep finds nothing with the prefix; the counts equal the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
+- [x] **T.1** `Initialize-OerS96Prereq.ps1 -Teardown -Unattended` puts the chosen directory role's policy back to its baseline, removes `oer-s96-user`'s eligibility, puts `oer-s96-pim`'s member policy back, removes `oer-s96-new`, `oer-s96-pim` and `oer-s96-user`, and deletes `oer-s96-au`; the sweep finds nothing with the prefix; the counts equal the baseline; no session is left; the main clone is on `main` at the HEAD S.1 recorded.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS96Prereq.ps1') -Teardown -Unattended 2>&1 | ForEach-Object { "$_" })
@@ -832,11 +1347,77 @@ are NOT deleted, and the step stops (G11.5); exit code 3 -- residue in `raw\resi
 next prereq run retries; report each row. An object deleted with 204 can still show in the sweep for
 a minute or two: read back with T.2 before judging.
 
-Result:
+Result: 2026-10-07 14:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, with one count read back in T.2. Identity check passed; no residue. Teardown A: Message Center Reader at its baseline: True (1 rule differing before: AuthenticationContext_EndUser_Assignment; the enablement rule was back as it was after 1.0 and 1.2), restored after 1 read; Reports Reader 0 differing. Teardown B: oer-s96-pim held 1 direct eligibility schedule (1.2's), removed (201 Revoked); oer-s96-new 0. Teardown C: the member policy of oer-s96-pim had another id than at the baseline (onboarding), 2 rules differing (AuthenticationContext_EndUser_Assignment, Expiration_Admin_Eligibility), both sent from the baseline (200, 200) and read back at the baseline after 1 read. The library: step 2 removed the user's direct membership (201), step 5 deleted oer-s96-new and oer-s96-pim (204, 204), step 6 deleted oer-s96-user (204); removed 4, residue 0, unreadable 0. Teardown E: deleted oer-s96-au (204). The sweep finds nothing with the prefix; groups 98 and administrative units 1 equal the baseline; users read 24 against 23 one read after the user's 204 (the listing lags a deletion), equal in T.2. Exit code 0; no session left; the main clone on main at 6817b33, the HEAD S.1 recorded.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s96] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s96] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s96] [oer-s96] Transcript (redacted): raw\s96\teardown-20261007-141232Z.log; OerLive 1.0.3.
+[oer-s96] [oer-s96] Mode: REMOVE. Prefix 'oer-s96-'. Objects (fixed): oer-s96-user (disabled); oer-s96-pim (its one member oer-s96-user, its member PIM policy baselined and set to the starting state); oer-s96-au (assigned, no member); oer-s96-new is the checklist's own. The low-risk directory roles' policies are baselined. OerLive 1.0.3.
+[oer-s96] [oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s96] [oer-s96] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s96] [oer-s96] Residue: raw\residue.json holds no rows.
+[oer-s96] [oer-s96] Directory role 'Message Center Reader': rules differing from the baseline: 1 (AuthenticationContext_EndUser_Assignment)
+[oer-s96] [oer-s96] Directory role 'Message Center Reader': sent rule AuthenticationContext_EndUser_Assignment from the baseline: 200.
+[oer-s96] [oer-s96] Directory role 'Message Center Reader' back at its baseline: converged after 1 read(s), 0.7 s.
+[oer-s96] [oer-s96] Directory role 'Message Center Reader': restored: True (1 read(s), 0.7 s).
+[oer-s96] [oer-s96] Teardown A: 'Message Center Reader' at its baseline: True (rules differing before: 1: AuthenticationContext_EndUser_Assignment).
+[oer-s96] [oer-s96] Directory role 'Reports Reader': rules differing from the baseline: 0
+[oer-s96] [oer-s96] Teardown A: 'Reports Reader' at its baseline: True (rules differing before: 0).
+[oer-s96] [oer-s96] Teardown B: oer-s96-new: direct eligibility schedules 0.
+[oer-s96] [oer-s96] Teardown B: oer-s96-pim: direct eligibility schedules 1.
+[oer-s96] [oer-s96] Teardown B: removed oer-s96-pim: member eligibility schedule (201 Revoked).
+[oer-s96] [oer-s96] oer-s96-pim: no eligibility schedule listed: converged after 1 read(s), 0.4 s.
+[oer-s96] [oer-s96] oer-s96-pim's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s96] [oer-s96] Teardown C: the member policy of oer-s96-pim has another id than when the baseline was recorded (onboarding to PIM for Groups changes it); the baseline's rules are put back on the policy the group's scope lists now.
+[oer-s96] [oer-s96] Teardown C: member policy of oer-s96-pim now: MFA on activation: False; other enablement flags: Justification; authentication context: 'c1'; eligible assignments must expire: False; rules differing from the baseline: 2 (AuthenticationContext_EndUser_Assignment, Expiration_Admin_Eligibility)
+[oer-s96] [oer-s96] Teardown C: sent rule AuthenticationContext_EndUser_Assignment from the baseline: 200.
+[oer-s96] [oer-s96] Teardown C: sent rule Expiration_Admin_Eligibility from the baseline: 200.
+[oer-s96] [oer-s96] oer-s96-pim's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s96] [oer-s96] oer-s96-pim's member policy back at its baseline: converged after 1 read(s), 1.3 s.
+[oer-s96] [oer-s96] Teardown C: member policy of oer-s96-pim restored: True (1 read(s), 1.3 s); MFA on activation: False; other enablement flags: Justification; authentication context: none; eligible assignments must expire: True
+[oer-s96] [oer-s96] Teardown of 'oer-s96-': users 1, groups 2, access packages 0, catalogs 0; administrative units 1 and app registrations 0 are reported only.
+[oer-s96] [oer-s96] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s96] [oer-s96] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s96] [oer-s96] Removed: oer-s96-pim: PIM for Groups member assignment of a principal (201).
+[oer-s96] [oer-s96] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s96] [oer-s96] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s96] [oer-s96] Teardown 5/6: the prefixed groups.
+[oer-s96] [oer-s96] Deleted: group oer-s96-new (204).
+[oer-s96] [oer-s96] Deleted: group oer-s96-pim (204).
+[oer-s96] [oer-s96] Teardown 6/6: the prefixed users.
+[oer-s96] [oer-s96] DELETE user oer-s96-user@example.com: 204  after 1 attempt(s), 0.2 s; first attempt no membership removed in this run.
+[oer-s96] [oer-s96] Teardown of 'oer-s96-': removed 4, residue 0, unreadable 0.
+[oer-s96] [oer-s96] Teardown E: deleted oer-s96-au (204).
+[oer-s96] [oer-s96] oer-s96-au is gone: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s96] [oer-s96] oer-s96-au is gone: not yet (read 2, 2.2 s, likely replication delay) -- reading again in 4 s.
+[oer-s96] [oer-s96] oer-s96-au is gone: converged after 3 read(s), 6.3 s.
+[oer-s96] [oer-s96] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s96-' is left.
+[oer-s96] [oer-s96] Counts: users now 24, at the baseline 23; equal: False
+[oer-s96] [oer-s96] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s96] [oer-s96] Counts: administrativeUnits now 1, at the baseline 1; equal: True
+[oer-s96] [oer-s96] Done.
+[oer-s96] Teardown exit code: 0
+[oer-s96] A Graph SDK session is left: False; the module holds a session: False
+[oer-s96] Main clone: branch main; HEAD 6817b33
+```
 
 ### T.2. Read back, a few minutes later
 
-- [ ] **T.2** `Initialize-OerS96Prereq.ps1 -ReadBack` finds no prefixed object, no unread collection, the counts at the baseline, both directory role policies at their baselines, and no residue row.
+- [x] **T.2** `Initialize-OerS96Prereq.ps1 -ReadBack` finds no prefixed object, no unread collection, the counts at the baseline, both directory role policies at their baselines, and no residue row.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS96Prereq.ps1') -ReadBack 2>&1 | ForEach-Object { "$_" })
@@ -849,4 +1430,34 @@ Write-OerLiveStep "Read-back exit code: $LASTEXITCODE"
 **Failure looks like:** a prefixed object or a residue row -- report it in the step's report with its
 kind and name.
 
-Result:
+Result: 2026-10-07 14:15 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Read back a few minutes after T.1: the sweep finds nothing with the prefix; users 23, groups 98 and administrative units 1, each equal to the baseline (True); Message Center Reader and Reports Reader 0 rules differing from their baselines; prefixed objects left 0, unread collections 0, residue rows 0; exit code 0.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s96] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s96] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s96] [oer-s96] Transcript (redacted): raw\s96\readback-20261007-141436Z.log; OerLive 1.0.3.
+[oer-s96] [oer-s96] Mode: READ BACK. Prefix 'oer-s96-'. Objects (fixed): oer-s96-user (disabled); oer-s96-pim (its one member oer-s96-user, its member PIM policy baselined and set to the starting state); oer-s96-au (assigned, no member); oer-s96-new is the checklist's own. The low-risk directory roles' policies are baselined. OerLive 1.0.3.
+[oer-s96] [oer-s96] Omnicit.EntraRBAC 1.1.3 loaded from REPO\.claude\worktrees\s9-steg6\output\module\Omnicit.EntraRBAC\1.1.3.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s96] [oer-s96] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s96] [oer-s96] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s96-' is left.
+[oer-s96] [oer-s96] Counts: users now 23, at the baseline 23; equal: True
+[oer-s96] [oer-s96] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s96] [oer-s96] Counts: administrativeUnits now 1, at the baseline 1; equal: True
+[oer-s96] [oer-s96] Read-back: 'Message Center Reader' rules differing from the baseline: 0
+[oer-s96] [oer-s96] Read-back: 'Reports Reader' rules differing from the baseline: 0
+[oer-s96] [oer-s96] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s96] [oer-s96] Done.
+[oer-s96] Read-back exit code: 0
+```
