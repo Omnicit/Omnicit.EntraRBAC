@@ -3,6 +3,9 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+
+    # The ApproverRequired refusal text, held once for the BL-16 Context and for the no-try Describe.
+    $script:ZeroApproverMessage = 'Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or -RequireApproval $false alone to turn approval off. Nothing was looked up or sent.'
 }
 
 AfterAll {
@@ -564,7 +567,6 @@ Describe 'Set-OERRoleManagementPolicy' {
         # the role and the policy. Every lookup is mocked so that its call count shows whether it was
         # reached; the controls prove those counts can rise.
         BeforeAll {
-            $script:ZeroApproverMessage = 'Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or -RequireApproval $false alone to turn approval off. Nothing was looked up or sent.'
             $script:ZeroApproverScope = '/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg'
         }
 
@@ -687,7 +689,7 @@ Describe 'Set-OERRoleManagementPolicy' {
     }
 }
 
-Describe 'Set-OERRoleManagementPolicy: the -RequireApproval $false refusal in a script with no try (Sprint 9 step 4, BL-08)' {
+Describe 'Set-OERRoleManagementPolicy: the -RequireApproval $false and zero-approver refusals in a script with no try (Sprint 9 step 4, BL-08, BL-16)' {
     # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
     # look anything up or send a request on the way. The script stands in no try, prints a sentinel at
     # its end, and the stubs append every lookup and request to a log file whose path is substituted
@@ -753,7 +755,6 @@ $Results = @(
 )
 "REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
 '@
-        $script:ZeroApproverMessage = 'Approval cannot be required with no approver: -ApproverUser and -ApproverGroup name no approver, and Azure Resource Manager replaces the whole approver list. Pass at least one approver, or -RequireApproval $false alone to turn approval off. Nothing was looked up or sent.'
         $script:ZeroApproverCalls = @'
 $Results = @(
     Set-OERRoleManagementPolicy -Role 'Reader' -Subscription 'Prod' -ApproverUser @() -Confirm:$false

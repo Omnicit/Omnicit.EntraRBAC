@@ -37,12 +37,12 @@ function Resolve-OERGroupPimPolicyChange {
     so the diff drops the approvers rather than send a call the cmdlet would refuse -- the same
     reason the Azure Resource Manager sibling gives. The ignore is noted in Changes, but that note
     alone changes nothing: when it is the only entry, Changed is false and the handler reports
-    "already matches" for that access type, so the note is not shown to a plan reader at all. Unlike the Azure Resource Manager sibling
-    (Resolve-OERRoleManagementPolicyChange), which always sends both approver sides because ARM
-    replaces the whole primaryApprovers array in one patch, this diff sends only the DECLARED side(s)
-    when either side differs: Set-OERGroupPimPolicy replaces only the side it is bound for and carries
-    the other side from the live rule, so an undeclared side must never be sent here either. No Graph,
-    ARM, or authentication occurs.
+    "already matches" for that access type, so the note is not shown to a plan reader at all. Unlike
+    the Azure Resource Manager sibling (Resolve-OERRoleManagementPolicyChange), which always sends
+    both approver sides because ARM replaces the whole primaryApprovers array in one patch, this diff
+    sends only the DECLARED side(s) when either side differs: Set-OERGroupPimPolicy replaces only the
+    side it is bound for and carries the other side from the live rule, so an undeclared side must
+    never be sent here either. No Graph, ARM, or authentication occurs.
 
     .PARAMETER Declared
     The declared pimPolicy block for one access type: either a member/owner sub-object or the flat

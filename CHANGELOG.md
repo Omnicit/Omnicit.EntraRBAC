@@ -30,6 +30,13 @@ no tenant sends nothing (`SignInRefused`) until a sign-in naming its tenant, `Co
 `Disconnect-OER` succeeds. An empty `-TenantId` is refused, by `Connect-OER` with the new
 `InvalidTenantId`, and an Azure token no longer outlives a renewal from another tenant.
 
+`Set-OERGroupPimPolicy` puts back the accepted half of the MFA and authentication context pair when
+Graph rejects the other, so activation stays protected. It and the directory role cmdlet write no
+warning until every request is sent, so `-WarningAction Stop` no longer stops half-way. The three
+policy cmdlets refuse `-RequireApproval $false` beside an approver parameter
+(`MutuallyExclusiveParameter`), `Set-OERRoleManagementPolicy` refuses an empty approver list
+(`ApproverRequired`), and a declared empty approver side converges for Azure role policies.
+
 ## [1.1.2] - 2026-10-06
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope, ignoring
