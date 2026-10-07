@@ -31,11 +31,12 @@ no tenant sends nothing (`SignInRefused`) until a sign-in naming its tenant, `Co
 `InvalidTenantId`, and an Azure token no longer outlives a renewal from another tenant.
 
 `Set-OERGroupPimPolicy` puts back the accepted half of the MFA and authentication context pair when
-Graph rejects the other, so activation stays protected. It and the directory role cmdlet write no
-warning until every request is sent, so `-WarningAction Stop` no longer stops half-way. The three
-policy cmdlets refuse `-RequireApproval $false` beside an approver parameter
-(`MutuallyExclusiveParameter`), `Set-OERRoleManagementPolicy` refuses an empty approver list
-(`ApproverRequired`), and a declared empty approver side converges for Azure role policies.
+Graph rejects the other, so activation stays protected. It and `Set-OERDirectoryRoleManagementPolicy`
+write no warning between their first request and their last, so `-WarningAction Stop` no longer
+stops half-way. They and `Set-OERRoleManagementPolicy` refuse `-RequireApproval $false` beside an
+approver parameter (`MutuallyExclusiveParameter`), the last also an empty approver list
+(`ApproverRequired`). `Invoke-OERStructure` no longer reports a change on every run for an Azure
+role policy declaring an empty approver list.
 
 ## [1.1.2] - 2026-10-06
 

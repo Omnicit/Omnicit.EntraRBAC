@@ -1356,8 +1356,9 @@ neither cmdlet sends a rule PATCH of its own and that each calls the helper once
 half needs nothing, since the second was validated against an unchanged policy. The pair counts
 only when both rules are in the confirmed set, so a DECLINED half is never put back (the
 declined-partner guard of the section above covers that case). A put-back that is itself rejected
-leaves the first half applied: the helper reports why, and both cmdlets say activation may now
-require neither control.
+leaves the first half applied: the helper reports why, and the cmdlets say what activation now
+requires. The group cmdlet says it may now require neither control; the directory cmdlet reads the
+object it just returned and names what that role now requires.
 
 **A rule that was put back is not reported as changed.** The group cmdlet builds the property list
 of its result from the rules it sent minus the one put back, so that rule adds no property to the
@@ -1369,9 +1370,10 @@ set and asks nothing itself, so the cmdlet answers every `ShouldProcess` prompt 
 order, and sends afterwards. It used to prompt and send rule by rule. The put-back also needs the
 first half's live version, which has to be read BEFORE the first PATCH changes it, and not under
 `-WhatIf` or when a prompt was declined, where nothing, or not the whole pair, is sent. With the
-confirmed set known first, the cmdlet reads only when both pair rules were accepted, so `-WhatIf`,
-a declined prompt and a declined partner make no read. The declined-partner guard of the section
-above reads the same set and is unchanged.
+confirmed set known first, the cmdlet reads the first half only when both pair rules were accepted,
+so `-WhatIf`, a declined prompt and a declined partner make no first-half read of their own. (A
+reconcile read, below, runs before the prompts and is made under `-WhatIf` as well.) The
+declined-partner guard of the section above reads the same set and is unchanged.
 
 **Where the first half's live version comes from.** The two reconcile reads the group cmdlet may
 already make are exactly the first half in each direction: `ClearMfa` reads the enablement rule and
@@ -1403,8 +1405,11 @@ holds no warning, error, information or host call, which the AST test checks -- 
 before the result object, so the first message still stops a Stop caller, but only after every
 PATCH and the put-back were sent. The messages that precede the sends, a reconcile reason or a
 failed first-half read, are written before the first PATCH on purpose: stopping there sends
-nothing. The rejection text now names the policy (`Rule 'ID' of PIM policy 'ID' was not applied`);
-the older live-verification checklists and the live run quoted above show the earlier wording.
+nothing. The rejection text now names the policy, and the label differs per cmdlet: the group
+cmdlet writes `Rule 'ID' of PIM policy 'ID' was not applied`, the directory cmdlet
+`Rule 'ID' of directory role management policy 'ID' was not applied`. The group cmdlet's earlier
+wording, `Rule 'ID' was not applied`, survives in the older live-verification checklists and in the
+live run quoted above.
 
 **Why `requiredscope.tests.ps1` counts a call to the helper as a write by the caller.** That gate
 decides whether a cmdlet writes from the method of the `Invoke-OERGraphRequest` calls in its own

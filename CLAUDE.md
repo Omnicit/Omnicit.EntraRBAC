@@ -911,11 +911,15 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   version -- and the rule that no warning is written between the first PATCH and the last put-back:
   the helper returns its messages and the caller writes them after it returns, since a
   `-WarningAction Stop` caller is otherwise stopped before the put-back. It is called by
-  `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm every rule first
-  and order them with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly, and
+  `Set-OERGroupPimPolicy` and `Set-OERDirectoryRoleManagementPolicy`, which confirm first and order
+  the rules with `Get-OERPimRulePatchOrder`. Never PATCH a rule from either cmdlet directly, and
   never write a warning inside the helper. Held by the AST check in
-  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1`; `tests/QA/requiredscope.tests.ps1` counts a call
-  to it as a Graph write by the caller, since the helper carries no path literal of its own.
+  `tests/Unit/Private/Send-OERPimRulePatch.Tests.ps1` and, for the caller-side half (the messages
+  written only after the last request), by the `-WarningAction Stop` tests in
+  `tests/Unit/Public/Set-OERGroupPimPolicy.Tests.ps1` and
+  `tests/Unit/Public/Set-OERDirectoryRoleManagementPolicy.Tests.ps1`, in a `try` and in a script with
+  no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
+  the helper carries no path literal of its own.
   `Why: docs/development/rationale.md#pim-rule-pair-put-back`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
