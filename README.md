@@ -233,8 +233,12 @@ when it began -- it refuses that document with `SignInSuperseded` and sends noth
 are given. Called inside a script block or a function in a pipeline, such as
 `ForEach-Object { Invoke-OERStructure ... }`, each of these commands begins only when that block
 runs, after every other command in the pipeline has begun and so after most of their sign-ins, and
-it takes the session they left for its own: name `-TenantId` there. Run the commands as separate
-statements; to move objects between tenants, collect them in a variable first:
+it takes the session they left for its own. A document exported by `Get-OERInventory` or
+`Export-OERInventory` names its tenant (`tenantId`), and `Invoke-OERStructure` refuses it in any
+other tenant with `DocumentTenantMismatch`, reading and writing nothing for it, whichever session it
+began with. A document without `tenantId`, and the three cmdlets above, still take that session
+for their own, so name `-TenantId` there. Run the commands as separate statements; to move objects
+between tenants, collect them in a variable first:
 
 ```powershell
 # Read in one tenant, then write in another, as two statements
@@ -246,6 +250,7 @@ foreach ($Group in $Groups) {
 
 # Copy a structure the same way: read it, then apply it
 $Inventory = Get-OERInventory -TenantId $TenantA -Include Groups
+$Inventory.PSObject.Properties.Remove('tenantId')   # the export names tenant A; apply it to B as a template
 Invoke-OERStructure -InputObject $Inventory -TenantId $TenantB -WhatIf
 
 # Not as one pipeline: New-OERGroup would run inside Get-OERGroup's
@@ -260,6 +265,12 @@ Invoke-OERStructure -InputObject $Inventory -TenantId $TenantB -WhatIf
 The second statement switches tenant in the same PowerShell process, so whether it reaches the
 tenant it names depends on the sign-in type, as [Switching tenants](#switching-tenants) below
 describes.
+
+`Invoke-OERStructure` applies a document that names its tenant only in that tenant. Given a
+`-TenantId` that is another tenant ID, it refuses the document with `DocumentTenantMismatch` before
+it signs in, with no token request; otherwise, once it has signed in, it compares the document with
+the tenant the session's tokens were issued for. To apply an export in another tenant -- as a
+template, like the copy above -- change its `tenantId` to that tenant's ID or remove the key first.
 
 ### Switching tenants
 
@@ -679,7 +690,8 @@ Remove-OERAccessPackageAssignment -AssignmentId '<id from the list above>'
 
 Read the tenant, hand the bundle to an LLM (or edit the JSON by hand), validate offline, preview,
 then apply. `Test-OERStructure` never touches the tenant, and `Invoke-OERStructure -WhatIf` only
-reads.
+reads. The exported `inventory.json` names the tenant it was read from (`tenantId`), and
+`Invoke-OERStructure` applies it, or a proposal that keeps the key, only in that tenant.
 
 ```powershell
 # 1. Export the current posture into a timestamped bundle (JSON + schema + LLM prompt + README)

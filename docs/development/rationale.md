@@ -617,7 +617,7 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
-Sprint 9 step 3). The
+Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -630,9 +630,15 @@ wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the tw
 `Checkpoint-OERSignIn`; `Invoke-MgGraphRequest` only in the Graph wrapper and `Invoke-WebRequest`
 only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
 `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
-`Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER` -- and every listed owner must really call
-its command, so a rule cannot hold over nothing and a stale owner is a failure. Two of those lists
-were widened by one owner each in Sprint 9 step 2, each widening justified in the gate's own text.
+`Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
+`Invoke-OERStructure` -- and every listed owner must really call its command, so a rule cannot hold
+over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
+Sprint 9 step 2, each widening justified in the gate's own text. Each row of the owner table is
+enforced only by its own `It`, which asserts that the command has no caller outside its owners and
+that its owners really call it: no assertion reads the table as a whole, so a row without an `It`
+asserts nothing. MEASURED in Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with
+its owner list emptied, left the gate green, so it got its own `It`, and the gate's comment now
+says that a new row needs one.
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
 latched outer command (BL-74); it refuses no request, and the transports' latch gates, which this
 gate places, still do, so the reason a reader elsewhere is refused -- a gate no static check places
@@ -1503,6 +1509,13 @@ NOT use the approach from Omnicit.PIM.
 8. **Session-uncertain marker** -- a sign-in that does not succeed leaves the session uncertain, and
    while it is, a command that names no tenant is refused before it requests a token (A10, BL-89).
    See [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain)
+   below.
+9. **Document tenant** -- an exported structure document names the tenant its Graph token was
+   issued for (`tenantId`), and `Invoke-OERStructure` applies a document that names its tenant only
+   there: it compares the document with a `-TenantId` that is a tenant ID before the sign-in, and
+   with the tenants the session's tokens were issued for after it, and refuses it with
+   `DocumentTenantMismatch` (BL-88, A14). It never signs in to the document's tenant. See
+   [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from)
    below.
 
 The tenant *and identity* part of step 1 is load-bearing: PR #36 closed the audit's only Critical
@@ -2685,8 +2698,14 @@ while `Get-OERInventory`'s frame still remembers A, so every request of the appl
 refusal naming `Get-OERInventory` (read in the code, by the same rule as the measured
 `Up | Down`). The working form is two statements:
 `$Inventory = Get-OERInventory -TenantId A ...`, then
-`Invoke-OERStructure -InputObject $Inventory -TenantId B ...`. The second was one tenant named two
-ways, and Sprint 9 step 3 ended it (BL-77, below).
+`Invoke-OERStructure -InputObject $Inventory -TenantId B ...` -- and since Sprint 9 step 6b
+(BL-88, A14) a line between them that removes the inventory's `tenantId`,
+`$Inventory.PSObject.Properties.Remove('tenantId')`: the export names tenant A, and the apply
+refuses it in B with `DocumentTenantMismatch` otherwise, before its sign-in when B is a tenant ID.
+The pipeline form is now refused the same way, and when B is a tenant ID that refusal comes first,
+before `Invoke-OERStructure` signs in to B at all (read in the code). See
+[A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from).
+The second was one tenant named two ways, and Sprint 9 step 3 ended it (BL-77, below).
 
 **One tenant named two ways (BL-77).** HISTORY: until Sprint 9 step 3 the identity's tenant term was
 the tenant as the caller NAMED it, the value `TenantId` holds in the state -- the same key the cache
@@ -2772,21 +2791,28 @@ working, not a limit to work around: work in another tenant belongs in a stateme
   `SignInSuperseded` and sends nothing for it. The three name-looking builders had the same gap
   (BL-81) and are closed the same way. See
   [A command acts under the session it began with](#a-command-acts-under-the-session-it-began-with).
-- OPEN, and older than Sprint 9 step 2: `Invoke-OERStructure` or one of the three name-looking
-  builders WITHOUT `-TenantId`, called inside a script block or a function in a pipeline. The
-  snapshot that closed the bullet above is taken when the command's own `begin` block runs, and
-  inside a script block that is when the block runs, after every `begin` block of the outer
-  pipeline. In
+- CLOSED for a document that names its tenant (BL-88, Sprint 9 step 6b); OPEN, and older than
+  Sprint 9 step 2, for a document without `tenantId` and for the three name-looking builders:
+  `Invoke-OERStructure` or one of the builders WITHOUT `-TenantId`, called inside a script block or
+  a function in a pipeline. The snapshot that closed the bullet above is taken when the command's
+  own `begin` block runs, and inside a script block that is when the block runs, after every `begin`
+  block of the outer pipeline. In
   `Get-ChildItem *.json | ForEach-Object { Invoke-OERStructure -Path $_ -Prune } | ForEach-Object -Begin { Connect-OER -TenantId B } -Process { $_ }`,
   after a sign-in to A, `Invoke-OERStructure` begins under B, compares B with B, signs in under B and
   remembers it, so neither its own check nor the supersession gate sees a difference, and `-Prune`
   runs in B with no error. The three builders, called the same way, look their names up in B.
   MEASURED by the final review of Sprint 9 step 2 with plain-PowerShell stand-ins of the shape: the
-  direct pipeline was refused, and the same command wrapped in `ForEach-Object` applied under B. The
-  code is no worse than before that step, which left the gap open (its Ruling R11). The texts tell
-  the operator to name `-TenantId` on such a command, or to run it as a statement of its own:
-  README's `### Disconnect` section and the about topic's `GRAPH SDK SESSION` in one clause each,
-  CLAUDE.md as a rule.
+  direct pipeline was refused, and the same command wrapped in `ForEach-Object` applied under B. That
+  step left the gap open (its Ruling R11), and A11 parked it for Philip (P-4). Since Sprint 9 step 6b
+  an exported document names the tenant it was read from (`tenantId`), and `Invoke-OERStructure`
+  compares it, after the sign-in, with the tenant the session's tokens were issued for: a document
+  in that pipeline exported from A is refused in B with `DocumentTenantMismatch` and nothing is read
+  or written for it, whichever session the command began with -- see
+  [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from).
+  A document without `tenantId` is still applied in B, and the builders still look their names up
+  there, so the texts still tell the operator to name `-TenantId` on such a command, or to run it as
+  a statement of its own: README's `### Disconnect` section and the about topic's
+  `GRAPH SDK SESSION` in one sentence each, CLAUDE.md as a rule.
 - A command that signs in again inside its own `process` block, to another tenant, replaces its own
   memory, and nothing compares that second sign-in with its first: it is the same command's own
   choice.
@@ -2813,11 +2839,22 @@ and the three builders that look up a name do the same before they resolve what 
 `-TenantId` on it or run it as a statement of its own); called inside a script block or a function
 in a pipeline, each of those four commands begins only when that block runs, after every other
 command in the pipeline has begun and so after most of their sign-ins, and takes the session they
-left for its own, so the operator is told to name `-TenantId` there (the open known limit above);
-the commands run as separate statements, with objects collected in a variable first to move them
-between tenants. Both give the two-statement examples -- groups read and created, and an inventory
-read and applied -- the two pipelines they replace commented out, and a pointer to the limits per
-sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant.
+left for its own; a document exported by `Get-OERInventory` or `Export-OERInventory` names its
+tenant, and `Invoke-OERStructure` refuses it in any other tenant with `DocumentTenantMismatch`,
+reading and writing nothing for it, whichever session it began with, while a document without
+`tenantId`, and the three builders, still take that session for their own, so the operator is told
+to name `-TenantId` there (the known limit above, open for those; until Sprint 9 step 6b the clause
+ended at that advice, for all four); the commands run as separate statements, with objects
+collected in a variable first to move them between tenants. Both give the two-statement examples --
+groups read and created, and an inventory read and applied, its `tenantId` removed between the two
+since Sprint 9 step 6b -- the two pipelines they replace commented out, and a pointer to the limits
+per sign-in type that `SWITCHING TENANTS` states for the statement that switches tenant. A short
+paragraph after that pointer states the document tenant rule for the operator: a document that
+names its tenant is applied only there, a `-TenantId` that is another tenant ID refuses it before
+the sign-in with no token request, any other one is compared after the sign-in with the tenant the
+session's tokens were issued for, and an export used as a template for another tenant gets its
+`tenantId` changed or removed first. The README's inventory walkthrough says in one sentence that
+the exported `inventory.json` names its tenant and is applied only there.
 `Connect-OER`'s help carries the same rule in two sentences, beside the general case of a refused
 sign-in; its sentence that a cmdlet a refused command calls does not change that by signing in
 stays true, since such a cmdlet is now refused at its sign-in (BL-74), and a sentence beside it
@@ -2896,8 +2933,10 @@ builders take it in their `begin` block, and every `begin` block of a pipeline r
 every UPSTREAM command's `begin`-block sign-in and before any DOWNSTREAM one. A command called inside
 a script block or a function in a pipeline begins only when that block runs, after every `begin`
 block of the outer pipeline, so its snapshot may already hold a downstream command's sign-in: that
-is the open known limit above, which this step did not close. Without `-TenantId` each of them
-compares in `process`:
+is the known limit above, which this step did not close, and which Sprint 9 step 6b closed only for
+a document that names its tenant (BL-88, under
+[A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from)).
+Without `-TenantId` each of them compares in `process`:
 
 - `Invoke-OERStructure` for each document after the document is read and validated, directly
   before `Initialize-OERAuth`, so a document that cannot be read or does not validate still reports
@@ -3048,6 +3087,273 @@ One guard survives every test by construction: the `return` after the terminatin
 stack -- measured with a Pester probe that was not committed -- so the `return` is unreachable
 today, and it stays against a future change that stops that helper throwing. Gate 10 of
 [#static-source-gates](#static-source-gates) holds the two widened owner lists.
+
+### A document names the tenant it was exported from
+
+**The finding (BL-88).** The known limit Sprint 9 step 2 left open (its Ruling R11), under
+[A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced):
+`Invoke-OERStructure` without `-TenantId`, called inside a script block or a function in a
+pipeline, begins only when that block runs, after every `begin` block of the outer pipeline. Its
+snapshot (BL-76) then already holds a downstream command's sign-in, its own sign-in names no tenant
+and inherits that session, and its frame remembers it, so neither the snapshot nor the supersession
+gate sees a difference: the document, `-Prune` included, was applied in the tenant the downstream
+command switched to, with no error. MEASURED by the final review of Sprint 9 step 2 with
+plain-PowerShell stand-ins, and reproduced end to end before this step's fix by P19 and P19d below,
+which recorded the document's group read going out under the switched tenant. Nothing the command
+can see of its own session tells the two tenants apart, so the only general fix the architect saw
+had to come from the document -- and that changes the export's format and how a document can be
+used as a template, which is not the architect's decision: A11 parked it for Philip (P-4).
+
+**The decision (A14, Philip's decision 2026-10-07, P-4).** An exported document carries its tenant,
+and the apply refuses another one. The export writes a new top-level `tenantId`, the tenant the
+Microsoft Graph token was issued for; `tenantAlias` is still used only for the naming templates and
+does not change. The apply compares the document's tenant with the session's after its sign-in and
+refuses the whole document with the new `DocumentTenantMismatch` before any section is read or
+written; a `-TenantId` that is another tenant ID than the document's refuses it before the sign-in.
+Nothing ever signs in WITH the document's tenant, so A6 stands: the tenant is only compared. A
+document without `tenantId` behaves exactly as before, and an export used as a template for another
+tenant gets the key removed or changed first -- the cost Philip accepted. It closes BL-88 for an
+exported document, since the command inside the script block still signs in under the switched
+session but the document names the right tenant, and leaves the form open, with the advice
+`-TenantId`, for a document without the key and for the three name-looking builders, which take no
+document.
+
+**The export.** `Get-OERInventoryTenantId` is the single owner of which tenant an export names: the
+state's `TokenTenantId` when it is a canonical GUID (`Test-OERGuid`), and nothing otherwise.
+`Get-OERInventory` and `Export-OERInventory` call it in their `begin` block, directly after their
+own `Initialize-OERAuth`, and pass the value to `ConvertTo-OERInventory -TenantId`, which writes
+`tenantId` directly after `version`, and only when it is a GUID (Ruling R7: a second small helper,
+so that the converter, the single owner of the inventory shape, stays pure). The capture stands in
+`begin` so that the document names the session this command signed in under, never one a nested
+cmdlet or a pipeline neighbour switched to by the time the document is assembled.
+`Export-OERInventory` takes its own capture rather than reading the `tenantId` of the inventory
+`Get-OERInventory` returns, and passes it to both of its converter calls. The bundle folder's name
+and the summary's `TenantId` keep the tenant as named, as before; only `inventory.json` carries the
+granted tenant. The validator (`Test-OERStructureSchema`, Rule 1b) and the schema
+(`Get-OERStructureSchemaJson`) know the key: a present `tenantId` must be a canonical GUID, and an
+explicit `null`, an empty string or any other value is an Error (Ruling R3), which
+`Invoke-OERStructure` reports as `StructureValidationFailed` before either comparison. A `null` is
+refused rather than read as no key, since an LLM that wrote one would otherwise drop the check
+silently; a document meant to carry no check omits the key. If wrong: treat an explicit `null` as
+absent, one condition. A document without the key is valid as before. The prompt template tells an
+LLM to keep `tenantId` exactly as exported and never to invent, change or remove one.
+
+**The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
+the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
+without the key; otherwise an error record, or nothing when the comparison passes. It never signs
+in, sends nothing and reads nothing but the module's state, and it compares with PowerShell's
+case-insensitive `-eq`. `Invoke-OERStructure` calls it twice per document, in `process`, after the
+document is read and validated:
+
+1. Before the sign-in, only when `-TenantId` is bound, and before the BL-76 check. When `-TenantId`
+   is a canonical GUID that is not the document's `tenantId`, the document is refused with no token
+   request, no tenant lookup and no `Connect-MgGraph`, and the snapshot is not taken again, since
+   nothing signed in. A domain, `organizations`, a braced or dash-less GUID or any other name is
+   not compared here (Ruling R8): it is not a tenant ID, and the tenant it names is known only from
+   the token it yields. If wrong: nothing is lost, since the second comparison still refuses such a
+   document, after a token request.
+2. After the sign-in, whatever `-TenantId` names and without one: directly after the snapshot is
+   taken again, and before the omitted-collection warning under `-Prune`, the administrative unit
+   pre-pass, the role-assignment scope pre-pass and every section. The document's `tenantId` must
+   equal the state's `TokenTenantId`, and, when Azure Resource Manager is used, `ArmTokenTenantId`
+   as well. A GUID `-TenantId` that passed the first comparison is compared again here: a refused
+   sign-in leaves another session, or none, in place, and outside any `try` the command carries on
+   to this point.
+
+A difference writes `DocumentTenantMismatch` as a non-terminating error and returns: nothing is read
+or written for that document, and the next piped document is tried on its own. Its category is
+`InvalidOperation` and its target the document's path, or the parameter set's name, as
+`InvalidStructureDocument`'s is (Ruling R5; if wrong, change both before this step merges, since
+every merge publishes and a change after it is a published change). The message names the
+document's tenant and the tenant it was compared with, says that nothing was read or written for
+the document -- signed in to, read or written, before the sign-in -- and tells the operator to name
+that tenant with `-TenantId` or, to use the document as a template for another tenant, to change or
+remove its `tenantId`. It holds no token, account or credential.
+
+**One comparison per document (Ruling R1).** The spec's "before every section, the administrative
+unit pre-pass included" is read as ONE comparison directly after the sign-in, before the first
+thing that reads or writes for the document: the same sentence says the whole document is refused
+and nothing read or written for it, which a check between sections could not honour once the first
+section had run. A session that changes between sections is refused by the supersession gate (A20)
+instead: `Invoke-OERStructure`'s frame remembers the identity its own sign-in gave it, whose tenant
+term is `TokenTenantId` (BL-77) -- the tenant just compared with the document -- so a later switch
+differs from it and every request after it is refused. If wrong: add a comparison before each
+section in the dispatch loop.
+
+**Why never the tenant as named.** The tenant the caller named (`TenantId` in the state) can be a
+domain, `organizations` or nothing at all, so an export that wrote it would often name no tenant ID
+a later session could be compared with. The granted tenant is the one every request goes out under:
+since BL-12 a named tenant is checked against the token (`TenantMismatch`), and since BL-77 the
+identity's tenant term, which the supersession gate and the snapshot compare, is `TokenTenantId`.
+So the export writes `TokenTenantId` and the apply compares with it. A document exported under
+`-TenantId contoso.onmicrosoft.com` then applies whether the apply names that tenant by its GUID, by
+its domain or not at all, as long as the token comes from that tenant. A comparison with the name
+would refuse the domain, and no tenant named whenever the session itself was named by a domain or
+`organizations`, and would pass a session named for the document's tenant whose token came from
+another.
+
+**Why no session, or a token tenant that is not a GUID, refuses (Ruling R4).** After the sign-in the
+comparison needs a tenant ID. With no state -- a sign-in refused from no session -- or a
+`TokenTenantId` that is not a GUID -- AzAuth reported no tenant for the token, the documented limit
+of `TenantMismatch` -- the document's tenant cannot be shown to be the session's, so the document is
+refused: the safe direction, as for the supersession gate's "no state counts as a difference". If
+wrong: such a document cannot be applied from a session whose token reports no tenant ID until its
+`tenantId` is removed. A missing ARM token tenant, or one that is not a GUID, refuses a document that
+uses Azure Resource Manager the same way.
+
+**The ARM term.** The Azure sections are applied with the ARM token, which the ARM wrapper sends
+with no session gate, and the ARM token can come from another tenant than the Graph token in ways
+the sign-in does not always catch: a granted tenant that is not a GUID is not compared by
+`TenantMismatch`, and the ARM token of a sign-in that names no tenant is compared with the Graph
+token only when both are GUIDs (A13 and F3, under
+[Requested tenant vs granted tenant](#requested-tenant-vs-granted-tenant)). So when Azure Resource
+Manager is used -- `$NeedArm`: an Azure section both selected by `-Include` and declared in the
+document, or `-IncludeARM` -- the ARM token's tenant must be the document's too. Otherwise it is not
+compared: a Graph-only document sends no ARM request, and a session that holds no ARM token, or one
+from an earlier sign-in, must not refuse it. A document with no Azure section under an explicit
+`-IncludeARM` is compared on both tokens, since the command asked for Azure Resource Manager.
+
+**The gate (Ruling R6).** The single owner is held by one row in gate 10's owner table --
+`Get-OERDocumentTenantMismatch` called only in `Invoke-OERStructure`, which must really call it --
+with an `It` of its own, since a row alone asserts nothing (measured, below). There is no rule on
+the `DocumentTenantMismatch` literal or on a read of a document's `tenantId`. If wrong: a second
+comparison written inline, without calling the owner, is caught only by review and the CLAUDE.md
+rule.
+
+**What it costs.**
+
+- An export used as a template for another tenant gets its `tenantId` changed to that tenant's ID,
+  or removed, first (A14, the accepted cost). The cross-tenant copy under
+  [A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced)
+  -- `$Inventory = Get-OERInventory -TenantId A ...`, then
+  `Invoke-OERStructure -InputObject $Inventory -TenantId B ...` -- is refused now unless the key is
+  removed between the two statements, and the README and the about topic show that line (Ruling R9):
+  `$Inventory.PSObject.Properties.Remove('tenantId')`. A document written by hand, or by an LLM from
+  a template without the key, is not affected.
+- A session whose token reports no tenant ID cannot apply an exported document that carries
+  `tenantId`, and cannot write one: the export then leaves the key out, with no warning (Ruling R2),
+  so that document carries no tenant check -- the same documented limit as `TenantMismatch`'s. A
+  warning was not added, since about 140 existing tests that count warnings run with no state. If
+  wrong: add one warning in the two callers of `Get-OERInventoryTenantId`.
+- A document refused because a refused sign-in left another session in place reports two errors,
+  outside any `try`: the sign-in's own (`SignInRefused`, `TenantMismatch` and the rest), then
+  `DocumentTenantMismatch`, whose message speaks of the session's token -- the session the refusal
+  left in place, which is the one every request would have gone out under. When that session is the
+  document's tenant, the document passes the comparison and the sign-in latch refuses every request
+  instead, as before.
+
+**Known limits.**
+
+- A document without `tenantId` -- written by hand, from a template, or exported from a session
+  whose token reported no tenant ID -- keeps the open form of BL-88: called without `-TenantId`
+  inside a script block or a function in a pipeline, it is applied in the tenant another command's
+  sign-in left. So do the three name-looking builders, which take no document. The texts keep the
+  advice to name `-TenantId` for those.
+- After a REFUSED sign-in, the export's capture in `begin` reads the session the refusal left in
+  place -- usually the previous tenant's -- so the export names that tenant although the operator
+  named another (Ruling R10). Every read the export then makes is refused by the sign-in latch, so
+  the document holds no section content: applied in the tenant it names it declares only empty or
+  unread sections, which create nothing and give `-Prune`, which acts only on the child collections a
+  document declares, nothing to remove; applied anywhere else it is refused. Read in the code, not
+  tested. The capture stays in `begin` (R7, and the reason under "The export"). If wrong: the
+  exported `tenantId` can name the previous session's tenant for an empty bundle.
+- `Test-OERGuid` matches with `$`, which .NET lets match before a final line feed, so the validator
+  accepts a `tenantId` of a GUID followed by a line feed, which the schema's pattern refuses; the
+  comparison then never finds that value equal to a token tenant, so the document is refused (fails
+  closed). A one-element array holding a GUID passes the validator's `[string]` cast while the
+  schema's `type: string` refuses it; the comparison reads it as that GUID, so it names no other
+  tenant. This step's review found both and left them as they are.
+- Nothing machine-checks who calls `Get-OERInventoryTenantId`; gate 10 holds only the comparison.
+  `tests/Unit/Public/DirectoryRoleInventory.RoundTrip.Tests.ps1` runs with no state, so its
+  export-to-apply round trip carries no `tenantId` and never reaches the comparison.
+
+**The user-facing texts.** `Invoke-OERStructure`'s help states the document tenant rule in a
+paragraph of its own beside its pipeline session rule, and its `-TenantId` and `-InputObject` point
+at it; `Get-OERInventory`'s and `Export-OERInventory`'s help say what `tenantId` names, that it is
+not the tenant as named, and when it is left out; `Test-OERStructure`'s help that the key is
+checked offline as a canonical GUID and compared only by the apply. The README and the about topic
+carry it in the clause and the short paragraph described under "The user-facing texts" of
+[A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced),
+and the copy example removes the key. CLAUDE.md carries the closed and open halves in its
+Authentication Architecture rule and the two owners in a Code Style rule.
+
+**The proof.** Unit: `tests/Unit/Private/Get-OERDocumentTenantMismatch.Tests.ps1`, Describe
+`Get-OERDocumentTenantMismatch (BL-88, A14)`, pins the owner: a document without `tenantId` returns
+nothing in both modes; before the sign-in the document's tenant in another letter case passes,
+another tenant ID gives exactly one record (id, category, target and message), a domain,
+`organizations` or a braced tenant ID is left to the second comparison, and the state is not read;
+after the sign-in no state, a Graph token tenant that is missing or not a GUID, and another tenant
+each refuse, the granted tenant is compared and never the name
+(`compares the GRANTED tenant, never the tenant as named: a named tenant equal to the document's does not pass when the token differs`),
+and with `-IncludeARM` the ARM token's tenant is compared -- another tenant, or none, refuses --
+while without it the ARM token is not; no token ever reaches the message.
+`tests/Unit/Public/Invoke-OERStructure.Tests.ps1`, Describe
+`Invoke-OERStructure refuses a document from another tenant (BL-88, A14)`, pins the command: test 1
+refuses before the sign-in with `Initialize-OERAuth` never called; 2 is the letter-case control; 3,
+a domain whose token comes from another tenant, and 3b, `organizations`, are refused after the
+sign-in only; 4 and 5, without `-TenantId`, are refused under another tenant and applied under the
+document's; 6 refuses with no session; 7 applies a document without `tenantId` as before; Context 8
+holds that a refused document gets no `-Prune` warning and no administrative unit pre-pass, beside a
+control; Context 9 the ARM term -- refused under another ARM tenant before the scope pre-pass,
+dispatched when both tokens match, refused when the ARM tenant is not a tenant ID, a groups-only
+document refused under an explicit `-IncludeARM` and applied without it, and no ARM comparison
+without an Azure section or `-IncludeARM`; 10 refuses only the piped document that names another
+tenant and applies the next one; 11 reports a `tenantId` that is not a tenant ID as
+`StructureValidationFailed` before either comparison; and 12 terminates the statement as
+`DocumentTenantMismatch` under `-ErrorAction Stop`, before and after the sign-in. The export:
+`tests/Unit/Private/Get-OERInventoryTenantId.Tests.ps1` (Describe
+`Get-OERInventoryTenantId (BL-88, A14)`), the Context `tenantId (BL-88, A14)` in
+`tests/Unit/Private/ConvertTo-OERInventory.Tests.ps1`, and the Describes
+`Get-OERInventory tenantId (BL-88, A14)` and `Export-OERInventory tenantId (BL-88, A14)` in the two
+cmdlets' files, which include
+`captures the tenant in begin, directly after the sign-in, not when the document is assembled` and
+`writes its own capture, not the tenantId of the inventory Get-OERInventory returned`. The validator
+and the schema: the Describes `Test-OERStructureSchema tenantId (BL-88, A14)` and
+`Get-OERStructureSchemaJson tenantId (BL-88, A14)`. The help: the Describes
+`Get-OERInventory help documents the tenantId (BL-88, A14)` and
+`Test-OERStructure help documents the tenantId (BL-88, A14)`, and one `It` each in
+`tests/Unit/Public/Export-OERInventory.Tests.ps1` and `tests/Unit/Public/Invoke-OERStructure.Tests.ps1`;
+the prompt template: the Describe `Get-OERInventoryPromptTemplate tenantId (BL-88, A14)`.
+
+End to end, in `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`, in the A20 Describe with the
+real `Initialize-OERAuth`, every transport stubbed and no `try` around the pipeline: P19 is BL-88's
+shape -- after `Connect-OER` to one tenant, `Invoke-OERStructure` without `-TenantId` inside a
+`ForEach-Object` script block, followed by a `ForEach-Object` whose `-Begin` signs in to another --
+and the only token calls are the two `Connect-OER` sign-ins, no Graph or ARM request leaves, no
+`SignInSuperseded` is written, and exactly one `DocumentTenantMismatch` names the document's path.
+P19b, the control for the open form, applies a document without `tenantId` under the switched
+tenant; P19c applies a document that names the switched tenant; P19d adds `-IncludeARM` and sends
+nothing through either transport; P19e runs `Invoke-OERStructure -TenantId` naming another tenant ID
+than its document as a plain statement, and no token for that tenant is requested and nothing is
+sent. Gate 10 of [#static-source-gates](#static-source-gates) holds the comparison to
+`Invoke-OERStructure`, in its own `It`,
+`compares a structure document's tenantId with Get-OERDocumentTenantMismatch only in Invoke-OERStructure.ps1`.
+
+Mutation-proved, one exact edit at a time. Deleting the comparison after the sign-in turns unit
+tests 3, 4, 6, 8, 9 (the ARM refusal), 10 and 12 (after the sign-in), P19 and P19d red; dropping
+only its `return` turns 3, 4, 6, 8, 9, 10, P19 and P19d red, while 12 stays green, since under
+`-ErrorAction Stop` the write itself throws. Deleting the comparison before the sign-in turns test 1,
+12 (before the sign-in) and P19e red -- P19e records a token request for the other tenant -- and
+dropping only its `return` turns test 1 and P19e red, so in a script with no `try` that `return` is
+what keeps the token request from being made. Moving the comparison after the `-Prune` warning
+turns Context 8's test red. In the owner: comparing `TenantId` instead of `TokenTenantId` turns the
+GRANTED-tenant test and seven more of the owner's tests red; dropping the ARM branch turns the
+owner's two `-IncludeARM` refusals and Context 9's three refusals red; returning early when there is no state turns
+`refuses when the session holds no state` and test 6 red; and dropping the GUID test before the
+sign-in turns
+`returns nothing when -TenantId is a domain, organizations or a braced tenant ID: those are compared after the sign-in`,
+test 3 and test 3b red. In the export: reading `TenantId` turns
+`returns the tenant the Graph token was issued for, never the tenant as named` and the cmdlets'
+tests red; moving the capture out of `begin` turns the capture test red; dropping `-TenantId` from
+`Export-OERInventory`'s canonical converter call turns five of its tests red, and from its Azure-only
+call `passes the capture to both ConvertTo-OERInventory calls, the Azure-only branch and the canonical one`;
+and dropping the converter's GUID test turns its four `leaves tenantId out` cases red. Dropping the
+helper's GUID test turns only the helper's own four non-GUID cases red: the converter's test keeps a
+non-GUID out of the document, so that mutant is caught by one layer of the two, by design. In the
+validator: removing `tenantId` from the known keys, deleting Rule 1b, or replacing `Test-OERGuid`
+with a `[guid]` cast each turns its tests red, the last only the braced and dash-less GUID cases.
+And gate 10: the row with its owner list emptied left the gate green until the row got its own
+`It`, which then turns red, as it does for a call added to another file.
 
 ### A refused sign-in leaves the session uncertain
 
@@ -3218,11 +3524,15 @@ nothing more.
 - The marker refuses only a command that names NO tenant. A command that names another tenant signs
   in to that tenant as it always did, and its own sign-in is checked like any other; one that names
   the previous tenant explicitly signs in there, as named.
-- It does not close the open known limit under
+- It does not close the known limit under
   [A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced):
   `Invoke-OERStructure` or a name-looking builder without `-TenantId`, called inside a script block
   or a function in a pipeline, still takes another command's SUCCESSFUL sign-in for the session it
-  began with. The marker records only sign-ins that did not succeed.
+  began with. The marker records only sign-ins that did not succeed. Sprint 9 step 6b closed that
+  limit for a document that names its tenant, by comparing the document's `tenantId` with the
+  session after the sign-in, not through the marker (BL-88, under
+  [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from));
+  it stays open for a document without `tenantId` and for the builders.
 - Each runspace imports its own copy of the module and so has its own marker (INFERRED, as for the
   state).
 
