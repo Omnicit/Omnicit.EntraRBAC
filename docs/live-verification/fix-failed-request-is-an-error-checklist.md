@@ -520,7 +520,9 @@ Write-OerLiveStep "2.4 oer-s95-grp holds no '$Role' assignment: True ($($W.Attem
 }
 ```
 
-**Expect:** `errors: none; ... (writes: 4)`; rows `Removed` twice (`removed undeclared eligible ...`
+**Expect:** `errors: none; ... (writes: 5)` -- the two removals, the two creates, and the POST
+`getMemberGroups` read of the signed-in identity's memberships (the handler's guard 4 for a group
+candidate), which the fence counts as a non-GET request; rows `Removed` twice (`removed undeclared eligible ...`
 and `active ...`) and `Created` twice for `oer-s95-grp2`; the handler's prune warnings; `holds no ...
 assignment: True`.
 **Failure looks like:** a `Failed` row carrying `EligibilityRequestFailed` or
@@ -536,7 +538,8 @@ Result:
 if ($PruneAllowed) {
     $null = Invoke-S95 -Label '2.5 document B again' -Call { Invoke-OERStructure -Path $DocB -Prune -Confirm:$false }
 } else { Write-OerLiveStep '2.5 SKIPPED: class B (see 2.3).' }
-Remove-Item -Path function:global:Invoke-MgGraphRequest, function:global:Invoke-WebRequest
+# Unqualified on purpose: a scope-qualified function:global: path removes nothing (CLAUDE.md, Testing Conventions).
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest
 Remove-Item -LiteralPath $DocA, $DocB
 Write-OerLiveStep "Fences removed: $(-not (Get-Command -Name Invoke-MgGraphRequest -CommandType Function -ErrorAction Ignore) -and -not (Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore)); documents deleted: $(-not (Test-Path -LiteralPath $DocA) -and -not (Test-Path -LiteralPath $DocB))"
 Disconnect-OerLive
@@ -828,7 +831,8 @@ Result:
 $null = Invoke-S95 -Label '5.2 control' -Call { Set-OERAccessPackageAssignmentPolicy -Id $PolId -DisplayName 'oer-s95-pol' -Description 'oer-s95 control' -Confirm:$false }
 $Now = Get-S95PolicyState
 Write-OerLiveStep "5.2 description changed: $($Now.Description -ceq 'oer-s95 control'); allowedTargetScope $($Now.Scope); targets $($Now.Targets)"
-Remove-Item -Path function:global:Invoke-MgGraphRequest, function:global:Invoke-WebRequest
+# Unqualified on purpose: a scope-qualified function:global: path removes nothing (CLAUDE.md, Testing Conventions).
+Remove-Item -Path function:Invoke-MgGraphRequest, function:Invoke-WebRequest
 Disconnect-OerLive
 ```
 
