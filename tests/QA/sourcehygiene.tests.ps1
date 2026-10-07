@@ -1435,6 +1435,12 @@ BeforeAll {
         sign-in was refused, and a command that names no tenant would then act on the previous tenant.
         The marker's variable, $script:_OERSessionUncertain, is read and written in no file but the
         helper's own.
+        Get-OERDocumentTenantMismatch, the single owner of the comparison of a document's tenantId
+        (BL-88, A14), is called only by Invoke-OERStructure, so a second apply path cannot compare -- or
+        skip comparing -- on rules of its own.
+        Each row of $script:transportGateOwners is enforced only by its own It below, which asserts that
+        the command has no caller outside its owners and that its owners really call it: no assertion
+        reads the table as a whole, so a new row needs its own It, and a row without one is inert.
 
         WHO MAY NAME THE RECLAIM (Sprint 9 step 3, final review I2, Ruling F2). -ReclaimGraphSession
         is the one way past the session gate's refusal in Initialize-OERAuth (A18) and past the
@@ -1521,6 +1527,7 @@ BeforeAll {
         [PSCustomObject]@{ Command = 'Invoke-RestMethod'; Owners = @($script:tenantLookupPath) }
         [PSCustomObject]@{ Command = 'Resolve-OERTenantDomain'; Owners = @($script:signInMemoryPath) }
         [PSCustomObject]@{ Command = 'Set-OERSessionUncertain'; Owners = @('source\Private\Initialize-OERAuth.ps1', 'source\Public\Connect-OER.ps1', 'source\Public\Disconnect-OER.ps1') }
+        [PSCustomObject]@{ Command = 'Get-OERDocumentTenantMismatch'; Owners = @('source\Public\Invoke-OERStructure.ps1') }
     )
     $script:transportGateAliases = @{ iwr = 'Invoke-WebRequest'; curl = 'Invoke-WebRequest'; wget = 'Invoke-WebRequest'; irm = 'Invoke-RestMethod' }
 
@@ -3625,6 +3632,20 @@ named its tenant or was Connect-OER's, Connect-OER sets it first thing, and Disc
 fourth caller can clear it after a refused sign-in, and the next command that names no tenant then acts
 on the previous tenant -- the loop over tenant profiles that applied one tenant's document, prune
 included, in another. Change the marker only in those three files.
+'@
+    }
+
+    It 'compares a structure document''s tenantId with Get-OERDocumentTenantMismatch only in Invoke-OERStructure.ps1' {
+        $script:transportOwnerStale['Get-OERDocumentTenantMismatch'] -join "`n" | Should -BeNullOrEmpty -Because (
+            'Invoke-OERStructure must really call Get-OERDocumentTenantMismatch, or this rule has nothing to be the only owner of; an owner listed here that calls it nowhere is a stale rule, not a pass')
+        $script:transportOwnerViolations['Get-OERDocumentTenantMismatch'] -join "`n" | Should -BeNullOrEmpty -Because @'
+Get-OERDocumentTenantMismatch is the single owner of the comparison between a structure document's
+tenantId and the tenant the document is applied in (BL-88, A14): Invoke-OERStructure calls it before the
+sign-in, against a -TenantId that is a tenant ID, and after it, against the tenants the session's tokens
+were issued for, and refuses the document with DocumentTenantMismatch before anything is read or written
+for it. A second caller is a second apply path that compares -- or skips comparing -- on rules of its
+own, so a document exported from one tenant could be applied in another through it. Apply a document
+only through Invoke-OERStructure.
 '@
     }
 

@@ -175,7 +175,7 @@ Describe 'Test-OERStructure help pointer to the worked example' {
     # direction when the example or the schema changes.
     It 'names exactly the schema sections the worked example does not declare' {
         $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
-        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantAlias') })
+        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
         $ExamplePath = Join-Path $PSScriptRoot '../../../docs/examples/example-structure.json'
         $Example = Get-Content -LiteralPath $ExamplePath -Raw | ConvertFrom-Json
         $Missing = @($Sections | Where-Object { $Example.PSObject.Properties.Name -notcontains $_ } | Sort-Object)
@@ -186,5 +186,16 @@ Describe 'Test-OERStructure help pointer to the worked example' {
         $Clause = [regex]::Match($Help, 'except\s+(?<List>[\w\s,]+?),\s+which\s+(?:is|are)\s+not\s+in\s+the\s+example\s+yet')
         $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
         ($Named -join ',') | Should -BeExactly ($Missing -join ',')
+    }
+}
+
+Describe 'Test-OERStructure help documents the tenantId (BL-88, A14)' {
+    It 'says tenantId must be a canonical GUID and that only Invoke-OERStructure compares it with a session' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Test-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape('A top-level tenantId, when present, must be a canonical GUID (an explicit null or any other value is an Error; a document without the key is valid).'))
+        $Description | Should -Match ([regex]::Escape('The check is offline: Test-OERStructure does not compare tenantId with any session, while Invoke-OERStructure does and refuses a document that names another tenant.'))
     }
 }

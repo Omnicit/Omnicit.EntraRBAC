@@ -125,6 +125,17 @@ Describe 'Get-OERInventoryReadme' {
         }
     }
 
+    It 'tells the reader in Next steps that a proposal keeping tenantId is applied only in the tenant the export came from' {
+        InModuleScope $script:moduleName {
+            $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
+            # Whitespace collapsed first, so the assertion does not depend on where the paragraph wraps.
+            $Section = ($Md -split '(?m)^## Next steps\r?$')[1] -replace '\s+', ' '
+            $Section | Should -Match ([regex]::Escape('A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant this export came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in another tenant, change or remove `tenantId` first.'))
+            # The sentence follows the apply step it qualifies, inside the Next steps section.
+            $Section.IndexOf('`Invoke-OERStructure -Path ./proposal.json`') | Should -BeLessThan $Section.IndexOf('A proposal that keeps the `tenantId`')
+        }
+    }
+
     It 'contains only ASCII characters' {
         InModuleScope $script:moduleName {
             $Bytes = [System.Text.Encoding]::UTF8.GetBytes((Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()))
@@ -315,7 +326,7 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
-                    Where-Object { $_ -notin @('version', 'tenantAlias') })
+                    Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
             $Md | Should -Match "The apply document has $Word sections only"
             foreach ($Section in $Sections) {

@@ -843,7 +843,7 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
     # direction when the example or the schema changes.
     It 'names exactly the schema sections the worked example does not declare' {
         $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
-        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantAlias') })
+        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
         $ExamplePath = Join-Path $PSScriptRoot '../../../docs/examples/example-structure.json'
         $Example = Get-Content -LiteralPath $ExamplePath -Raw | ConvertFrom-Json
         $Missing = @($Sections | Where-Object { $Example.PSObject.Properties.Name -notcontains $_ } | Sort-Object)
@@ -854,6 +854,44 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
         $Clause = [regex]::Match($Help, 'except\s+(?<List>[\w\s,]+?),\s+which\s+(?:is|are)\s+not\s+in\s+the\s+example\s+yet')
         $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
         ($Named -join ',') | Should -BeExactly ($Missing -join ',')
+    }
+
+    It 'documents the document tenant rule beside the pipeline session rule, and points -TenantId and -InputObject at it (BL-88, A14)' {
+        # Read through Get-Help, never the command's Definition: the Definition holds the function body,
+        # where DocumentTenantMismatch and tenantId already stand, so a match there proves nothing about
+        # the help. Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Invoke-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText = @{}
+        foreach ($P in @($Help.Parameters.Parameter)) {
+            $ParamText[[string]$P.Name] = ((@($P.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+
+        $Description | Should -Match ([regex]::Escape('Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory and Export-OERInventory write it -- is applied only in that tenant.'))
+        $Description | Should -Match ([regex]::Escape('the document is refused with DocumentTenantMismatch before the sign-in, with no token request'))
+        $Description | Should -Match ([regex]::Escape('the document is compared again after the sign-in, before anything is read or written for it (the omitted-collection warning and the administrative unit pre-pass included)'))
+        $Description | Should -Match ([regex]::Escape("the tenant the session's Microsoft Graph token was issued for must be the document's, and so must the tenant the Azure Resource Manager token was issued for when Azure Resource Manager is used (an Azure section is selected and declared, or -IncludeARM is set)"))
+        $Description | Should -Match ([regex]::Escape("A session that holds no such token, or whose token tenant is not a GUID, cannot be compared and refuses the document too."))
+        $Description | Should -Match ([regex]::Escape('refuses the document with DocumentTenantMismatch as a non-terminating error: nothing is read or written for it, and the next piped document is tried on its own'))
+        $Description | Should -Match ([regex]::Escape("The document's tenant is only compared, never signed in to, so name it with -TenantId to apply the document there."))
+        $Description | Should -Match ([regex]::Escape("A document without tenantId is applied as before, with no tenant check: to use an export as a template for another tenant, change its tenantId to that tenant's ID or remove the key."))
+        $Description | Should -Match ([regex]::Escape('Called inside a script block or a function in a pipeline (ForEach-Object { Invoke-OERStructure ... }), the command begins after every other command in the pipeline has begun and takes the session they left for its own, which the pipeline session rule above cannot see'))
+        $Description | Should -Match ([regex]::Escape('a document without tenantId is applied in whatever tenant that session holds, so name -TenantId there'))
+
+        # The new paragraph stands after the pipeline session rule, which is still there word for word at
+        # its head and its end, and before the next paragraph.
+        $Description | Should -Match ([regex]::Escape('Pipeline session rule: without -TenantId the command acts only under the session it began with.'))
+        $Description | Should -Match ([regex]::Escape('Run such commands as separate statements.'))
+        $Rule = $Description.IndexOf('Pipeline session rule:')
+        $Rule | Should -BeGreaterThan -1
+        $Rule | Should -BeLessThan $Description.IndexOf('Document tenant rule:')
+        $Description.IndexOf('Document tenant rule:') | Should -BeLessThan $Description.IndexOf('RoleAssignments scope grouping:')
+
+        $ParamText['TenantId'] | Should -Match 'tenantId'
+        $ParamText['TenantId'] | Should -Match ([regex]::Escape('see the document tenant rule above'))
+        $ParamText['InputObject'] | Should -Match ([regex]::Escape('whose tenantId, when it carries one, limits it to that tenant'))
+        # The pipeline session rule's last sentence no longer claims the sign-in is unconditional.
+        $Description | Should -Match ([regex]::Escape('With -TenantId the command signs in to that tenant as before, except that a document naming another tenant than a -TenantId that is a tenant ID is refused before that sign-in (see the document tenant rule below).'))
     }
 }
 
@@ -1486,5 +1524,387 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+}
+
+Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14)' {
+    # A structure document that names its tenant (tenantId, which Get-OERInventory writes) is applied
+    # in that tenant only. Get-OERDocumentTenantMismatch owns the comparison; Invoke-OERStructure calls
+    # it twice per document: before the sign-in, against a -TenantId that is a tenant ID, and after the
+    # sign-in, against the tenant the session's tokens were issued for (TokenTenantId, and
+    # ArmTokenTenantId when an Azure section is applied). A refusal is DocumentTenantMismatch, written
+    # as a non-terminating error before anything is read or written for the document. Initialize-OERAuth
+    # stays mocked; the session is a direct write of the module state. The tenants are invented: A is
+    # 4444..., B is 7777..., and cccc... is a tenant ID with letters, for the letter-case cases.
+    BeforeAll {
+        function script:Set-BL88ProbeState {
+            param([string]$TenantId, [string]$TokenTenantId, [string]$ArmTokenTenantId)
+            InModuleScope Omnicit.EntraRBAC -Parameters @{ T = $TenantId; G = $TokenTenantId; A = $ArmTokenTenantId } {
+                param($T, $G, $A)
+                $script:_OERAuthState = if ($T) {
+                    @{
+                        TenantId = $T; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'; Environment = 'Global'
+                        TokenTenantId = $(if ($G) { $G } else { $null }); ArmTokenTenantId = $(if ($A) { $A } else { $null })
+                    }
+                } else { $null }
+            }
+        }
+        function script:New-BL88Doc {
+            param([string]$TenantId, [string]$Name = 'oer-bl88-probe')
+            '{ "version": "1.0", "tenantId": "' + $TenantId + '", "groups": [ { "displayName": "' + $Name + '" } ] }'
+        }
+        $script:TenantA = '44444444-4444-4444-4444-444444444444'
+        $script:TenantB = '77777777-7777-7777-7777-777777777777'
+    }
+    BeforeEach {
+        Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Sync-OERStructureGroup {
+                ConvertTo-OERStructureResult -Section 'groups' -Item ([string]$Item.displayName) -Action 'Skipped' -Detail "would create group $([string]$Item.displayName)"
+            }
+            Mock Sync-OERStructureAdministrativeUnit { }
+            Mock Sync-OERStructureRoleAssignment { }
+            # The roleAssignments scope pre-pass resolves every scope before dispatch; no test here may
+            # reach the ARM transport through it.
+            Mock Resolve-OERScope {
+                param($Scope, $Subscription, $ManagementGroup)
+                if ($Subscription) { "/subscriptions/$Subscription" } elseif ($ManagementGroup) { "/providers/Microsoft.Management/managementGroups/$ManagementGroup" } else { $Scope }
+            }
+        }
+    }
+    AfterAll { Set-BL88ProbeState -TenantId $null }
+
+    It '1: refuses the document before signing in when -TenantId names another tenant ID than the document' {
+        # The sign-in, were it made, would succeed for B, as a real one would, so the comparison after it
+        # would refuse the document too: what only the check before the sign-in gives is that no token
+        # is requested at all, which is therefore asserted first.
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Initialize-OERAuth {
+                $script:_OERAuthState = @{
+                    TenantId = '77777777-7777-7777-7777-777777777777'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                    Environment = 'Global'; TokenTenantId = '77777777-7777-7777-7777-777777777777'
+                }
+            }
+        }
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -TenantId $script:TenantB -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        # No token is requested for a tenant the document does not name.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].FullyQualifiedErrorId | Should -BeExactly 'DocumentTenantMismatch,Invoke-OERStructure'
+        $Mismatch[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+        $Mismatch[0].TargetObject | Should -BeExactly 'Json'
+        $Mismatch[0].Exception.Message | Should -BeLike "The structure document names tenant '44444444-4444-4444-4444-444444444444', but -TenantId names tenant '77777777-7777-7777-7777-777777777777'. *"
+        $Mismatch[0].Exception.Message | Should -BeLike '*nothing was signed in to, read or written for this document*'
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '2: applies the document when -TenantId names its tenant in another letter case' {
+        # cccc... carries letters, so a case-sensitive comparison anywhere would refuse here.
+        Set-BL88ProbeState -TenantId 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' -TokenTenantId 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC'
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId 'cccccccc-cccc-cccc-cccc-cccccccccccc') -TenantId 'CCCCCCCC-CCCC-CCCC-CCCC-CCCCCCCCCCCC' -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        @($Errs).Count | Should -Be 0
+        $Out.Count | Should -Be 1
+        $Out[0].Item | Should -BeExactly 'oer-bl88-probe'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    It '3: refuses after the sign-in when -TenantId is a domain whose token was issued for another tenant' {
+        InModuleScope Omnicit.EntraRBAC {
+            Mock Initialize-OERAuth {
+                $script:_OERAuthState = @{
+                    TenantId = 'contoso.onmicrosoft.com'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                    Environment = 'Global'; TokenTenantId = '77777777-7777-7777-7777-777777777777'
+                }
+            }
+        }
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -TenantId 'contoso.onmicrosoft.com' -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "*names tenant '44444444-4444-4444-4444-444444444444', but the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'.*"
+        $Mismatch[0].Exception.Message | Should -BeLike '*nothing was read or written for this document*'
+        @($Errs).Count | Should -Be 1
+        # The domain is not a tenant ID, so it was compared after the sign-in, through its token.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -eq 'contoso.onmicrosoft.com' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '3b: with -TenantId organizations, does not refuse before the sign-in and refuses after it when the session is another tenant than the document''s' {
+        # organizations names no tenant ID, so it is compared after the sign-in, through its token: the
+        # mocked sign-in leaves the session at A, and the document names B.
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantB) -TenantId 'organizations' -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -eq 'organizations' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "*names tenant '77777777-7777-7777-7777-777777777777', but the session's Microsoft Graph token was issued for tenant '44444444-4444-4444-4444-444444444444'.*"
+        $Mismatch[0].Exception.Message | Should -BeLike '*nothing was read or written for this document*'
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '4: refuses without -TenantId when the session is another tenant, naming the document''s path' {
+        Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB
+        $DocPath = Join-Path $TestDrive 'bl88-a.json'
+        Set-Content -LiteralPath $DocPath -Value (New-BL88Doc -TenantId $script:TenantA) -Encoding utf8
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Path $DocPath -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].TargetObject | Should -BeExactly $DocPath
+        $Mismatch[0].Exception.Message | Should -BeLike "*but the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'*"
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '5: applies without -TenantId when the session is the document''s tenant' {
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        @($Errs).Count | Should -Be 0
+        $Out.Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    It '6: refuses a document with tenantId when the module holds no session after the sign-in' {
+        Set-BL88ProbeState -TenantId $null
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike '*but the session holds no Microsoft Graph token whose tenant can be compared with it*'
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        # Not vacuous: the sign-in really left no state.
+        InModuleScope Omnicit.EntraRBAC { $null -eq $script:_OERAuthState } | Should -BeTrue
+    }
+
+    It '7: applies a document without tenantId under a session of another tenant, as before' {
+        Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json '{ "version": "1.0", "groups": [ { "displayName": "oer-bl88-probe" } ] }' -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 0
+        @($Errs).Count | Should -Be 0
+        $Out.Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+    }
+
+    Context '8: nothing before the sections runs for a refused document' {
+        BeforeAll {
+            # g1 names AU-1, so the administrative unit pre-pass runs, and g1 and AU-1 omit their
+            # members (and AU-1 its scopedRoles), so -Prune writes the omitted-collection warning.
+            $script:PrePassDoc = '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444", ' +
+                '"groups": [ { "displayName": "g1", "administrativeUnit": "AU-1" } ], ' +
+                '"administrativeUnits": [ { "displayName": "AU-1" } ] }'
+        }
+
+        It 'writes no -Prune warning and runs no administrative unit pre-pass under a session of another tenant' {
+            Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB
+            $Errs = $null
+            $W = $null
+            $Out = @(Invoke-OERStructure -Json $script:PrePassDoc -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue -WarningVariable W)
+            $Out | Should -BeNullOrEmpty
+            @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 1
+            @($Errs).Count | Should -Be 1
+            @($W | Where-Object { "$_" -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 0
+            @($W).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        }
+
+        It 'control: the same document under its own tenant writes the warning and runs the pre-pass' {
+            $Errs = $null
+            $W = $null
+            $null = @(Invoke-OERStructure -Json $script:PrePassDoc -Prune -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs -WarningAction SilentlyContinue -WarningVariable W)
+            @($Errs).Count | Should -Be 0
+            @($W | Where-Object { "$_" -like 'Invoke-OERStructure: -Prune is set*' }).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 1 -Exactly -ParameterFilter { $EnsureOnly }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+        }
+    }
+
+    Context '9: the Azure Resource Manager token' {
+        BeforeAll {
+            $script:RaDoc = '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444", ' +
+                '"roleAssignments": [ { "scope": "sub:Prod", "role": "Reader", "principal": "p" } ] }'
+        }
+
+        It 'refuses a document with an Azure section when the ARM token was issued for another tenant, before the scope pre-pass' {
+            Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA -ArmTokenTenantId $script:TenantB
+            $Errs = $null
+            $Out = @(Invoke-OERStructure -Json $script:RaDoc -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            $Out | Should -BeNullOrEmpty
+            $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+            $Mismatch.Count | Should -Be 1
+            $Mismatch[0].Exception.Message | Should -BeLike "*but the session's Azure Resource Manager token was issued for tenant '77777777-7777-7777-7777-777777777777'*"
+            @($Errs).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureRoleAssignment -Times 0
+        }
+
+        It 'dispatches the Azure section when both tokens were issued for the document''s tenant' {
+            Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA -ArmTokenTenantId $script:TenantA
+            $Errs = $null
+            $null = @(Invoke-OERStructure -Json $script:RaDoc -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Errs).Count | Should -Be 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 1 -Exactly
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureRoleAssignment -Times 1 -Exactly
+        }
+
+        It 'refuses a document with an Azure section when the ARM token''s tenant is not a tenant ID' {
+            Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA -ArmTokenTenantId 'not-a-guid'
+            $Errs = $null
+            $Out = @(Invoke-OERStructure -Json $script:RaDoc -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            $Out | Should -BeNullOrEmpty
+            $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+            $Mismatch.Count | Should -Be 1
+            $Mismatch[0].Exception.Message | Should -BeLike '*but the session holds no Azure Resource Manager token whose tenant can be compared with it*'
+            @($Errs).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Resolve-OERScope -Times 0
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureRoleAssignment -Times 0
+        }
+
+        It 'refuses a groups-only document under an explicit -IncludeARM when the ARM token was issued for another tenant, and applies it without -IncludeARM' {
+            Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA -ArmTokenTenantId $script:TenantB
+            $Errs = $null
+            $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -IncludeARM -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            $Out | Should -BeNullOrEmpty
+            $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+            $Mismatch.Count | Should -Be 1
+            $Mismatch[0].Exception.Message | Should -BeLike "*but the session's Azure Resource Manager token was issued for tenant '77777777-7777-7777-7777-777777777777'*"
+            @($Errs).Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $IncludeARM }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+
+            # The same document without -IncludeARM uses no ARM token, so the ARM token is not compared.
+            $Errs = $null
+            $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Errs).Count | Should -Be 0
+            $Out.Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+        }
+
+        It 'does not compare the ARM token for a document with no Azure section and no -IncludeARM' {
+            Set-BL88ProbeState -TenantId $script:TenantA -TokenTenantId $script:TenantA -ArmTokenTenantId $script:TenantB
+            $Errs = $null
+            $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+            @($Errs).Count | Should -Be 0
+            $Out.Count | Should -Be 1
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { -not $IncludeARM }
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+        }
+    }
+
+    It '10: refuses only the piped document that names another tenant and applies the next one' {
+        $Doc1 = New-BL88Doc -TenantId $script:TenantB -Name 'oer-bl88-probe-1' | ConvertFrom-Json
+        $Doc2 = New-BL88Doc -TenantId $script:TenantA -Name 'oer-bl88-probe-2' | ConvertFrom-Json
+        $Errs = $null
+        $Out = @($Doc1, $Doc2 | Invoke-OERStructure -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "*names tenant '77777777-7777-7777-7777-777777777777', but the session's Microsoft Graph token was issued for tenant '44444444-4444-4444-4444-444444444444'*"
+        $Mismatch[0].TargetObject | Should -BeExactly 'InputObject'
+        @($Errs).Count | Should -Be 1
+        $Out.Count | Should -Be 1
+        $Out[0].Item | Should -BeExactly 'oer-bl88-probe-2'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 2 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 1 -Exactly -ParameterFilter { $Item.displayName -eq 'oer-bl88-probe-2' }
+    }
+
+    It '11: reports a tenantId that is not a tenant ID as StructureValidationFailed, before either comparison' {
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId 'contoso') -TenantId $script:TenantB -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'StructureValidationFailed*' }).Count | Should -Be 1
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' }).Count | Should -Be 0
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '12: under -ErrorAction Stop the refusal <Case> terminates the statement as DocumentTenantMismatch' -ForEach @(
+        @{ Case = 'before the sign-in'; Requested = '77777777-7777-7777-7777-777777777777'; SignIns = 0 }
+        @{ Case = 'after the sign-in'; Requested = $null; SignIns = 1 }
+    ) {
+        if (-not $Requested) { Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB }
+        $Params = @{ Json = (New-BL88Doc -TenantId $script:TenantA); WhatIf = $true; ErrorAction = 'Stop' }
+        if ($Requested) { $Params.TenantId = $Requested }
+        { Invoke-OERStructure @Params } | Should -Throw -ErrorId 'DocumentTenantMismatch*'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times $SignIns -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '13: refuses after the sign-in when -TenantId is the document''s own tenant ID but the session the sign-in left is not (TokenTenantId <Case>)' -ForEach @(
+        @{ Case = 'is another tenant'; Expected = "the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'" }
+        @{ Case = 'is absent'; Expected = 'the session holds no Microsoft Graph token whose tenant can be compared with it' }
+    ) {
+        # -TenantId names the document's own tenant, so the comparison before the sign-in passes and the
+        # sign-in is made. The comparison after it is NOT skipped for a -TenantId that is a tenant ID: the
+        # name is what was asked for, the token is what the session was granted, and a sign-in that did
+        # not take effect (or whose token carries no tenant) must not turn into an apply. The mocked
+        # sign-in only sets the module state, so nothing signs in anywhere.
+        if ($Case -eq 'is another tenant') {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Initialize-OERAuth {
+                    $script:_OERAuthState = @{
+                        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                        Environment = 'Global'; TokenTenantId = '77777777-7777-7777-7777-777777777777'
+                    }
+                }
+            }
+        } else {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Initialize-OERAuth {
+                    $script:_OERAuthState = @{
+                        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                        Environment = 'Global'; TokenTenantId = $null
+                    }
+                }
+            }
+        }
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -TenantId $script:TenantA -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "The structure document names tenant '44444444-4444-4444-4444-444444444444', but $Expected*"
+        $Mismatch[0].Exception.Message | Should -BeLike '*nothing was read or written for this document*'
+        @($Errs).Count | Should -Be 1
+        # The sign-in WAS made (the comparison before it passed); only the one after it refused.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '14: refuses a document in a real run (-Confirm:$false, no -WhatIf) without -TenantId when the session is another tenant, writing nothing' {
+        Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "*but the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'*"
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
     }
 }

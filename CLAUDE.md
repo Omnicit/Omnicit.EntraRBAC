@@ -607,9 +607,13 @@ browser prompt (A6). The snapshot is taken when the command's own `begin` runs, 
 command that stands in the pipeline itself and not one called inside a script block or a function
 in a pipeline -- `ForEach-Object { Invoke-OERStructure ... }`. Such a command begins only when the
 block runs, after every `begin` block of the outer pipeline, so it takes a downstream command's
-sign-in for the session it began with: `Invoke-OERStructure`'s document, `-Prune` included, then
-applies to the downstream command's tenant, and a builder looks its names up there -- an open gap,
-older than BL-76. So never call `Invoke-OERStructure` or a name-looking builder without `-TenantId`
+sign-in for the session it began with. The gap this leaves is closed for a document that names its
+tenant (BL-88; `tenantId`, which `Get-OERInventory` and `Export-OERInventory` write):
+`Get-OERDocumentTenantMismatch` refuses the document in any other tenant with
+`DocumentTenantMismatch`, whatever session the command began with. It stays open, older than BL-76,
+for a document without `tenantId` -- applied, `-Prune` included, in the downstream command's
+tenant -- and for the builders, which look their names up there. So never call a name-looking
+builder, or `Invoke-OERStructure` with a document that carries no `tenantId`, without `-TenantId`
 inside a script block or function in a pipeline that signs in to another tenant or identity. The
 identity's tenant term is the tenant the Graph token was issued for (`TokenTenantId`) when that is a
 GUID, and the tenant as NAMED otherwise, never the ARM token's (BL-77): since a named tenant is
@@ -996,6 +1000,22 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   (`$script:_OERSessionUncertain`), called only by `Initialize-OERAuth`, `Connect-OER` and
   `Disconnect-OER` (see **Authentication Architecture**).
   `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
+- **`Get-OERDocumentTenantMismatch` is the single owner of the comparison of a structure document's
+  `tenantId`** with the tenant `Invoke-OERStructure` acts in, and of the `DocumentTenantMismatch` id
+  and message (BL-88, A14); `Get-OERInventoryTenantId` is the single owner of which tenant an export
+  names -- the Graph token's granted tenant (`TokenTenantId`) when it is a GUID, never the tenant as
+  named, and otherwise no key at all, with no warning. `Get-OERInventory` and `Export-OERInventory`
+  call it in `begin`, directly after their own sign-in. `Invoke-OERStructure` calls the comparison
+  twice per document: before the sign-in whenever `-TenantId` is bound -- where the owner compares
+  only a canonical GUID and leaves any other name (a domain, `organizations`) to the second call;
+  keep that GUID test in the owner, never in the caller -- and after the sign-in against
+  `TokenTenantId` (and `ArmTokenTenantId` when ARM is used), directly after the snapshot is taken
+  again and before anything is read or written for the document. A present `tenantId` that is
+  not a canonical GUID, `null` included, fails validation; a document without the key is applied
+  exactly as before. Never sign in WITH the document's tenant (A6), never compare it inline, and
+  never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
+  `Invoke-OERStructure`, in a row with an `It` of its own; nothing machine-checks who calls
+  `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
 
 ---
 
@@ -1221,9 +1241,10 @@ bug.
   `Get-OERSignInIdentity` only in `Register-OERSignInIdentity`, `Get-OERSignInSupersession` and
   `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
   `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
-  `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`, and
-  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`, every
-  listed owner really calling it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
+  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`, and
+  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, every listed owner really calling
+  it; the tenant lookup's one `Invoke-RestMethod` call carrying only
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and

@@ -4348,3 +4348,66 @@ Describe 'Test-OERStructureSchema refuses an empty name (A10)' {
         }
     }
 }
+
+Describe 'Test-OERStructureSchema tenantId (BL-88, A14)' {
+    BeforeAll {
+        function Invoke-TenantIdValidation {
+            param([string]$Json)
+            InModuleScope $script:moduleName -Parameters @{ Json = $Json } {
+                param($Json)
+                Test-OERStructureSchema -Document ($Json | ConvertFrom-Json)
+            }
+        }
+    }
+
+    It 'accepts a canonical GUID tenantId as Valid, with no finding at all' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444" }'
+        $V.Valid | Should -BeTrue
+        @($V.Errors).Count | Should -Be 0 -Because 'neither the unknown-key rule nor the tenantId rule may report it'
+        @($V.Errors | Where-Object Path -eq 'tenantId').Count | Should -Be 0
+    }
+
+    It 'accepts an upper-case hexadecimal GUID tenantId as Valid' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE" }'
+        $V.Valid | Should -BeTrue
+        @($V.Errors | Where-Object Path -eq 'tenantId').Count | Should -Be 0
+    }
+
+    It 'no longer reports tenantId as an unknown top-level key' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444" }'
+        @($V.Errors | Where-Object { $_.Message -like "*Unknown top-level key 'tenantId'*" }).Count | Should -Be 0
+    }
+
+    It 'accepts a document without the tenantId key, with no finding naming tenantId' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantAlias": "contoso" }'
+        $V.Valid | Should -BeTrue
+        @($V.Errors | Where-Object { $_.Path -eq 'tenantId' -or $_.Item -eq 'tenantId' -or $_.Message -like '*tenantId*' }).Count |
+            Should -Be 0
+    }
+
+    It 'refuses <Label> as exactly one Error at Path tenantId and is not Valid' -ForEach @(
+        @{ Label = 'an explicit null'; Fragment = 'null' }
+        @{ Label = 'an empty string'; Fragment = '""' }
+        @{ Label = 'a tenant domain'; Fragment = '"contoso.onmicrosoft.com"' }
+        @{ Label = 'a braced GUID'; Fragment = '"{44444444-4444-4444-4444-444444444444}"' }
+        @{ Label = 'a dash-less GUID'; Fragment = '"44444444444444444444444444444444"' }
+        @{ Label = 'a number'; Fragment = '5' }
+    ) {
+        $V = Invoke-TenantIdValidation -Json ('{ "version": "1.0", "tenantId": ' + $Fragment + ' }')
+        $V.Valid | Should -BeFalse
+        @($V.Errors).Count | Should -Be 1 -Because 'the one finding is the tenantId rule, and nothing else is wrong with the document'
+        $Finding = @($V.Errors | Where-Object Path -eq 'tenantId')
+        $Finding.Count | Should -Be 1
+        $Finding[0].Section | Should -BeExactly '(root)'
+        $Finding[0].Item | Should -BeExactly 'tenantId'
+        $Finding[0].Severity | Should -BeExactly 'Error'
+        $Finding[0].Message | Should -BeLike "'tenantId' must be*"
+    }
+
+    It 'names the offending value and the way out in the message' {
+        $V = Invoke-TenantIdValidation -Json '{ "version": "1.0", "tenantId": "contoso.onmicrosoft.com" }'
+        $Message = @($V.Errors | Where-Object Path -eq 'tenantId')[0].Message
+        $Message | Should -BeLike "*found 'contoso.onmicrosoft.com'*"
+        $Message | Should -BeLike '*Omit the key*'
+    }
+}

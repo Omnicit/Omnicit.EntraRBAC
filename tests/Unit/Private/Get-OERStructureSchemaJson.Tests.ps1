@@ -1025,3 +1025,47 @@ Describe 'Get-OERStructureSchemaJson refuses an empty name (A10)' {
         }
     }
 }
+
+Describe 'Get-OERStructureSchemaJson tenantId (BL-88, A14)' {
+    It 'declares tenantId as a canonical-GUID string whose description says never to invent one' {
+        InModuleScope $script:moduleName {
+            $Obj = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Obj.properties.PSObject.Properties.Name | Should -Contain 'tenantId'
+            $Obj.properties.tenantId.type | Should -BeExactly 'string'
+            $Obj.properties.tenantId.pattern | Should -BeExactly '^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$'
+            $Obj.properties.tenantId.description | Should -Not -BeNullOrEmpty
+            $Obj.properties.tenantId.description | Should -Match 'never invent'
+        }
+    }
+
+    It 'does not make tenantId required' {
+        InModuleScope $script:moduleName {
+            $Obj = Get-OERStructureSchemaJson | ConvertFrom-Json
+            $Obj.required | Should -Not -Contain 'tenantId'
+        }
+    }
+
+    It 'validates a document carrying a GUID tenantId' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Json = '{ "version": "1.0", "tenantId": "44444444-4444-4444-4444-444444444444" }'
+            Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeTrue
+        }
+    }
+
+    It 'rejects a tenantId that is not a canonical GUID' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Json = '{ "version": "1.0", "tenantId": "contoso" }'
+            Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+
+    It 'rejects an explicit null tenantId' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        InModuleScope $script:moduleName {
+            $Schema = Get-OERStructureSchemaJson
+            $Json = '{ "version": "1.0", "tenantId": null }'
+            Test-Json -Json $Json -Schema $Schema -ErrorAction SilentlyContinue | Should -BeFalse
+        }
+    }
+}

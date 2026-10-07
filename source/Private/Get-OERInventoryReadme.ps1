@@ -212,6 +212,10 @@ this export could not read" above.
 5. Preview the changes, then apply:
    `Invoke-OERStructure -Path ./proposal.json -WhatIf`
    `Invoke-OERStructure -Path ./proposal.json`
+
+A proposal that keeps the `tenantId` of `inventory.json` is applied only in the tenant this export
+came from: `Invoke-OERStructure` refuses it anywhere else. To apply it in another tenant, change or
+remove `tenantId` first.
 '@
 
     $Readme.Replace('@@COULD-NOT-READ@@', $CouldNotRead)

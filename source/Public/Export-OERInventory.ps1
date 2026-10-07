@@ -95,14 +95,21 @@ function Export-OERInventory {
     say) can tell a collection that was not read from one that is empty. The lists go into README.md
     only, never into inventory.json or any other file that is validated or applied.
 
+    inventory.json carries the top-level tenantId that Get-OERInventory writes -- the tenant ID the
+    session's Microsoft Graph token was issued for -- so Invoke-OERStructure applies it only in that
+    tenant and refuses it elsewhere with DocumentTenantMismatch; the Get-OERInventory help describes
+    the rule.
+
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
-    oer-inventory-<tenantId>-<yyyyMMdd-HHmmss>, so inventory.json is at
-    <OutputPath>/oer-inventory-<tenantId>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
-    Because the stamp is generated per run, the only reliable way to address the bundle afterwards is
-    the BundlePath property of the returned Omnicit.EntraRBAC.InventoryBundle object -- an absolute
-    path, populated under -WhatIf too (as the planned location). Capture the returned object and join
-    onto its BundlePath rather than guessing the folder name; see the Test-OERStructure example below.
+    oer-inventory-<tenant>-<yyyyMMdd-HHmmss>, so inventory.json is at
+    <OutputPath>/oer-inventory-<tenant>-<stamp>/inventory.json and NOT at <OutputPath>/inventory.json.
+    <tenant> is the tenant as the session names it (an ID, or the domain given to -TenantId), which can
+    differ from the tenantId inside inventory.json. Because the stamp is generated per run, the only
+    reliable way to address the bundle afterwards is the BundlePath property of the returned
+    Omnicit.EntraRBAC.InventoryBundle object -- an absolute path, populated under -WhatIf too (as the
+    planned location). Capture the returned object and join onto its BundlePath rather than guessing
+    the folder name; see the Test-OERStructure example below.
 
     The full export to LLM to Test-OERStructure to Invoke-OERStructure walkthrough is documented in
     the repository at docs/inventory-to-llm/README.md, and a worked apply document is kept in the
@@ -146,6 +153,8 @@ function Export-OERInventory {
 
     .PARAMETER TenantId
     Optional tenant id or domain name forwarded to Initialize-OERAuth for explicit tenant targeting.
+    The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was
+    issued for, not this value.
 
     .EXAMPLE
     Export-OERInventory
@@ -154,7 +163,7 @@ function Export-OERInventory {
     .EXAMPLE
     Export-OERInventory -OutputPath C:\Temp -Include Groups,AdministrativeUnits,Catalogs,AccessPackages,RoleAssignments,RoleManagementPolicies
     Reads the full posture (including tenant-wide Azure role assignments and PIM policies) into a
-    bundle under C:\Temp\oer-inventory-<tenantId>-<stamp>\, not into C:\Temp itself.
+    bundle under C:\Temp\oer-inventory-<tenant>-<stamp>\, not into C:\Temp itself.
 
     .EXAMPLE
     $Bundle = Export-OERInventory -OutputPath C:\Temp
@@ -192,6 +201,10 @@ function Export-OERInventory {
             $AuthParams.IncludeARM = $true
         }
         Initialize-OERAuth @AuthParams
+        # BL-88 (A14): the tenant inventory.json names, captured here under the session this command
+        # signed in under. It is this cmdlet's own capture, never the tenantId of the inventory
+        # Get-OERInventory returns, so the document is assembled with the one value in both calls.
+        $DocumentTenantId = Get-OERInventoryTenantId
     }
     process {
         # --- Gather the Entra ID sections (names only, for portability) ---
@@ -236,7 +249,7 @@ function Export-OERInventory {
             if ($AllDirectoryRolePolicies) { $InvParams.AllDirectoryRolePolicies = $true }
             Get-OERInventory @InvParams
         } else {
-            ConvertTo-OERInventory
+            ConvertTo-OERInventory -TenantId $DocumentTenantId
         }
         $IncompleteReads = [System.Collections.Generic.List[string]]::new()
         foreach ($IErr in @($InventoryReadErrors)) {
@@ -478,6 +491,7 @@ function Export-OERInventory {
         # apply-schema validation ("'role' is required at directoryRoleManagementPolicies[0]")
         # instead of writing a genuinely empty section, same footgun $AllGroups above guards against.
         $Canonical = ConvertTo-OERInventory `
+            -TenantId $DocumentTenantId `
             -Groups $DetailedGroups `
             -AdministrativeUnits @($Inv.AdministrativeUnits) `
             -Catalogs @($Inv.Catalogs) `

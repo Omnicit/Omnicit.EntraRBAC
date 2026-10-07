@@ -6630,3 +6630,121 @@ Describe 'Get-OERInventory groups section, read through the real Get-OERGroup' {
         }
     }
 }
+
+Describe 'Get-OERInventory tenantId (BL-88, A14)' {
+    # The export names the tenant the session's Graph token was issued for (TokenTenantId, through
+    # Get-OERInventoryTenantId), never the tenant as the caller named it. The mocked sign-in below
+    # sets the module's auth state itself, the way the real one does, so the capture time is the real
+    # one: after Initialize-OERAuth in the begin block.
+    BeforeAll {
+        $script:moduleName = 'Omnicit.EntraRBAC'
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Get-OERGroup { }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{
+                    TenantId      = 'contoso.onmicrosoft.com'
+                    TokenTenantId = '44444444-4444-4444-4444-444444444444'
+                }
+            }
+        }
+    }
+
+    AfterAll {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+    }
+
+    It 'writes the tenant the Graph token was issued for as tenantId, never the tenant as named' {
+        $Inv = Get-OERInventory -Include Groups -TenantId 'contoso.onmicrosoft.com' -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        $Inv.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        @($Inv.PSObject.Properties.Name)[0..2] | Should -Be @('version', 'tenantId', 'groups')
+    }
+
+    It 'leaves tenantId out, with no warning, when the token reported no tenant ID' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{ TenantId = '11111111-1111-1111-1111-111111111111'; TokenTenantId = $null }
+            }
+        }
+        $Inv = Get-OERInventory -Include Groups -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        $Inv.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+        @($Inv.PSObject.Properties.Name)[0..1] | Should -Be @('version', 'groups')
+        @($Warn).Count | Should -Be 0 -Because 'the export just leaves tenantId out and says nothing; a session whose token reports no tenant ID is refused only by the apply, for a document that names a tenant'
+    }
+
+    It 'leaves tenantId out when the session holds no state' {
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        $Inv = Get-OERInventory -Include Groups -WarningVariable Warn -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
+        @($Warn).Count | Should -Be 0
+    }
+
+    It 'captures the tenant in begin, directly after the sign-in, not when the document is assembled' {
+        # A read that finds the session's token tenant changed while the section is read must still
+        # yield the tenant the command signed in under: the capture happens in begin.
+        Mock -ModuleName $script:moduleName Get-OERGroup {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState.TokenTenantId = '77777777-7777-7777-7777-777777777777'
+            }
+        }
+        $Inv = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        # Reach proof: the section read ran, and it did change the module's state under the command.
+        Should -Invoke -ModuleName $script:moduleName Get-OERGroup -Times 1 -Exactly
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.TokenTenantId | Should -BeExactly '77777777-7777-7777-7777-777777777777'
+        }
+        $Inv.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+    }
+
+    It 'writes a tenantId that serializes to a document the shipped schema accepts' -Skip:(-not (Get-Command Test-Json).Parameters.ContainsKey('Schema')) {
+        $Inv = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        $Json = $Inv | ConvertTo-Json -Depth 32
+        $Json | Should -Match '"tenantId":\s*"44444444-4444-4444-4444-444444444444"'
+        Test-Json -Json $Json -Schema (InModuleScope $script:moduleName { Get-OERStructureSchemaJson }) -ErrorAction SilentlyContinue |
+            Should -Be $true
+    }
+
+    It 'names the tenant of the session each call signed in under' {
+        $First = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {
+            & (Get-Module Omnicit.EntraRBAC) {
+                $script:_OERAuthState = @{ TenantId = 'fabrikam.onmicrosoft.com'; TokenTenantId = '77777777-7777-7777-7777-777777777777' }
+            }
+        }
+        $Second = Get-OERInventory -Include Groups -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+
+        $First.tenantId | Should -BeExactly '44444444-4444-4444-4444-444444444444'
+        $Second.tenantId | Should -BeExactly '77777777-7777-7777-7777-777777777777'
+    }
+}
+
+Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
+    It 'says what tenantId names, what Invoke-OERStructure does with it, and when it is left out' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Get-OERInventory -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape("The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's Microsoft Graph token was issued for, never the tenant as named with -TenantId"))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure applies the document only in that tenant and refuses it anywhere else with DocumentTenantMismatch.'))
+        $Description | Should -Match ([regex]::Escape('the key is left out, with no warning, and the document carries no tenant check.'))
+        $Description | Should -Match ([regex]::Escape("To use the inventory as a template for another tenant, change its tenantId to that tenant's ID or remove the key."))
+
+        $Param = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'TenantId' }
+        $Param | Should -Not -BeNullOrEmpty
+        $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText | Should -Match ([regex]::Escape("The inventory's tenantId is the tenant ID the session's Microsoft Graph token was issued for, not this value."))
+    }
+}

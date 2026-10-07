@@ -5,7 +5,9 @@ function Test-OERStructureSchema {
 
     .DESCRIPTION
     Performs the shared, tenant-free schema validation used by both Test-OERStructure and
-    Invoke-OERStructure. Checks the required version key, rejects unknown top-level keys, requires each
+    Invoke-OERStructure. Checks the required version key, checks that a top-level tenantId, when
+    present, is a canonical GUID (an explicit null or any other value is an Error; a document without
+    the key is valid), rejects unknown top-level keys, requires each
     present section to be an array, and validates the per-item shape of every section (required fields,
     enum values (including eligibility accessType member/owner and membershipRuleProcessingState On/Paused, shared by administrative units and groups), mutually exclusive displayName/template, numeric ranges). A catalog's externallyVisible must be a boolean. A roleAssignments
     item's conditionVersion without a condition is an Error (a version alone has no effect); a condition
@@ -289,7 +291,7 @@ function Test-OERStructureSchema {
         }
     }
 
-    $KnownTop = @('version', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
+    $KnownTop = @('version', 'tenantId', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
         'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
         'roleAssignments', 'roleManagementPolicies')
 
@@ -298,6 +300,19 @@ function Test-OERStructureSchema {
         [string]::IsNullOrEmpty($Document.version)) {
         Add-Finding -Section '(root)' -Item 'version' -Path 'version' `
             -Message 'Required key "version" is missing or empty.'
+    }
+
+    # Rule 1b (BL-88, A14): tenantId, when the key is present at all, is the tenant ID the document was
+    # exported from, and Invoke-OERStructure refuses to apply the document in any other tenant. It must
+    # therefore be a canonical GUID: an explicit null, an empty string, a domain or any other value names
+    # no tenant the engine could compare with, and is refused here rather than read as "no tenantId" --
+    # a document that is meant to carry no tenant check omits the key. Test-OERGuid is the predicate.
+    if ($Document.PSObject.Properties.Name -contains 'tenantId' -and
+        -not (Test-OERGuid -Value ([string]$Document.tenantId))) {
+        Add-Finding -Section '(root)' -Item 'tenantId' -Path 'tenantId' `
+            -Message ("'tenantId' must be the tenant ID the document was exported from, in the canonical " +
+                "GUID form (8-4-4-4-12 hexadecimal digits); found '$([string]$Document.tenantId)'. Omit " +
+                'the key to apply the document without a tenant check.')
     }
 
     # Rule 2: unknown top-level keys

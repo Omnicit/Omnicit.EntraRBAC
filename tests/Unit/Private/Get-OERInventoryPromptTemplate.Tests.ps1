@@ -318,7 +318,7 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
-                    Where-Object { $_ -notin @('version', 'tenantAlias') })
+                    Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
             $T | Should -Match "The apply document has exactly $Word sections"
             foreach ($Section in $Sections) {
@@ -383,6 +383,30 @@ Describe 'Get-OERInventoryPromptTemplate group rename through previousDisplayNam
             $T | Should -Match 'changing displayName creates a new unit'
             $T | Should -Match 'changing displayName creates a new catalog'
             $T | Should -Match 'changing displayName creates a new package'
+        }
+    }
+}
+
+Describe 'Get-OERInventoryPromptTemplate tenantId (BL-88, A14)' {
+    # An exported inventory.json carries a top-level tenantId, and Invoke-OERStructure refuses to apply
+    # a document in any other tenant. A model that dropped, changed or invented one would hand the
+    # operator a proposal the engine refuses, or one that silently names the wrong tenant.
+    It 'lists tenantId among the allowed top-level keys, as present in an exported inventory.json' {
+        InModuleScope $script:moduleName {
+            # Whitespace collapsed first, so the assertion does not depend on where the prose wraps.
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            $T | Should -Match ([regex]::Escape('Allowed keys ONLY: version (required, e.g. "1.0"), tenantId (present in an exported inventory.json), tenantAlias (optional), and the section arrays.'))
+        }
+    }
+
+    It 'tells the model to keep tenantId exactly as it appears in inventory.json and never to invent, change, guess or remove one' {
+        InModuleScope $script:moduleName {
+            $T = (Get-OERInventoryPromptTemplate) -replace '\s+', ' '
+            # 'Never invent' alone is not discriminating: the resource-group rule already says it. Anchor
+            # on the tenantId rule's own sentences.
+            $T | Should -Match ([regex]::Escape('tenantId names the tenant this inventory was exported from, and Invoke-OERStructure refuses to apply the document in any other tenant.'))
+            $T | Should -Match ([regex]::Escape('Keep tenantId in your proposal exactly as it appears in inventory.json.'))
+            $T | Should -Match ([regex]::Escape('Never invent, change, guess or remove one: if inventory.json has no tenantId, write none.'))
         }
     }
 }
