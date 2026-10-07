@@ -4840,26 +4840,24 @@ document and passes to the groups and administrative units handlers as a private
 R8: a run-scoped list through the handlers' extra parameters, as `roleAssignments` already does). A
 group `New-OERGroup` found already existing is recorded too, which can only withhold. The unit's
 prune pass, straight after the unresolved-entry call, withholds a candidate whose id is a recorded
-group id and whose record names this unit by display name or object id, ignoring case: with
-`-Prune` the row is `Skipped` and nothing is removed, without `-Prune` it is `Extra` as before, with
-the usual "use -Prune to remove" hint. Only the creating run withholds it. A later run cannot tell
-that the membership came from the create, since nothing records it in the tenant or the document,
-and withholding every group member of a unit would end the unit prune for groups altogether -- a
+group id and whose record names this unit, by its display name or its object id: with `-Prune` the
+row is `Skipped` and nothing is removed, without `-Prune` it is `Extra` as before, with the usual
+"use -Prune to remove" hint. Only the creating run withholds it. A later run cannot tell that the
+membership came from the create, since nothing records it in the tenant or the document, and
+withholding every group member of a unit would end the unit prune for groups altogether -- a
 decision this fix does not make. Every later apply with `-Prune` removes the membership unless the
-unit's `members` name the group. Known limit: `New-OERGroup` accepts any unit id form `-as [guid]`
-reads, but the record keeps the text as declared and the pass compares it with the live id as text,
-so a braced or dash-less id is not matched and that membership is still pruned in the creating run;
-an id in the canonical form Microsoft Graph returns is matched.
+unit's `members` name the group.
 
 **The validator reports the later removal.** Rule 12 of `Test-OERStructureSchema` (issue #59)
 reports a Warning finding for a group whose `administrativeUnit` names a unit the same document
 reconciles without naming the group in its `members`. Since BL-07 it checks a template-based group
 under the name `Resolve-OERName` computes, as the duplicate check does; matches the unit by its
-`displayName` or by the `id` its entry declares, ignoring case; and reports a unit named by an object
-id that no entry declares, when an entry that reconciles its members does not name the group, since
-offline it cannot tell which unit that is. A member that is an object id counts as naming the group
-when the group declares no `id` of its own, since an exported inventory lists a group member by its
-id (ruling R9: no false finding, at the price of a missed one when that id is another object). Its
+`displayName` or by the `id` its entry declares; and reports a unit named by an object id that no
+entry declares when an entry that may be that unit reconciles its members without naming the group,
+since offline it cannot tell which unit that is. When the group declares no `id` of its own, a
+member that is an object id that may be the group counts as naming it, since an exported inventory
+lists a group member by its id (ruling R9: no false finding, at the price of a missed one when that
+id is another object). Its
 text says what the engine now does: the creating run withholds the prune, every later apply with
 `-Prune` removes the membership. `Invoke-OERStructure` surfaces no Warning finding -- it joins only
 the Error findings into `StructureValidationFailed`, when it refuses the document -- so this finding
