@@ -843,7 +843,7 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
     # direction when the example or the schema changes.
     It 'names exactly the schema sections the worked example does not declare' {
         $Schema = InModuleScope $script:moduleName { Get-OERStructureSchemaJson } | ConvertFrom-Json
-        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantAlias') })
+        $Sections = @($Schema.properties.PSObject.Properties.Name | Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
         $ExamplePath = Join-Path $PSScriptRoot '../../../docs/examples/example-structure.json'
         $Example = Get-Content -LiteralPath $ExamplePath -Raw | ConvertFrom-Json
         $Missing = @($Sections | Where-Object { $Example.PSObject.Properties.Name -notcontains $_ } | Sort-Object)

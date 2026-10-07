@@ -315,7 +315,7 @@ Describe 'Get-OERInventoryReadme apply-document section list' {
         InModuleScope $script:moduleName {
             $Md = Get-OERInventoryReadme -IncompleteReads @() -SkippedScopes @() -SkippedEligibilityScopes @()
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
-                    Where-Object { $_ -notin @('version', 'tenantAlias') })
+                    Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
             $Md | Should -Match "The apply document has $Word sections only"
             foreach ($Section in $Sections) {

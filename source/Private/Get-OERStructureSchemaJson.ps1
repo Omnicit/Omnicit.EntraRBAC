@@ -7,7 +7,9 @@ function Get-OERStructureSchemaJson {
     Produces the formal JSON Schema written into an Export-OERInventory bundle as schema.json, so an
     LLM (or any consumer) can validate a proposed apply document without access to the module. The
     schema mirrors the offline validator Test-OERStructureSchema exactly: the required top-level
-    version key, the closed set of top-level keys, the per-section required fields, the enforced enums
+    version key, the optional top-level tenantId (a canonical GUID, never null: a document that
+    carries no tenant check omits the key), the closed set of top-level keys, the per-section required
+    fields, the enforced enums
     (catalog resource type, access review recurrence, role assignment principal type, directory role
     assignment assignmentType Eligible/Active and principal type, eligibility accessType member/owner,
     membershipRuleProcessingState On/Paused (shared by administrative units and groups), activeEnablement
@@ -141,6 +143,7 @@ function Get-OERStructureSchemaJson {
   },
   "properties": {
     "version": { "type": "string", "minLength": 1 },
+    "tenantId": { "type": "string", "pattern": "^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$", "description": "The tenant ID (GUID) the document was exported from: the tenant the exporting session's Microsoft Graph token was issued for. Invoke-OERStructure applies the document only in that tenant and refuses it with DocumentTenantMismatch, reading and writing nothing, when -TenantId or the session names another. Keep it exactly as exported and never invent one; to use an export as a template for another tenant, change it to that tenant's ID or remove the key. A document without the key carries no tenant check." },
     "tenantAlias": { "type": "string" },
     "groups": {
       "type": "array",

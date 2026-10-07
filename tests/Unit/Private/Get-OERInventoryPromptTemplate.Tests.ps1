@@ -318,7 +318,7 @@ Describe 'Get-OERInventoryPromptTemplate apply-document section list' {
         InModuleScope $script:moduleName {
             $T = Get-OERInventoryPromptTemplate
             $Sections = @((Get-OERStructureSchemaJson | ConvertFrom-Json).properties.PSObject.Properties.Name |
-                    Where-Object { $_ -notin @('version', 'tenantAlias') })
+                    Where-Object { $_ -notin @('version', 'tenantId', 'tenantAlias') })
             $Word = @{ 7 = 'seven'; 8 = 'eight'; 9 = 'nine'; 10 = 'ten' }[$Sections.Count]
             $T | Should -Match "The apply document has exactly $Word sections"
             foreach ($Section in $Sections) {
