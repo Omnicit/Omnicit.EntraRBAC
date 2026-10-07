@@ -27,7 +27,7 @@ lives beside the operator's copy of this file outside the repository ([README.md
 paragraph). Every sign-in is app-only; nothing here signs in as a person. A 401 or 403 as
 `oer-live-cc` is a stop. Neither `oer-live-cc` nor `oer-live-cc-noperm` is ever a principal here.
 
-**Sign-ins.** Every block's FIRST sign-in goes through `Connect-OerLive -Graph`, which runs
+**Sign-ins.** Every block's FIRST sign-in goes through `Connect-OerLive -Arm`, which runs
 `Disconnect-OER` and `Disconnect-MgGraph` first and then checks the identity as True/False.
 
 **Redact before you commit.** Raw console output belongs in `docs/live-verification/raw/s96/`, which
@@ -144,6 +144,15 @@ function Start-S96Fence {
     Set-Item -Path function:global:Invoke-MgGraphRequest -Value ([scriptblock]::Create($Text))
 }
 
+function Start-S96NoPrompt {
+    # A token request that does not carry the certificate would be an interactive or device-code sign-in
+    # (it happened once in this file's first run of 0.4, when the block signed in Graph only): refuse it
+    # instead of opening a prompt. A global proxy of Get-AzToken, which the module calls unqualified,
+    # forwards only a request that carries -ClientCertificate.
+    $Meta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Get-AzToken -CommandType Cmdlet))
+    $Text = "$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute($Meta))`nparam($([System.Management.Automation.ProxyCommand]::GetParamBlock($Meta)))`nend { if (-not `$PSBoundParameters.ContainsKey('ClientCertificate')) { throw 'S96 fence: a token request without the certificate was refused; nothing prompts.' }; AzAuth\Get-AzToken @PSBoundParameters }"
+    Set-Item -Path function:global:Get-AzToken -Value ([scriptblock]::Create($Text))
+}
 function Stop-S96Fence {
     # Unqualified on purpose: a scope-qualified function:global: path removes nothing (CLAUDE.md, Testing Conventions).
     if (Test-Path -Path function:Invoke-MgGraphRequest) { Remove-Item -Path function:Invoke-MgGraphRequest }
@@ -267,7 +276,8 @@ Result:
 - [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 $M = Get-Module -Name Omnicit.EntraRBAC
 Write-OerLiveStep "The module is the worktree's build: $($M.ModuleBase.StartsWith((Join-Path $Cfg.Repo 'output\module'), [System.StringComparison]::OrdinalIgnoreCase))"
 Disconnect-OerLive
@@ -334,7 +344,8 @@ Result:
 - [ ] **0.4** The module reads `oer-s96-pim`'s member policy and the chosen directory role's policy in the starting state, `oer-s96-user` holds no eligibility in the group, and the tenant has a published authentication context.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 $Ctx = Get-S96ContextId
 Write-OerLiveStep "Published authentication context used by this file: $Ctx; the chosen directory role: '$Role', form $RoleForm"
 $Gp = Get-OERGroupPimPolicy -Group 'oer-s96-pim' -AccessType member -ErrorAction Stop
@@ -372,7 +383,8 @@ is cleared (by `Set-OERDirectoryRoleManagementPolicy` in a real run, by the hand
 - [ ] **1.0** For the form `setMfaFirst` (neither low-risk role carried an MFA / authentication-context pair to reconcile, 0.2), a real run of a one-entry document requiring MFA on activation for the chosen role reports `Updated`, writes no warning, and the role then reads with MFA required; the teardown puts the baseline back. For any other form nothing is written.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 if ($RoleForm -eq 'setMfaFirst') {
     Start-S96Fence
     $D0 = [ordered]@{ version = '1.0'; directoryRoleManagementPolicies = @([ordered]@{ role = $Role; requireMfaOnActivation = $true }) } | ConvertTo-Json -Depth 10
@@ -403,7 +415,8 @@ Result:
 - [ ] **1.1** `Invoke-OERStructure -Json $W -WhatIf` writes each of the three warnings exactly once and before the `What if:` line of the change it belongs to, reports the three changes `Skipped`, and sends no Graph write.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $Ctx = Get-S96ContextId
 $W = Get-S96DocumentW -ContextId $Ctx
@@ -445,7 +458,8 @@ Result:
 - [ ] **1.2** `Invoke-OERStructure -Json $W -Confirm:$false` writes each of the three warnings exactly once, with the texts 1.1 planned, reports `Updated` for the group's member policy, the permanent eligibility and the directory role policy, and the policies then read in the new state.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $Ctx = Get-S96ContextId
 $W = Get-S96DocumentW -ContextId $Ctx
@@ -494,7 +508,8 @@ Result:
 - [ ] **1.3** A second real run of document W reports only `Unchanged`, writes no warning and sends no Graph write.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $W = Get-S96DocumentW -ContextId (Get-S96ContextId)
 $Cap = Invoke-S96Captured -Label '1.3' -Call { Invoke-OERStructure -Json $W -Confirm:$false }
@@ -517,7 +532,8 @@ Result:
 - [ ] **1.4** `Invoke-OERStructure -WhatIf` with `oer-s96-au` declared `dynamic: true` writes `Set-OERAdministrativeUnit`'s membership-type warning once, before the `What if:` line of the update, and sends no Graph write; the unit stays assigned.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'oer-s96-au' -ErrorAction Stop
 $Doc = [ordered]@{ version = '1.0'; administrativeUnits = @([ordered]@{ displayName = 'oer-s96-au'; dynamic = $true; membershipRule = '(user.department -eq "oer-s96")' }) } | ConvertTo-Json -Depth 10
@@ -545,7 +561,8 @@ Result:
 - [ ] **2.1** `Remove-OERGroupEligibility -Group oer-s96-pim -User oer-s96-user -AccessType member -WhatIf` writes its warning before the `What if:` line and sends nothing; the eligibility 1.2 created is still listed.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $Cap = Invoke-S96Captured -Label '2.1' -Call { Remove-OERGroupEligibility -Group 'oer-s96-pim' -User $UserUpn -AccessType member -WhatIf }
 Write-S96Capture -Label '2.1' -Capture $Cap
@@ -569,7 +586,8 @@ Result:
 - [ ] **2.2** `Set-OERAdministrativeUnit -AdministrativeUnit oer-s96-au -MembershipType Dynamic -MembershipRule ... -WhatIf` writes the membership-type warning before the `What if:` line and sends nothing; the unit stays assigned.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $Cap = Invoke-S96Captured -Label '2.2' -Call { Set-OERAdministrativeUnit -AdministrativeUnit 'oer-s96-au' -MembershipType Dynamic -MembershipRule '(user.department -eq "oer-s96")' -WhatIf }
 Write-S96Capture -Label '2.2' -Capture $Cap
@@ -591,7 +609,8 @@ Result:
 - [ ] **2.3** `Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -Group oer-s96-pim -WhatIf` writes its warning before the `What if:` line and sends nothing.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $R = if ($Role) { $Role } else { 'Message Center Reader' }
 $Cap = Invoke-S96Captured -Label '2.3' -Call { Remove-OERActiveDirectoryRoleAssignment -Role $R -Group 'oer-s96-pim' -WhatIf }
@@ -613,7 +632,8 @@ Result:
 - [ ] **2.4** `Get-OERGroupMember -Group oer-s96-pim | Remove-OERActiveDirectoryRoleAssignment -Role <the low-risk role> -WhatIf` is refused with `NotDirectAssignment`, whose message says the piped object is a group member row from `Get-OERGroupMember`; no warning, no `What if:` line, nothing sent.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $R = if ($Role) { $Role } else { 'Message Center Reader' }
 $Rows = @(Get-OERGroupMember -Group 'oer-s96-pim' -ErrorAction Stop)
@@ -646,6 +666,7 @@ $Docs = [ordered]@{
 }
 # Offline: the worktree's build through OerLive's own loader (no sign-in, no tenant call).
 & (Get-Module -Name OerLive) { Import-OerLiveModule }
+Start-S96NoPrompt
 foreach ($Key in $Docs.Keys) {
     $V = Test-OERStructure -Json ($Docs[$Key] | ConvertTo-Json -Depth 10)
     $Placement = @(@($V.Errors) | Where-Object { [string]$_.Path -like 'groups*.administrativeUnit' })
@@ -669,7 +690,8 @@ Result:
 - [ ] **3.2** `Invoke-OERStructure -Json $P -Prune -Confirm:$false` creates `oer-s96-new` into `oer-s96-au` and reports the unit's prune of it `Skipped` with a Detail starting `prune withheld:`; the fence around the module's transport makes the unit's member read wait until the new group is listed, and refuses (and counts) any removal from the unit -- none is attempted.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'oer-s96-au' -ErrorAction Stop
 $Module = Get-Module -Name Omnicit.EntraRBAC
 & $Module {
@@ -734,7 +756,8 @@ Result:
 - [ ] **3.3** `oer-s96-au`'s member list holds `oer-s96-new` in three reads 5 s apart, once it has converged.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 $Au = Get-OERAdministrativeUnit -AdministrativeUnit 'oer-s96-au' -ErrorAction Stop
 $NewId = [string]@((Invoke-OerLiveGraph -Uri "v1.0/groups?`$filter=displayName eq 'oer-s96-new'&`$select=id").Body['value'])[0]['id']
 $Read = { $R = Invoke-OerLiveGraph -All -Uri "v1.0/directory/administrativeUnits/$($Au.Id)/members?`$select=id"; Assert-OerLiveOk -Response $R -Activity 'Reading the members of oer-s96-au' | Out-Null; , @(@($R.Body['value']) | ForEach-Object { [string]$_['id'] }) }
@@ -755,7 +778,8 @@ Result:
 - [ ] **3.4** `Invoke-OERStructure -Json $P -Prune -WhatIf`, with the group now existing, plans the removal of `oer-s96-new` from `oer-s96-au` (the guard covers only the run that creates the membership) and sends nothing.
 
 ```powershell
-Connect-OerLive -Graph
+Connect-OerLive -Arm
+Start-S96NoPrompt
 Start-S96Fence
 $P = Get-S96DocumentP
 $Cap = Invoke-S96Captured -Label '3.4' -Call { Invoke-OERStructure -Json $P -Prune -WhatIf }
