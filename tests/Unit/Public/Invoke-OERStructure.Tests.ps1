@@ -606,6 +606,19 @@ Describe 'Invoke-OERStructure -Prune and a group created into an administrative 
         @($PruneWarnings | Where-Object { "$_" -match "removing undeclared member 'u-extra'" }).Count | Should -Be 1
     }
 
+    It 'keeps the list per document: a second piped document that only reconciles the unit prunes the membership the first one created' {
+        # Document 1 creates grp-new into AU-IT, and its own administrativeUnits pass withholds that
+        # membership. Document 2 declares only AU-IT: it is another apply, so the membership is pruned
+        # there. A list kept for the whole invocation would withhold it twice.
+        $Doc1 = $script:Bl07Doc | ConvertFrom-Json
+        $Doc2 = '{ "version": "1.0", "administrativeUnits": [ { "displayName": "AU-IT", "members": [], "scopedRoles": null } ] }' | ConvertFrom-Json
+        $Rows = @($Doc1, $Doc2 | Invoke-OERStructure -Prune -Confirm:$false -ErrorAction Stop -WarningAction SilentlyContinue)
+        Should -Invoke -ModuleName $script:moduleName New-OERGroup -Times 1 -Exactly
+        @($Rows | Where-Object { $_.Section -eq 'administrativeUnits' -and $_.Action -eq 'Skipped' -and $_.Detail -like 'prune withheld: *' }).Count | Should -Be 1
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 1 -Exactly -ParameterFilter { $MemberId -eq '88888888-8888-8888-8888-888888888888' }
+        Should -Invoke -ModuleName $script:moduleName Remove-OERAdministrativeUnitMember -Times 2 -Exactly -ParameterFilter { $MemberId -eq 'u-extra' }
+    }
+
     It 'hands the administrativeUnits pass the same list the groups pass recorded into: one record in a real run, none under -WhatIf' {
         InModuleScope $script:moduleName -Parameters @{ Doc = $script:Bl07Doc } {
             param($Doc)

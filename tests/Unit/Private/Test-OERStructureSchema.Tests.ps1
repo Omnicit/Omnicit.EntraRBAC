@@ -2735,9 +2735,10 @@ Describe 'Test-OERStructureSchema approvalStages undeclared durationDays warning
 Describe 'Test-OERStructureSchema group administrativeUnit placement warning (issue #59)' {
     # administrativeUnit on a group is create-only (Sync-OERStructureGroup.ps1) and never round-trips,
     # so the ONLY way a document keeps a group inside a unit across repeated applies is by also naming
-    # the group in that unit's own administrativeUnits[].members. Warning, never Error (spec
-    # Foerhandsbeslut option A+B, not C): the prune pass stays independent of the groups section, and a
-    # document that validates today must keep validating.
+    # the group in that unit's own administrativeUnits[].members. Since BL-07 the run that creates the
+    # group withholds that prune (the administrativeUnits pass reads what the groups pass recorded), and
+    # every later apply with -Prune still removes the membership. Warning, never Error (spec
+    # Foerhandsbeslut option A+B, not C): a document that validates today must keep validating.
     It 'warns exactly once, at the group administrativeUnit path, naming the -Prune consequence, and keeps the document Valid' {
         InModuleScope $script:moduleName {
             $Doc = ('{ "version": "1.0", ' +
@@ -2890,6 +2891,39 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                 @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
             }
         }
+
+        # New-OERGroup reads administrativeUnit with the wider -as [guid] cast, so a braced or a
+        # dash-less id names the unit by its id there too; the check compares the two as GUIDs.
+        It 'matches the entry that declares the id when the group names it <Label>' -ForEach @(
+            @{ Label = 'in braces'; Ref = '{66666666-6666-6666-6666-AAAAAAAAAAAA}' }
+            @{ Label = 'without dashes'; Ref = '66666666666666666666aaaaaaaaaaaa' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Ref = $Ref } {
+                param($Ref)
+                $Doc = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "' + $Ref + '" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-1", "id": "66666666-6666-6666-6666-aaaaaaaaaaaa", "members": [ "SomeoneElse" ] } ] }') | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit '$([System.Management.Automation.WildcardPattern]::Escape($Ref))', but administrativeUnits[[]0].members does not list 'GroupX'. *"
+            }
+        }
+
+        It 'does not match an entry by an id when the unit is named by a display name, so two values that are not object ids never match' {
+            InModuleScope $script:moduleName {
+                $Doc = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-Ghost" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-0", "id": "not-an-object-id", "members": [] } ] }') | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+                # Control: the same entry named by its display name is matched and warns.
+                $Named = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-0" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-0", "id": "not-an-object-id", "members": [] } ] }') | ConvertFrom-Json
+                @((Test-OERStructureSchema -Document $Named).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 1
+            }
+        }
     }
 
     Context 'a unit named by an object id that no entry declares as its id' {
@@ -2940,6 +2974,35 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
             }
         }
 
+        It 'warns for a unit named by an object id without dashes, which New-OERGroup also reads as an id' {
+            InModuleScope $script:moduleName {
+                $Doc = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666666666666666666666666666" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-0", "members": [] } ] }') | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit '66666666666666666666666666666666', an object id that no administrativeUnits[[]] entry declares as its id, *(administrativeUnits[[]0]).*"
+            }
+        }
+
+        It 'does not list an entry that declares an id of its own, since that entry is another unit' {
+            InModuleScope $script:moduleName {
+                $Doc = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-666666666666" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-0", "id": "77777777-7777-7777-7777-777777777777", "members": [] }, ' +
+                    '{ "displayName": "AU-1", "members": [] } ] }') | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeLike "*whose members do not list 'GroupX' (administrativeUnits[[]1]). *"
+                $OnlyOther = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "66666666-6666-6666-6666-666666666666" } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-0", "id": "77777777-7777-7777-7777-777777777777", "members": [] } ] }') | ConvertFrom-Json
+                @((Test-OERStructureSchema -Document $OnlyOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
+            }
+        }
+
         It 'does not warn for a unit name that is not an object id and that no entry declares' {
             InModuleScope $script:moduleName {
                 $Doc = ('{ "version": "1.0", ' +
@@ -2960,6 +3023,23 @@ Describe 'Test-OERStructureSchema group administrativeUnit placement warning (is
                 $V = Test-OERStructureSchema -Document $Doc
                 @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
                 $V.Valid | Should -BeTrue
+            }
+        }
+
+        It 'warns when the unit''s object-id member is the id another groups[] entry declares, since it names that group' {
+            InModuleScope $script:moduleName {
+                $Doc = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-1" }, { "displayName": "GroupY", "id": "99999999-9999-9999-9999-999999999999", "members": null } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "99999999-9999-9999-9999-999999999999" ] } ] }') | ConvertFrom-Json
+                $V = Test-OERStructureSchema -Document $Doc
+                $Hit = @($V.Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' })
+                $Hit.Count | Should -Be 1
+                $Hit[0].Message | Should -BeLike "Group 'GroupX' at groups[[]0] declares administrativeUnit 'AU-1', but administrativeUnits[[]0].members does not list 'GroupX'. *"
+                # Control: one more object id that no groups[] entry declares may still be GroupX.
+                $WithOther = ('{ "version": "1.0", ' +
+                    '"groups": [ { "displayName": "GroupX", "administrativeUnit": "AU-1" }, { "displayName": "GroupY", "id": "99999999-9999-9999-9999-999999999999", "members": null } ], ' +
+                    '"administrativeUnits": [ { "displayName": "AU-1", "members": [ "99999999-9999-9999-9999-999999999999", "55555555-5555-5555-5555-555555555555" ] } ] }') | ConvertFrom-Json
+                @((Test-OERStructureSchema -Document $WithOther).Errors | Where-Object { $_.Path -eq 'groups[0].administrativeUnit' }).Count | Should -Be 0
             }
         }
 

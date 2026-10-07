@@ -76,9 +76,11 @@ function Sync-OERStructureAdministrativeUnit {
     membership in the run-scoped list the engine passes to both handlers as -CreatedUnitMembership.
     In the member Extra/prune pass, straight after the unresolved-entry rule above and before the
     -Prune branch, a live member whose id is a recorded group's id, recorded for this unit by its
-    display name (compared ignoring case) or its object id, is withheld under -Prune: it is reported
-    Skipped with a Detail that starts "prune withheld:", with no warning, no ShouldProcess prompt and
-    no Remove-OERAdministrativeUnitMember call (ConvertTo-OERPruneWithheldResult owns the text).
+    display name (compared ignoring case) or its object id (a reference that parses as a GUID, braced
+    or dash-less included, is compared as one, as New-OERGroup reads it), is withheld under -Prune:
+    it is reported Skipped with a Detail that starts "prune withheld:", with no warning, no
+    ShouldProcess prompt and no Remove-OERAdministrativeUnitMember call
+    (ConvertTo-OERPruneWithheldResult owns the text).
     Without -Prune it is reported Extra as before. Every other undeclared member is pruned as usual,
     and the next apply with -Prune removes the group's membership unless the unit's members name the
     group.
@@ -602,6 +604,8 @@ function Sync-OERStructureAdministrativeUnit {
             # explicit null is a distinct "leave membership alone" signal and must not report every live
             # member as Extra or, worse under -Prune, remove them all.
             if (-not $MembersDeclaredNull) {
+                # BL-07: the unit's own id as a GUID, compared with a recorded unit reference below.
+                $AuidGuid = [string]$Auid -as [guid]
                 foreach ($CurMember in $CurrentMembers) {
                     $CurId = $CurMember.Id
                     if ($DeclaredMemberIds -notcontains $CurId) {
@@ -610,11 +614,15 @@ function Sync-OERStructureAdministrativeUnit {
                         # BL-07: a group the groups section created INTO this unit earlier in this run
                         # (New-OERGroup -AdministrativeUnit) need not be listed here, since
                         # administrativeUnit never round-trips, and the run that created the membership
-                        # does not remove it. The record names the unit as the group declared it: this
-                        # unit's display name or its object id. Under -Prune the candidate is withheld;
-                        # without -Prune the helper returns nothing and it is reported Extra as before.
+                        # does not remove it. The record names the unit as the group declared it, and is
+                        # read the way New-OERGroup read it: a reference that parses as a GUID (-as
+                        # [guid], braced and dash-less forms included) is the unit's object id and is
+                        # compared as a GUID with this unit's id; any other reference is a display name,
+                        # compared ignoring case. Under -Prune the candidate is withheld; without -Prune
+                        # the helper returns nothing and it is reported Extra as before.
                         $CreatedHere = @($CreatedUnitMembership | Where-Object {
-                                $_.GroupId -ieq $CurId -and ($_.AdministrativeUnit -ieq $Name -or $_.AdministrativeUnit -ieq $Auid)
+                                $CreatedUnitGuid = [string]$_.AdministrativeUnit -as [guid]
+                                ($_.GroupId -ieq $CurId) -and $(if ($null -ne $CreatedUnitGuid) { $CreatedUnitGuid -eq $AuidGuid } else { [string]$_.AdministrativeUnit -ieq $Name })
                             })
                         if ($CreatedHere.Count -gt 0) {
                             $Withheld = ConvertTo-OERPruneWithheldResult -Section 'administrativeUnits' -Item $Name -Candidate "undeclared member '$CurId'" `

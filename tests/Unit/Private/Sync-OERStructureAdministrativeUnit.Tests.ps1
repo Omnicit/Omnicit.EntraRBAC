@@ -1499,6 +1499,8 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
         It 'withholds the recorded group''s membership under -Prune and still prunes the unrecorded member, for a record naming the unit <Label>' -ForEach @(
             @{ Label = 'by its display name, in another case'; Unit = 'au-it' }
             @{ Label = 'by its object id, in another case'; Unit = '66666666-6666-6666-6666-AAAAAAAAAAAA' }
+            @{ Label = 'by its object id in braces, which New-OERGroup also reads as an id'; Unit = '{66666666-6666-6666-6666-aaaaaaaaaaaa}' }
+            @{ Label = 'by its object id without dashes, which New-OERGroup also reads as an id'; Unit = '66666666666666666666AAAAAAAAAAAA' }
         ) {
             InModuleScope $script:moduleName -Parameters @{ Unit = $Unit } {
                 param($Unit)
@@ -1549,6 +1551,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
 
         It 'prunes the group''s membership under -Prune when the record names <Label>' -ForEach @(
             @{ Label = 'another unit'; Unit = 'AU-Other'; GroupId = '88888888-8888-8888-8888-888888888888' }
+            @{ Label = 'another unit by object id'; Unit = '77777777-7777-7777-7777-777777777777'; GroupId = '88888888-8888-8888-8888-888888888888' }
             @{ Label = 'another group of this unit'; Unit = 'AU-IT'; GroupId = '99999999-9999-9999-9999-999999999999' }
         ) {
             InModuleScope $script:moduleName -Parameters @{ Unit = $Unit; GroupId = $GroupId } {
