@@ -457,7 +457,7 @@ Describe 'Set-OERGroupPimPolicy' {
         }
     }
 
-    Context 'every $Sent.Contains rule-id literal that gates the summary is pinned (audit prom-pimpolicy-rule-literals-partially-unpinned)' {
+    Context 'every $Reported.Contains rule-id literal that gates the summary is pinned (audit prom-pimpolicy-rule-literals-partially-unpinned)' {
         # BLAST RADIUS -- recorded here so future triage stays honest. These ten literals gate ONLY
         # $Patched, i.e. WHICH PROPERTIES APPEAR on the returned summary object. $Out.Applied is
         # computed from $Failed.Count / $Sent.Count against @($Rules).Count and does not depend on
@@ -1582,5 +1582,199 @@ Describe 'Set-OERGroupPimPolicy MFA and authentication context pair, one half re
         $Run.Prompts[0] | Should -Match 'Enablement_EndUser_Assignment'
         $Run.Prompts[1] | Should -Match 'AuthenticationContext_EndUser_Assignment'
         @($Run.Output) | Should -Be @('PATCH Enablement_EndUser_Assignment')
+    }
+}
+
+Describe 'Set-OERGroupPimPolicy: no warning stops an update between its first PATCH and its last put-back (BL-10)' {
+    # Send-OERPimRulePatch returns every message about a rejected rule, and about a put-back that
+    # failed; the cmdlet writes them only after the last PATCH and the put-back were sent. So a caller
+    # running with -WarningAction Stop is stopped by the FIRST message, which is written after every
+    # request, and never half-way through the rule set. Proven in the two forms a caller can take:
+    # inside a try, and in a script with no try (where the stop ends the whole script, so what was
+    # sent is read from a log file the transport stub appends to, not from anything the script prints).
+    # Both scenarios write NO warning before the first PATCH: an explicit pair has no reconcile, and
+    # Get-OERAuthenticationContext lists c1 as published, so there is no validation warning either.
+    # That is proven too: the stopping message is the rejection of the rule, not an earlier one.
+    # The cmdlet call as a splat for the try and as text for the runspace, so the two forms stay side
+    # by side. Expected holds "<METHOD> <rule id>" in the order the requests are sent. Defined here,
+    # in the discovery phase, since -TestCases is read then.
+    $StopCases = @(
+        @{
+            Scenario = 'explicit pair, the context rule rejected'
+            Splat    = @{ AuthenticationContextId = 'c1'; ActivationEnabledRules = 'Justification' }
+            ArgText  = "-AuthenticationContextId 'c1' -ActivationEnabledRules Justification"
+            Reject   = 'AuthenticationContext_EndUser_Assignment'
+            Expected = @(
+                'GET Enablement_EndUser_Assignment'
+                'PATCH Enablement_EndUser_Assignment'
+                'PATCH AuthenticationContext_EndUser_Assignment'
+                'PATCH Enablement_EndUser_Assignment'
+            )
+        }
+        @{
+            Scenario = 'three rules, the first rejected'
+            Splat    = @{ ActivationMaxHours = 4; ActiveEnabledRules = 'Justification'; EligibleAlertRecipient = 'person18@example.com' }
+            ArgText  = "-ActivationMaxHours 4 -ActiveEnabledRules Justification -EligibleAlertRecipient 'person18@example.com'"
+            Reject   = 'Expiration_EndUser_Assignment'
+            Expected = @(
+                'PATCH Expiration_EndUser_Assignment'
+                'PATCH Enablement_Admin_Assignment'
+                'PATCH Notification_Admin_Admin_Eligibility'
+            )
+        }
+    )
+
+    BeforeAll {
+        function Get-TestCallLine { @($script:Calls | ForEach-Object { '{0} {1}' -f $_.Method, $_.RuleId }) }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth {}
+        Mock -ModuleName $script:moduleName Resolve-OERGroupId { 'g1' }
+        Mock -ModuleName $script:moduleName Get-OERPimGroupPolicyId { 'p1' }
+        Mock -ModuleName $script:moduleName Get-OERAuthenticationContext {
+            [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+        }
+        $script:Calls = [System.Collections.Generic.List[object]]::new()
+        $script:RejectRuleId = @()
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            param([string]$Method = 'GET', [string]$Uri, $Body)
+            $RuleId = ($Uri -split '/')[-1]
+            $script:Calls.Add([pscustomobject]@{ Method = $Method; RuleId = $RuleId; Body = $Body })
+            if ($Method -eq 'PATCH') {
+                if ($script:RejectRuleId -contains $RuleId) { throw "Graph rejected rule '$RuleId'." }
+                return @{}
+            }
+            @{ id = $RuleId; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+        }
+    }
+
+    Context 'inside a try' {
+        It 'explicit pair: is stopped only after both rules and the put-back of the first were sent' {
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $Caught = $null
+            try {
+                Set-OERGroupPimPolicy -Group 'g' -AuthenticationContextId 'c1' -ActivationEnabledRules Justification -Confirm:$false `
+                    -WarningAction Stop -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            # The first-half read, the pair in patch order, then the put-back of the first rule LAST.
+            @(Get-TestCallLine) | Should -Be @(
+                'GET Enablement_EndUser_Assignment'
+                'PATCH Enablement_EndUser_Assignment'
+                'PATCH AuthenticationContext_EndUser_Assignment'
+                'PATCH Enablement_EndUser_Assignment'
+            )
+            @($script:Calls[1].Body.enabledRules) | Should -Be @('Justification')
+            @($script:Calls[3].Body.enabledRules) | Should -Be @('MultiFactorAuthentication', 'Justification') -Because 'the last request puts the live rule back'
+            # The stop came from a warning, and from the rejection of the context rule in particular:
+            # nothing was written before it, and it was written after the put-back.
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+            $Caught.Exception.Message | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment' of PIM policy 'p1' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'.*"
+        }
+
+        It 'three rules, the first rejected: is stopped only after all three were sent' {
+            $script:RejectRuleId = @('Expiration_EndUser_Assignment')
+            $Caught = $null
+            try {
+                Set-OERGroupPimPolicy -Group 'g' -ActivationMaxHours 4 -ActiveEnabledRules Justification -EligibleAlertRecipient 'person18@example.com' -Confirm:$false `
+                    -WarningAction Stop -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            @(Get-TestCallLine) | Should -Be @(
+                'PATCH Expiration_EndUser_Assignment'
+                'PATCH Enablement_Admin_Assignment'
+                'PATCH Notification_Admin_Admin_Eligibility'
+            )
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+            $Caught.Exception.Message | Should -BeLike "*Rule 'Expiration_EndUser_Assignment' of PIM policy 'p1' was not applied: Graph rejected rule 'Expiration_EndUser_Assignment'.*"
+        }
+
+        It '<Scenario>: the control without Stop sends the same requests and writes the rejection as its FIRST warning' -TestCases $StopCases {
+            # Without this, the two tests above could pass for a call that never wrote that message.
+            $script:RejectRuleId = @($Reject)
+            $null = Set-OERGroupPimPolicy -Group 'g' @Splat -Confirm:$false -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+            @(Get-TestCallLine) | Should -Be $Expected
+            @($Warn).Count | Should -BeGreaterThan 0
+            @($Warn)[0] | Should -Be "Rule '$Reject' of PIM policy 'p1' was not applied: Graph rejected rule '$Reject'."
+        }
+    }
+
+    Context 'in a script with no try' {
+        BeforeAll {
+            # The script runs in a runspace through Invoke-OERWithConfirmAnswer, so it is transported as
+            # text and installs its own fakes in ITS copy of the module scope. The transport stub
+            # appends "<METHOD> <rule id>" to a log file whose path is substituted into the text, and
+            # throws for the rejected rule exactly as the real wrapper does. The call stands in no try.
+            # The control removes the five private stubs again and counts what still resolves; the stub
+            # of the exported Get-OERAuthenticationContext is left out, since the module's exported copy
+            # would still resolve after its removal.
+            $script:NewNoTryScenario = {
+                param([string]$Log, [string]$Reject, [string]$ArgText, [string]$Stop)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'g1' }
+    Set-Item -Path function:script:Get-OERPimGroupPolicyId -Value { 'p1' }
+    Set-Item -Path function:script:Get-OERAuthenticationContext -Value {
+        [CmdletBinding()] param()
+        [pscustomobject]@{ AuthenticationContextId = 'c1'; DisplayName = 'Require MFA'; IsAvailable = $true }
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        $RuleId = ($Uri -split '/')[-1]
+        Add-Content -LiteralPath '#LOG#' -Value "$Method $RuleId"
+        if ($Method -eq 'PATCH') {
+            if ($RuleId -eq '#REJECT#') { throw "Graph rejected rule '$RuleId'." }
+            return @{}
+        }
+        @{ id = $RuleId; enabledRules = @('MultiFactorAuthentication', 'Justification') }
+    }
+}
+$Result = Set-OERGroupPimPolicy -Group 'g' #ARGS# -Confirm:$false #STOP#
+"REACHED:$($Result.Applied)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Resolve-OERGroupId
+    Remove-Item function:Get-OERPimGroupPolicyId
+    Remove-Item function:Invoke-OERGraphRequest
+    "STUBS:$(@('Initialize-OERAuth', 'Remove-OERErrorRecord', 'Resolve-OERGroupId', 'Get-OERPimGroupPolicyId', 'Invoke-OERGraphRequest' | Where-Object { Get-Command -Name $PSItem -CommandType Function -ErrorAction Ignore }).Count)"
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#REJECT#', $Reject).Replace('#ARGS#', $ArgText).Replace('#STOP#', $Stop))
+            }
+            function Get-TestLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+        }
+
+        It '<Scenario>: -WarningAction Stop ends the script only after every request was sent, the put-back included' -TestCases $StopCases {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = & $script:NewNoTryScenario -Log $Log -Reject $Reject -ArgText $ArgText -Stop '-WarningAction Stop'
+            # Measured: a stop outside any try ends the whole script, so the runner throws to its caller.
+            { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } |
+                Should -Throw -ExpectedMessage "*WarningPreference*Rule '$Reject' of PIM policy 'p1' was not applied*"
+            @(Get-TestLoggedLine -Log $Log) | Should -Be $Expected
+        }
+
+        It '<Scenario>: the control without Stop reaches the end of the script with the same requests' -TestCases $StopCases {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = & $script:NewNoTryScenario -Log $Log -Reject $Reject -ArgText $ArgText -Stop ''
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            # The sentinel and the stub removal prove the script ran to its end; Applied is False since
+            # a rule was rejected, so the rejection path was reached.
+            ($Run.Output -join '|') | Should -Be 'REACHED:False|STUBS:0|END'
+            @(Get-TestLoggedLine -Log $Log) | Should -Be $Expected
+            @($Run.Warnings)[0] | Should -Be "Rule '$Reject' of PIM policy 'p1' was not applied: Graph rejected rule '$Reject'."
+        }
     }
 }

@@ -13,7 +13,7 @@ function Set-OERGroupPimPolicy {
     activation requires MFA or an authentication context: when both are sent and Microsoft Graph
     accepts the first but rejects the second, the first is PATCHed straight back to its live value, so
     activation keeps the protection it had before the call instead of being left with neither. That
-    rule is then not reported as sent, and the PolicyRulesRejected error says it was put back. Its live
+    rule is then not reported as changed, and the PolicyRulesRejected error says it was put back. Its live
     value is the one the mutual-exclusion reconcile below read, or else it is read once before the
     first PATCH; should that read fail, a warning says so before anything is sent, and the rule cannot
     be put back. Should putting it back fail, the rule stays reported and the error says how to set

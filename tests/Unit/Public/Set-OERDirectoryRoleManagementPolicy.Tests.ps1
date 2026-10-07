@@ -716,6 +716,127 @@ Describe 'Set-OERDirectoryRoleManagementPolicy' {
         }
     }
 
+    Context 'no warning stops the update between its first PATCH and its last put-back, under -WarningAction Stop (BL-10)' {
+        # Send-OERPimRulePatch returns every message about a rejected rule, and about a put-back that
+        # failed; the cmdlet writes them only after the last PATCH and the put-back were sent. So a
+        # caller running with -WarningAction Stop is stopped by the FIRST message, which is written
+        # after every request. The scenario writes NO warning before the first PATCH: the live
+        # context c1 is enabled and MFA is not, so setting c2 and dropping the justification
+        # requirement reconciles nothing. The enablement rule goes first (an ENABLING context rule
+        # goes last), and the context rule is the one rejected, so the enablement rule is put back.
+        It 'inside a try: is stopped only after both rules and the put-back of the first were sent' {
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1'
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $Caught = $null
+            try {
+                Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false `
+                    -Confirm:$false -WarningAction Stop -ErrorAction SilentlyContinue
+            } catch {
+                $Caught = $PSItem
+            }
+            # The pair in patch order, then the put-back of the first rule LAST.
+            @($script:Calls.RuleId) | Should -Be @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            @($script:Calls[0].Body.enabledRules).Count | Should -Be 0
+            @($script:Calls[2].Body.enabledRules) | Should -Be @('Justification') -Because 'the last request puts the live rule back'
+            # The stop came from a warning, and from the rejection of the context rule in particular:
+            # nothing was written before it, and it was written after the put-back.
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.Exception | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+            $Caught.Exception.Message | Should -BeLike "*Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy '$($script:PolicyId)' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'.*"
+        }
+
+        It 'inside a try: the control without Stop sends the same requests and writes the rejection as its FIRST warning' {
+            # Without this, the test above could pass for a call that never wrote that message.
+            $script:LiveRules = New-TestRuleSet -AuthContextEnabled $true -AuthContextClaim 'c1'
+            $script:RejectRuleId = @('AuthenticationContext_EndUser_Assignment')
+            $null = Set-OERDirectoryRoleManagementPolicy -Role 'Reports Reader' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false `
+                -Confirm:$false -WarningAction SilentlyContinue -WarningVariable Warn -ErrorAction SilentlyContinue
+            @($script:Calls.RuleId) | Should -Be @('Enablement_EndUser_Assignment', 'AuthenticationContext_EndUser_Assignment', 'Enablement_EndUser_Assignment')
+            @($Warn).Count | Should -BeGreaterThan 0
+            @($Warn)[0] | Should -Be "Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy '$($script:PolicyId)' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'."
+        }
+
+        Context 'in a script with no try' {
+            BeforeAll {
+                # The script runs in a runspace through Invoke-OERWithConfirmAnswer, so it is
+                # transported as text and installs its own fakes in ITS copy of the module scope. The
+                # transport stub appends "PATCH <rule id>" to a log file whose path is substituted into
+                # the text, and throws for the rejected rule exactly as the real wrapper does. The call
+                # stands in no try. The control removes the three private stubs again and counts what
+                # still resolves.
+                $script:NewNoTryScenario = {
+                    param([string]$Log, [string]$Stop)
+                    [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PATCH') {
+            $RuleId = ($Uri -split '/')[-1]
+            Add-Content -LiteralPath '#LOG#' -Value "PATCH $RuleId"
+            if ($RuleId -eq 'AuthenticationContext_EndUser_Assignment') { throw "Graph rejected rule '$RuleId'." }
+            return @{}
+        }
+        $Target = @{ caller = 'EndUser'; operations = @('All'); level = 'Assignment'; inheritableSettings = @(); enforcedSettings = @() }
+        @{
+            id = 'DirectoryRole_p1'; scopeId = '/'; scopeType = 'DirectoryRole'
+            rules = @(
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyAuthenticationContextRule'; id = 'AuthenticationContext_EndUser_Assignment'; isEnabled = $true; claimValue = 'c1'; target = $Target }
+                @{ '@odata.type' = '#microsoft.graph.unifiedRoleManagementPolicyEnablementRule'; id = 'Enablement_EndUser_Assignment'; enabledRules = @('Justification'); target = $Target }
+            )
+        }
+    }
+}
+$Result = Set-OERDirectoryRoleManagementPolicy -PolicyId 'DirectoryRole_p1' -AuthenticationContextId 'c2' -RequireJustificationOnActivation $false -Confirm:$false #STOP#
+"REACHED:$(@($Result.ChangedRuleIds).Count)"
+& $Module {
+    Remove-Item function:Initialize-OERAuth
+    Remove-Item function:Remove-OERErrorRecord
+    Remove-Item function:Invoke-OERGraphRequest
+    "STUBS:$(@('Initialize-OERAuth', 'Remove-OERErrorRecord', 'Invoke-OERGraphRequest' | Where-Object { Get-Command -Name $PSItem -CommandType Function -ErrorAction Ignore }).Count)"
+}
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
+                }
+                function Get-TestLoggedLine ([string]$Log) {
+                    if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+                }
+            }
+
+            It '-WarningAction Stop ends the script only after both rules and the put-back were sent' {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Scenario = & $script:NewNoTryScenario -Log $Log -Stop '-WarningAction Stop'
+                # Measured: a stop outside any try ends the whole script, so the runner throws to its caller.
+                { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } |
+                    Should -Throw -ExpectedMessage "*WarningPreference*Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy 'DirectoryRole_p1' was not applied*"
+                @(Get-TestLoggedLine -Log $Log) | Should -Be @(
+                    'PATCH Enablement_EndUser_Assignment'
+                    'PATCH AuthenticationContext_EndUser_Assignment'
+                    'PATCH Enablement_EndUser_Assignment'
+                )
+            }
+
+            It 'the control without Stop reaches the end of the script with the same requests' {
+                $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+                $Scenario = & $script:NewNoTryScenario -Log $Log -Stop ''
+                $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+                # The sentinel and the stub removal prove the script ran to its end. Nothing is reported
+                # as changed, since the one accepted rule was put back and the other was rejected.
+                ($Run.Output -join '|') | Should -Be 'REACHED:0|STUBS:0|END'
+                @(Get-TestLoggedLine -Log $Log) | Should -Be @(
+                    'PATCH Enablement_EndUser_Assignment'
+                    'PATCH AuthenticationContext_EndUser_Assignment'
+                    'PATCH Enablement_EndUser_Assignment'
+                )
+                @($Run.Warnings)[0] | Should -Be "Rule 'AuthenticationContext_EndUser_Assignment' of directory role management policy 'DirectoryRole_p1' was not applied: Graph rejected rule 'AuthenticationContext_EndUser_Assignment'."
+                @($Run.Errors | Where-Object { $_ -like "*Directory role management policy 'DirectoryRole_p1' was not fully applied*" }).Count | Should -Be 1
+            }
+        }
+    }
+
     Context 'one confirmation per call' {
         BeforeAll {
             # Pester mocks do not cross into the answering runspace, so the fakes are installed in

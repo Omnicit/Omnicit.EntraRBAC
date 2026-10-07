@@ -391,14 +391,18 @@ Describe 'Send-OERPimRulePatch' {
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Send-OERPimRulePatch' }).Count | Should -Be 1
         }
 
-        It 'Send-OERPimRulePatch writes no warning, error, information or host output' {
+        It 'Send-OERPimRulePatch writes no warning, error, information or host output and raises no terminating error' {
             $Commands = Get-TestCommand -RelativePath 'Private/Send-OERPimRulePatch.ps1'
             # Reached: the file was read and holds its sends.
             @($Commands | Where-Object { $_.GetCommandName() -eq 'Invoke-OERGraphRequest' }).Count | Should -BeGreaterThan 0
-            $Writers = @($Commands | Where-Object { $_.GetCommandName() -in 'Write-Warning', 'Write-Host', 'Write-Information', 'Write-Error' })
+            # Write-CmdletError is the module's own wrapper of $PSCmdlet.WriteError, so it counts as a
+            # writer too. Write-Output is not listed: the helper's one result IS its output.
+            $Writers = @($Commands | Where-Object { $_.GetCommandName() -in 'Write-Warning', 'Write-Host', 'Write-Information', 'Write-Error', 'Write-CmdletError' })
             $Writers.Count | Should -Be 0
+            # Every $PSCmdlet.Write* member call (WriteWarning, WriteError, WriteInformation, WriteHost,
+            # WriteObject, ...), and a ThrowTerminatingError, which ends the call as -WarningAction Stop would.
             $Members = Get-TestMemberCall -RelativePath 'Private/Send-OERPimRulePatch.ps1'
-            @($Members | Where-Object { [string]$_.Member.Value -in 'WriteWarning', 'WriteError', 'WriteInformation', 'WriteHost' }).Count | Should -Be 0
+            @($Members | Where-Object { [string]$_.Member.Value -like 'Write*' -or [string]$_.Member.Value -eq 'ThrowTerminatingError' }).Count | Should -Be 0
         }
     }
 }
