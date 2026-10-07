@@ -205,11 +205,11 @@ document.
     rationale to wait until the new name resolves before applying again.
   - IMPORTANT (issue #59): administrativeUnit is create-only and never round-trips, so if you set it,
     you MUST also add this group's displayName to the members[] array of the matching
-    administrativeUnits[] entry (same displayName, case-insensitive) in this SAME document. Otherwise
-    the administrative unit's handler -- dispatched AFTER groups in the SAME apply run -- sees the
-    group as an undeclared member and -Prune removes the membership the group's creation just added,
-    in that same run and again on every later apply -- and it never self-heals, since
-    administrativeUnit only fires on create. Declare both sides together.
+    administrativeUnits[] entry (same displayName or id, case-insensitive) in this SAME document.
+    Otherwise only the apply run that creates the group keeps the membership (it withholds that
+    prune: Skipped, "prune withheld"); on every later apply the administrative unit's handler sees
+    the group as an undeclared member and -Prune removes the membership -- and it never self-heals,
+    since administrativeUnit only fires on create. Declare both sides together.
   - pimPolicy is per access type. Use the nested form to set member AND owner:
     pimPolicy { member { ...block... }, owner { ...block... } }. The flat member-only form
     pimPolicy { activationMaxHours, authenticationContextId, allowPermanentEligibility } is still
