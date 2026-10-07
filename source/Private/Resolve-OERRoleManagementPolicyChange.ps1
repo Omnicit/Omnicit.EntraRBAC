@@ -17,8 +17,10 @@ function Resolve-OERRoleManagementPolicyChange {
     or "requireMfaOnActivation": null from disabling MFA. An empty string is still a declared value:
     authenticationContextId "" remains the documented "disable the authentication context" request.
     A document that explicitly declares requireApproval = false suppresses the approver parameters
-    entirely (Resolve-OERPolicyRulePatch forces isApprovalRequired = true whenever approvers are sent,
-    so sending both would re-enable approval); the suppression is recorded in the Changes list.
+    entirely: approvers only apply while approval is required (Resolve-OERPolicyRulePatch forces
+    isApprovalRequired = true whenever approvers are sent), and Set-OERRoleManagementPolicy refuses
+    -RequireApproval $false beside an approver parameter with MutuallyExclusiveParameter, so this diff
+    never sends both; the suppression is recorded in the Changes list.
     Declared approver values are object ids by the time this diff sees them -- the handler resolves a
     declared UPN or group display name to its object id first, through Resolve-OERDeclaredApprover --
     so approver lists are compared offline as case-insensitive sets of ids against the live approver
@@ -32,9 +34,12 @@ function Resolve-OERRoleManagementPolicyChange {
     declared side(s) are sent (ApproverUser only when approvers.users is declared, ApproverGroup only
     when approvers.groups is declared), because Set-OERDirectoryRoleManagementPolicy follows the
     Microsoft Graph semantics of replacing only the side it is bound for and carrying the other from
-    the live rule; the comparison itself is the same ids-against-ids set test either way. A null
-    Current (the policy could not be read) is treated as everything-declared-is-changed. No Graph,
-    ARM, or authentication occurs.
+    the live rule; the comparison itself is the same ids-against-ids set test either way, and a
+    declared empty list is a genuinely empty side for both callers, so it equals a live side that is
+    already empty. A change that would leave the Azure policy with no approver at all is not
+    prevented here: Set-OERRoleManagementPolicy refuses it with ApproverRequired. A null Current
+    (the policy could not be read) is treated as everything-declared-is-changed. No Graph, ARM, or
+    authentication occurs.
 
     .PARAMETER Declared
     One roleManagementPolicies[] entry from the structure document. Recognized fields:
@@ -173,13 +178,16 @@ function Resolve-OERRoleManagementPolicyChange {
     # decision; the seeded side never forces an update on its own.
     #
     # A document that EXPLICITLY declares requireApproval = false cannot also mean "use these
-    # approvers": Resolve-OERPolicyRulePatch sets isApprovalRequired = $true UNCONDITIONALLY whenever
-    # PrimaryApprovers are supplied, so sending both would silently RE-ENABLE approval on a policy the
-    # document says must have it off. The explicit false wins and the approver parameters are never
-    # sent. Get-OERInventory can produce exactly that document: ConvertTo-OERRoleManagementPolicy
-    # reads primaryApprovers regardless of isApprovalRequired, so an approval-off policy with leftover
-    # stage approvers exports both keys. An OMITTED requireApproval keeps the old behaviour -- the
-    # approvers are applied and ARM turns approval on, which is what declaring approvers means.
+    # approvers": approvers apply only while approval is required (Resolve-OERPolicyRulePatch sets
+    # isApprovalRequired = $true UNCONDITIONALLY whenever PrimaryApprovers are supplied, which would
+    # silently RE-ENABLE approval on a policy the document says must have it off), and
+    # Set-OERRoleManagementPolicy now refuses -RequireApproval $false beside an approver parameter with
+    # MutuallyExclusiveParameter. So this diff must never send both: the explicit false wins and the
+    # approver parameters are never sent. Get-OERInventory can produce exactly that document:
+    # ConvertTo-OERRoleManagementPolicy reads primaryApprovers regardless of isApprovalRequired, so an
+    # approval-off policy with leftover stage approvers exports both keys. An OMITTED requireApproval
+    # keeps the old behaviour -- the approvers are applied and ARM turns approval on, which is what
+    # declaring approvers means.
     $HasDeclUser  = Test-DeclHas $Declared.approvers 'users'
     $HasDeclGroup = Test-DeclHas $Declared.approvers 'groups'
     $ApprovalExplicitlyOff = (Test-DeclHas $Declared 'requireApproval') -and (-not [bool]$Declared.requireApproval)
@@ -206,18 +214,13 @@ function Resolve-OERRoleManagementPolicyChange {
             @()
         }
 
-        # Directory-role caller only: re-wrap both sides as genuine [string[]] before they are
-        # compared or sent. The if-statement assignments above unroll a declared [] to $null, and
-        # Test-ApproverSetEqual reads @($null) as ONE entry, so a declared empty side would never
-        # equal an empty live side and would report a change -- and a Failed NoChange write -- on
-        # every run.
-        if ($SendDeclaredApproverSideOnly) {
-            $DeclUser  = [string[]]@($DeclUser | Where-Object { $_ })
-            $DeclGroup = [string[]]@($DeclGroup | Where-Object { $_ })
-        }
-        # ARM path (switch not set), left unchanged in this step: the same unrolling means a
-        # declared empty side is compared as @($null) and never converges against an empty live
-        # side. That defect is reported as a finding outside this step.
+        # Both callers, the Azure Resource Manager one and the directory-role one: re-wrap both sides
+        # as genuine [string[]] before they are compared or sent. The if-statement assignments above
+        # unroll a declared [] to $null, and Test-ApproverSetEqual reads @($null) as ONE entry, so a
+        # declared empty side would never equal an empty live side and would report a change -- and,
+        # for the directory-role caller, a Failed NoChange write -- on every run (BL-16).
+        $DeclUser  = [string[]]@($DeclUser | Where-Object { $_ })
+        $DeclGroup = [string[]]@($DeclGroup | Where-Object { $_ })
         $UserChanged  = $HasDeclUser  -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclUser  -CurrentApprover $CurUser))
         $GroupChanged = $HasDeclGroup -and (($null -eq $Current) -or -not (Test-ApproverSetEqual -DeclaredValue $DeclGroup -CurrentApprover $CurGroup))
         if (($UserChanged -or $GroupChanged) -and $SendDeclaredApproverSideOnly) {
