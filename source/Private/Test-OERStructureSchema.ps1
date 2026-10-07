@@ -116,17 +116,23 @@ function Test-OERStructureSchema {
     through the document (Set-OERGroup -NewDisplayName does it). An explicit null is not declared,
     as for every other key, and that Warning does not compare a template-based group's computed name.
     A groups[] entry declaring a non-empty administrativeUnit whose matching administrativeUnits[] entry (by
-    displayName, case-insensitively) exists in the same
-    document but does not name the group in its members is a Warning (issue #59): administrativeUnit
-    is applied only when the group is created and never round-trips, so without the reciprocal members
-    entry -Prune removes the membership in the SAME apply run -- Invoke-OERStructure dispatches
-    administrativeUnits after groups, so the create and the prune happen in one call -- and again on
-    every later apply, and nothing self-heals it. Nothing is reported when the referenced unit is not
-    declared in the document (it may be managed elsewhere), when the unit declares members as an
-    explicit null (the documented signal that skips reconciling that collection entirely), or when
-    the group is template-based (this check deliberately keeps to a declared displayName, so that no
-    document that passed before starts warning, although the naming engine can compute the name
-    offline, as the duplicate check below does). A second top-level entry whose key matches an
+    displayName, case-insensitively, or by the id the entry declares) exists in the same document but
+    does not name the group in its members is a Warning (issue #59, BL-07): administrativeUnit is
+    applied only when the group is created and never round-trips, so without the reciprocal members
+    entry every later apply with -Prune removes the membership, and nothing self-heals it. The run that
+    creates the group withholds that prune (Skipped, "prune withheld"), since the apply engine records
+    the membership it created. The group's name is its displayName or, for a template-based group,
+    the name Resolve-OERName computes from template and tokens, as the duplicate check below computes
+    it (an entry whose name cannot be computed is not checked). The members name the group when they
+    list its name or its declared id, ignoring case; when the group declares no id, a member that is
+    an object id may be the group, and nothing is reported. Nothing is reported either when the
+    referenced unit is not declared in the document (it may be managed elsewhere), or when the unit
+    declares members as an explicit null (the documented signal that skips reconciling that
+    collection entirely). An administrativeUnit that is an object id no entry declares as its id
+    names a unit this check cannot identify offline: that is a Warning when at least one
+    administrativeUnits[] entry reconciles its members (members not an explicit null) without naming
+    the group, naming those entries and what to do -- name the group in that unit's members, or
+    declare the unit's id on its entry. A second top-level entry whose key matches an
     earlier one, compared without regard to letter case, is an Error at the later entry's path
     that names the earlier entry's index, since the two describe one live object and applying both
     makes each undo the other, or through a child collection removes what the other declared, on
@@ -255,6 +261,29 @@ function Test-OERStructureSchema {
         $Seen[$Key] = $Index
     }
 
+    # The name a groups[] entry claims: its displayName, or for a template-based entry the name the
+    # naming engine computes from template and tokens, with the token conversion Sync-OERStructureGroup
+    # applies. Returns $null when the entry declares neither, or when the name cannot be computed --
+    # an unknown token, or any other refusal, makes Resolve-OERName throw -- since the apply engine
+    # reports such an entry Failed on its own. The one owner of that computation here: the duplicate
+    # check (BL-02) and the administrativeUnit placement rule (Rule 12) both call it.
+    function Get-GroupEntryName {
+        param([object]$Group)
+        if (Test-HasProp -Node $Group -Name 'displayName') { return [string]$Group.displayName }
+        if (-not (Test-HasProp -Node $Group -Name 'template') -or [string]::IsNullOrEmpty([string]$Group.template)) { return $null }
+        $TokenHash = @{}
+        if ((Test-HasProp -Node $Group -Name 'tokens') -and $Group.tokens -is [PSCustomObject]) {
+            foreach ($TokenProp in $Group.tokens.PSObject.Properties) {
+                $TokenHash[$TokenProp.Name] = $TokenProp.Value
+            }
+        }
+        try {
+            return Resolve-OERName -Template ([string]$Group.template) -Tokens $TokenHash
+        } catch {
+            return $null
+        }
+    }
+
     $KnownTop = @('version', 'tenantAlias', 'groups', 'administrativeUnits', 'catalogs',
         'accessPackages', 'accessReviews', 'directoryRoleManagementPolicies', 'directoryRoleAssignments',
         'roleAssignments', 'roleManagementPolicies')
@@ -355,29 +384,13 @@ function Test-OERStructureSchema {
                 }
 
                 # BL-02: the names this entry claims are its own name and its previousDisplayName. A
-                # template-based entry's name is computed with the naming engine, with the token
-                # conversion Sync-OERStructureGroup applies; an unknown token (or any other refusal)
-                # throws, and an entry whose name cannot be computed claims no name here -- the apply
-                # engine reports that entry Failed on its own. Each claim is checked against the
+                # template-based entry's name is computed with the naming engine (Get-GroupEntryName);
+                # an entry whose name cannot be computed claims no name here -- the apply engine
+                # reports that entry Failed on its own. Each claim is checked against the
                 # EARLIER entries' claims only: the previousDisplayName is not claimed at all when it
                 # equals this entry's own name, so an entry whose displayName equals its own
                 # previousDisplayName (already a Warning above) is not a duplicate of itself.
-                $GroupNameKey = $null
-                if ($HasDN) {
-                    $GroupNameKey = [string]$G.displayName
-                } elseif ($HasTpl -and -not [string]::IsNullOrEmpty([string]$G.template)) {
-                    $GroupTokenHash = @{}
-                    if ((Test-HasProp -Node $G -Name 'tokens') -and $G.tokens -is [PSCustomObject]) {
-                        foreach ($GroupTokenProp in $G.tokens.PSObject.Properties) {
-                            $GroupTokenHash[$GroupTokenProp.Name] = $GroupTokenProp.Value
-                        }
-                    }
-                    try {
-                        $GroupNameKey = Resolve-OERName -Template ([string]$G.template) -Tokens $GroupTokenHash
-                    } catch {
-                        $GroupNameKey = $null
-                    }
-                }
+                $GroupNameKey = Get-GroupEntryName -Group $G
                 if ($null -ne $GroupNameKey) {
                     Add-DuplicateEntryFinding -Seen $GroupNameSeen -Key $GroupNameKey -Index $I -Section 'groups' `
                         -Item $GItem -Path $GPath -What "group name '$GroupNameKey'" -Consequence $GroupConsequence
@@ -1742,19 +1755,38 @@ function Test-OERStructureSchema {
         }
     }
 
-    # Rule 12: cross-reference warning -- groups[].administrativeUnit placement (issue #59)
+    # Rule 12: cross-reference warning -- groups[].administrativeUnit placement (issue #59, BL-07)
     #
     # administrativeUnit on a group is create-path only (Sync-OERStructureGroup) and never round-trips,
     # so the ONLY way a document keeps a group inside a unit across repeated applies is by also naming
-    # the group in that unit's own administrativeUnits[].members. Without it, Sync-OERStructureAdministrativeUnit
-    # sees an undeclared member and, under -Prune, removes the very membership the groups section just
-    # created -- in the SAME apply run, not merely a later one: Invoke-OERStructure's hardcoded section
-    # order is groups -> administrativeUnits, New-OERGroup -AdministrativeUnit creates the group
-    # straight into the unit (POST .../administrativeUnits/{id}/members), and the -EnsureOnly pre-pass
-    # reconciles no members. Every later apply repeats it, and nothing here self-heals it, since the
-    # create-only field never fires again once the group exists. This is a Warning, never an Error (spec Foerhandsbeslut
-    # option A+B, not C): the prune pass itself deliberately stays independent of the groups section, so
-    # this validator only documents the trap offline rather than reaching into that handler's logic.
+    # the group in that unit's own administrativeUnits[].members. The run that creates the group keeps
+    # the membership: Sync-OERStructureGroup records it, and Sync-OERStructureAdministrativeUnit --
+    # dispatched after groups -- withholds its prune in that run (Skipped, "prune withheld"). Every
+    # later apply with -Prune sees an undeclared member and removes it, and nothing self-heals it,
+    # since the create-only field never fires again once the group exists. This is a Warning, never an
+    # Error (spec Foerhandsbeslut option A+B, not C), so no document that validates today starts failing.
+    #
+    # The group's name is the one Get-GroupEntryName computes, a template-based group's included; an
+    # entry whose name cannot be computed is skipped. The unit is matched by its displayName, ignoring
+    # case, or by the id an administrativeUnits[] entry declares. A unit's members name the group when
+    # they hold its name or its declared id, ignoring case. When the group declares no id, a member
+    # that is an object id may be this group -- an exported inventory lists a group member by its id --
+    # so the unit counts as naming it (ruling R9).
+    function Test-UnitMayNameGroup {
+        param([object]$Unit, [string]$GroupName, [object]$GroupId)
+        $UnitMembers = if (Test-HasProp -Node $Unit -Name 'members') { @($Unit.members) } else { @() }
+        foreach ($UnitMember in $UnitMembers) {
+            $MemberText = [string]$UnitMember
+            if ($MemberText -ieq $GroupName) { return $true }
+            if ($null -ne $GroupId) {
+                if ($MemberText -ieq [string]$GroupId) { return $true }
+            } elseif (Test-OERGuid -Value $MemberText) {
+                return $true
+            }
+        }
+        return $false
+    }
+
     if ((Test-HasProp -Node $Document -Name 'groups') -and
         ($Document.groups -is [System.Collections.IEnumerable]) -and
         ($Document.groups -isnot [string]) -and
@@ -1770,26 +1802,50 @@ function Test-OERStructureSchema {
             $PAuName = [string]$PGroup.administrativeUnit
             if ([string]::IsNullOrEmpty($PAuName)) { continue }
 
-            # A template-based group's real displayName is produced by Resolve-OERName (token
-            # substitution), which is pure and offline, so this validator could compute it -- the
-            # duplicate-name check in Rule 3 + Rule 4 does. This rule deliberately keeps to a declared
-            # displayName anyway: computing the name here would make documents that passed before start
-            # warning, and the placement Warning is the older, narrower rule.
-            if (-not (Test-HasProp -Node $PGroup -Name 'displayName')) { continue }
-            $PGroupName = [string]$PGroup.displayName
+            # A template-based group's name is computed offline, exactly as the duplicate check does;
+            # an entry whose name cannot be computed is reported Failed by the apply engine on its own.
+            $PGroupName = Get-GroupEntryName -Group $PGroup
+            if ($null -eq $PGroupName) { continue }
+            $PGroupId = if (Test-HasProp -Node $PGroup -Name 'id') { [string]$PGroup.id } else { $null }
+            $PNamedAs = if ($null -ne $PGroupId) { "'$PGroupName' or its id '$PGroupId'" } else { "'$PGroupName'" }
+            $PGPath = "groups[$I]"
 
             $PMatchedAuIndex = -1
             for ($K = 0; $K -lt $AuPlacementUnits.Count; $K++) {
-                if ((Test-HasProp -Node $AuPlacementUnits[$K] -Name 'displayName') -and
-                    ([string]$AuPlacementUnits[$K].displayName -ieq $PAuName)) {
+                $PUnit = $AuPlacementUnits[$K]
+                if (((Test-HasProp -Node $PUnit -Name 'displayName') -and ([string]$PUnit.displayName -ieq $PAuName)) -or
+                    ((Test-HasProp -Node $PUnit -Name 'id') -and ([string]$PUnit.id -ieq $PAuName))) {
                     $PMatchedAuIndex = $K
                     break
                 }
             }
-            # No administrativeUnits[] entry for this unit in the SAME document: the unit is managed
-            # elsewhere (or already exists in the tenant with this group already a member), and this
-            # document makes no claim about its membership either way.
-            if ($PMatchedAuIndex -lt 0) { continue }
+
+            if ($PMatchedAuIndex -lt 0) {
+                # No administrativeUnits[] entry for this unit by name: the unit is managed elsewhere (or
+                # already exists in the tenant with this group already a member), and this document
+                # makes no claim about its membership either way. An object id that no entry declares as
+                # its id is the exception: the unit may be one of the entries, and offline nothing tells
+                # which. Warn when an entry that reconciles its members (an explicit null does not) does
+                # not name the group, since that entry may be the unit (ruling R9).
+                if (-not (Test-OERGuid -Value $PAuName)) { continue }
+                $PUnnamingIndex = @(for ($K = 0; $K -lt $AuPlacementUnits.Count; $K++) {
+                        if ((-not (Test-OERDeclaredNull -Node $AuPlacementUnits[$K] -Name 'members')) -and
+                            (-not (Test-UnitMayNameGroup -Unit $AuPlacementUnits[$K] -GroupName $PGroupName -GroupId $PGroupId))) {
+                            $K
+                        }
+                    })
+                if ($PUnnamingIndex.Count -eq 0) { continue }
+                $PUnnamingList = ($PUnnamingIndex | ForEach-Object { "administrativeUnits[$_]" }) -join ', '
+                Add-Finding -Section 'groups' -Item $PGroupName -Path "$PGPath.administrativeUnit" -Severity 'Warning' `
+                    -Message ("Group '$PGroupName' at $PGPath declares administrativeUnit '$PAuName', an object id that no " +
+                        'administrativeUnits[] entry declares as its id, so this check cannot tell offline whether it names ' +
+                        "a unit whose members do not list $PNamedAs ($PUnnamingList). " +
+                        'administrativeUnit is applied only when the group is created and never round-trips: if it names ' +
+                        'one of them, the run that creates the group withholds the prune of that membership (Skipped, ' +
+                        '"prune withheld"), and every later apply with -Prune removes it. Name the group in that ' +
+                        "unit's members, or declare the unit's id on its administrativeUnits[] entry.")
+                continue
+            }
             $PMatchedAu = $AuPlacementUnits[$PMatchedAuIndex]
 
             # An explicit null on the unit's members is the documented "hands off" signal
@@ -1798,19 +1854,15 @@ function Test-OERStructureSchema {
             if (Test-OERDeclaredNull -Node $PMatchedAu -Name 'members') { continue }
 
             # An OMITTED members key is not the same signal -- it still reconciles (against an empty
-            # declared set) and still prunes, so it is read here as an empty list, not skipped.
-            $PAuMembers = if (Test-HasProp -Node $PMatchedAu -Name 'members') { @($PMatchedAu.members) } else { @() }
-            $PGroupIsNamed = @($PAuMembers | Where-Object { [string]$_ -ieq $PGroupName }).Count -gt 0
-            if (-not $PGroupIsNamed) {
-                $PGPath = "groups[$I]"
+            # declared set) and still prunes, so Test-UnitMayNameGroup reads it as an empty list.
+            if (-not (Test-UnitMayNameGroup -Unit $PMatchedAu -GroupName $PGroupName -GroupId $PGroupId)) {
                 Add-Finding -Section 'groups' -Item $PGroupName -Path "$PGPath.administrativeUnit" -Severity 'Warning' `
                     -Message ("Group '$PGroupName' at $PGPath declares administrativeUnit '$PAuName', but " +
-                        "administrativeUnits[$PMatchedAuIndex].members does not list '$PGroupName'. " +
-                        'administrativeUnit is applied only when the group is created and never round-trips, ' +
-                        "so unless this document's administrativeUnits[$PMatchedAuIndex] entry also names the " +
-                        'group in members, -Prune removes the membership the create just added in the SAME ' +
-                        'apply run -- the administrativeUnits section is dispatched after groups -- and again ' +
-                        'on every later apply.')
+                        "administrativeUnits[$PMatchedAuIndex].members does not list $PNamedAs. " +
+                        'administrativeUnit is applied only when the group is created and never round-trips: ' +
+                        'the run that creates the group withholds the prune of that membership (Skipped, ' +
+                        '"prune withheld"), but every later apply with -Prune removes it unless this ' +
+                        "document's administrativeUnits[$PMatchedAuIndex] entry names the group in members.")
             }
         }
     }
