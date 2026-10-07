@@ -196,6 +196,80 @@ Describe 'Remove-OERActiveRoleAssignment' {
             $Err[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousPrincipal*'
         }
     }
+
+    Context 'a removal Azure Resource Manager accepts but answers with a status in the Failed family (BL-33)' {
+        # ARM can accept the AdminRemove request and answer it with status Failed (or another value of
+        # the Failed family, such as FailedAsResourceIsLocked), which removes nothing. The cmdlet still
+        # emits the request object, then writes AssignmentRequestFailed.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{
+                    id         = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/req-rf'
+                    name       = 'req-rf'
+                    properties = [PSCustomObject]@{
+                        scope = '/subscriptions/s1'; roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+                        principalId = 'aaaa0000-0000-0000-0000-000000000001'; principalType = 'User'; requestType = 'AdminRemove'
+                        status = $script:AnsweredStatus
+                    }
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one AssignmentRequestFailed when ARM answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+            @{ Status = 'FailedAsResourceIsLocked' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Remove-OERActiveRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Remove-OERActiveRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly '/subscriptions/s1'
+            $Err[0].Exception.Message | Should -BeExactly ("Azure Resource Manager accepted the active role assignment removal request 'req-rf' " +
+                "(AdminRemove) of role '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal " +
+                "'aaaa0000-0000-0000-0000-000000000001' at scope '/subscriptions/s1' but answered status $Status, so nothing was " +
+                'removed: the active assignment is still in place.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries AssignmentRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Remove-OERActiveRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Remove-OERActiveRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].Name | Should -BeExactly 'req-rf'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status Revoked, a removal that succeeded, and still emits the object' {
+            $script:AnsweredStatus = 'Revoked'
+            $Err = $null
+            $Out = @(Remove-OERActiveRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered Revoked, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly 'Revoked'
+            @($Err).Count | Should -Be 0
+        }
+    }
 }
 
 Describe 'Remove-OERActiveRoleAssignment verbose output' {

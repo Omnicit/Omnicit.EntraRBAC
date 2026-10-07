@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -254,6 +255,80 @@ Describe 'Remove-OEREligibleRoleAssignment' {
             $Err[0].FullyQualifiedErrorId | Should -BeLike 'AmbiguousPrincipal*'
         }
     }
+
+    Context 'a removal Azure Resource Manager accepts but answers with a status in the Failed family (BL-33)' {
+        # ARM can accept the AdminRemove request and answer it with status Failed (or another value of
+        # the Failed family, such as FailedAsResourceIsLocked), which removes nothing. The cmdlet still
+        # emits the request object, then writes EligibilityRequestFailed.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{
+                    id         = '/subscriptions/s1/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/req-rf'
+                    name       = 'req-rf'
+                    properties = [PSCustomObject]@{
+                        scope = '/subscriptions/s1'; roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+                        principalId = 'aaaa0000-0000-0000-0000-000000000001'; principalType = 'User'; requestType = 'AdminRemove'
+                        status = $script:AnsweredStatus
+                    }
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one EligibilityRequestFailed when ARM answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+            @{ Status = 'FailedAsResourceIsLocked' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OEREligibleRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly '/subscriptions/s1'
+            $Err[0].Exception.Message | Should -BeExactly ("Azure Resource Manager accepted the eligible role assignment removal request 'req-rf' " +
+                "(AdminRemove) of role '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal " +
+                "'aaaa0000-0000-0000-0000-000000000001' at scope '/subscriptions/s1' but answered status $Status, so nothing was " +
+                'removed: the eligible assignment is still in place.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries EligibilityRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OEREligibleRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].Name | Should -BeExactly 'req-rf'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status Revoked, a removal that succeeded, and still emits the object' {
+            $script:AnsweredStatus = 'Revoked'
+            $Err = $null
+            $Out = @(Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered Revoked, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly 'Revoked'
+            @($Err).Count | Should -Be 0
+        }
+    }
 }
 
 Describe 'Remove-OEREligibleRoleAssignment verbose output' {
@@ -291,5 +366,62 @@ Describe 'Remove-OEREligibleRoleAssignment verbose output' {
                 Where-Object { $_ -is [System.Management.Automation.VerboseRecord] }).Message -join "`n"
         $Text | Should -Not -Match '(?i)bearer'
         $Text | Should -Not -Match '(?i)authorization\s*:'
+    }
+}
+
+Describe 'Remove-OEREligibleRoleAssignment: a removal answered with a status in the Failed family, in a script with no try (BL-33)' {
+    # EligibilityRequestFailed is NON-terminating: a script that stands in no try carries on past it,
+    # and what it must see is each request object and, once per call, the error. The script prints a
+    # sentinel at its end, and its fakes are installed in the answering runspace's own copy of the
+    # module (Pester mocks do not cross a runspace). The control answers Revoked in the same script
+    # with the same fakes, so an empty error stream there cannot be an artefact of the harness.
+    BeforeAll {
+        $script:NewNoTryScenario = {
+            param([string]$Status)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERScope -Value { '/subscriptions/s1' }
+    Set-Item -Path function:script:Resolve-OERRoleDefinitionId -Value { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+    Set-Item -Path function:script:Invoke-OERArmRequest -Value {
+        param([string]$Method = 'GET', [string]$Path, [hashtable]$Body)
+        [pscustomobject]@{
+            id = '/subscriptions/s1/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/req-nt'; name = 'req-nt'
+            properties = [pscustomobject]@{
+                scope = '/subscriptions/s1'; roleDefinitionId = $Body.properties.roleDefinitionId
+                principalId = $Body.properties.principalId; requestType = $Body.properties.requestType; status = '#STATUS#'
+            }
+        }
+    }
+}
+$Results = @(
+    Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000002' -Scope '/subscriptions/s1' -Confirm:$false
+    Remove-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000003' -Scope '/subscriptions/s1' -Confirm:$false
+)
+"EMITTED:$(@($Results | ForEach-Object { '{0}={1}' -f $_.PrincipalId.Substring(34), $_.Status }) -join ',')"
+'END'
+'@).Replace('#STATUS#', $Status))
+        }
+        function Get-TestFailedMessage ([string]$PrincipalId) {
+            "Azure Resource Manager accepted the eligible role assignment removal request 'req-nt' (AdminRemove) of role " +
+            "'/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal '$PrincipalId' at scope " +
+            "'/subscriptions/s1' but answered status Failed, so nothing was removed: the eligible assignment is still in place."
+        }
+    }
+
+    It 'reaches the end of the script, emits each request object, and writes EligibilityRequestFailed once per call' {
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Status 'Failed')
+        ($Run.Output -join '|') | Should -Be 'EMITTED:02=Failed,03=Failed|END'
+        @($Run.Errors).Count | Should -Be 2
+        @($Run.Errors | Where-Object { $_ -ceq (Get-TestFailedMessage -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000002') }).Count | Should -Be 1
+        @($Run.Errors | Where-Object { $_ -ceq (Get-TestFailedMessage -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000003') }).Count | Should -Be 1
+    }
+
+    It 'the control: answered Revoked in the same script, both objects are emitted and no error is written' {
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Status 'Revoked')
+        ($Run.Output -join '|') | Should -Be 'EMITTED:02=Revoked,03=Revoked|END'
+        @($Run.Errors).Count | Should -Be 0
     }
 }

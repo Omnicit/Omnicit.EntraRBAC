@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -474,5 +475,301 @@ Describe 'Set-OERAccessPackageAssignmentPolicy requestor scope preservation' {
             $Body.allowedTargetScope -eq 'specificDirectoryUsers' -and
             @($Body.specificAllowedTargets).Count -eq 1
         }
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy refuses a connected-organization scope that names no target (Sprint 9 step 5, BL-50)' {
+    # New-OERAccessPackageRequestorScope builds SpecificConnectedOrganizationUsers with no
+    # specificAllowedTargets (the module does not model connected organization targets), and a full
+    # update PUTs a declared scope whole, so the live connected organizations would be replaced with
+    # an empty list. The refusal sits after the read of the live policy and its AccessPackageNotFound
+    # check, and before ConvertTo-OERPolicyBody and ShouldProcess, so it reads the same under -WhatIf.
+    BeforeAll {
+        $script:Bl50Id = '11111111-1111-1111-1111-111111111111'
+        $script:Bl50Message = "-RequestorScope names allowedTargetScope SpecificConnectedOrganizationUsers but no connected organization -- New-OERAccessPackageRequestorScope cannot name one -- so the full update of assignment policy '$($script:Bl50Id)' would replace every connected organization the live policy names with an empty list. Nothing was sent. Omit -RequestorScope to keep the live scope and its connected organizations."
+
+        # A hand-built tagged scope, the shape the builder returns, so a target can be named.
+        function New-Bl50Scope {
+            param([string]$AllowedTargetScope, $SpecificAllowedTargets, [switch]$OmitTargets)
+            $Members = [ordered]@{ AllowedTargetScope = $AllowedTargetScope }
+            if (-not $OmitTargets) { $Members.SpecificAllowedTargets = $SpecificAllowedTargets }
+            $Out = [PSCustomObject]$Members
+            $Out.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RequestorScope')
+            $Out
+        }
+
+        function New-Bl50ConnectedOrgTarget {
+            @{
+                '@odata.type'           = '#microsoft.graph.connectedOrganizationMembers'
+                connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                description             = 'Partner organization'
+            }
+        }
+
+        function Invoke-Bl50Set {
+            param($Scope, [bool]$UseWhatIf = $false)
+            $Err = $null
+            $Result = Set-OERAccessPackageAssignmentPolicy -Id $script:Bl50Id -DisplayName 'Partners' `
+                -Description 'new description' -RequestorScope $Scope -WhatIf:$UseWhatIf -Confirm:$false `
+                -ErrorAction SilentlyContinue -ErrorVariable Err
+            [PSCustomObject]@{ Result = $Result; Errors = @($Err) }
+        }
+    }
+
+    BeforeEach {
+        InModuleScope $script:moduleName { $script:_OERAuthState = $null }
+        Mock -ModuleName $script:moduleName Initialize-OERAuth { }
+        # The live policy names a connected organization; the read-modify-write GET returns it.
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{
+                id                     = '11111111-1111-1111-1111-111111111111'
+                displayName            = 'Partners'
+                description            = 'live description'
+                accessPackage          = @{ id = 'ap-1' }
+                allowedTargetScope     = 'specificConnectedOrganizationUsers'
+                specificAllowedTargets = @(@{
+                        '@odata.type'           = '#microsoft.graph.connectedOrganizationMembers'
+                        connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+                        description             = 'Partner organization'
+                    })
+                expiration             = @{ type = 'noExpiration' }
+            }
+        } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+        Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+            @{
+                id                 = '11111111-1111-1111-1111-111111111111'
+                displayName        = 'Partners'
+                allowedTargetScope = $Body.allowedTargetScope
+                expiration         = @{ type = 'noExpiration' }
+            }
+        } -ParameterFilter { $Method -eq 'PUT' }
+    }
+
+    Context 'the refusal' {
+        It 'refuses the scope New-OERAccessPackageRequestorScope builds, once, after reading the policy once, and sends nothing (WhatIf: <UseWhatIf>)' -ForEach @(
+            @{ UseWhatIf = $false }
+            @{ UseWhatIf = $true }
+        ) {
+            $Scope = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers -ErrorAction Stop
+
+            $Run = Invoke-Bl50Set -Scope $Scope -UseWhatIf $UseWhatIf
+
+            $Run.Result | Should -BeNullOrEmpty
+            # The only record this call writes is its own: exactly one, cmdlet-qualified.
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'InvalidPolicyInput,Set-OERAccessPackageAssignmentPolicy'
+            $Run.Errors[0].CategoryInfo.Category | Should -Be 'InvalidArgument'
+            $Run.Errors[0].TargetObject | Should -Be $script:Bl50Id
+            $Run.Errors[0].Exception.Message | Should -BeExactly $script:Bl50Message
+            # Positive proof that the guard was reached: the live policy was read, once, and that was
+            # the only request made.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                (-not $Method -or $Method -eq 'GET') -and $Uri -like '*assignmentPolicies/11111111-1111-1111-1111-111111111111?*expand=accessPackage*'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'refuses a scope that names the connected-organization scope and no target (<Name>)' -ForEach @(
+            @{ Name = 'the Pascal-case spelling, an empty list'; Scope = 'SpecificConnectedOrganizationUsers'; Targets = @(); Omit = $false }
+            @{ Name = 'mixed casing, an empty list'; Scope = 'SPECIFICconnectedOrganizationUsers'; Targets = @(); Omit = $false }
+            @{ Name = 'a null target list'; Scope = 'specificConnectedOrganizationUsers'; Targets = $null; Omit = $false }
+            @{ Name = 'a list of only null entries'; Scope = 'specificConnectedOrganizationUsers'; Targets = @($null, $null); Omit = $false }
+            @{ Name = 'no target member at all'; Scope = 'specificConnectedOrganizationUsers'; Targets = $null; Omit = $true }
+        ) {
+            $Scope = if ($Omit) {
+                New-Bl50Scope -AllowedTargetScope $Scope -OmitTargets
+            } else {
+                New-Bl50Scope -AllowedTargetScope $Scope -SpecificAllowedTargets $Targets
+            }
+
+            $Run = Invoke-Bl50Set -Scope $Scope
+
+            $Run.Result | Should -BeNullOrEmpty
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'InvalidPolicyInput,Set-OERAccessPackageAssignmentPolicy'
+            $Run.Errors[0].Exception.Message | Should -BeExactly $script:Bl50Message
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                -not $Method -or $Method -eq 'GET'
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'reports the missing access package first: the refusal comes after the AccessPackageNotFound check' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Partners' }
+            } -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+            $Scope = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers -ErrorAction Stop
+
+            $Run = Invoke-Bl50Set -Scope $Scope
+
+            $Run.Errors.Count | Should -Be 1
+            $Run.Errors[0].FullyQualifiedErrorId | Should -Be 'AccessPackageNotFound,Set-OERAccessPackageAssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -eq 'PUT' }
+        }
+    }
+
+    Context 'what the refusal leaves alone' {
+        It 'sends the update when the connected-organization scope carries a target (<Scope>)' -ForEach @(
+            @{ Scope = 'specificConnectedOrganizationUsers' }
+            @{ Scope = 'SPECIFICconnectedOrganizationUsers' }
+        ) {
+            $Scope = New-Bl50Scope -AllowedTargetScope $Scope -SpecificAllowedTargets @(New-Bl50ConnectedOrgTarget)
+
+            $Run = Invoke-Bl50Set -Scope $Scope
+
+            $Run.Errors.Count | Should -Be 0
+            $Run.Result.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.AssignmentPolicy'
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { -not $Method -or $Method -eq 'GET' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Uri -like '*assignmentPolicies/11111111-1111-1111-1111-111111111111' -and
+                @($Body.specificAllowedTargets).Count -eq 1 -and
+                $Body.specificAllowedTargets[0].connectedOrganizationId -eq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            }
+        }
+
+        It 'sends the update for every other scope (<Name>)' -ForEach @(
+            @{ Name = 'AllMemberUsers'; Kind = 'Builder'; Expected = 'allMemberUsers' }
+            @{ Name = 'AllConfiguredConnectedOrganizationUsers'; Kind = 'Builder'; Expected = 'allConfiguredConnectedOrganizationUsers' }
+            @{ Name = 'SpecificDirectoryUsers'; Kind = 'BuilderWithUser'; Expected = 'specificDirectoryUsers' }
+            @{ Name = 'SpecificDirectoryUsers hand-built with no target'; Kind = 'HandBuilt'; Expected = 'specificDirectoryUsers' }
+        ) {
+            $Scope = switch ($Kind) {
+                'Builder' { New-OERAccessPackageRequestorScope -Scope $Expected -ErrorAction Stop }
+                'BuilderWithUser' { New-OERAccessPackageRequestorScope -Scope SpecificDirectoryUsers -User '22222222-2222-2222-2222-222222222222' -ErrorAction Stop }
+                'HandBuilt' { New-Bl50Scope -AllowedTargetScope 'specificDirectoryUsers' -SpecificAllowedTargets @() }
+            }
+            $script:Bl50ExpectedScope = $Expected
+
+            $Run = Invoke-Bl50Set -Scope $Scope
+
+            $Run.Errors.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and $Body.allowedTargetScope -ceq $script:Bl50ExpectedScope
+            }
+        }
+
+        It 'keeps the live connected organization when -RequestorScope is omitted' {
+            $Err = $null
+            Set-OERAccessPackageAssignmentPolicy -Id $script:Bl50Id -DisplayName 'Partners' -Description 'new description' `
+                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+
+            @($Err).Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter {
+                $Method -eq 'PUT' -and
+                $Body.allowedTargetScope -ceq 'specificConnectedOrganizationUsers' -and
+                @($Body.specificAllowedTargets).Count -eq 1 -and
+                $Body.specificAllowedTargets[0].connectedOrganizationId -eq 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            }
+        }
+    }
+}
+
+Describe 'Set-OERAccessPackageAssignmentPolicy: the connected-organization refusal in a script with no try (Sprint 9 step 5, BL-50)' {
+    # A refused call writes a NON-terminating error and the script goes on, so what it must not do is
+    # send the PUT on the way. The script stands in no try, prints a sentinel at its end, and the
+    # stubbed transport appends every request to a log file whose path is substituted into the text.
+    # The control runs the allowed form in the same script with the same stub, so a refused run with
+    # no PUT in the log cannot be an artefact of a stub that never logs one. The stub writes its log
+    # with -WhatIf:$false: a -WhatIf call passes its preference down to Add-Content, which would
+    # otherwise skip the write and make a -WhatIf request invisible in the log.
+    BeforeAll {
+        $script:Bl50Message = "-RequestorScope names allowedTargetScope SpecificConnectedOrganizationUsers but no connected organization -- New-OERAccessPackageRequestorScope cannot name one -- so the full update of assignment policy '11111111-1111-1111-1111-111111111111' would replace every connected organization the live policy names with an empty list. Nothing was sent. Omit -RequestorScope to keep the live scope and its connected organizations."
+
+        $script:NewBl50NoTryScenario = {
+            param([string]$Log, [string]$Calls)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Remove-OERErrorRecord -Value { }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        if ($Method -eq 'PUT') {
+            Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest PUT targets=$(@($Body.specificAllowedTargets).Count)"
+            return @{ id = '11111111-1111-1111-1111-111111111111'; displayName = 'Partners'; allowedTargetScope = $Body.allowedTargetScope; expiration = @{ type = 'noExpiration' } }
+        }
+        Add-Content -LiteralPath '#LOG#' -WhatIf:$false -Value "Invoke-OERGraphRequest $Method"
+        @{
+            id                     = '11111111-1111-1111-1111-111111111111'
+            displayName            = 'Partners'
+            accessPackage          = @{ id = 'ap-1' }
+            allowedTargetScope     = 'specificConnectedOrganizationUsers'
+            specificAllowedTargets = @(@{ '@odata.type' = '#microsoft.graph.connectedOrganizationMembers'; connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+            expiration             = @{ type = 'noExpiration' }
+        }
+    }
+}
+$Refused = New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers
+$Named = [pscustomobject]@{
+    AllowedTargetScope     = 'specificConnectedOrganizationUsers'
+    SpecificAllowedTargets = @(@{ '@odata.type' = '#microsoft.graph.connectedOrganizationMembers'; connectedOrganizationId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa' })
+}
+$Named.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.RequestorScope')
+#CALLS#
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#CALLS#', $Calls))
+        }
+
+        $script:Bl50RefusedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' -RequestorScope $Refused -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' -RequestorScope $Refused -WhatIf
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:Bl50AllowedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' -RequestorScope $Named -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        $script:Bl50RefusedThenAllowedCalls = @'
+$Results = @(
+    Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' -RequestorScope $Refused -Confirm:$false
+    Set-OERAccessPackageAssignmentPolicy -Id '11111111-1111-1111-1111-111111111111' -DisplayName 'Partners' -RequestorScope $Named -Confirm:$false
+)
+"REACHED:$(@($Results | Where-Object { $null -ne $_ }).Count)"
+'@
+        function Get-Bl50RequestLog ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'reaches the end of the script, sends no PUT, and writes the refusal once per call (with and without -WhatIf)' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewBl50NoTryScenario -Log $Log -Calls $script:Bl50RefusedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        # Positive proof: each refused call read the live policy, and that was all it sent.
+        @(Get-Bl50RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest GET')
+        @($Run.Errors).Count | Should -Be 2
+        @($Run.Errors | Where-Object { $_ -ceq $script:Bl50Message }).Count | Should -Be 2
+    }
+
+    It 'the control: the same script with a scope that names a connected organization sends the PUT' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewBl50NoTryScenario -Log $Log -Calls $script:Bl50AllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 0
+        @(Get-Bl50RequestLog -Log $Log) | Should -Be @('Invoke-OERGraphRequest GET', 'Invoke-OERGraphRequest PUT targets=1')
+    }
+
+    It 'carries on after a refused call: the next call in the same script sends its PUT' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NewBl50NoTryScenario -Log $Log -Calls $script:Bl50RefusedThenAllowedCalls
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:1|END'
+        @($Run.Errors).Count | Should -Be 1
+        @($Run.Errors | Where-Object { $_ -ceq $script:Bl50Message }).Count | Should -Be 1
+        @(Get-Bl50RequestLog -Log $Log) | Should -Be @(
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest GET'
+            'Invoke-OERGraphRequest PUT targets=1'
+        )
     }
 }

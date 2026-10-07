@@ -48,7 +48,14 @@ function Set-OERAccessPackageAssignmentPolicy {
     .PARAMETER RequestorScope
     An optional tagged Omnicit.EntraRBAC.RequestorScope object from New-OERAccessPackageRequestorScope.
     When omitted, the policy keeps its live allowedTargetScope and specificAllowedTargets instead of
-    being reset to a default scope.
+    being reset to a default scope. A scope whose allowedTargetScope is SpecificConnectedOrganizationUsers
+    and that names no connected organization is refused with a non-terminating InvalidPolicyInput error
+    after the live policy is read and before anything is sent, also under -WhatIf: that is the scope
+    New-OERAccessPackageRequestorScope -Scope SpecificConnectedOrganizationUsers builds, since the
+    module does not model connected organization targets, and the full update would replace every
+    connected organization the live policy names with an empty list. Omit -RequestorScope to keep the
+    live scope and its connected organizations. Every other scope, and a tagged scope object that
+    does carry a connected organization target, is unaffected.
 
     .PARAMETER RequestorSettings
     A tagged object from New-OERAccessPackageRequestorSettings controlling requestor self-service options.
@@ -226,6 +233,29 @@ function Set-OERAccessPackageAssignmentPolicy {
         if (-not $PackageId) {
             Write-CmdletError -Message ([System.Exception]::new("Could not determine the access package for policy '$Id'.")) `
                 -ErrorId 'AccessPackageNotFound' -Category ObjectNotFound -TargetObject $Id -Cmdlet $PSCmdlet
+            return
+        }
+
+        # BL-50: New-OERAccessPackageRequestorScope builds SpecificConnectedOrganizationUsers with no
+        # specificAllowedTargets -- the module does not model connected organization targets -- and
+        # this cmdlet PUTs the declared scope whole, so the update would replace every connected
+        # organization the live policy names with an empty list. Refused here, after the read of the
+        # live policy and its AccessPackageNotFound check and BEFORE ConvertTo-OERPolicyBody and
+        # ShouldProcess, so it reads the same under -WhatIf and no PUT is ever sent. Only a scope that
+        # names the connected-organization scope AND holds no non-null target is caught: a hand-built
+        # tagged scope that carries a target, and every other scope, go through unchanged. -eq compares
+        # case-insensitively, so every casing of the scope name is caught.
+        if ($PSBoundParameters.ContainsKey('RequestorScope') -and
+            $RequestorScope.AllowedTargetScope -eq 'specificConnectedOrganizationUsers' -and
+            @(@($RequestorScope.SpecificAllowedTargets) | Where-Object { $null -ne $_ }).Count -eq 0) {
+            Write-CmdletError `
+                -Message ([System.Exception]::new(
+                    '-RequestorScope names allowedTargetScope SpecificConnectedOrganizationUsers but no ' +
+                    'connected organization -- New-OERAccessPackageRequestorScope cannot name one -- so the ' +
+                    "full update of assignment policy '$Id' would replace every connected organization the " +
+                    'live policy names with an empty list. Nothing was sent. Omit -RequestorScope to keep ' +
+                    'the live scope and its connected organizations.')) `
+                -ErrorId 'InvalidPolicyInput' -Category InvalidArgument -TargetObject $Id -Cmdlet $PSCmdlet
             return
         }
 

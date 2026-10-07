@@ -5028,3 +5028,144 @@ the cmdlet's own record.
 `Resolve-OERPrincipalOrId` with every cmdlet that uses it -- read only the message and
 `Test-OERAmbiguousNameError`, so they publish the same ids and messages as before. Their existing
 tests pass without a change, which is the proof.
+
+## failed-schedule-request
+
+Sprint 9 step 5 (BL-33) made a PIM schedule request that Microsoft Graph or Azure Resource Manager
+ACCEPTED, and then answered with a status in the Failed family, an error in the twelve cmdlets that
+send one. The private `Test-OERScheduleRequestFailed` owns the rule. This section records why the rule
+is the Failed family and nothing wider, why a cmdlet emits the request object before the error, why
+there is one owner, and what the two ARM `New-` cmdlets do with a role policy they opened.
+
+**What was wrong.** A schedule request is answered in two layers: the call is accepted, and the
+object it returns carries a `status`. Both services answer a request they took and then could not
+act on with the status `Failed`, which grants, changes, removes, activates or deactivates nothing.
+Only `Add-OERGroupEligibility` wrote an error for it (`EligibilityRequestFailed`). The other eleven
+cmdlets that send a schedule request emitted the object and wrote nothing, so a caller reading "no
+error" read a request that did nothing as done, and so did the apply engine, which calls them with
+`-ErrorAction Stop` and acts on an error alone.
+
+**Why the Failed family and nothing else.** The statuses are taken from the documentation. Microsoft
+Graph documents them on the `request` resource, which `unifiedRoleEligibilityScheduleRequest`,
+`unifiedRoleAssignmentScheduleRequest` and `privilegedAccessGroupEligibilityScheduleRequest` inherit
+(learn.microsoft.com/graph/api/resources/request?view=graph-rest-1.0): Canceled, Denied, Failed,
+Granted, PendingAdminDecision, PendingApproval, PendingProvisioning, PendingScheduleCreation,
+Provisioned, Revoked, ScheduleCreated. Azure Resource Manager documents them in the `Status` enum of
+role assignment and role eligibility schedule requests, Microsoft.Authorization api-version
+2020-10-01 (learn.microsoft.com, the azure-mgmt-authorization v2020_10_01 `Status` enum, and the
+Az.Resources completer for `IRoleAssignmentScheduleRequest.Status`): Accepted, PendingEvaluation,
+Granted, Denied, PendingProvisioning, Provisioned, PendingRevocation, Revoked, Canceled, Failed,
+PendingApprovalProvisioning, PendingApproval, FailedAsResourceIsLocked, PendingAdminDecision,
+AdminApproved, AdminDenied, TimedOut, ProvisioningStarted, Invalid, PendingScheduleCreation,
+ScheduleCreated, PendingExternalProvisioning. They are the same two lists the owner's own help
+carries.
+
+The rule is a prefix, not a list: a status that starts with `Failed`, compared without regard to
+letter case, so `Failed`, `FailedAsResourceIsLocked` and any later member of the family are errors
+without a change here. Everything else is left alone, one reason per group:
+
+- `Denied`, `AdminDenied`, `Canceled` and `TimedOut` are outcomes of an approval, or of a requester's
+  cancellation, that come after the request was answered. They are never the synchronous answer to
+  the admin and self requests these cmdlets send.
+- `Invalid` has no documented meaning.
+- `Accepted`, `ProvisioningStarted`, `AdminApproved`, `Granted`, `Provisioned`, `ScheduleCreated`
+  and every `Pending*` value are applied or on their way.
+- `Revoked` is a removal's success. A removal answered `Revoked` is never an error, and the engine
+  keeps reporting it `Removed`.
+
+If wrong: an admin request answered synchronously with `Denied`, `AdminDenied`, `Canceled`,
+`TimedOut` or `Invalid` would still read as success. None of them has been measured as the answer to
+a request that did nothing; should one be, `Test-OERScheduleRequestFailed` is the one place to add
+it.
+
+**Why the object is emitted first.** Under `-ErrorAction Stop` the first error a cmdlet writes stops
+it, so nothing after the error runs. The request object is the only record of what the service took
+(its name or id and its status), and a caller that wants to retry, report or look the request up
+needs it. Written first, it reaches the caller, through `-OutVariable` for example, before the error
+stops the cmdlet. `Add-OERGroupEligibility` already did this and the other eleven follow it. The
+error is non-terminating, written with `Write-CmdletError` in category `InvalidResult`, like every
+other failure a public cmdlet reports. Its target is the object the request acts on: the group id,
+the role definition id of a directory role, or the target scope of an Azure role.
+
+**Two ids.** `EligibilityRequestFailed` already existed, from `Add-OERGroupEligibility`, and names an
+eligibility request. It goes to the group, directory role and Azure eligibility cmdlets (Add- and
+Remove-OERGroupEligibility, New- and Remove-OEREligibleDirectoryRoleAssignment, New- and
+Remove-OEREligibleRoleAssignment). The active assignment, activation and deactivation requests are
+not eligibility requests, so reusing the id would have published the wrong noun: they get the one
+new id, `AssignmentRequestFailed` (New- and Remove-OERActiveDirectoryRoleAssignment, New- and
+Remove-OERActiveRoleAssignment, Enable- and Disable-OEREligibleRoleAssignment). No published id is
+renamed or removed.
+
+**Why one owner.** Before the step the module held the literal `Failed` three times: once in
+`Add-OERGroupEligibility`, and twice in `Sync-OERStructureGroup`, where the two new-group replication
+waits read an eligibility request's answer. Eleven more copies would have made fourteen places to
+decide what a failed request is, and fourteen places to drift apart on case, on the prefix and on
+`Revoked`. The owner is a pure private function, so it makes no request and writes nothing, and the
+twelve cmdlets and the two waits all ask it.
+
+What holds that is the cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`,
+and only that much of it: the twelve cmdlet files call the owner, and no other file under `source/`
+compares a status to a `Failed` literal in the shapes the check scans, which are a status-named
+operand against a literal that starts with `Failed`, in either order, with `-eq`, `-ne`, `-like`,
+`-notlike`, `-match` or `-notmatch` (and their case-sensitive and explicitly case-insensitive forms).
+A comparison written in another shape, such as `-in`, `-contains`, a `switch`, `StartsWith` or a
+pattern anchored with a caret, is not seen by it and stays a matter for review. The check does NOT
+hold that the two engine waits call the owner. The behaviour tests in
+`tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do, by driving each wait with `FAILED` and
+`FailedAsResourceIsLocked` answers.
+
+**The engine's two waits.** They are the replication waits of `Sync-OERStructureGroup` for a group
+created in the same run, where Graph can take an eligibility request and fail it at once because the
+group is not yet known to PIM for Groups, and the same request minutes later is Provisioned
+(measured live on 2026-10-03). The engine waits and asks again from one shared budget. They are not
+new error handling, which is why the decision that the engine needs no code of its own for this step
+holds. They already compared the answer to the literal with `-eq` and `-ne`, which are
+case-insensitive, so `FAILED` was taken as Failed before the move as well. Routing them through the
+owner changes behaviour only for the OTHER values that start with `Failed`, `FailedAsResourceIsLocked`
+for example: such an answer used to end the wait as applied, and is now waited through like `Failed`.
+Without the move the rule would have had three owners, which is the cost it removes. The time-bound
+wait sends its request itself, through `Send-OERNewGroupEligibilityRequest`. The permanent wait calls
+`Add-OERGroupEligibility` with a module flag set around exactly that call, so that the cmdlet does not
+write its own error for an answer the wait handles.
+
+Everywhere else the engine needed no code. Each call it makes to these cmdlets passes
+`-ErrorAction Stop`, so the new error lands in the handler's `catch` and the row is Failed, carrying
+the cmdlet's id. The tests run the real cmdlets against a transport mock for the directory role
+assignment create, update and prune paths and for the group eligibility prune, and hold that a
+Failed answer is a Failed row and never Created, Updated or Removed, while a `Revoked` removal stays
+Removed.
+
+**A Failed answer after an opened role policy.** `New-OEREligibleRoleAssignment` and
+`New-OERActiveRoleAssignment` can open the role management policy first, so that a permanent grant is
+allowed, and send the grant afterwards. A request answered Failed grants nothing, and a grant that is
+refused already rolls the policy back (`New-OERActiveRoleAssignment` gained that rollback in the same
+step, see below). Leaving the policy open on a Failed answer would be the very weakening that
+rollback exists to undo, so a Failed answer rolls it back too. The one record,
+`EligibilityRequestFailed` or `AssignmentRequestFailed`, carries the rollback text: whether the
+rollback succeeded and, when it did not, the `Set-OERRoleManagementPolicy` command that closes the
+policy by hand. It is one record and not a `PolicyOpenedButGrantFailed` as well, since the request
+was accepted, not refused. The rollback runs BEFORE the object is emitted, not only before the error:
+a consumer that stops the pipeline at the object, `Select-Object -First 1` for example, would
+otherwise skip it exactly as `-ErrorAction Stop` skips what follows the error, and the policy would
+stay open. The object is still emitted before the error. `Add-OERGroupEligibility` has no rollback to
+run, since the single-rule open it makes has no public inverse, so its Failed record only names the
+policy that is left open.
+
+**The order on a refused grant.** In `New-OEREligibleRoleAssignment`, a grant that threw after the
+policy was opened wrote the grant's own error first, then rolled back, then wrote
+`PolicyOpenedButGrantFailed`. Under `-ErrorAction Stop` the first error stops the cmdlet, so neither
+the rollback nor the `PolicyOpenedButGrantFailed` record ever ran, and the policy stayed open
+(measured while writing this step). That is an older defect, fixed here because BL-80 brings
+`New-OERActiveRoleAssignment` to the shape of `New-OEREligibleRoleAssignment` and would otherwise have
+copied it: `New-OERActiveRoleAssignment` opened the policy before it asked for confirmation and had no
+rollback at all. Each of the two cmdlets now has one rollback block, shared by the refused-grant path
+and the Failed path. On a refused grant it runs first, then the cmdlet writes
+`PolicyOpenedButGrantFailed`, which names the policy, whether the rollback succeeded and how the
+request failed, and only then the grant's own error. Under `-ErrorAction Stop` the cmdlet is stopped
+by `PolicyOpenedButGrantFailed`, after the rollback, and the grant's own message travels inside it,
+since under Stop its own record is never reached. `New-OERActiveRoleAssignment` also opens the policy
+only once the assignment is confirmed, as `New-OEREligibleRoleAssignment` already did, so a declined
+prompt weakens nothing while `-WhatIf` still plans the policy change.
+`Add-OERGroupEligibility` keeps its older order, where its grant error is written before
+`PolicyOpenedButGrantFailed`, so under `-ErrorAction Stop` the advice naming the policy it left open
+is not written there. There is no rollback in it to skip, and the order was left alone in this step.

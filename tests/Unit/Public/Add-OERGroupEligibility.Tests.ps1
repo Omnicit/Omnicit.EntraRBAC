@@ -578,6 +578,22 @@ Describe 'Add-OERGroupEligibility' {
             $Err[0].Exception.Message | Should -BeLike "Microsoft Graph accepted the PIM owner eligibility request 'req-f2' for principal *"
         }
 
+        It 'asks the owner of the Failed family: <Status> is the same error, and the message shows the status as answered (BL-33)' -ForEach @(
+            @{ Status = 'FAILED' }
+            @{ Status = 'FailedAsResourceIsLocked' }
+        ) {
+            $script:AnsweredStatus = $Status
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-f3'; status = $script:AnsweredStatus } }
+            $Err = $null
+            $Result = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
+            $Err[0].Exception.Message | Should -BeExactly ($script:FailedMessage.Replace("'req-f1'", "'req-f3'").Replace('answered status Failed,', "answered status $Status,"))
+        }
+
         It 'writes no error for status <Status>, which is not Failed' -ForEach @(
             @{ Status = 'Provisioned' }
             @{ Status = 'PendingApproval' }

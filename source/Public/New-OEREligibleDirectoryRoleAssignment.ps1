@@ -36,6 +36,14 @@ function New-OEREligibleDirectoryRoleAssignment {
     read (permission denied, transport failure) is written to Verbose and the request proceeds,
     letting Microsoft Graph enforce the policy.
 
+    Microsoft Graph can accept the request and answer it with a status in the Failed family (Failed,
+    or any status that starts with Failed, in any letter case), which grants or changes nothing. The
+    cmdlet then still emits the request object (its Status reads as answered) and afterwards writes a
+    non-terminating EligibilityRequestFailed error (category InvalidResult, target the role
+    definition id), so a caller running with -ErrorAction Stop still receives the object, for
+    example through -OutVariable, before the error stops it. Every other status is not an error --
+    Provisioned and PendingApproval included.
+
     For least privilege, RoleEligibilitySchedule.ReadWrite.Directory is enough for the write and
     RoleManagement.Read.Directory resolves -Role; the module's default sign-in scope list already
     requests the broader RoleManagement.ReadWrite.Directory, which covers both. A delegated caller
@@ -287,7 +295,19 @@ function New-OEREligibleDirectoryRoleAssignment {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Response -Kind Eligible
+            $Request = ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Response -Kind Eligible
+            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
+            # -OutVariable, for example) before the error below stops it.
+            $Request
+            # Microsoft Graph can ACCEPT the request and answer it with a status in the Failed family,
+            # which grants or changes nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "Microsoft Graph accepted the eligible directory role assignment request '$($Request.ScheduleRequestId)' " +
+                        "($Action) of role '$($RoleInput.RoleDefinitionId)' for principal '$($Principal.PrincipalId)' at directory " +
+                        "scope '/' but answered status $($Request.Status), so nothing was granted or changed.")) `
+                    -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $RoleInput.RoleDefinitionId -Cmdlet $PSCmdlet
+            }
         }
     }
 }

@@ -12,6 +12,15 @@ function Remove-OERActiveRoleAssignment {
     This is a destructive operation (ConfirmImpact High) and emits a warning before the request.
     Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
     Initialize-OERAuth -IncludeARM.
+
+    Azure Resource Manager can accept the removal request and answer it with a status in the Failed
+    family (Failed, FailedAsResourceIsLocked, or any other status that starts with Failed, in any
+    letter case), which removes nothing. The cmdlet then still emits the request object (its Status
+    reads as answered) and afterwards writes a non-terminating AssignmentRequestFailed error
+    (category InvalidResult, target the scope), so a caller running with -ErrorAction Stop still
+    receives the object, for example through -OutVariable, before the error stops it; the active
+    assignment is still in place. Every other status is not an error -- Revoked, the answer to a
+    removal that succeeded, included.
     .PARAMETER Role
     The role: display name, role definition GUID, or full ARM id. Pipeline by property name
     (RoleDefinitionId). Tab-completion offers the five curated common Azure RBAC roles; any other
@@ -153,7 +162,20 @@ function Remove-OERActiveRoleAssignment {
                 $PSCmdlet.WriteError($PSItem)
                 return
             }
-            ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            $Request = ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
+            # -OutVariable, for example) before the error below stops it.
+            $Request
+            # Azure Resource Manager can ACCEPT the removal and answer it with a status in the Failed
+            # family, which removes nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            # Revoked, a removal's success, is not one of them.
+            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "Azure Resource Manager accepted the active role assignment removal request '$($Request.Name)' (AdminRemove) " +
+                        "of role '$RoleDefinitionId' for principal '$ResolvedPrincipalId' at scope '$TargetScope' but answered status " +
+                        "$($Request.Status), so nothing was removed: the active assignment is still in place.")) `
+                    -ErrorId 'AssignmentRequestFailed' -Category InvalidResult -TargetObject $TargetScope -Cmdlet $PSCmdlet
+            }
         }
     }
 }

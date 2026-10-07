@@ -13,10 +13,14 @@ function New-OEREligibleRoleAssignment {
     Supports -WhatIf/-Confirm. Requires an ARM token; authentication is
     ensured via Initialize-OERAuth -IncludeARM. A permanent grant that needs the role management
     policy opened opens it only once the assignment itself is confirmed (declining the prompt
-    weakens nothing, while -WhatIf still plans the policy change), and a grant that then fails rolls
-    the policy back and reports a PolicyOpenedButGrantFailed error naming the policy. Principal
-    resolution runs BEFORE scope resolution, so a call supplying both an unresolvable principal and
-    an invalid scope reports the principal error, not InvalidScope.
+    weakens nothing, while -WhatIf still plans the policy change). A grant that is then refused
+    rolls the policy back first, then reports a PolicyOpenedButGrantFailed error naming the
+    policy, whether the rollback succeeded and how the request failed, and only then re-publishes
+    the grant's own error, so a caller running with -ErrorAction Stop is stopped by
+    PolicyOpenedButGrantFailed after the rollback. The rollback is not asked again, even under
+    -Confirm: it puts back this invocation's own change, which the operator already confirmed.
+    Principal resolution runs BEFORE scope resolution, so a call supplying both an unresolvable
+    principal and an invalid scope reports the principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -25,6 +29,18 @@ function New-OEREligibleRoleAssignment {
     each piped item's own principal eligible. Piping a role definition, subscription, resource group
     or resource alongside a named principal is unaffected -- none of those shapes carries a
     PrincipalId.
+
+    Azure Resource Manager can accept the request and answer it with a status in the Failed family
+    (Failed, FailedAsResourceIsLocked, or any other status that starts with Failed, in any letter
+    case), which grants nothing. The cmdlet then still emits the request object (its Status reads as
+    answered) and afterwards writes a non-terminating EligibilityRequestFailed error (category
+    InvalidResult, target the scope), so a caller running with -ErrorAction Stop still receives the
+    object, for example through -OutVariable, before the error stops it. When this invocation had
+    opened the role management policy for a permanent grant, the policy is rolled back first --
+    before the object is emitted, as it is before any error for a refused grant -- and the
+    EligibilityRequestFailed message says whether the rollback succeeded; it is the one record, not
+    a PolicyOpenedButGrantFailed as well, since the request was accepted rather than refused. Every
+    other status is not an error -- Provisioned and PendingApproval included.
     .PARAMETER Role
     The role: display name (e.g. 'Reader'), role definition GUID, or full ARM id. Pipeline by
     property name (RoleDefinitionId). Tab-completion offers the five curated common Azure RBAC
@@ -66,10 +82,17 @@ function New-OEREligibleRoleAssignment {
     Absolute end time for a time-bound eligibility.
     .PARAMETER Permanent
     Make the eligibility permanent (no expiration). Default when no schedule is supplied. When the
-    role's PIM policy forbids permanent eligibility, the cmdlet opens it first (a loud warning is
-    emitted and the policy change is a separate -WhatIf/-Confirm action); if the policy cannot be
-    opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error is returned and no
-    assignment is created.
+    role's PIM policy forbids permanent eligibility, a loud warning says so before the confirmation
+    prompt, and the cmdlet opens the policy only once the assignment itself is confirmed, before it
+    sends the grant: a declined prompt changes no policy, while -WhatIf still plans the policy
+    change (a separate -WhatIf/-Confirm action of Set-OERRoleManagementPolicy). If the policy cannot
+    be opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error is returned and
+    no assignment is created; use -AllowPermanentEligibility via Set-OERRoleManagementPolicy
+    directly, or supply a time-bound schedule with -DurationDays. If the grant is then refused, or
+    answered with a status in the Failed family, the policy this invocation opened is rolled back
+    without a second prompt, since it puts back this invocation's own change: a refused grant
+    reports PolicyOpenedButGrantFailed, and a Failed answer says so in its one
+    EligibilityRequestFailed record.
     .PARAMETER Justification
     Justification recorded on the request.
     .PARAMETER TicketNumber
@@ -302,32 +325,71 @@ function New-OEREligibleRoleAssignment {
         }
 
         if ($Proceed) {
+            # The one rollback of a policy this invocation opened, shared by a refused grant (the
+            # catch below) and a grant answered with a status in the Failed family: it puts the policy
+            # back and returns the sentence that says whether it did, so automation can revert it if
+            # the rollback fails too. It is NOT asked again (-Confirm:$false): it puts back this
+            # invocation's own open, which the operator already confirmed, and under an explicit
+            # -Confirm a declined nested prompt would emit nothing and throw nothing, so the policy
+            # would stay open while the record said it was rolled back. $Reverted is taken from a call
+            # that did not throw, never from its output: the rollback cannot be declined
+            # (-Confirm:$false), and under -ErrorAction Stop every failure of it, NoChange included,
+            # throws, so a call that returns is a rollback written.
+            $RollBackOpenedPolicy = {
+                $Reverted = $false
+                try {
+                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentEligibility $false -Confirm:$false -ErrorAction Stop
+                    $Reverted = $true
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                }
+                if ($Reverted) {
+                    'It was rolled back to disallow permanent assignments.'
+                } else {
+                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentEligibility `$false' to close it."
+                }
+            }
             $Name = [guid]::NewGuid().ToString()
             try {
                 $Response = Invoke-OERArmRequest -Method PUT -Path "$TargetScope/providers/Microsoft.Authorization/roleEligibilityScheduleRequests/$Name`?api-version=2020-10-01" -Body $Body
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $PSCmdlet.WriteError($PSItem)
+                $GrantError = $PSItem
                 if ($PolicyOpened) {
-                    # The grant failed AFTER this invocation weakened the governing policy. Put it
-                    # back, and if that fails too, name the policy so automation can revert it.
-                    $Reverted = $false
-                    try {
-                        $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentEligibility $false -ErrorAction Stop
-                        $Reverted = $true
-                    } catch {
-                        Remove-OERErrorRecord -Record $PSItem
-                    }
-                    $RevertText = if ($Reverted) {
-                        'It was rolled back to disallow permanent assignments.'
-                    } else {
-                        "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentEligibility `$false' to close it."
-                    }
-                    Write-CmdletError -Message ([System.Exception]::new("The eligible role assignment failed after role management policy '$OpenedPolicyId' had been opened to allow permanent assignments. $RevertText")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
+                    # The grant failed AFTER this invocation weakened the governing policy. Put it back
+                    # FIRST, then report it, and only then re-publish the grant's own error: under
+                    # -ErrorAction Stop the first error written stops this command, so anything after
+                    # it would never run and the policy would stay open.
+                    $RevertText = & $RollBackOpenedPolicy
+                    Write-CmdletError -Message ([System.Exception]::new("The eligible role assignment failed after role management policy '$OpenedPolicyId' had been opened to allow permanent assignments. $RevertText The request failed with: $($GrantError.Exception.Message)")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
                 }
+                $PSCmdlet.WriteError($GrantError)
                 return
             }
-            ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            $Request = ConvertTo-OERRoleScheduleRequest -InputObject $Response
+            # Azure Resource Manager can ACCEPT the request and answer it with a status in the Failed
+            # family, which grants nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            $RequestFailed = Test-OERScheduleRequestFailed -Status $Request.Status
+            # A Failed answer granted nothing, so a policy this invocation opened is put back as for a
+            # refused grant -- BEFORE the object is emitted and the error written, so neither
+            # -ErrorAction Stop nor a consumer that stops the pipeline can skip the rollback.
+            $RevertText = $null
+            if ($RequestFailed -and $PolicyOpened) { $RevertText = & $RollBackOpenedPolicy }
+            # Emitted before the error, so a caller under -ErrorAction Stop still receives the request
+            # (through -OutVariable, for example) before the error below stops it.
+            $Request
+            if ($RequestFailed) {
+                $FailedMessage = "Azure Resource Manager accepted the eligible role assignment request '$($Request.Name)' (AdminAssign) " +
+                    "of role '$RoleDefinitionId' for principal '$($Principal.PrincipalId)' at scope '$TargetScope' but answered " +
+                    "status $($Request.Status), so nothing was granted."
+                if ($PolicyOpened) {
+                    # One record, not a PolicyOpenedButGrantFailed as well: the request was accepted,
+                    # not refused, but it carries the same rollback text.
+                    $FailedMessage += " Role management policy '$OpenedPolicyId' had been opened to allow permanent assignments before the request was sent. $RevertText"
+                }
+                Write-CmdletError -Message ([System.Exception]::new($FailedMessage)) `
+                    -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $TargetScope -Cmdlet $PSCmdlet
+            }
         }
     }
 }

@@ -46,6 +46,15 @@ function Remove-OEREligibleDirectoryRoleAssignment {
     another way -- through a group, or at a directory scope narrower than the tenant -- a warning
     says which.
 
+    Microsoft Graph can accept the removal request and answer it with a status in the Failed family
+    (Failed, or any status that starts with Failed, in any letter case), which removes nothing. The
+    cmdlet then still emits the request object (its Status reads as answered) and afterwards writes a
+    non-terminating EligibilityRequestFailed error (category InvalidResult, target the role
+    definition id), so a caller running with -ErrorAction Stop still receives the object, for
+    example through -OutVariable, before the error stops it; the eligible assignment is still in
+    place. Every other status is not an error -- Revoked, the answer to a removal that succeeded,
+    included.
+
     .PARAMETER Role
     The directory role: display name (matched without regard to letter case) or role definition id.
     Pipeline by property name (RoleDefinitionId). A name matching more than one role definition is
@@ -218,7 +227,21 @@ function Remove-OEREligibleDirectoryRoleAssignment {
                 $PSCmdlet.WriteError($RemoveError)
                 return
             }
-            ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Response -Kind Eligible
+            $Request = ConvertTo-OERDirectoryRoleScheduleRequest -InputObject $Response -Kind Eligible
+            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
+            # -OutVariable, for example) before the error below stops it.
+            $Request
+            # Microsoft Graph can ACCEPT the removal and answer it with a status in the Failed family,
+            # which removes nothing; Test-OERScheduleRequestFailed owns which statuses that is.
+            # Revoked, a removal's success, is not one of them.
+            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
+                Write-CmdletError -Message ([System.Exception]::new(
+                        "Microsoft Graph accepted the eligible directory role assignment removal request '$($Request.ScheduleRequestId)' " +
+                        "(adminRemove) of role '$($RoleInput.RoleDefinitionId)' for principal '$($Principal.PrincipalId)' at directory " +
+                        "scope '/' but answered status $($Request.Status), so nothing was removed: the eligible assignment is still " +
+                        'in place.')) `
+                    -ErrorId 'EligibilityRequestFailed' -Category InvalidResult -TargetObject $RoleInput.RoleDefinitionId -Cmdlet $PSCmdlet
+            }
         }
     }
 }
