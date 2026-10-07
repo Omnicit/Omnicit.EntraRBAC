@@ -293,7 +293,7 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
 
     It 'streams only its own warning for a scopedRole prune, silencing the duplicate the real Remove cmdlet writes' {
         # Remove-OERAdministrativeUnitScopedRole runs for REAL: only auth and the Graph transport are
-        # mocked, so its own "Removing scoped role membership" warning is written inside its gate. The
+        # mocked, so its own "Removing scoped role membership" warning is written, before its own gate. The
         # warning stream itself is captured (3>&1): -WarningVariable would also collect a warning the
         # cmdlet writes under a call-site SilentlyContinue, which never reaches the stream.
         InModuleScope $script:moduleName {
@@ -2252,7 +2252,6 @@ Describe 'Sync-OERStructureAdministrativeUnit' {
         # In the real runs below Set-OERAdministrativeUnit runs for REAL: only auth, the unit lookup, the
         # handler's own read and the Graph transport are mocked.
         BeforeAll {
-            $script:AuWarnId = '11111111-1111-1111-1111-1111111111a1'
             $script:AuWarnText = "Changing the membership type of administrative unit '11111111-1111-1111-1111-1111111111a1' to 'Dynamic'. " +
                 "The unit's existing membership can change as a result; on a Dynamic unit the membership rule owns the membership " +
                 'and members can no longer be added or removed manually.'

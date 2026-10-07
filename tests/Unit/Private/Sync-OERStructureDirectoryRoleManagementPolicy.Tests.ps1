@@ -486,7 +486,8 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: the plan shows the MFA
 
     # The parity matrix: for every combination of the live policy (MFA on activation on or off, the
     # authentication context enabled as 'c7' or disabled) and the declared change (requireMfaOnActivation
-    # true, authenticationContextId 'c1', authenticationContextId ''), the handler's -WhatIf warning, or
+    # true, authenticationContextId 'c1', authenticationContextId ''), plus one row that turns MFA off
+    # while it enables a context, the handler's -WhatIf warning, or
     # its absence, is what the REAL Set-OERDirectoryRoleManagementPolicy writes for the same splat and
     # the same live rules in a real run -- once, with the same text. Expected names the outcome, so a
     # matrix whose rows all agree on silence cannot pass. A row whose declaration already matches the
@@ -503,6 +504,10 @@ Describe 'Sync-OERStructureDirectoryRoleManagementPolicy: the plan shows the MFA
         @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "authenticationContextId 'c1'"; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2
             Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': mfa cleared: mutually exclusive with authenticationContextId=c1" }
         @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "authenticationContextId ''"; Mfa = $true; Ctx = ''; Json = '{ "role": "Reports Reader", "authenticationContextId": "" }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
+        # MFA turned off in the same change that enables a context: the cmdlet toggles MFA off first, so
+        # nothing is left to clear and neither mode warns.
+        @{ LiveMfa = 'on'; LiveCtx = 'disabled'; Declared = "requireMfaOnActivation false and authenticationContextId 'c1'"; Mfa = $true; Ctx = ''
+            Json = '{ "role": "Reports Reader", "requireMfaOnActivation": false, "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2; Expected = $null }
         @{ LiveMfa = 'on'; LiveCtx = 'c7'; Declared = 'requireMfaOnActivation true'; Mfa = $true; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "requireMfaOnActivation": true }'; Action = 'Unchanged'; Patches = 0; Expected = $null }
         @{ LiveMfa = 'on'; LiveCtx = 'c7'; Declared = "authenticationContextId 'c1'"; Mfa = $true; Ctx = 'c7'; Json = '{ "role": "Reports Reader", "authenticationContextId": "c1" }'; Action = 'Updated'; Patches = 2
             Expected = "Policy 'DirectoryRole_11111111-1111-1111-1111-111111111111_aaaaaaaa-0000-0000-0000-000000000010': mfa cleared: mutually exclusive with authenticationContextId=c1" }

@@ -221,7 +221,7 @@ Describe 'Sync-OERStructureRoleAssignment' {
 
     It 'streams only its own warning for the scope prune, silencing the duplicate the real Remove cmdlet writes' {
         # Remove-OERRoleAssignment runs for REAL: only auth and the ARM transport are mocked, so its own
-        # "Deleting Azure role assignment" warning is written inside its gate. The warning stream itself
+        # "Deleting Azure role assignment" warning is written, before its own gate. The warning stream itself
         # is captured (3>&1): -WarningVariable would also collect a warning the cmdlet writes under a
         # call-site SilentlyContinue, which never reaches the stream.
         InModuleScope $script:moduleName {

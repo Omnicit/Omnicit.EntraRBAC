@@ -6589,6 +6589,101 @@ Describe 'Sync-OERStructureGroup: the plan shows the warning a real run gives (B
         }
     }
 
+    Context 'a permanent eligibility after step 4 of the same item changes the permanent-eligibility setting' {
+        # In a real run step 4 writes the policy before step 5's Add-OERGroupEligibility reads it, so the
+        # cmdlet warns on the state step 4 leaves. Under -WhatIf step 4 writes nothing, so the plan
+        # decides on the value step 4 WOULD write. Everything below runs for REAL --
+        # Set-OERGroupPimPolicy, Add-OERGroupEligibility, Get-OERGroupPermanentEligibilityState and
+        # Enable-OERGroupPermanentEligibility included -- except auth, the group, principal and policy-id
+        # lookups, the handler's group and policy reads, the PIM-in-use question and the Graph transport.
+        # The transport keeps the live Expiration_Admin_Eligibility rule: a PATCH of it changes what the
+        # next read returns, so the cmdlet in step 5 sees what step 4 wrote.
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:New-StepWarnRule {
+                    @(
+                        @{ id = 'Expiration_EndUser_Assignment'; isExpirationRequired = $true; maximumDuration = 'PT8H' }
+                        @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = $script:StepEligRequired; maximumDuration = 'P365D' }
+                    )
+                }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Test-OERGroupPimInUse { [PSCustomObject]@{ InUse = $true; Reason = 'x'; Manageable = $true } }
+                Mock Resolve-OERGroupId { '66666666-6666-6666-6666-6666666666e5' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{ Id = '66666666-6666-6666-6666-6666666666e5'; DisplayName = 'role_sec_step'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+                }
+                Mock Resolve-OERStructurePrincipal { '22222222-2222-2222-2222-2222222222b2' }
+                Mock Get-OERPimGroupPolicyId { 'pol-step' }
+                Mock Get-OERGroupPimPolicy {
+                    ConvertTo-OERGroupPimPolicy -Rules @(New-StepWarnRule) -GroupId '66666666-6666-6666-6666-6666666666e5' -PolicyId 'pol-step' -AccessType 'member'
+                }
+                # The rule PATCHes (step 4's, and the cmdlet's own opening of the policy), the request
+                # POST, the single-rule read and the rule list. Anything else is not simulated and throws.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests') { return @{ id = 'req-step'; status = 'Provisioned' } }
+                    if ($Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility') {
+                        $script:StepEligRequired = [bool]$Body.isExpirationRequired
+                        return @{}
+                    }
+                    if ($Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_EndUser_Assignment') { return @{} }
+                    if ($Method -ne 'PATCH' -and $Method -ne 'POST') {
+                        if ($Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility') { return @(New-StepWarnRule)[1] }
+                        if ($Uri -like '*/roleManagementPolicies/pol-step/rules') { return @{ value = @(New-StepWarnRule) } }
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+            }
+        }
+
+        It 'plans exactly the permanent-eligibility warnings a real run writes when the document declares <Declared>' -ForEach @(
+            # Step 4 opens the policy for permanent eligibility, so step 5 needs no opening: no warning.
+            @{ Declared = 'allowPermanentEligibility true on a policy that forbids it'; Policy = '{ "allowPermanentEligibility": true }'
+                LiveRequired = $true; WarnCount = 0; EligPatches = 1 }
+            # Step 4 closes the policy, so step 5 must open it again: one warning, the same in both modes.
+            @{ Declared = 'allowPermanentEligibility false on a policy that allows it'; Policy = '{ "allowPermanentEligibility": false }'
+                LiveRequired = $false; WarnCount = 1; EligPatches = 2 }
+            # Step 4 changes the policy without touching permanence, so the live read decides: allowed, no warning.
+            @{ Declared = 'only activationMaxHours, on a policy that allows permanent eligibility'; Policy = '{ "activationMaxHours": 4 }'
+                LiveRequired = $false; WarnCount = 0; EligPatches = 0 }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Policy = $Policy; LiveRequired = $LiveRequired; WarnCount = $WarnCount; EligPatches = $EligPatches } {
+                param($Policy, $LiveRequired, $WarnCount, $EligPatches)
+                $Json = '{ "displayName": "role_sec_step", "members": null, "pimPolicy": { "member": ' + $Policy +
+                    ' }, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }'
+                $Expected = "This eligibility requires opening the PIM-for-groups policy for group '66666666-6666-6666-6666-6666666666e5' (member access) " +
+                    'to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.'
+
+                $script:StepEligRequired = $LiveRequired
+                $Plan = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $true
+                # Reached: both gates declined and planned their rows; nothing was written.
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like 'would set pimPolicy (member):*' }).Count | Should -Be 1
+                @($Plan.Rows | Where-Object { $_.Action -eq 'Skipped' -and $_.Detail -like "would set permanent member eligibility for 'person1@example.com':*" }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -in @('PATCH', 'POST') }
+                $Plan.Warnings.Count | Should -Be $WarnCount
+
+                $script:StepEligRequired = $LiveRequired
+                $Run = Invoke-GroupWarnCapture -Item ($Json | ConvertFrom-Json) -WhatIfRun $false
+                # Reached: step 4 wrote the policy and step 5 sent the request, through the real cmdlets.
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like 'pimPolicy (member) set:*' }).Count | Should -Be 1
+                @($Run.Rows | Where-Object { $_.Action -eq 'Updated' -and $_.Detail -like 'set permanent member eligibility*' }).Count | Should -Be 1
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+                Should -Invoke Invoke-OERGraphRequest -Times $EligPatches -Exactly -ParameterFilter {
+                    $Method -eq 'PATCH' -and $Uri -like '*/roleManagementPolicies/pol-step/rules/Expiration_Admin_Eligibility'
+                }
+                $Run.Warnings.Count | Should -Be $WarnCount -Because 'the plan must show exactly the permanent-eligibility warnings the run gives'
+                if ($WarnCount -eq 1) {
+                    $Plan.Warnings[0] | Should -BeExactly $Expected
+                    ($Run.Warnings[0] -ceq $Plan.Warnings[0]) | Should -BeTrue -Because 'the plan must show the very warning the run gives'
+                }
+            }
+        }
+    }
+
     Context 'the MFA / authentication context pair the diff reconciles (step 4, Set-OERGroupPimPolicy)' {
         # Resolve-OERGroupPimPolicyChange reconciles the pair itself and sends the reconciled rule, so
         # Set-OERGroupPimPolicy, called with those parameters, has nothing left to resolve and writes no

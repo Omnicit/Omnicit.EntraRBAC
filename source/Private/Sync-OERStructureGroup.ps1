@@ -122,7 +122,11 @@ function Sync-OERStructureGroup {
        left to resolve and writes no warning. The handler therefore writes it, before the ShouldProcess
        gate and in every mode, so -WhatIf shows it and a real run writes it once: "Policy '<id>':
        <reason>", the text the cmdlet writes for a direct call, with the id of the policy it read, or
-       "pimPolicy (<accessType>) of group '<name>': <reason>" when no policy was read.
+       "pimPolicy (<accessType>) of group '<name>': <reason>" when no policy was read. The warning
+       states the diff's decision, not the outcome: Set-OERGroupPimPolicy can still refuse the call
+       after it (an authentication context the tenant does not define or has not published, a failed
+       policy lookup, an unreadable approval rule), and the Failed row then shows that nothing was
+       changed.
        For a group THIS RUN created, the handler first asks Get-OERPimGroupPolicyId whether Graph lists
        that access type's policy yet, then reads the listed policy through Get-OERListedGroupPimPolicy,
        and waits while either comes back empty -- one shared budget of at most about 30 seconds
@@ -150,9 +154,15 @@ function Sync-OERStructureGroup {
        allow permanent eligible assignments (affecting ALL eligibility of that access type). Under
        -WhatIf, where the cmdlet is never called, the handler makes the same read
        (Get-OERGroupPermanentEligibilityState) before its gate and writes the cmdlet's warning, with the
-       same text, when the policy has not been opened yet; a failed read writes nothing, as in the
-       cmdlet. A real run leaves the warning to the cmdlet, so it is written once either way. Step 3
-       has no such warning: a time-bound eligibility never opens the policy.
+       same text, when the policy is listed and does not allow permanent eligibility; a failed read
+       writes nothing, as in the cmdlet. The plan decides on the state step 4 WOULD leave: when step 4
+       of the same item had a changed policy for that access type that sets allowPermanentEligibility,
+       and its gate declined that change, its value stands in for what the read says about permanent
+       eligibility (true: no warning; false: the warning when the policy is listed), since a real run
+       applies step 4 before the cmdlet reads the policy. Otherwise the read decides, and whether the
+       policy is listed always comes from the read. A real run leaves the warning to the cmdlet, so it
+       is written once either way. Step 3 has no such warning: a time-bound eligibility never opens
+       the policy.
        For a group THIS RUN created, the entry first waits, from the same shared budget, until
        Microsoft Graph lists that access type's policy AND that policy answers its read, as step 4
        does: Get-OERPimGroupPolicyId -NotFoundAsUnlisted, then Get-OERListedGroupPimPolicy, a 404 from
@@ -853,6 +863,11 @@ function Sync-OERStructureGroup {
         # nothing.
         $EligibilityWrittenThisRun = $false
 
+        # The permanent-eligibility setting step 4 of this item would have written, by access type, when
+        # its gate declined the write (under -WhatIf). Step 5's plan reads the live policy, which that
+        # unapplied write has not changed yet, so it decides on the value step 4 WOULD leave instead.
+        $PlannedPermanentAllowed = @{}
+
         # ONE wait budget per group item (at most 30 s of waiting in total: 2 + 4 + 8 + 16), shared by
         # step 3 (a time-bound eligibility on a new group), step 4 (the pimPolicy of the member and the
         # owner access type) and step 5 (a permanent eligibility on a new group) -- not one budget per
@@ -1175,6 +1190,10 @@ function Sync-OERStructureGroup {
                 # written here instead, before the gate and in EVERY mode (Ruling R5), with the text the
                 # cmdlet writes for a direct call: the plan shows it, and a real run writes it once.
                 # The policy id is the one the read above gave; without a read policy the item names it.
+                # The warning states the diff's decision: Set-OERGroupPimPolicy can still refuse the
+                # call after it (an authentication context the tenant does not define or has not
+                # published, a failed policy lookup, an unreadable approval rule), and the Failed row
+                # then shows that nothing was changed.
                 if ($Change.ConflictReason) {
                     $ConflictTarget = if ($CurrentPolicy -and $CurrentPolicy.PolicyId) { "Policy '$($CurrentPolicy.PolicyId)'" } else { "pimPolicy ($AccessType) of group '$Name'" }
                     Write-Warning "${ConflictTarget}: $($Change.ConflictReason)"
@@ -1196,6 +1215,11 @@ function Sync-OERStructureGroup {
                     }
                 } else {
                     ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Skipped' -Detail "would set pimPolicy ($AccessType): $($Change.Changes -join '; ')"
+                    # Not applied, so the live policy still has its old permanent-eligibility setting.
+                    # Step 5's plan decides on the setting this change would have left (see step 5).
+                    if ($Change.SetParams.ContainsKey('AllowPermanentEligibility')) {
+                        $PlannedPermanentAllowed[$AccessType] = [bool]$Change.SetParams.AllowPermanentEligibility
+                    }
                 }
             }
         }
@@ -1234,9 +1258,14 @@ function Sync-OERStructureGroup {
             # Under -WhatIf the engine never calls that cmdlet, so the plan would not show the warning a
             # real run gives: the same read is made here, before the gate, and the cmdlet's own warning
             # written when the policy must be opened. A failed read writes nothing, as in the cmdlet.
-            # Only under -WhatIf -- a real run calls the cmdlet, which writes it, and a second copy here
-            # would warn twice. Under -WhatIf a group this run would create is never reached here (its
-            # creation is skipped and the handler returns), so the group always exists already.
+            # The plan decides on the state step 4 WOULD leave: when step 4 of this item had a changed
+            # policy for this access type that sets allowPermanentEligibility and its gate declined it,
+            # that value stands in for the read's PermanentAllowed (true: no warning; false: the warning
+            # when the policy is listed), since a real run applies it before the cmdlet reads the policy.
+            # Otherwise the read decides. Whether the policy is listed (HasPolicy) always comes from the
+            # read. Only under -WhatIf -- a real run calls the cmdlet, which writes it, and a second copy
+            # here would warn twice. Under -WhatIf a group this run would create is never reached here
+            # (its creation is skipped and the handler returns), so the group always exists already.
             if ($WhatIfPreference) {
                 $PermanentState = $null
                 try {
@@ -1245,7 +1274,11 @@ function Sync-OERStructureGroup {
                     Remove-OERErrorRecord -Record $PSItem
                     Write-Verbose "Sync-OERStructureGroup: could not read whether the $($EChange.AccessType) policy of group '$Name' allows permanent eligibility ($($PSItem.Exception.Message)); the plan cannot say whether it would be opened."
                 }
-                if ($PermanentState -and $PermanentState.HasPolicy -and -not $PermanentState.PermanentAllowed) {
+                $PermanentAllowed = [bool]$PermanentState.PermanentAllowed
+                if ($PlannedPermanentAllowed.ContainsKey([string]$EChange.AccessType)) {
+                    $PermanentAllowed = $PlannedPermanentAllowed[[string]$EChange.AccessType]
+                }
+                if ($PermanentState -and $PermanentState.HasPolicy -and -not $PermanentAllowed) {
                     Write-Warning "This eligibility requires opening the PIM-for-groups policy for group '$Gid' ($($EChange.AccessType) access) to allow PERMANENT eligible assignments, which affects ALL $($EChange.AccessType) eligibility for this group."
                 }
             }
@@ -1400,16 +1433,16 @@ function Sync-OERStructureGroup {
                 if ($Withheld) { $Withheld; continue }
                 if ($Prune) {
                     # Remove-OERGroupEligibility (ConfirmImpact = High) also emits its own generic
-                    # Write-Warning inside its ShouldProcess gate on every real removal. A previous revision
-                    # dropped the handler-level warning below to avoid a double-warn against that (unlike
-                    # Remove-OERGroupMember, which is silent) -- but that traded a duplicate for a safety
-                    # hole: the child cmdlet is never reached under -WhatIf or when an interactive -Confirm
-                    # prompt is declined, so nothing warned before the destructive gate. The handler warning
-                    # is restored here, phrased from $WhatIfPreference so it fires before the gate on every
-                    # path, and the child's own duplicate is silenced at the call site because the handler's
-                    # message already names the principal, the access type and the group -- strictly more
-                    # informative than the cmdlet's generic one -- and is the one that reaches the operator
-                    # before the prompt.
+                    # Write-Warning, before its own ShouldProcess gate, every time it is called. A previous
+                    # revision dropped the handler-level warning below to avoid a double-warn against that
+                    # (unlike Remove-OERGroupMember, which is silent) -- but that traded a duplicate for a
+                    # safety hole: the child cmdlet is never reached under the engine's -WhatIf or when the
+                    # engine's -Confirm prompt is declined, so nothing warned before the destructive gate.
+                    # The handler warning is restored here, phrased from $WhatIfPreference so it fires before
+                    # the gate on every path, and the child's own duplicate is silenced at the call site
+                    # (-WarningAction SilentlyContinue) because the handler's message already names the
+                    # principal, the access type and the group -- strictly more informative than the
+                    # cmdlet's generic one -- and is the one that reaches the operator before the prompt.
                     $PruneVerb = if ($WhatIfPreference) { 'would remove' } else { 'removing' }
                     Write-Warning "Sync-OERStructureGroup: $PruneVerb $Label from group '$Name'."
                     if ($Caller.ShouldProcess($Name, "Remove $Label")) {
