@@ -11,9 +11,14 @@ function New-OERActiveRoleAssignment {
     -EndDateTime/-Permanent (default permanent). principalType is NOT sent (the schedule-request API
     treats it as response-only). Exactly one principal source and one scope source are required.
     Supports -WhatIf/-Confirm. Requires an ARM token; authentication is ensured via
-    Initialize-OERAuth -IncludeARM. Principal resolution runs BEFORE scope resolution, so a call
-    supplying both an unresolvable principal and an invalid scope reports the principal error, not
-    InvalidScope.
+    Initialize-OERAuth -IncludeARM. A permanent grant that needs the role management policy opened
+    opens it only once the assignment itself is confirmed (declining the prompt weakens nothing,
+    while -WhatIf still plans the policy change). A grant that then fails rolls the policy back
+    first, then reports a PolicyOpenedButGrantFailed error naming the policy, whether the rollback
+    succeeded and how the request failed, and only then re-publishes the grant's own error, so a
+    caller running with -ErrorAction Stop is stopped by PolicyOpenedButGrantFailed after the
+    rollback. Principal resolution runs BEFORE scope resolution, so a call supplying both an
+    unresolvable principal and an invalid scope reports the principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -28,8 +33,12 @@ function New-OERActiveRoleAssignment {
     case), which grants nothing. The cmdlet then still emits the request object (its Status reads as
     answered) and afterwards writes a non-terminating AssignmentRequestFailed error (category
     InvalidResult, target the scope), so a caller running with -ErrorAction Stop still receives the
-    object, for example through -OutVariable, before the error stops it. Every other status is not
-    an error -- Provisioned and PendingApproval included.
+    object, for example through -OutVariable, before the error stops it. When this invocation had
+    opened the role management policy for a permanent grant, the policy is rolled back first --
+    before the object is emitted, as it is before any error for a refused grant -- and the
+    AssignmentRequestFailed message says whether the rollback succeeded; it is the one record, not a
+    PolicyOpenedButGrantFailed as well, since the request was accepted rather than refused. Every
+    other status is not an error -- Provisioned and PendingApproval included.
     .PARAMETER Role
     The role: display name (e.g. 'Reader'), role definition GUID, or full ARM id. Pipeline by
     property name (RoleDefinitionId). Tab-completion offers the five curated common Azure RBAC
@@ -71,11 +80,16 @@ function New-OERActiveRoleAssignment {
     Absolute end time for a time-bound active assignment.
     .PARAMETER Permanent
     Make the active assignment permanent (no expiration). Default when no schedule is supplied. When
-    the role's PIM policy forbids permanent active assignment, the cmdlet opens it first (a loud
-    warning is emitted and the policy change is a separate -WhatIf/-Confirm action); if the policy
-    cannot be opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error is
-    returned and no assignment is created. Use -AllowPermanentActiveAssignment via
-    Set-OERRoleManagementPolicy directly, or supply a time-bound schedule with -DurationDays.
+    the role's PIM policy forbids permanent active assignment, a loud warning says so before the
+    confirmation prompt, and the cmdlet opens the policy only once the assignment itself is
+    confirmed, before it sends the grant: a declined prompt changes no policy, while -WhatIf still
+    plans the policy change (a separate -WhatIf/-Confirm action of Set-OERRoleManagementPolicy). If
+    the policy cannot be opened (e.g. missing roleManagementPolicies/write) a PolicyOpenFailed error
+    is returned and no assignment is created; use -AllowPermanentActiveAssignment via
+    Set-OERRoleManagementPolicy directly, or supply a time-bound schedule with -DurationDays. If the
+    grant is then refused, or answered with a status in the Failed family, the policy this
+    invocation opened is rolled back: a refused grant reports PolicyOpenedButGrantFailed, and a
+    Failed answer says so in its one AssignmentRequestFailed record.
     .PARAMETER Justification
     Justification recorded on the request.
     .PARAMETER TicketNumber
@@ -232,6 +246,23 @@ function New-OERActiveRoleAssignment {
         }
         Write-Verbose "[New-OERActiveRoleAssignment] Resolved role '$Role' to '$RoleDefinitionId'."
 
+        # Name the principal that will ACTUALLY be acted on, not merely the one the operator typed.
+        # -PrincipalId shares a parameter set with the friendly parameters and Resolve-OERPrincipalOrId
+        # lets -PrincipalId win, so it must be tested FIRST here too (see Remove-OEREligibleRoleAssignment).
+        $PrincipalLabel = if ($PrincipalId) { $Principal.PrincipalId }
+        elseif ($User) { $User }
+        elseif ($Group) { $Group }
+        elseif ($ServicePrincipal) { $ServicePrincipal }
+        else { $Principal.PrincipalId }
+        $PrincipalTypeLabel = if ($Principal.PrincipalType) { $Principal.PrincipalType } else { 'principal' }
+        $Target = "active role '$Role' for $PrincipalTypeLabel '$PrincipalLabel' at scope '$TargetScope'"
+
+        # The pre-check is a READ, so it runs BEFORE the gate and its warning is emitted before the
+        # operator is asked. The confirmation prompt names only the assignment, so hiding the policy
+        # warning behind it would ask the operator to approve a change to every active assignment
+        # for this role at this scope without saying so. Only the policy WRITE is gated below.
+        $NeedsPolicyOpen = $false
+        $PendingPolicyId = $null
         if ($ScheduleInfo.expiration.type -eq 'NoExpiration') {
             $PolicyState = $null
             try {
@@ -241,14 +272,36 @@ function New-OERActiveRoleAssignment {
                 Write-Verbose "[New-OERActiveRoleAssignment] Could not pre-check the role management policy for permanent active assignment: $($PSItem.Exception.Message). Proceeding; Azure will enforce the policy."
             }
             if ($PolicyState -and -not $PolicyState.PermanentAllowed) {
-                Write-Warning "Opening the role management policy for role '$Role' at scope '$TargetScope' to allow PERMANENT active assignments. This affects ALL active assignments for this role at this scope."
-                try {
-                    $null = Set-OERRoleManagementPolicy -PolicyId $PolicyState.PolicyId -AllowPermanentActiveAssignment $true -ErrorAction Stop
-                } catch {
-                    Remove-OERErrorRecord -Record $PSItem
-                    Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$Role'' <scope> -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PolicyState.PolicyId -Cmdlet $PSCmdlet
-                    return
+                $NeedsPolicyOpen = $true
+                $PendingPolicyId = $PolicyState.PolicyId
+                Write-Warning "This assignment requires opening the role management policy for role '$Role' at scope '$TargetScope' to allow PERMANENT active assignments, which affects ALL active assignments for this role at this scope."
+            }
+        }
+
+        # Decide ONCE. Opening the policy is a mutation and must not run when the operator declines.
+        # Under -WhatIf, ShouldProcess returns $false but $WhatIfPreference is $true, and the
+        # self-gating Set-OERRoleManagementPolicy only prints its own plan line -- so the -WhatIf
+        # plan still shows the policy open, while a DECLINED prompt ($Proceed false,
+        # $WhatIfPreference false) weakens nothing.
+        $Proceed = $PSCmdlet.ShouldProcess($Target, 'Create active Azure role assignment')
+
+        $PolicyOpened = $false
+        $OpenedPolicyId = $null
+        if (($Proceed -or $WhatIfPreference) -and $NeedsPolicyOpen) {
+            try {
+                # Set-OERRoleManagementPolicy is self-gating: under an explicit -Confirm the propagated
+                # $ConfirmPreference makes it prompt on its own, and a declined prompt emits NOTHING
+                # having written nothing. Take the flag from that result -- setting it unconditionally
+                # would later name, and attempt to roll back, a policy that was never opened.
+                $OpenResult = Set-OERRoleManagementPolicy -PolicyId $PendingPolicyId -AllowPermanentActiveAssignment $true -ErrorAction Stop
+                if ($OpenResult) {
+                    $PolicyOpened = $true
+                    $OpenedPolicyId = $PendingPolicyId
                 }
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                Write-CmdletError -Message ([System.Exception]::new("Could not open the role management policy to allow permanent active assignment: $($PSItem.Exception.Message) Run 'Set-OERRoleManagementPolicy -Role ''$Role'' <scope> -AllowPermanentActiveAssignment `$true' with Microsoft.Authorization/roleManagementPolicies/write permission, or grant a time-bound assignment with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
+                return
             }
         }
 
@@ -267,36 +320,64 @@ function New-OERActiveRoleAssignment {
             $Body.properties.conditionVersion = if ($ConditionVersion) { $ConditionVersion } else { '2.0' }
         }
 
-        # Name the principal that will ACTUALLY be acted on, not merely the one the operator typed.
-        # -PrincipalId shares a parameter set with the friendly parameters and Resolve-OERPrincipalOrId
-        # lets -PrincipalId win, so it must be tested FIRST here too (see Remove-OEREligibleRoleAssignment).
-        $PrincipalLabel = if ($PrincipalId) { $Principal.PrincipalId }
-        elseif ($User) { $User }
-        elseif ($Group) { $Group }
-        elseif ($ServicePrincipal) { $ServicePrincipal }
-        else { $Principal.PrincipalId }
-        $PrincipalTypeLabel = if ($Principal.PrincipalType) { $Principal.PrincipalType } else { 'principal' }
-        $Target = "active role '$Role' for $PrincipalTypeLabel '$PrincipalLabel' at scope '$TargetScope'"
-        if ($PSCmdlet.ShouldProcess($Target, 'Create active Azure role assignment')) {
+        if ($Proceed) {
+            # The one rollback of a policy this invocation opened, shared by a refused grant (the
+            # catch below) and a grant answered with a status in the Failed family: it puts the policy
+            # back and returns the sentence that says whether it did, so automation can revert it if
+            # the rollback fails too.
+            $RollBackOpenedPolicy = {
+                $Reverted = $false
+                try {
+                    $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentActiveAssignment $false -ErrorAction Stop
+                    $Reverted = $true
+                } catch {
+                    Remove-OERErrorRecord -Record $PSItem
+                }
+                if ($Reverted) {
+                    'It was rolled back to disallow permanent assignments.'
+                } else {
+                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentActiveAssignment `$false' to close it."
+                }
+            }
             $Name = [guid]::NewGuid().ToString()
             try {
                 $Response = Invoke-OERArmRequest -Method PUT -Path "$TargetScope/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/$Name`?api-version=2020-10-01" -Body $Body
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $PSCmdlet.WriteError($PSItem)
+                $GrantError = $PSItem
+                if ($PolicyOpened) {
+                    # The grant failed AFTER this invocation weakened the governing policy. Put it back
+                    # FIRST, then report it, and only then re-publish the grant's own error: under
+                    # -ErrorAction Stop the first error written stops this command, so anything after
+                    # it would never run and the policy would stay open.
+                    $RevertText = & $RollBackOpenedPolicy
+                    Write-CmdletError -Message ([System.Exception]::new("The active role assignment failed after role management policy '$OpenedPolicyId' had been opened to allow permanent assignments. $RevertText The request failed with: $($GrantError.Exception.Message)")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
+                }
+                $PSCmdlet.WriteError($GrantError)
                 return
             }
             $Request = ConvertTo-OERRoleScheduleRequest -InputObject $Response
-            # Emitted first, so a caller under -ErrorAction Stop still receives the request (through
-            # -OutVariable, for example) before the error below stops it.
-            $Request
             # Azure Resource Manager can ACCEPT the request and answer it with a status in the Failed
             # family, which grants nothing; Test-OERScheduleRequestFailed owns which statuses that is.
-            if (Test-OERScheduleRequestFailed -Status $Request.Status) {
-                Write-CmdletError -Message ([System.Exception]::new(
-                        "Azure Resource Manager accepted the active role assignment request '$($Request.Name)' (AdminAssign) of role " +
-                        "'$RoleDefinitionId' for principal '$($Principal.PrincipalId)' at scope '$TargetScope' but answered status " +
-                        "$($Request.Status), so nothing was granted.")) `
+            $RequestFailed = Test-OERScheduleRequestFailed -Status $Request.Status
+            # A Failed answer granted nothing, so a policy this invocation opened is put back as for a
+            # refused grant -- BEFORE the object is emitted and the error written, so neither
+            # -ErrorAction Stop nor a consumer that stops the pipeline can skip the rollback.
+            $RevertText = $null
+            if ($RequestFailed -and $PolicyOpened) { $RevertText = & $RollBackOpenedPolicy }
+            # Emitted before the error, so a caller under -ErrorAction Stop still receives the request
+            # (through -OutVariable, for example) before the error below stops it.
+            $Request
+            if ($RequestFailed) {
+                $FailedMessage = "Azure Resource Manager accepted the active role assignment request '$($Request.Name)' (AdminAssign) of role " +
+                    "'$RoleDefinitionId' for principal '$($Principal.PrincipalId)' at scope '$TargetScope' but answered status " +
+                    "$($Request.Status), so nothing was granted."
+                if ($PolicyOpened) {
+                    # One record, not a PolicyOpenedButGrantFailed as well: the request was accepted,
+                    # not refused, but it carries the same rollback text.
+                    $FailedMessage += " Role management policy '$OpenedPolicyId' had been opened to allow permanent assignments before the request was sent. $RevertText"
+                }
+                Write-CmdletError -Message ([System.Exception]::new($FailedMessage)) `
                     -ErrorId 'AssignmentRequestFailed' -Category InvalidResult -TargetObject $TargetScope -Cmdlet $PSCmdlet
             }
         }
