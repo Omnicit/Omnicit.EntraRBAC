@@ -191,6 +191,78 @@ Describe 'Remove-OEREligibleDirectoryRoleAssignment' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 
+    Context 'a removal Microsoft Graph accepts but answers with a status in the Failed family (BL-33)' {
+        # Microsoft Graph can accept the adminRemove request and answer it with status Failed, which
+        # removes nothing. The cmdlet still emits the request object, then writes
+        # EligibilityRequestFailed, so a caller never takes the Failed request for a removal.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Method, $Uri, $Body)
+                [PSCustomObject]@{
+                    id               = 'req-rf'
+                    action           = $Body.action
+                    status           = $script:AnsweredStatus
+                    roleDefinitionId = $Body.roleDefinitionId
+                    principalId      = $Body.principalId
+                    directoryScopeId = $Body.directoryScopeId
+                    createdDateTime  = '2026-09-01T00:00:00Z'
+                    scheduleInfo     = $null
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one EligibilityRequestFailed when Graph answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Remove-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.DirectoryRoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OEREligibleDirectoryRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+            $Err[0].Exception.Message | Should -BeExactly ("Microsoft Graph accepted the eligible directory role assignment removal request " +
+                "'req-rf' (adminRemove) of role 'aaaaaaaa-0000-0000-0000-000000000001' for principal " +
+                "'bbbbbbbb-0000-0000-0000-000000000002' at directory scope '/' but answered status $Status, so nothing was " +
+                'removed: the eligible assignment is still in place.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries EligibilityRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Remove-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OEREligibleDirectoryRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].ScheduleRequestId | Should -BeExactly 'req-rf'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status Revoked, a removal that succeeded, and still emits the object' {
+            $script:AnsweredStatus = 'Revoked'
+            $Err = $null
+            $Out = @(Remove-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered Revoked, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly 'Revoked'
+            @($Err).Count | Should -Be 0
+        }
+    }
+
     Context 'a removal Microsoft Graph answers with RoleAssignmentDoesNotExist' {
         # The same rule as the active twin, measured live there: only a re-read that succeeds and
         # finds no direct eligibility makes the answer a success, and an eligibility the principal

@@ -207,6 +207,84 @@ Describe 'Disable-OEREligibleRoleAssignment' {
             Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 1
         }
     }
+
+    Context 'a deactivation Azure Resource Manager accepts but answers with a status in the Failed family (BL-33)' {
+        # ARM can accept the SelfDeactivate request and answer it with status Failed (or another value
+        # of the Failed family, such as FailedAsResourceIsLocked), which deactivates nothing. The
+        # cmdlet still emits the request object, then writes AssignmentRequestFailed.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                [PSCustomObject]@{
+                    id         = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/req-d1'
+                    name       = 'req-d1'
+                    properties = [PSCustomObject]@{
+                        scope = '/subscriptions/s1'; roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+                        principalId = 'aaaa0000-0000-0000-0000-000000000001'; principalType = 'User'; requestType = 'SelfDeactivate'
+                        status = $script:AnsweredStatus
+                    }
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one AssignmentRequestFailed when ARM answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+            @{ Status = 'FailedAsResourceIsLocked' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Disable-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.RoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Disable-OEREligibleRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly '/subscriptions/s1'
+            $Err[0].Exception.Message | Should -BeExactly ("Azure Resource Manager accepted the deactivation request 'req-d1' (SelfDeactivate) " +
+                "of role '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal " +
+                "'aaaa0000-0000-0000-0000-000000000001' at scope '/subscriptions/s1' but answered status $Status, so nothing was " +
+                'deactivated: the active assignment is still in place.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries AssignmentRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Disable-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Disable-OEREligibleRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].Name | Should -BeExactly 'req-d1'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status <Status>, and still emits the object' -ForEach @(
+            @{ Status = 'Granted' }
+            @{ Status = 'Provisioned' }
+            @{ Status = 'Revoked' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Disable-OEREligibleRoleAssignment -Role 'Reader' -PrincipalId 'aaaa0000-0000-0000-0000-000000000001' -Scope '/subscriptions/s1' `
+                    -Confirm:$false -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered with this status, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'PUT' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 0
+        }
+    }
 }
 
 Describe 'Disable-OEREligibleRoleAssignment verbose output' {

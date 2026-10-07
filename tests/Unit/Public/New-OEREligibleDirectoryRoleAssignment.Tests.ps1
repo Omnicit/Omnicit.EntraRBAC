@@ -217,6 +217,81 @@ Describe 'New-OEREligibleDirectoryRoleAssignment' {
         $Out | Should -BeNullOrEmpty
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,New-OEREligibleDirectoryRoleAssignment' }).Count | Should -Be 1
     }
+
+    Context 'a request Microsoft Graph accepts but answers with a status in the Failed family (BL-33)' {
+        # Microsoft Graph can accept the request and answer it with status Failed, which grants or
+        # changes nothing. The cmdlet still emits the request object, then writes
+        # EligibilityRequestFailed, so a caller never takes the Failed request for a grant.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Method, $Uri, $Body)
+                [PSCustomObject]@{
+                    id               = 'req-f1'
+                    action           = $Body.action
+                    status           = $script:AnsweredStatus
+                    roleDefinitionId = $Body.roleDefinitionId
+                    principalId      = $Body.principalId
+                    directoryScopeId = $Body.directoryScopeId
+                    createdDateTime  = '2026-09-01T00:00:00Z'
+                    scheduleInfo     = $null
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one EligibilityRequestFailed when Graph answers status <Status> to <Action>' -ForEach @(
+            @{ Status = 'Failed'; Action = 'adminAssign' }
+            @{ Status = 'FAILED'; Action = 'adminAssign' }
+            @{ Status = 'Failed'; Action = 'adminUpdate' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -DurationDays 30 `
+                    -Action $Action -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.DirectoryRoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,New-OEREligibleDirectoryRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+            $Err[0].Exception.Message | Should -BeExactly ("Microsoft Graph accepted the eligible directory role assignment request 'req-f1' " +
+                "($Action) of role 'aaaaaaaa-0000-0000-0000-000000000001' for principal 'bbbbbbbb-0000-0000-0000-000000000002' at " +
+                "directory scope '/' but answered status $Status, so nothing was granted or changed.")
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries EligibilityRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -DurationDays 30 `
+                    -Confirm:$false -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,New-OEREligibleDirectoryRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].ScheduleRequestId | Should -BeExactly 'req-f1'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status <Status>, and still emits the object' -ForEach @(
+            @{ Status = 'Provisioned' }
+            @{ Status = 'PendingApproval' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(New-OEREligibleDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -DurationDays 30 `
+                    -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered with this status, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 0
+        }
+    }
 }
 
 Describe 'New-OEREligibleDirectoryRoleAssignment with an ambiguous service principal display name' {

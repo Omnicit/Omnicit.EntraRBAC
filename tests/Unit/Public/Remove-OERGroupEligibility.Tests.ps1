@@ -243,6 +243,66 @@ Describe 'Remove-OERGroupEligibility' {
         }
     }
 
+    Context 'a removal Microsoft Graph accepts but answers with a status in the Failed family (BL-33)' {
+        # Microsoft Graph can accept the adminRemove request and answer it with status Failed, which
+        # removes nothing. The cmdlet still emits the request object, then writes
+        # EligibilityRequestFailed, so a caller never takes the Failed request for a removal.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-rf'; status = $script:AnsweredStatus; action = 'adminRemove' } }
+        }
+
+        It 'emits the request object AND writes exactly one EligibilityRequestFailed when Graph answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Result = @(Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Result.Count | Should -Be 1
+            $Result[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.GroupEligibility'
+            $Result[0].RequestId | Should -BeExactly 'req-rf'
+            $Result[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OERGroupEligibility'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly 'gid-1'
+            $Err[0].Exception.Message | Should -BeExactly ("Microsoft Graph accepted the PIM member eligibility removal request 'req-rf' for " +
+                "principal '11111111-1111-1111-1111-111111111111' on group 'gid-1' but answered status $Status, so nothing was " +
+                'removed: the eligibility is still in place.')
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries EligibilityRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Remove-OERGroupEligibility'
+            @($Out).Count | Should -Be 1
+            $Out[0].RequestId | Should -BeExactly 'req-rf'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status Revoked, a removal that succeeded, and still emits the object' {
+            $script:AnsweredStatus = 'Revoked'
+            $Err = $null
+            $Result = @(Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered Revoked, so the absence below is a decision.
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Result.Count | Should -Be 1
+            $Result[0].Status | Should -BeExactly 'Revoked'
+            @($Err).Count | Should -Be 0
+        }
+    }
+
     It 'still emits the full GroupEligibility request shape after the converter extraction' {
         Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-shape'; status = 'Revoked'; action = 'adminRemove' } }
         $Result = Remove-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false

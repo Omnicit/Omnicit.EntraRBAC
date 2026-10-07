@@ -2,6 +2,7 @@ BeforeAll {
     Import-Module Omnicit.EntraRBAC -Force
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -220,6 +221,78 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
         @($Err | Where-Object { $_.FullyQualifiedErrorId -like '*,Remove-OERActiveDirectoryRoleAssignment' }).Count | Should -Be 1
     }
 
+    Context 'a removal Microsoft Graph accepts but answers with a status in the Failed family (BL-33)' {
+        # Microsoft Graph can accept the adminRemove request and answer it with status Failed, which
+        # removes nothing. The cmdlet still emits the request object, then writes
+        # AssignmentRequestFailed, so a caller never takes the Failed request for a removal.
+        BeforeEach {
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest {
+                param($Method, $Uri, $Body)
+                [PSCustomObject]@{
+                    id               = 'req-rf'
+                    action           = $Body.action
+                    status           = $script:AnsweredStatus
+                    roleDefinitionId = $Body.roleDefinitionId
+                    principalId      = $Body.principalId
+                    directoryScopeId = $Body.directoryScopeId
+                    createdDateTime  = '2026-09-01T00:00:00Z'
+                    scheduleInfo     = $null
+                }
+            }
+        }
+
+        It 'emits the request object AND writes exactly one AssignmentRequestFailed when Graph answers status <Status>' -ForEach @(
+            @{ Status = 'Failed' }
+            @{ Status = 'FAILED' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Err = $null
+            $Out = @(Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $Out[0].PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.DirectoryRoleScheduleRequest'
+            $Out[0].Status | Should -BeExactly $Status
+            @($Err).Count | Should -Be 1
+            $Err[0].FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Remove-OERActiveDirectoryRoleAssignment'
+            $Err[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+            $Err[0].TargetObject | Should -BeExactly 'aaaaaaaa-0000-0000-0000-000000000001'
+            $Err[0].Exception.Message | Should -BeExactly ("Microsoft Graph accepted the active directory role assignment removal request " +
+                "'req-rf' (adminRemove) of role 'aaaaaaaa-0000-0000-0000-000000000001' for principal " +
+                "'bbbbbbbb-0000-0000-0000-000000000002' at directory scope '/' but answered status $Status, so nothing was " +
+                'removed: the active assignment is still in place.')
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+        }
+
+        It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries AssignmentRequestFailed' {
+            $Out = $null
+            $Thrown = $null
+            try {
+                Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction Stop -OutVariable Out | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown | Should -Not -BeNullOrEmpty
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,Remove-OERActiveDirectoryRoleAssignment'
+            @($Out).Count | Should -Be 1
+            $Out[0].ScheduleRequestId | Should -BeExactly 'req-rf'
+            $Out[0].Status | Should -BeExactly 'Failed'
+        }
+
+        It 'writes no error for status Revoked, a removal that succeeded, and still emits the object' {
+            $script:AnsweredStatus = 'Revoked'
+            $Err = $null
+            $Out = @(Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -User 'person1@example.com' -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            # The request was sent and answered Revoked, so the absence below is a decision.
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Out.Count | Should -Be 1
+            $Out[0].Status | Should -BeExactly 'Revoked'
+            @($Err).Count | Should -Be 0
+        }
+    }
+
     Context 'a removal Microsoft Graph answers with RoleAssignmentDoesNotExist' {
         # Measured live: Graph answered an adminRemove of an active assignment with
         # RoleAssignmentDoesNotExist although the request is listed Revoked and the assignment is gone.
@@ -330,5 +403,59 @@ Describe 'Remove-OERActiveDirectoryRoleAssignment' {
             $R.Written[0].FullyQualifiedErrorId | Should -BeExactly 'ActiveDurationTooShort,Remove-OERActiveDirectoryRoleAssignment'
             Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-OERGraphRequest -Times 0 -ParameterFilter { $Method -ne 'POST' }
         }
+    }
+}
+
+Describe 'Remove-OERActiveDirectoryRoleAssignment: a removal answered with a status in the Failed family, in a script with no try (BL-33)' {
+    # AssignmentRequestFailed is NON-terminating: a script that stands in no try carries on past it,
+    # and what it must see is each request object and, once per call, the error. The script prints a
+    # sentinel at its end, and its fakes are installed in the answering runspace's own copy of the
+    # module (Pester mocks do not cross a runspace). The control answers Revoked in the same script
+    # with the same fakes, so an empty error stream there cannot be an artefact of the harness.
+    BeforeAll {
+        $script:NewNoTryScenario = {
+            param([string]$Status)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERDirectoryRoleDefinitionId -Value { 'aaaaaaaa-0000-0000-0000-000000000001' }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [pscustomobject]@{
+            id = 'req-nt'; action = $Body.action; status = '#STATUS#'
+            roleDefinitionId = $Body.roleDefinitionId; principalId = $Body.principalId; directoryScopeId = $Body.directoryScopeId
+            scheduleInfo = $null
+        }
+    }
+}
+$Results = @(
+    Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000002' -Confirm:$false
+    Remove-OERActiveDirectoryRoleAssignment -Role 'Reports Reader' -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000003' -Confirm:$false
+)
+"EMITTED:$(@($Results | ForEach-Object { '{0}={1}' -f $_.PrincipalId.Substring(34), $_.Status }) -join ',')"
+'END'
+'@).Replace('#STATUS#', $Status))
+        }
+        function Get-TestFailedMessage ([string]$PrincipalId) {
+            "Microsoft Graph accepted the active directory role assignment removal request 'req-nt' (adminRemove) of role " +
+            "'aaaaaaaa-0000-0000-0000-000000000001' for principal '$PrincipalId' at directory scope '/' but answered status " +
+            'Failed, so nothing was removed: the active assignment is still in place.'
+        }
+    }
+
+    It 'reaches the end of the script, emits each request object, and writes AssignmentRequestFailed once per call' {
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Status 'Failed')
+        ($Run.Output -join '|') | Should -Be 'EMITTED:02=Failed,03=Failed|END'
+        @($Run.Errors).Count | Should -Be 2
+        @($Run.Errors | Where-Object { $_ -ceq (Get-TestFailedMessage -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000002') }).Count | Should -Be 1
+        @($Run.Errors | Where-Object { $_ -ceq (Get-TestFailedMessage -PrincipalId 'bbbbbbbb-0000-0000-0000-000000000003') }).Count | Should -Be 1
+    }
+
+    It 'the control: answered Revoked in the same script, both objects are emitted and no error is written' {
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:NewNoTryScenario -Status 'Revoked')
+        ($Run.Output -join '|') | Should -Be 'EMITTED:02=Revoked,03=Revoked|END'
+        @($Run.Errors).Count | Should -Be 0
     }
 }
