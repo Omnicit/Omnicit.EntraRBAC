@@ -6073,7 +6073,10 @@ $RecordLines
     It 'P19e: Invoke-OERStructure -TenantId naming another tenant ID than its document requests no token and sends nothing (BL-88, the check before the sign-in)' {
         # The check before the sign-in, in a runspace with no try: the refusal is a non-terminating
         # error and a return, so only that return keeps the command from signing in to the tenant
-        # -TenantId names. A plain statement, no pipeline: nothing else could refuse it.
+        # -TenantId names. A plain statement, no pipeline, so the pipeline session rule has nothing to
+        # refuse here. The comparison after the sign-in would refuse this document too, but only after a
+        # token request for B; what only the check before the sign-in gives is that no such request is
+        # made, which the single TOKEN line below proves.
         $HitsBefore = @($global:OERTransportTripwireHits).Count
         $R = Invoke-SupersessionPipelineProbe -Scenario {
             Connect-OER -TenantId '44444444-4444-4444-4444-444444444444'

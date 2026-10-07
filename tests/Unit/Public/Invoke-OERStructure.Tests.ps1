@@ -1849,4 +1849,60 @@ Describe 'Invoke-OERStructure refuses a document from another tenant (BL-88, A14
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times $SignIns -Exactly
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
     }
+
+    It '13: refuses after the sign-in when -TenantId is the document''s own tenant ID but the session the sign-in left is not (TokenTenantId <Case>)' -ForEach @(
+        @{ Case = 'is another tenant'; Expected = "the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'" }
+        @{ Case = 'is absent'; Expected = 'the session holds no Microsoft Graph token whose tenant can be compared with it' }
+    ) {
+        # -TenantId names the document's own tenant, so the comparison before the sign-in passes and the
+        # sign-in is made. The comparison after it is NOT skipped for a -TenantId that is a tenant ID: the
+        # name is what was asked for, the token is what the session was granted, and a sign-in that did
+        # not take effect (or whose token carries no tenant) must not turn into an apply. The mocked
+        # sign-in only sets the module state, so nothing signs in anywhere.
+        if ($Case -eq 'is another tenant') {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Initialize-OERAuth {
+                    $script:_OERAuthState = @{
+                        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                        Environment = 'Global'; TokenTenantId = '77777777-7777-7777-7777-777777777777'
+                    }
+                }
+            }
+        } else {
+            InModuleScope Omnicit.EntraRBAC {
+                Mock Initialize-OERAuth {
+                    $script:_OERAuthState = @{
+                        TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'ClientCertificate'; ClientId = '33333333-3333-3333-3333-333333333333'
+                        Environment = 'Global'; TokenTenantId = $null
+                    }
+                }
+            }
+        }
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -TenantId $script:TenantA -WhatIf -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "The structure document names tenant '44444444-4444-4444-4444-444444444444', but $Expected*"
+        $Mismatch[0].Exception.Message | Should -BeLike '*nothing was read or written for this document*'
+        @($Errs).Count | Should -Be 1
+        # The sign-in WAS made (the comparison before it passed); only the one after it refused.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $TenantId -eq '44444444-4444-4444-4444-444444444444' }
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+    }
+
+    It '14: refuses a document in a real run (-Confirm:$false, no -WhatIf) without -TenantId when the session is another tenant, writing nothing' {
+        Set-BL88ProbeState -TenantId $script:TenantB -TokenTenantId $script:TenantB
+        $Errs = $null
+        $Out = @(Invoke-OERStructure -Json (New-BL88Doc -TenantId $script:TenantA) -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Errs)
+        $Out | Should -BeNullOrEmpty
+        $Mismatch = @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'DocumentTenantMismatch*' })
+        $Mismatch.Count | Should -Be 1
+        $Mismatch[0].Exception.Message | Should -BeLike "*but the session's Microsoft Graph token was issued for tenant '77777777-7777-7777-7777-777777777777'*"
+        @($Errs).Count | Should -Be 1
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureAdministrativeUnit -Times 0
+    }
 }

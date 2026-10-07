@@ -6679,7 +6679,7 @@ Describe 'Get-OERInventory tenantId (BL-88, A14)' {
         $Inv.PSObject.TypeNames[0] | Should -Be 'Omnicit.EntraRBAC.Inventory'
         $Inv.PSObject.Properties.Name | Should -Not -Contain 'tenantId'
         @($Inv.PSObject.Properties.Name)[0..1] | Should -Be @('version', 'groups')
-        @($Warn).Count | Should -Be 0 -Because 'a token without a tenant ID is not compared anywhere in the module, so the export says nothing either'
+        @($Warn).Count | Should -Be 0 -Because 'the export just leaves tenantId out and says nothing; a session whose token reports no tenant ID is refused only by the apply, for a document that names a tenant'
     }
 
     It 'leaves tenantId out when the session holds no state' {
