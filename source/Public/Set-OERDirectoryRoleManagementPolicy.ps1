@@ -48,13 +48,14 @@ function Set-OERDirectoryRoleManagementPolicy {
     list clears its side. Supplying approvers on either side implies approval is required, so
     -RequireApproval $false beside -ApproverUser or -ApproverGroup, an empty list included, is a
     contradiction: it is refused with a non-terminating MutuallyExclusiveParameter error before
-    anything is looked up or sent, whatever other parameters the call binds (pass -RequireApproval
-    $false alone to turn approval off). Every approver value is resolved to an object id first (a user
-    by user principal name or id, a group by display name or id), and nothing is read or sent unless
-    every value resolves: a value that matches nothing is a non-terminating ApproverNotFound error, a
-    group display name that several groups share is a non-terminating AmbiguousApproverName error
-    whose message names the candidate ids, and a lookup that fails (insufficient permission,
-    throttling, a dead transport, ...) is reported as that error itself, never as ApproverNotFound.
+    anything is looked up or sent, and nothing else the call binds is sent either (pass
+    -RequireApproval $false alone to turn approval off). Every approver value is resolved to an object
+    id first (a user by user principal name or id, a group by display name or id), and nothing is
+    read or sent unless every value resolves: a value that matches nothing is a non-terminating
+    ApproverNotFound error, a group display name that several groups share is a non-terminating
+    AmbiguousApproverName error whose message names the candidate ids, and a lookup that fails
+    (insufficient permission, throttling, a dead transport, ...) is reported as that error itself,
+    never as ApproverNotFound.
     Approval required with no approver left -- -RequireApproval $true on a stage without one, or
     approver parameters that clear every approver -- is a non-terminating ApproverRequired error and
     nothing is sent.

@@ -29,8 +29,8 @@ function Set-OERRoleManagementPolicy {
 
     Approvers apply only when approval is required, so -RequireApproval $false beside -ApproverUser
     or -ApproverGroup, an empty list included, is a contradiction: it is refused with a
-    non-terminating MutuallyExclusiveParameter error before anything is looked up or sent, whatever
-    other parameters the call binds. Pass -RequireApproval $false alone to turn approval off.
+    non-terminating MutuallyExclusiveParameter error before anything is looked up or sent, and nothing
+    else the call binds is sent either. Pass -RequireApproval $false alone to turn approval off.
     Azure Resource Manager replaces the whole approver list, so approvers that name nobody are refused
     too: -ApproverUser or -ApproverGroup bound with no approver among them (an empty list, or only
     empty strings) is a non-terminating ApproverRequired error, raised before anything is looked up

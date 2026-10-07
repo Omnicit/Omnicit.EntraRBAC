@@ -32,10 +32,10 @@ no tenant sends nothing (`SignInRefused`) until a sign-in naming its tenant, `Co
 
 `Set-OERGroupPimPolicy` puts back the accepted half of the MFA and authentication context pair when
 Graph rejects the other. Neither it nor `Set-OERDirectoryRoleManagementPolicy` warns between its first
-request and its last, so `-WarningAction Stop` no longer stops half-way. These two and
+rule update and its last, so `-WarningAction Stop` no longer stops half-way. These two and
 `Set-OERRoleManagementPolicy` refuse `-RequireApproval $false` beside an approver parameter
-(`MutuallyExclusiveParameter`), and the last refuses an empty approver list (`ApproverRequired`).
-`Invoke-OERStructure` now converges on a declared empty Azure approver list.
+(`MutuallyExclusiveParameter`), and the last refuses an empty approver list (`ApproverRequired`). In
+`Invoke-OERStructure`, an empty Azure approver side now matches an empty live one.
 
 ## [1.1.2] - 2026-10-06
 
