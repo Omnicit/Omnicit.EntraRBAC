@@ -555,7 +555,11 @@ Result:
 
 **3.0 to 3.4 run in ONE process**, in order, with the fences of section 1. Role Reader at
 `oer-s95-rg` (named by the subscription and the resource group), principal `oer-s95-grp`, time-bound
-one day.
+one day. The Reader policy at a resource group requires a justification for an active assignment
+(measured in this run: without one Azure Resource Manager refuses the request with
+`RoleAssignmentRequestPolicyValidationFailed`), so every active call passes `-Justification`. The
+read-backs filter the principal's schedules to `oer-s95-rg`: a principal filter cannot be combined
+with `-AtScope`.
 
 ### 3.0. The fences
 
@@ -596,10 +600,10 @@ Result:
 
 ### 3.2. New-OERActiveRoleAssignment, time-bound: Provisioned, no error
 
-- [ ] **3.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write and no policy write.
+- [ ] **3.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -DurationDays 1 -Justification ... -Confirm:$false` emits one request object with status `Provisioned` and writes no error; one ARM write and no policy write.
 
 ```powershell
-$null = Invoke-S95 -Label '3.2 active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -DurationDays 1 -Confirm:$false }
+$null = Invoke-S95 -Label '3.2 active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -DurationDays 1 -Justification 'oer-s95 live verification' -Confirm:$false }
 $ActiveAt = [datetime]::UtcNow
 ```
 
@@ -633,7 +637,7 @@ Result:
 ```powershell
 $null = Invoke-S95 -Label '3.4 active remove' -Call { Remove-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -Confirm:$false }
 $W = Wait-OerLiveConverged -Activity '3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg' -Read {
-    , @(@(Get-OEREligibleRoleAssignment @Rg -Group 'oer-s95-grp' -AtScope -ErrorAction Stop) + @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -AtScope -ErrorAction Stop) | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' })
+    , @(@(Get-OEREligibleRoleAssignment @Rg -Group 'oer-s95-grp' -ErrorAction Stop) + @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -ErrorAction Stop) | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' -and ([string]$_.Scope).EndsWith('/resourceGroups/oer-s95-rg', [System.StringComparison]::OrdinalIgnoreCase) })
 } -Test { @($args[0]).Count -eq 0 }
 Write-OerLiveStep "3.4 oer-s95-grp holds no Reader schedule at oer-s95-rg: True ($($W.Attempts) read(s), $($W.Seconds) s)"
 Disconnect-OerLive
@@ -692,7 +696,7 @@ Result:
 - [ ] **4.1** Before the plan, the group holds no active Reader schedule at `oer-s95-rg`.
 
 ```powershell
-$Pre = @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -AtScope -ErrorAction Stop | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' })
+$Pre = @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -ErrorAction Stop | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' -and ([string]$_.Scope).EndsWith('/resourceGroups/oer-s95-rg', [System.StringComparison]::OrdinalIgnoreCase) })
 Write-OerLiveStep "4.1 active Reader schedules of oer-s95-grp at oer-s95-rg: $($Pre.Count)"
 ```
 
@@ -703,7 +707,7 @@ Result:
 
 ### 4.2. -WhatIf in a child process: the warning, two planned writes, nothing written
 
-- [ ] **4.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -WhatIf`, in a child process, warns that the assignment requires opening the policy, plans the policy change and the assignment, and writes nothing: the policy still forbids a permanent active assignment and the group holds none.
+- [ ] **4.2** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -WhatIf`, in a child process, warns that the assignment requires opening the policy, plans the policy change and the assignment, and writes nothing: the policy still forbids a permanent active assignment and the group holds none.
 
 ```powershell
 $Child = Join-Path $Raw 'child-s95-4.2.ps1'
@@ -717,7 +721,7 @@ Connect-OerLive -Arm
 `$WebMeta = [System.Management.Automation.CommandMetadata]::new((Get-Command -Name Invoke-WebRequest -CommandType Cmdlet))
 `$WebFence = "`$([System.Management.Automation.ProxyCommand]::GetCmdletBindingAttribute(`$WebMeta))``nparam(`$([System.Management.Automation.ProxyCommand]::GetParamBlock(`$WebMeta)))``nend { if ([string]```$Method -and [string]```$Method -ne 'Get') { ```$global:ArmWrites++ }; Microsoft.PowerShell.Utility\Invoke-WebRequest @PSBoundParameters }"
 Set-Item -Path function:global:Invoke-WebRequest -Value ([scriptblock]::Create(`$WebFence))
-`$All = @(New-OERActiveRoleAssignment -Role 'Reader' -Subscription '$($Cfg.SubscriptionId)' -ResourceGroup 'oer-s95-rg' -Group 'oer-s95-grp' -Permanent -WhatIf 2>&1 3>&1)
+`$All = @(New-OERActiveRoleAssignment -Role 'Reader' -Subscription '$($Cfg.SubscriptionId)' -ResourceGroup 'oer-s95-rg' -Group 'oer-s95-grp' -Permanent -Justification 'oer-s95 live verification' -WhatIf 2>&1 3>&1)
 foreach (`$R in `$All) {
     if (`$R -is [System.Management.Automation.WarningRecord]) { "WARNING|`$(`$R.Message)" }
     elseif (`$R -is [System.Management.Automation.ErrorRecord]) { "ERROR|`$(([string]`$R.FullyQualifiedErrorId -split ',')[0])" }
@@ -733,7 +737,7 @@ Remove-Item -LiteralPath $Child
 $WarnAt = [array]::FindIndex([string[]]$ChildOut, [Predicate[string]] { param($L) $L -like 'WARNING|*requires opening the role management policy*' })
 $WhatIf = @($ChildOut | Where-Object { $_ -match '^What if: ' })
 $After = Get-S95PermanentAllowed
-$Held = @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -AtScope -ErrorAction Stop | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' })
+$Held = @(Get-OERActiveRoleAssignment @Rg -Group 'oer-s95-grp' -ErrorAction Stop | Where-Object { $null -ne $_ -and [string]$_.RoleName -eq 'Reader' -and ([string]$_.Scope).EndsWith('/resourceGroups/oer-s95-rg', [System.StringComparison]::OrdinalIgnoreCase) })
 Write-OerLiveStep "4.2 the policy warning under -WhatIf: $($WarnAt -ge 0); What if lines: $($WhatIf.Count); ARM writes: $(@($ChildOut | Where-Object { $_ -like 'ARMWRITES|*' }) -replace '^ARMWRITES\|', ''); objects: $(@($ChildOut | Where-Object { $_ -like 'OBJECT|*' }).Count); errors: $(@($ChildOut | Where-Object { $_ -like 'ERROR|*' }).Count); the policy now allows a permanent active assignment: $After; active Reader schedules of oer-s95-grp: $($Held.Count)"
 ```
 
@@ -749,10 +753,10 @@ Result:
 
 ### 4.3. Confirmed: the policy is opened, then the assignment is Provisioned
 
-- [ ] **4.3** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Confirm:$false` warns, opens the policy, then creates the assignment: one request object `Provisioned` with no expiration, no error, the ARM writes in the order policy then request; afterwards the policy allows a permanent active assignment.
+- [ ] **4.3** `New-OERActiveRoleAssignment -Role Reader` (at `oer-s95-rg`) `-Group oer-s95-grp -Permanent -Justification ... -Confirm:$false` warns, opens the policy, then creates the assignment: one request object `Provisioned` with no expiration, no error, the ARM writes in the order policy then request; afterwards the policy allows a permanent active assignment.
 
 ```powershell
-$null = Invoke-S95 -Label '4.3 permanent active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -Permanent -Confirm:$false }
+$null = Invoke-S95 -Label '4.3 permanent active create' -Call { New-OERActiveRoleAssignment -Role 'Reader' @Rg -Group 'oer-s95-grp' -Permanent -Justification 'oer-s95 live verification' -Confirm:$false }
 $After = Get-S95PermanentAllowed
 Write-OerLiveStep "4.3 the policy now allows a permanent active assignment: $After (the teardown puts the baseline back)"
 Disconnect-OerLive
