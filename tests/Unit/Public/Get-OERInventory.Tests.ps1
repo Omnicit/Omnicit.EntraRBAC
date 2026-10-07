@@ -6730,3 +6730,21 @@ Describe 'Get-OERInventory tenantId (BL-88, A14)' {
         $Second.tenantId | Should -BeExactly '77777777-7777-7777-7777-777777777777'
     }
 }
+
+Describe 'Get-OERInventory help documents the tenantId (BL-88, A14)' {
+    It 'says what tenantId names, what Invoke-OERStructure does with it, and when it is left out' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Get-OERInventory -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+
+        $Description | Should -Match ([regex]::Escape("The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's Microsoft Graph token was issued for, never the tenant as named with -TenantId"))
+        $Description | Should -Match ([regex]::Escape('Invoke-OERStructure applies the document only in that tenant and refuses it anywhere else with DocumentTenantMismatch.'))
+        $Description | Should -Match ([regex]::Escape('the key is left out, with no warning, and the document carries no tenant check.'))
+        $Description | Should -Match ([regex]::Escape("To use the inventory as a template for another tenant, change its tenantId to that tenant's ID or remove the key."))
+
+        $Param = @($Help.Parameters.Parameter) | Where-Object { $_.Name -eq 'TenantId' }
+        $Param | Should -Not -BeNullOrEmpty
+        $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText | Should -Match ([regex]::Escape("The inventory's tenantId is the tenant ID the session's Microsoft Graph token was issued for, not this value."))
+    }
+}

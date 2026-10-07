@@ -95,6 +95,11 @@ function Export-OERInventory {
     say) can tell a collection that was not read from one that is empty. The lists go into README.md
     only, never into inventory.json or any other file that is validated or applied.
 
+    inventory.json carries the top-level tenantId that Get-OERInventory writes -- the tenant ID the
+    session's Microsoft Graph token was issued for -- so Invoke-OERStructure applies it only in that
+    tenant and refuses it elsewhere with DocumentTenantMismatch; the Get-OERInventory help describes
+    the rule.
+
     WHERE THE FILES LAND: nothing is ever written directly into -OutputPath. -OutputPath is only the
     PARENT directory; every file goes into a new timestamped subfolder beneath it named
     oer-inventory-<tenantId>-<yyyyMMdd-HHmmss>, so inventory.json is at
@@ -146,6 +151,8 @@ function Export-OERInventory {
 
     .PARAMETER TenantId
     Optional tenant id or domain name forwarded to Initialize-OERAuth for explicit tenant targeting.
+    The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was
+    issued for, not this value.
 
     .EXAMPLE
     Export-OERInventory

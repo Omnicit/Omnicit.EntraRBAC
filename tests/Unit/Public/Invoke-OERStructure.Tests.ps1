@@ -855,6 +855,42 @@ Describe 'Invoke-OERStructure help pointer to the worked example' {
         $Named = @($Clause.Groups['List'].Value -split ',|\band\b' | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
         ($Named -join ',') | Should -BeExactly ($Missing -join ',')
     }
+
+    It 'documents the document tenant rule beside the pipeline session rule, and points -TenantId and -InputObject at it (BL-88, A14)' {
+        # Read through Get-Help, never the command's Definition: the Definition holds the function body,
+        # where DocumentTenantMismatch and tenantId already stand, so a match there proves nothing about
+        # the help. Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Help = Get-Help Invoke-OERStructure -Full
+        $Description = ((@($Help.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText = @{}
+        foreach ($P in @($Help.Parameters.Parameter)) {
+            $ParamText[[string]$P.Name] = ((@($P.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        }
+
+        $Description | Should -Match ([regex]::Escape('Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory and Export-OERInventory write it -- is applied only in that tenant.'))
+        $Description | Should -Match ([regex]::Escape('the document is refused with DocumentTenantMismatch before the sign-in, with no token request'))
+        $Description | Should -Match ([regex]::Escape('the document is compared again after the sign-in, before anything is read or written for it (the omitted-collection warning and the administrative unit pre-pass included)'))
+        $Description | Should -Match ([regex]::Escape("the tenant the session's Microsoft Graph token was issued for must be the document's, and so must the tenant the Azure Resource Manager token was issued for when Azure Resource Manager is used (an Azure section is selected and declared, or -IncludeARM is set)"))
+        $Description | Should -Match ([regex]::Escape("A session that holds no such token, or whose token tenant is not a GUID, cannot be compared and refuses the document too."))
+        $Description | Should -Match ([regex]::Escape('refuses the document with DocumentTenantMismatch as a non-terminating error: nothing is read or written for it, and the next piped document is tried on its own'))
+        $Description | Should -Match ([regex]::Escape("The document's tenant is only compared, never signed in to, so name it with -TenantId to apply the document there."))
+        $Description | Should -Match ([regex]::Escape("A document without tenantId is applied as before, with no tenant check: to use an export as a template for another tenant, change its tenantId to that tenant's ID or remove the key."))
+        $Description | Should -Match ([regex]::Escape('Called inside a script block or a function in a pipeline (ForEach-Object { Invoke-OERStructure ... }), the command begins after every other command in the pipeline has begun and takes the session they left for its own, which the pipeline session rule above cannot see'))
+        $Description | Should -Match ([regex]::Escape('a document without tenantId is applied in whatever tenant that session holds, so name -TenantId there'))
+
+        # The new paragraph stands after the pipeline session rule, which is still there word for word at
+        # its head and its end, and before the next paragraph.
+        $Description | Should -Match ([regex]::Escape('Pipeline session rule: without -TenantId the command acts only under the session it began with.'))
+        $Description | Should -Match ([regex]::Escape('Run such commands as separate statements.'))
+        $Rule = $Description.IndexOf('Pipeline session rule:')
+        $Rule | Should -BeGreaterThan -1
+        $Rule | Should -BeLessThan $Description.IndexOf('Document tenant rule:')
+        $Description.IndexOf('Document tenant rule:') | Should -BeLessThan $Description.IndexOf('RoleAssignments scope grouping:')
+
+        $ParamText['TenantId'] | Should -Match 'tenantId'
+        $ParamText['TenantId'] | Should -Match ([regex]::Escape('see the document tenant rule above'))
+        $ParamText['InputObject'] | Should -Match ([regex]::Escape('whose tenantId limits it to that tenant'))
+    }
 }
 
 Describe 'Invoke-OERStructure with an ambiguous subscription display name in a scope' {

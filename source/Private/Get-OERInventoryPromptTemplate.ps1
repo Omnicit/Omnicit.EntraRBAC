@@ -168,8 +168,14 @@ $NamingLine
 
 # Output schema (Invoke-OERStructure document)
 
-Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), tenantAlias
-(optional), and the section arrays. Any other top-level key is rejected.
+Top level is a JSON object. Allowed keys ONLY: version (required, e.g. "1.0"), tenantId (present in an
+exported inventory.json), tenantAlias (optional), and the section arrays. Any other top-level key is
+rejected.
+
+tenantId names the tenant this inventory was exported from, and Invoke-OERStructure refuses to apply
+the document in any other tenant. Keep tenantId in your proposal exactly as it appears in
+inventory.json. Never invent, change, guess or remove one: if inventory.json has no tenantId, write
+none.
 
 Declare each group, administrative unit, catalog, access review and directory role policy once, by
 displayName (a directory role policy by role), and each access package once per catalog: names are

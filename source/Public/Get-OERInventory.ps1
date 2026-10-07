@@ -167,6 +167,14 @@ function Get-OERInventory {
     group or service principal. A role management policy read twice, for example by naming the same
     role twice in -Role, is written once.
 
+    The inventory carries a top-level tenantId, directly after its version: the tenant ID the session's
+    Microsoft Graph token was issued for, never the tenant as named with -TenantId (a domain, or
+    organizations, names no tenant ID). Invoke-OERStructure applies the document only in that tenant
+    and refuses it anywhere else with DocumentTenantMismatch. When the token reports no tenant ID, or
+    the module holds no session, the key is left out, with no warning, and the document carries no
+    tenant check. To use the inventory as a template for another tenant, change its tenantId to that
+    tenant's ID or remove the key.
+
     .PARAMETER Include
     The building-block sections to read. Defaults to Groups, AdministrativeUnits, Catalogs and
     AccessPackages. AccessReviews captures only access-package-scoped, single-stage review
@@ -232,7 +240,9 @@ function Get-OERInventory {
     Acquire an ARM token and read the Azure sections. Forwarded to Initialize-OERAuth.
 
     .PARAMETER TenantId
-    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
+    Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. The
+    inventory's tenantId is the tenant ID the session's Microsoft Graph token was issued for, not this
+    value.
 
     .EXAMPLE
     Get-OERInventory -Include Groups,Catalogs,AccessPackages

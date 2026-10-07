@@ -76,6 +76,29 @@ function Invoke-OERStructure {
     or did not validate, signs nothing in and moves nothing: the document after it is compared with
     the same session. With -TenantId the command signs in to that tenant as before.
 
+    Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory
+    and Export-OERInventory write it -- is applied only in that tenant. With a -TenantId that is a
+    tenant ID (a GUID) naming another tenant, the document is refused with DocumentTenantMismatch
+    before the sign-in, with no token request. Whatever -TenantId names, the document is compared
+    again after the sign-in, before anything is read or written for it (the omitted-collection
+    warning and the administrative unit pre-pass included): the tenant the session's Microsoft Graph
+    token was issued for must be the document's, and so must the tenant the Azure Resource Manager
+    token was issued for when Azure Resource Manager is used (an Azure section is selected and
+    declared, or -IncludeARM is set). A -TenantId that is a domain or organizations, or none at all,
+    is compared only this way. A session that holds no such token, or whose token tenant is not a
+    GUID, cannot be compared and refuses the document too. A difference refuses the document with
+    DocumentTenantMismatch as a non-terminating error: nothing is read or written for it, and the
+    next piped document is tried on its own. The document's tenant is only compared, never signed in
+    to, so name it with -TenantId to apply the document there. A document without tenantId is applied
+    as before, with no tenant check: to use an export as a template for another tenant, change its
+    tenantId to that tenant's ID or remove the key. A tenantId that is not a canonical GUID fails
+    validation (StructureValidationFailed). Called inside a script block or a function in a pipeline
+    (ForEach-Object { Invoke-OERStructure ... }), the command begins after every other command in
+    the pipeline has begun and takes the session they left for its own, which the pipeline session
+    rule above cannot see: a document that names its tenant is still refused in any other tenant,
+    while a document without tenantId is applied in whatever tenant that session holds, so name
+    -TenantId there.
+
     RoleAssignments scope grouping: before the first role assignment item is dispatched, the engine
     resolves every item's scope once (Resolve-OERStructureRoleAssignmentScope) and groups the items on
     the canonical RESOLVED scope, compared without regard to letter case -- never on the scope text
@@ -121,8 +144,9 @@ function Invoke-OERStructure {
     -InputObject.
 
     .PARAMETER InputObject
-    The document to apply: a PSCustomObject (such as the output of Get-OERInventory) to apply
-    directly, eliminating the need for a manual ConvertTo-Json / ConvertFrom-Json round-trip; OR a
+    The document to apply: a PSCustomObject (such as the output of Get-OERInventory, whose tenantId
+    limits it to that tenant -- see the document tenant rule above) to apply directly, eliminating
+    the need for a manual ConvertTo-Json / ConvertFrom-Json round-trip; OR a
     file to read -- either a path string or a System.IO.FileInfo (for example piped from
     Get-ChildItem or Get-Item), read from disk exactly like -Path. A System.IO.DirectoryInfo is an
     error. Mutually exclusive with -Path and -Json.
@@ -202,7 +226,10 @@ function Invoke-OERStructure {
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth. Without it
-    the command acts only under the session it began with (see the pipeline session rule above).
+    the command acts only under the session it began with (see the pipeline session rule above). A
+    document that names its tenant (tenantId) is applied only in that tenant: a -TenantId that is a
+    GUID and differs from it refuses the document before the sign-in, and any other -TenantId is
+    compared after the sign-in (see the document tenant rule above).
 
     .PARAMETER IncludeARM
     Acquire an ARM token before dispatching. Required explicitly only if the document does not

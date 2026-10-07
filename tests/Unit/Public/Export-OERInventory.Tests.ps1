@@ -1374,6 +1374,17 @@ Describe 'Export-OERInventory (help documents the bundle nesting)' {
         $ParamText | Should -Not -BeNullOrEmpty
         $ParamText | Should -Match 'PARENT'
     }
+
+    It 'says inventory.json carries the tenantId Get-OERInventory writes, and that it is not the tenant as named (BL-88, A14)' {
+        # Whitespace collapsed first, so the assertions do not depend on where the prose wraps.
+        $Description = ((@($script:ExportHelp.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $Description | Should -Match ([regex]::Escape("inventory.json carries the top-level tenantId that Get-OERInventory writes -- the tenant ID the session's Microsoft Graph token was issued for -- so Invoke-OERStructure applies it only in that tenant and refuses it elsewhere with DocumentTenantMismatch; the Get-OERInventory help describes the rule."))
+
+        $Param = @($script:ExportHelp.Parameters.Parameter) | Where-Object { $_.Name -eq 'TenantId' }
+        $Param | Should -Not -BeNullOrEmpty
+        $ParamText = ((@($Param.Description) | ForEach-Object { $_.Text }) -join ' ') -replace '\s+', ' '
+        $ParamText | Should -Match ([regex]::Escape("The tenantId written into inventory.json is the tenant ID the session's Microsoft Graph token was issued for, not this value."))
+    }
 }
 
 Describe 'Export-OERInventory (directory role sections)' {
