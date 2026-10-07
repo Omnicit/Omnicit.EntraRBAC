@@ -921,6 +921,23 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   no `try`; `tests/QA/requiredscope.tests.ps1` counts a call to it as a Graph write by the caller, since
   the helper carries no path literal of its own.
   `Why: docs/development/rationale.md#pim-rule-pair-put-back`
+- **`Test-OERScheduleRequestFailed` is the single owner of which PIM schedule request status is an
+  error: the Failed family, meaning `Failed`, `FailedAsResourceIsLocked` and any later status that
+  starts with `Failed`, compared case-insensitively, and nothing else** -- `Revoked` is a removal's
+  success, and `Denied`, `Canceled` and the `Pending*` values are not errors. It is called by the
+  twelve cmdlets that send a schedule request -- `Add-`/`Remove-OERGroupEligibility`, `New-`/
+  `Remove-OEREligibleDirectoryRoleAssignment`, `New-`/`Remove-OERActiveDirectoryRoleAssignment`,
+  `New-`/`Remove-OEREligibleRoleAssignment`, `New-`/`Remove-OERActiveRoleAssignment` and
+  `Enable-`/`Disable-OEREligibleRoleAssignment` -- and by the two new-group replication waits in
+  `Sync-OERStructureGroup`. A cmdlet emits the request object FIRST and then writes the non-terminating
+  `EligibilityRequestFailed` (group, directory role and Azure eligibility requests) or
+  `AssignmentRequestFailed` (active assignment, activation and deactivation requests), so a caller
+  under `-ErrorAction Stop` still receives the object. Never compare a status to a `Failed` literal
+  anywhere else. The cohort check in `tests/Unit/Private/Test-OERScheduleRequestFailed.Tests.ps1`
+  holds that the twelve cmdlet files call the owner and that no other file under `source/` compares a
+  status to a `Failed` literal in the shapes it scans; it does NOT hold the two engine waits, whose
+  behaviour tests in `tests/Unit/Private/Sync-OERStructureGroup.Tests.ps1` do.
+  `Why: docs/development/rationale.md#failed-schedule-request`
 - **`Get-OERCloudEndpoint` is the single owner of the cloud-to-endpoint table.** Every Graph
   resource/audience, Graph service root, ARM resource/host and authority (STS) host for a sovereign
   cloud is read from it; never hardcode one of those hosts a second time. `source/Private/Invoke-OERArmRequest.ps1`

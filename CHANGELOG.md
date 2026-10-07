@@ -37,6 +37,13 @@ rule update and its last, so `-WarningAction Stop` no longer stops half-way. The
 (`MutuallyExclusiveParameter`), and the last refuses an empty approver list (`ApproverRequired`). In
 `Invoke-OERStructure`, an empty Azure approver side now matches an empty live one.
 
+Eleven cmdlets that send a PIM schedule request now treat an accepted request answered with a status
+starting `Failed` as an error, after the request object (`EligibilityRequestFailed`, or the new
+`AssignmentRequestFailed`), so `Invoke-OERStructure` reports the row Failed.
+`Set-OERAccessPackageAssignmentPolicy` refuses a connected-organization scope that names none
+(`InvalidPolicyInput`). `New-OERActiveRoleAssignment` opens a role policy for a permanent assignment
+only once confirmed; it and `New-OEREligibleRoleAssignment` roll it back if the assignment fails.
+
 ## [1.1.2] - 2026-10-06
 
 `Invoke-OERStructure` groups, matches and prunes `roleAssignments` on the resolved scope, ignoring
