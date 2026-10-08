@@ -10,11 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 A permanent group eligibility grant that Graph refuses after `Add-OERGroupEligibility` opened the
 group's PIM policy now reports `PolicyOpenedButGrantFailed` first, naming the policy left open, how
 to close it and why it failed, so `-ErrorAction Stop` stops on it and the `Invoke-OERStructure`
-result shows it. The close command, `Set-OERGroupPimPolicy` with `-AllowPermanentEligibility:$false`,
-now really closes the policy; the old one left it open. `GroupNotOnboarded` for a group created in
-the same run says whether its policy was opened and how to close it. The two Azure role assignment
-cmdlets no longer call a rollback failed when the policy was already closed again. No ErrorId
-changed.
+result shows it. The advice now names a command that really closes the policy,
+`Set-OERGroupPimPolicy` with `-AllowPermanentEligibility:$false`; the old advice left it open.
+`GroupNotOnboarded` for a group created in the same run says whether its policy was opened and, if
+so, how to close it. The two Azure role assignment cmdlets no longer call a rollback failed when the
+policy was already closed. No ErrorId changed.
 
 ## [1.1.3] - 2026-10-07
 
