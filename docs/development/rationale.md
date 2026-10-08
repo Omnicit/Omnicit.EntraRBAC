@@ -5549,14 +5549,15 @@ BL-99), in the refused grant's `PolicyOpenedButGrantFailed` and in the Failed an
 since both come from the one rollback block. The block decides on the error id, never on the
 message: the first comma-separated segment of the caught record's `FullyQualifiedErrorId`, compared
 ordinally, must be `NoChange` (the real cmdlet's record reads `NoChange,Set-OERRoleManagementPolicy`
-under `-ErrorAction Stop`, measured against a mocked transport). Another failure can carry the words
-"No applicable policy rule changed.", and a reworded message must not turn a failed rollback into a
-closed policy. The rollback runs BEFORE the object is emitted, not only before the error:
-a consumer that stops the pipeline at the object, `Select-Object -First 1` for example, would
-otherwise skip it exactly as `-ErrorAction Stop` skips what follows the error, and the policy would
-stay open. The object is still emitted before the error. `Add-OERGroupEligibility` has no rollback to
-run, since the single-rule open it makes has no public inverse, so its Failed record only names the
-policy that is left open.
+under `-ErrorAction Stop`, measured against a mocked transport). The error id is the contract the
+cmdlet owns, while its message, "No applicable policy rule changed.", is prose that can be reworded,
+or reused by another failure, and deciding on it could turn a failed rollback into a closed policy.
+The rollback runs BEFORE the object is emitted, not only before the error: a consumer that stops the
+pipeline at the object, `Select-Object -First 1` for example, would otherwise skip it exactly as
+`-ErrorAction Stop` skips what follows the error, and the policy would stay open. The object is
+still emitted before the error. `Add-OERGroupEligibility` has no rollback to run, since the
+single-rule open it makes has no public inverse, so its Failed record only names the policy that is
+left open.
 
 **The order on a refused grant.** In `New-OEREligibleRoleAssignment`, a grant that threw after the
 policy was opened wrote the grant's own error first, then rolled back, then wrote
@@ -5567,12 +5568,13 @@ the rollback nor the `PolicyOpenedButGrantFailed` record ever ran, and the polic
 copied it: `New-OERActiveRoleAssignment` opened the policy before it asked for confirmation and had no
 rollback at all. Each of the two cmdlets now has one rollback block, shared by the refused-grant path
 and the Failed path. On a refused grant it runs first, then the cmdlet writes
-`PolicyOpenedButGrantFailed`, which names the policy, whether the rollback succeeded and how the
-request failed, and only then the grant's own error. Under `-ErrorAction Stop` the cmdlet is stopped
-by `PolicyOpenedButGrantFailed`, after the rollback, and the grant's own message travels inside it,
-since under Stop its own record is never reached. `New-OERActiveRoleAssignment` also opens the policy
-only once the assignment is confirmed, as `New-OEREligibleRoleAssignment` already did, so a declined
-prompt weakens nothing while `-WhatIf` still plans the policy change.
+`PolicyOpenedButGrantFailed`, which names the policy, how the rollback went (rolled back, found
+already closed, or failed) and how the request failed, and only then the grant's own error. Under
+`-ErrorAction Stop` the cmdlet is stopped by `PolicyOpenedButGrantFailed`, after the rollback, and
+the grant's own message travels inside it, since under Stop its own record is never reached.
+`New-OERActiveRoleAssignment` also opens the policy only once the assignment is confirmed, as
+`New-OEREligibleRoleAssignment` already did, so a declined prompt weakens nothing while `-WhatIf`
+still plans the policy change.
 `Add-OERGroupEligibility` kept its older order through this step, its grant error written before
 `PolicyOpenedButGrantFailed`, so under `-ErrorAction Stop` the advice naming the policy it left open
 was never written. Sprint 10 step 2 (BL-98) gave it the same order: on a grant refused after it

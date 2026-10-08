@@ -331,12 +331,12 @@ function New-OEREligibleRoleAssignment {
         if ($Proceed) {
             # The one rollback of a policy this invocation opened, shared by a refused grant (the
             # catch below) and a grant answered with a status in the Failed family: it puts the policy
-            # back and returns the sentence that says whether it did, so automation can revert it if
-            # the rollback fails too. It is NOT asked again (-Confirm:$false): it puts back this
-            # invocation's own open, which the operator already confirmed, and under an explicit
-            # -Confirm a declined nested prompt would emit nothing and throw nothing, so the policy
-            # would stay open while the record said it was rolled back. $Reverted is taken from a call
-            # that did not throw, never from its output: the rollback cannot be declined
+            # back and returns the sentence for the outcome, one of the three below, so automation can
+            # revert it if the rollback fails too. It is NOT asked again (-Confirm:$false): it puts
+            # back this invocation's own open, which the operator already confirmed, and under an
+            # explicit -Confirm a declined nested prompt would emit nothing and throw nothing, so the
+            # policy would stay open while the record said it was rolled back. $Reverted is taken from
+            # a call that did not throw, never from its output: the rollback cannot be declined
             # (-Confirm:$false), and under -ErrorAction Stop every failure of it, NoChange included,
             # throws, so a call that returns is a rollback written.
             #
@@ -346,7 +346,8 @@ function New-OEREligibleRoleAssignment {
             # (BL-99). Reporting that as "ALSO failed, so the policy is still open" would send the
             # operator to close a policy that is closed. It is decided on the error id, the first
             # comma-separated segment of FullyQualifiedErrorId compared ordinally, never on the
-            # message: another failure can carry the same words, and the id is what the cmdlet owns.
+            # message: the error id is the contract the cmdlet owns, while a message is prose that can
+            # be reworded, or reused by another failure.
             $RollBackOpenedPolicy = {
                 $Reverted = $false
                 $AnsweredNoChange = $false
