@@ -76,7 +76,7 @@ function Disconnect-OER {
             ($GraphSessionState -eq 'Untracked' -and $null -ne (Get-OERGraphSessionFingerprint))
         if ($LeavesOtherSession) {
             Write-Warning ('Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process ' +
-                'connected, since Omnicit.EntraRBAC did not connect it. Run Disconnect-MgGraph to end that session.')
+                'connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.')
         }
         if ($PSCmdlet.ShouldProcess('Omnicit.EntraRBAC session', 'Disconnect and clear cached auth state')) {
             $script:_OERAuthState = $null

@@ -7,7 +7,9 @@ function Get-OERGraphSessionFingerprint {
     The Microsoft Graph PowerShell SDK keeps one session per process, and Invoke-OERGraphRequest sends
     every Graph call under it with no token of its own. Initialize-OERAuth records this fingerprint
     straight after its own Connect-MgGraph, and Get-OERGraphSessionState compares it with the session
-    the process holds before the module trusts its cache or sends a Graph call.
+    the process holds before the module trusts its cache or sends a Graph call. Disconnect-OER also
+    calls this directly, when the module holds no record of a session of its own, to learn whether the
+    process holds a session at all.
 
     It is built from eight properties of the context Get-MgContext returns: AuthType,
     TokenCredentialType, ClientId, TenantId, Account, AppName, Environment and Scopes (sorted). For a

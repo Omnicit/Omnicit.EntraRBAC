@@ -1966,10 +1966,9 @@ references to `TokenManager` at all -- it only ever touches the on-disk MSAL tok
 static credential field. MEASURED: removing and re-importing the AzAuth module leaves the same
 credential instance in place. `Disconnect-OER` clears only `$script:_OERAuthState` (this module's
 own session state) and calls `Disconnect-MgGraph` for the session the module connected (A4; it
-called `Disconnect-AzAccount` too until 2026-09-21); reading its source shows
-it never touches AzAuth's credential at all, so it was never capable of clearing it. Decompiling
-AzAuth shows the only call site that clears the static credential is `Get-AzToken`'s own `-Force`
-handling.
+called `Disconnect-AzAccount` too until 2026-09-21); reading its source shows it never touches
+AzAuth's credential at all, so it was never capable of clearing it. Decompiling AzAuth shows the
+only call site that clears the static credential is `Get-AzToken`'s own `-Force` handling.
 
 **The tenant lookup (BL-12, decided by Philip 2026-10-06, P-2).** HISTORY first: this paragraph
 used to record the lookup as a proposal, not built, since it is a new network call, and the gap it
@@ -2329,9 +2328,11 @@ and the A10 marker in every case, so the next cmdlet is `Untracked` and signs in
 
 The warning is one string, written once by `Write-Warning` when a session exists and is left -- for
 `Changed`, and for `Untracked` with a session in the process: `Disconnect-OER leaves the Microsoft
-Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC did not connect it.
-Run Disconnect-MgGraph to end that session.` The `ShouldProcess` target and action strings are
-unchanged.
+Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of
+connecting it. Run Disconnect-MgGraph to end that session.` It says "has no record of connecting
+it" and not "did not connect it": for an `Untracked` session the module cannot know it did not
+connect it, since an earlier import of the module may have; it knows only that it holds no record.
+The `ShouldProcess` target and action strings are unchanged.
 
 Ruling: a warning before the gate, not after it, and not Verbose or Information. It is shown by
 default, it shows under `-WhatIf` and before a `-Confirm` prompt is answered, it is about what the
@@ -2356,25 +2357,29 @@ about topic say both halves. The one gap is the gap every gate read has: another
 `Connect-MgGraph` between the read and the disconnect is not seen (see "What is still not covered"
 below).
 
-The tests are in `tests/Unit/Public/Disconnect-OER.Tests.ps1`, Describe `Disconnect-OER ends only the
-Graph SDK session the module connected (A4, BL-67)`: one test per state -- `Own`, `Changed`,
-`Untracked` with no state and with a state that has no fingerprint, `Untracked` with no session, and
-`Absent` -- each pinning the exact warning text and its count (one, or none), whether
-`Disconnect-MgGraph` ran, and that the state is cleared; `Changed` also the A10 marker. A `-WhatIf`
-test on `Changed` proves the warning is written and the state and marker are untouched, which a
-warning inside the gate could not do. An AST test, read from the loaded function, requires the one
-`Write-Warning` to start before the first `ShouldProcess` call. The A18 test now expects the one
-read the decision makes (`Get-MgContext` once after the disconnect, and still once after the module
-is asked what it tracks). MUTATIONS (G5), each one edit to a copy of `source/` run through the
-covering tests: (a) `Disconnect-MgGraph` called unconditionally (`if ($true)`) turns the `Changed`,
-both `Untracked`-with-a-session, `Untracked`-with-none and `Absent` tests red; (b) the `Untracked`
-arm of the warning condition dropped turns the two `Untracked`-with-a-session tests red; (c)
+The tests are in `tests/Unit/Public/Disconnect-OER.Tests.ps1`, Describe `Disconnect-OER ends only
+the Graph SDK session the module connected (A4, BL-67)`: one test per state -- `Own`, `Changed`,
+`Untracked` with no state and with a state that has no fingerprint, `Untracked` with no session,
+and `Absent` -- each pinning the exact warning text and its count (one, or none), whether
+`Disconnect-MgGraph` ran, and that the state is cleared; `Changed` also the A10 marker. Two
+`-WhatIf` tests. On `Changed` the warning is written and the state and marker are untouched, which
+a warning inside the gate could not do. On `Own` `Disconnect-MgGraph` is not called, the state and
+marker stay and no warning is written: on every other state the call is not made whatever the gate
+does, so this is the one test that holds the disconnect itself inside the gate. An AST test, read
+from the loaded function, requires the one `Write-Warning` to start before the first `ShouldProcess`
+call. The A18 test now expects the one read the decision makes (`Get-MgContext` once after the
+disconnect, and still once after the module is asked what it tracks). MUTATIONS (G5), each one edit
+to a copy of `source/` run through the covering tests: (a) `Disconnect-MgGraph` called
+unconditionally (`if ($true)`) turns the `Changed`, both `Untracked`-with-a-session,
+`Untracked`-with-none and `Absent` tests red; (b) the `Untracked` arm of the warning condition
+dropped turns the two `Untracked`-with-a-session tests red; (c)
 `$null -ne (Get-OERGraphSessionFingerprint)` dropped, so every `Untracked` warns, turns the
 `Untracked`-with-none test red; (d) the `Write-Warning` block moved inside the gate turns the
-`-WhatIf` test, the AST order test and the cohort's after-the-gate rule red (the last with
-`OER_COHORT_SOURCE_ROOT` pointed at the mutated copy); (e) `'Own'` swapped for `'Changed'` in the
-disconnect condition turns the `Own` test, the first Describe's `calls Disconnect-MgGraph for the
-session the module connected` and the `Changed` test red.
+`-WhatIf`-on-`Changed` test, the AST order test and the cohort's after-the-gate rule red (the last
+with `OER_COHORT_SOURCE_ROOT` pointed at the mutated copy); (e) `'Own'` swapped for `'Changed'` in
+the disconnect condition turns the `Own` test, the first Describe's `calls Disconnect-MgGraph for
+the session the module connected` and the `Changed` test red; (f) the `if ($GraphSessionState -eq
+'Own')` block moved out of the gate, after it, turns the `-WhatIf`-on-`Own` test red.
 
 **Why `Invoke-OERGraphRequest` checks again before every call.** MEASURED 2026-10-05 in
 PowerShell 7, with plain functions and no module code:
@@ -2482,13 +2487,12 @@ switches the session back by itself, and `Connect-OER` run with the same sign-in
 interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
 instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
 and `Disconnect-OER` ends only the session the module connected, leaving any other with a warning
-(A4). The README and the about topic add
-one sentence the two help texts do not carry: runspaces in one process (`ForEach-Object -Parallel`,
-`Start-ThreadJob`) share one Graph SDK session, so a parallel fan-out across tenants in one process
-gets `GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate
-PowerShell process). `Connect-OER`'s `.DESCRIPTION` alone carries the general case as well: a cmdlet
-whose own sign-in fails or is refused sends no Microsoft Graph or Azure Resource Manager request
-(`SignInRefused`).
+(A4). The README and the about topic add one sentence the two help texts do not carry: runspaces in
+one process (`ForEach-Object -Parallel`, `Start-ThreadJob`) share one Graph SDK session, so a
+parallel fan-out across tenants in one process gets `GraphSessionChanged`, and each tenant belongs
+in its own process (`Start-Job`, or a separate PowerShell process). `Connect-OER`'s `.DESCRIPTION`
+alone carries the general case as well: a cmdlet whose own sign-in fails or is refused sends no
+Microsoft Graph or Azure Resource Manager request (`SignInRefused`).
 
 **The old guidance, and what was known about it.** Until the check existed, the same four texts
 told the operator to run `Disconnect-OER` before their own `Connect-MgGraph` in the same process, or

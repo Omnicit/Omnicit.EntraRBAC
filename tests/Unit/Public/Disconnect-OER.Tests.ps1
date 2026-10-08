@@ -217,7 +217,7 @@ Describe 'Disconnect-OER ends only the Graph SDK session the module connected (A
     BeforeAll {
         # One string; the help, README and about topic say the same in their own words.
         $script:LeftWarning = 'Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process ' +
-            'connected, since Omnicit.EntraRBAC did not connect it. Run Disconnect-MgGraph to end that session.'
+            'connected, since Omnicit.EntraRBAC has no record of connecting it. Run Disconnect-MgGraph to end that session.'
     }
 
     BeforeEach {
@@ -235,6 +235,14 @@ Describe 'Disconnect-OER ends only the Graph SDK session the module connected (A
             param($C)
             Get-OERGraphSessionFingerprint -Context $C
         }
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $false
+        }
+    }
+
+    AfterEach {
+        # Leave no state or marker behind for the next test or the next file.
         InModuleScope $script:moduleName {
             $script:_OERAuthState = $null
             $script:_OERSessionUncertain = $false
@@ -347,6 +355,30 @@ Describe 'Disconnect-OER ends only the Graph SDK session the module connected (A
             $script:_OERAuthState.TenantId | Should -BeExactly 'x'
             $script:_OERSessionUncertain | Should -BeTrue
         }
+    }
+
+    # The guard for the one call that ends a live session. On a Changed session Disconnect-MgGraph is not
+    # called whatever the gate does, so only an Own state shows that -WhatIf does not reach it.
+    It 'under -WhatIf on an Own session, does not disconnect it, keeps the state and the marker, and writes no warning' {
+        InModuleScope $script:moduleName -Parameters @{ F = $script:SessionFingerprint } {
+            param($F)
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = $F }
+            $script:_OERSessionUncertain = $true
+            # The precondition: the state really reads Own, so the call that must not happen is the one
+            # the gate guards.
+            Get-OERGraphSessionState | Should -BeExactly 'Own'
+        }
+
+        Disconnect-OER -WhatIf -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName -Parameters @{ F = $script:SessionFingerprint } {
+            param($F)
+            $script:_OERAuthState.TenantId | Should -BeExactly 'x'
+            $script:_OERAuthState.GraphSessionFingerprint | Should -BeExactly $F
+            $script:_OERSessionUncertain | Should -BeTrue
+        }
+        @($Warnings).Count | Should -Be 0
     }
 
     It 'writes its one warning before its first $PSCmdlet.ShouldProcess call, read from the loaded function' {
