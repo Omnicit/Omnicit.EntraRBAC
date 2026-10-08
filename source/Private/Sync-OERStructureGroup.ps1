@@ -1522,18 +1522,20 @@ function Sync-OERStructureGroup {
                                 # The caught record's own error id: its FullyQualifiedErrorId without the
                                 # suffix PowerShell appends for the command that wrote it -- ',' and the
                                 # implementing type's full name for a compiled cmdlet, ',' and the name for
-                                # any other command, none when there is no command -- stripped only when the
-                                # id ends with it. Never the first comma segment: an error id can itself
-                                # contain a comma (a thrown string, for example).
+                                # any other command, and none (the empty suffix, which strips nothing) when
+                                # there is no command -- stripped only when the id ends with it. Never the
+                                # first comma segment: an error id can itself contain a comma (a thrown
+                                # string, for example).
                                 $CaughtId = [string]$PSItem.FullyQualifiedErrorId
-                                $CaughtCommand = if ($null -ne $PSItem.InvocationInfo) { $PSItem.InvocationInfo.MyCommand } else { $null }
-                                $CaughtSuffix = $null
-                                if ($CaughtCommand -is [System.Management.Automation.CmdletInfo]) {
-                                    $CaughtSuffix = ',' + $CaughtCommand.ImplementingType.FullName
+                                $CaughtCommand = $PSItem.InvocationInfo.MyCommand
+                                $CaughtSuffix = if ($CaughtCommand -is [System.Management.Automation.CmdletInfo]) {
+                                    ',' + $CaughtCommand.ImplementingType.FullName
                                 } elseif ($null -ne $CaughtCommand) {
-                                    $CaughtSuffix = ',' + $CaughtCommand.Name
+                                    ',' + $CaughtCommand.Name
+                                } else {
+                                    ''
                                 }
-                                if ($CaughtSuffix -and $CaughtId.EndsWith($CaughtSuffix, [System.StringComparison]::Ordinal)) {
+                                if ($CaughtId.EndsWith($CaughtSuffix, [System.StringComparison]::Ordinal)) {
                                     $CaughtId = $CaughtId.Substring(0, $CaughtId.Length - $CaughtSuffix.Length)
                                 }
                                 if (-not [string]::Equals($CaughtId, 'PolicyOpenedButGrantFailed', [System.StringComparison]::Ordinal)) {

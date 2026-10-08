@@ -5927,6 +5927,8 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
 
         It 'e: publishes the caught record''s own error id when the second call fails with <Shape>' -ForEach @(
             @{ Shape = 'an error id that contains a comma'; Published = 'Odd,Id' }
+            # Thrown, so written by no command: the suffix is none, and a trailing comma is the id's own.
+            @{ Shape = 'an error id that ends with a comma'; Published = 'Trailing,' }
             @{ Shape = 'the error of a compiled cmdlet'; Published = 'System.ArgumentException' }
             @{ Shape = 'the error a [CmdletBinding()] function writes under -ErrorAction Stop'; Published = 'Helper_Refused' }
         ) {
@@ -5935,9 +5937,15 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
                 $script:ReadPlan = @('closed', 'open')
                 # The caught record as this process makes it, read here first: its message and category.
                 $Second = switch -Wildcard ($Shape) {
-                    '*comma*' {
+                    '*contains a comma*' {
                         {
                             throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Odd: an error id with a comma.'), 'Odd,Id',
+                                [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                        }
+                    }
+                    '*ends with a comma*' {
+                        {
+                            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Trailing: an error id that ends with a comma.'), 'Trailing,',
                                 [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
                         }
                     }
