@@ -202,6 +202,14 @@ function Sync-OERStructureGroup {
        reads no permanent-eligibility setting is never taken for "not opened": the message says the
        policy may have been opened and could not be read, and gives the same command for the case
        that it allows permanent eligibility.
+       When a LATER call in that wait throws after an earlier call was sent and answered Failed, the
+       earlier request may have opened the policy while the later call opened nothing, so its error
+       carries no advice. The record the caller gets and the Failed row then carry the same
+       after-attempts read and outcome text as GroupNotOnboarded (the six outcomes after a call was
+       made), appended to the caught message, in a new record with the caught record's own error id,
+       category and target. The read is made before that record is written, so a caller stopped by it
+       under -ErrorAction Stop gets it too. A first call's error, and a PolicyOpenedButGrantFailed
+       (which carries the advice for the policy that call opened), are reported as before.
        A refused probe (a 403 on the listing or on the read, for example) ends the
        wait at once and the cmdlet is called as for any group, and a 404 from the cmdlet itself after
        the policy was read is reported as for any group. For that one call the handler sets the
@@ -1380,6 +1388,65 @@ function Sync-OERStructureGroup {
                     # real boolean, $null (unknown) when the poll was refused or read none.
                     $PermanentAttempted = $false
                     $AllowedBefore = $null
+                    # Whether an EARLIER call of this entry was sent and answered. Set on the statement
+                    # directly after the call's try/catch/finally, which only a call that returned
+                    # reaches (its catch always leaves the loop), and the loop calls again only after a
+                    # request answered status Failed: so a later call that throws knows that a request
+                    # before it was accepted and answered Failed -- a request that may have opened the
+                    # group's policy (see the catch of the call below).
+                    $EarlierRequestSent = $false
+                    # The after-attempts read and its outcome, in ONE place for the two ways this wait
+                    # ends after a call was made: the GroupNotOnboarded message below, and the catch of a
+                    # LATER call that throws after an earlier call was sent and answered Failed. It says
+                    # whether the group's policy was opened for this entry, since Add-OERGroupEligibility
+                    # opens it to allow permanent eligibility before its request and has no rollback. It
+                    # reads the policy ONCE more, with the poll's own functions (no wait, no budget), and
+                    # compares that with $AllowedBefore; invoked with &, it reads $Gid, $EChange, $Name
+                    # and $AllowedBefore from this handler's scope as they stand then, and returns ONE
+                    # string, the sentence group with no leading space. A read that is refused, unlisted,
+                    # answers 404 or reads no boolean is UNKNOWN, and an unknown is never reported as "not
+                    # opened"; a refused read is scrubbed and logged here and never published. Six
+                    # outcomes, decided in this order: after-read unknown; after-read closed, either "not
+                    # left open" or -- when the poll read it closed just before the first request, which
+                    # would then have opened it -- a read that may be out of date, since it can come from
+                    # a replica that has not seen the open; before-state unknown; already open before;
+                    # opened and still open. The close command comes from Get-OERGroupPimPolicyCloseAdvice,
+                    # as in Add-OERGroupEligibility.
+                    $PermanentPolicyAfterAttempts = {
+                        $AllowedAfter = $null
+                        $AfterPolicyId = $null
+                        try {
+                            $AfterPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $EChange.AccessType -NotFoundAsUnlisted
+                            if ($AfterPolicyId) {
+                                $AfterPolicy = Get-OERListedGroupPimPolicy -GroupId $Gid -PolicyId $AfterPolicyId -AccessType $EChange.AccessType
+                                if ($null -ne $AfterPolicy -and $AfterPolicy.AllowPermanentEligibility -is [bool]) {
+                                    $AllowedAfter = [bool]$AfterPolicy.AllowPermanentEligibility
+                                }
+                            }
+                        } catch {
+                            Remove-OERErrorRecord -Record $PSItem
+                            Write-Verbose "Sync-OERStructureGroup: could not read the $($EChange.AccessType) policy of new group '$Name' after its permanent eligibility requests ($($PSItem.Exception.Message)); whether it was opened is not known."
+                        }
+                        $CloseAdvice = Get-OERGroupPimPolicyCloseAdvice -GroupId $Gid -AccessType $EChange.AccessType
+                        if ($null -eq $AllowedAfter) {
+                            "Its PIM-for-groups policy for '$($EChange.AccessType)' access may have been opened to allow permanent eligibility before the request was sent, and it could not be read afterwards. If it allows permanent eligibility, $CloseAdvice"
+                        } elseif (-not $AllowedAfter) {
+                            if ($false -eq $AllowedBefore) {
+                                # Closed before the first request, which would have opened it, and closed
+                                # again a few seconds later: that read may come from a replica that has
+                                # not seen the open, so it is never taken for "not left open".
+                                "Its PIM-for-groups policy for '$($EChange.AccessType)' access reads as not allowing permanent eligibility after the requests, but the first request would have opened it, so that read may be out of date. If it allows permanent eligibility, $CloseAdvice"
+                            } else {
+                                "Its PIM-for-groups policy for '$($EChange.AccessType)' access does not allow permanent eligibility as read after the requests, so it was not left open."
+                            }
+                        } elseif ($null -eq $AllowedBefore) {
+                            "PIM-for-groups policy '$AfterPolicyId' allows permanent eligibility after the requests and may have been opened for them, since whether it allowed it before the first request is not known. The policy is open; $CloseAdvice"
+                        } elseif ($AllowedBefore) {
+                            "Its PIM-for-groups policy for '$($EChange.AccessType)' access already allowed permanent eligibility before the first request, so it was not opened for it."
+                        } else {
+                            "PIM-for-groups policy '$AfterPolicyId' had been opened to allow permanent eligibility before the request was sent. The policy is still open; $CloseAdvice"
+                        }
+                    }
                     $Waits = 0
                     while ($true) {
                         $PollRefused = $false
@@ -1437,12 +1504,60 @@ function Sync-OERStructureGroup {
                             $PermanentRequest = Add-OERGroupEligibility -Id $Gid -PrincipalId $EPrinId -AccessType $EChange.AccessType -Action $EAction -Confirm:$false -ErrorAction Stop
                         } catch {
                             Remove-OERErrorRecord -Record $PSItem
-                            $Caller.WriteError($PSItem)
-                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add permanent eligibility for '$EPrinRef': $($PSItem.Exception.Message)" -ErrorRecord $PSItem
+                            # The caught record is published as itself, as for any group, unless an
+                            # EARLIER call of this entry was sent and answered Failed. That request may
+                            # have opened the group's policy -- the cmdlet opens it before its request and
+                            # has no rollback, and the EligibilityRequestFailed that would have said so is
+                            # not written for this handler's replication (see the flag above) -- while this
+                            # later call opened nothing, so its error carries no advice and the open policy
+                            # would go unmentioned. So the after-attempts read runs and its statement is
+                            # appended to the caught message, in a NEW record with the caught record's own
+                            # error id, category and target (no InnerException: only the message is
+                            # reused). The read runs BEFORE $Caller.WriteError, so a caller under
+                            # -ErrorAction Stop, which that write stops, still gets it. A
+                            # PolicyOpenedButGrantFailed already carries the advice for the policy that call
+                            # opened, and is published as itself.
+                            $Published = $PSItem
+                            if ($EarlierRequestSent) {
+                                # The caught record's own error id: its FullyQualifiedErrorId without the
+                                # suffix PowerShell appends for the command that wrote it -- ',' and the
+                                # implementing type's full name for a compiled cmdlet, ',' and the name for
+                                # any other command, none when there is no command -- stripped only when the
+                                # id ends with it. Never the first comma segment: an error id can itself
+                                # contain a comma (a thrown string, for example).
+                                $CaughtId = [string]$PSItem.FullyQualifiedErrorId
+                                $CaughtCommand = if ($null -ne $PSItem.InvocationInfo) { $PSItem.InvocationInfo.MyCommand } else { $null }
+                                $CaughtSuffix = $null
+                                if ($CaughtCommand -is [System.Management.Automation.CmdletInfo]) {
+                                    $CaughtSuffix = ',' + $CaughtCommand.ImplementingType.FullName
+                                } elseif ($null -ne $CaughtCommand) {
+                                    $CaughtSuffix = ',' + $CaughtCommand.Name
+                                }
+                                if ($CaughtSuffix -and $CaughtId.EndsWith($CaughtSuffix, [System.StringComparison]::Ordinal)) {
+                                    $CaughtId = $CaughtId.Substring(0, $CaughtId.Length - $CaughtSuffix.Length)
+                                }
+                                if (-not [string]::Equals($CaughtId, 'PolicyOpenedButGrantFailed', [System.StringComparison]::Ordinal)) {
+                                    $CaughtMessage = $PSItem.Exception.Message
+                                    $CaughtCategory = $PSItem.CategoryInfo.Category
+                                    $CaughtTarget = $PSItem.TargetObject
+                                    $Statement = & $PermanentPolicyAfterAttempts
+                                    $Published = [System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new("$CaughtMessage $Statement"),
+                                        $CaughtId,
+                                        $CaughtCategory,
+                                        $CaughtTarget)
+                                }
+                            }
+                            $Caller.WriteError($Published)
+                            ConvertTo-OERStructureResult -Section 'groups' -Item $Name -Action 'Failed' -Detail "failed to add permanent eligibility for '$EPrinRef': $($Published.Exception.Message)" -ErrorRecord $Published
                             break
                         } finally {
                             $script:_OERGroupEligibilityFailedIsReplication = $false
                         }
+                        # Reached only when the call returned (the catch above always leaves the loop), and
+                        # the loop calls again only after a request answered status Failed: a later call of
+                        # this entry that throws then reports the policy state (see the catch).
+                        $EarlierRequestSent = $true
                         # ConvertTo-OERGroupEligibilityRequest stamps Status from Graph's status, and
                         # Test-OERScheduleRequestFailed owns which statuses are the Failed family.
                         if (@($PermanentRequest | Where-Object { Test-OERScheduleRequestFailed -Status ([string]$_.Status) }).Count -eq 0) {
@@ -1467,53 +1582,13 @@ function Sync-OERStructureGroup {
                         # One sentence group more says whether the group's policy was opened for this
                         # entry, since Add-OERGroupEligibility opens it to allow permanent eligibility
                         # before its request and has no rollback. The handler decides it itself: with no
-                        # call made, nothing was sent and nothing opened. Otherwise it reads the policy
-                        # ONCE more, after the attempts, with the poll's own functions (no wait, no budget)
-                        # and compares that with $AllowedBefore. A read that is refused, unlisted, answers
-                        # 404 or reads no boolean is UNKNOWN, and an unknown is never reported as "not
-                        # opened". Seven outcomes, decided in this order: no call made; after-read
-                        # unknown; after-read closed, either "not left open" or -- when the poll read it
-                        # closed just before the first request, which would then have opened it -- a read
-                        # that may be out of date, since it can come from a replica that has not seen the
-                        # open; before-state unknown; already open before; opened and still open. The
-                        # close command comes from Get-OERGroupPimPolicyCloseAdvice, as in
-                        # Add-OERGroupEligibility.
+                        # call made, nothing was sent and nothing opened. Otherwise the after-attempts
+                        # read decides it ($PermanentPolicyAfterAttempts above, the one place that read and
+                        # its six outcomes live), which makes seven outcomes here.
                         if (-not $PermanentAttempted) {
                             $Message += ' No eligibility request was sent, so no PIM-for-groups policy was opened for it.'
                         } else {
-                            $AllowedAfter = $null
-                            $AfterPolicyId = $null
-                            try {
-                                $AfterPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $EChange.AccessType -NotFoundAsUnlisted
-                                if ($AfterPolicyId) {
-                                    $AfterPolicy = Get-OERListedGroupPimPolicy -GroupId $Gid -PolicyId $AfterPolicyId -AccessType $EChange.AccessType
-                                    if ($null -ne $AfterPolicy -and $AfterPolicy.AllowPermanentEligibility -is [bool]) {
-                                        $AllowedAfter = [bool]$AfterPolicy.AllowPermanentEligibility
-                                    }
-                                }
-                            } catch {
-                                Remove-OERErrorRecord -Record $PSItem
-                                Write-Verbose "Sync-OERStructureGroup: could not read the $($EChange.AccessType) policy of new group '$Name' after its permanent eligibility requests ($($PSItem.Exception.Message)); whether it was opened is not known."
-                            }
-                            $CloseAdvice = Get-OERGroupPimPolicyCloseAdvice -GroupId $Gid -AccessType $EChange.AccessType
-                            if ($null -eq $AllowedAfter) {
-                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access may have been opened to allow permanent eligibility before the request was sent, and it could not be read afterwards. If it allows permanent eligibility, $CloseAdvice"
-                            } elseif (-not $AllowedAfter) {
-                                if ($false -eq $AllowedBefore) {
-                                    # Closed before the first request, which would have opened it, and
-                                    # closed again a few seconds later: that read may come from a replica
-                                    # that has not seen the open, so it is never taken for "not left open".
-                                    $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access reads as not allowing permanent eligibility after the requests, but the first request would have opened it, so that read may be out of date. If it allows permanent eligibility, $CloseAdvice"
-                                } else {
-                                    $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access does not allow permanent eligibility as read after the requests, so it was not left open."
-                                }
-                            } elseif ($null -eq $AllowedBefore) {
-                                $Message += " PIM-for-groups policy '$AfterPolicyId' allows permanent eligibility after the requests and may have been opened for them, since whether it allowed it before the first request is not known. The policy is open; $CloseAdvice"
-                            } elseif ($AllowedBefore) {
-                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access already allowed permanent eligibility before the first request, so it was not opened for it."
-                            } else {
-                                $Message += " PIM-for-groups policy '$AfterPolicyId' had been opened to allow permanent eligibility before the request was sent. The policy is still open; $CloseAdvice"
-                            }
+                            $Message += ' ' + (& $PermanentPolicyAfterAttempts)
                         }
                         $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($Message),
