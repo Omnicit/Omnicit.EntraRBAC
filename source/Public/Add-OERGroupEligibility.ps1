@@ -274,7 +274,7 @@ function Add-OERGroupEligibility {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new("Could not open the PIM-for-groups policy to allow permanent eligibility: $($PSItem.Exception.Message) Run 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n> -AllowPermanentEligibility' with sufficient permissions, or grant a time-bound eligibility with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
+                Write-CmdletError -Message ([System.Exception]::new("Could not open the PIM-for-groups policy to allow permanent eligibility: $($PSItem.Exception.Message) $(Get-OERGroupPimPolicyOpenAdvice -GroupId $GroupId -AccessType $AccessType)")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
                 return
             }
         }

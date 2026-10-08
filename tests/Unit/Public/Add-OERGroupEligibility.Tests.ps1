@@ -252,6 +252,28 @@ Describe 'Add-OERGroupEligibility' {
             (($e | ForEach-Object { $_.FullyQualifiedErrorId }) -join ' ') | Should -Match 'PolicyOpenFailed'
             Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
         }
+        It 'words PolicyOpenFailed for <AccessType> access with the cause and a command that runs as typed, without -ActivationMaxHours' -ForEach @(
+            @{ AccessType = 'member' }
+            @{ AccessType = 'owner' }
+        ) {
+            Mock -ModuleName $script:moduleName Get-OERGroupPermanentEligibilityState { [PSCustomObject]@{ HasPolicy = $true; PolicyId = 'pol-1'; PermanentAllowed = $false } }
+            Mock -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility { throw 'Forbidden' }
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { }
+            $Err = $null
+            Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -AccessType $AccessType -Confirm:$false -ErrorVariable Err -ErrorAction SilentlyContinue | Out-Null
+            # Reached: the open was tried, and failed, before anything was sent.
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'pol-1' }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 0
+            $Own = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and $_.FullyQualifiedErrorId -eq 'PolicyOpenFailed,Add-OERGroupEligibility' })
+            $Own.Count | Should -Be 1
+            $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::PermissionDenied)
+            $Own[0].TargetObject | Should -BeExactly 'pol-1'
+            # The whole message, built from the expected text and not from the helper.
+            $Own[0].Exception.Message | Should -BeExactly ('Could not open the PIM-for-groups policy to allow permanent eligibility: Forbidden ' +
+                "Run 'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType $AccessType -AllowPermanentEligibility' " +
+                'with sufficient permissions, or grant a time-bound eligibility with -DurationDays.')
+            $Own[0].Exception.Message | Should -Not -Match 'ActivationMaxHours'
+        }
         It 'degrades and still POSTs when the pre-check read fails' {
             Mock -ModuleName $script:moduleName Get-OERGroupPermanentEligibilityState { throw 'read failed' }
             Mock -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility { $true }
