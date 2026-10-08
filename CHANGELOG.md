@@ -8,13 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 A permanent group eligibility grant refused after `Add-OERGroupEligibility` opened the group's PIM
-policy now reports `PolicyOpenedButGrantFailed` first, naming the policy left open, how to close it
-and why it failed, shown under `-ErrorAction Stop` and in `Invoke-OERStructure` results. The advice
-now names a command that closes the policy, `Set-OERGroupPimPolicy` with
-`-AllowPermanentEligibility:$false`; the old one left it open. When `Invoke-OERStructure` gives up
-waiting on a group it created, `GroupNotOnboarded` says whether the policy was opened and, if so,
-how to close it. The two Azure role assignment cmdlets no longer call a rollback of an already
-closed policy failed. No ErrorId changed.
+policy now reports `PolicyOpenedButGrantFailed` first, naming the open policy, why the grant failed
+and how to close it (`Set-OERGroupPimPolicy -AllowPermanentEligibility:$false`; the old advice left
+it open), even under `-ErrorAction Stop` and in `Invoke-OERStructure` results.
+`Invoke-OERStructure`'s wait on a group it created now says, in `GroupNotOnboarded` and in a later
+attempt's error, whether the policy was opened and how to close it. When a rollback finds nothing
+to change, the two Azure role assignment cmdlets ask for a confirming read instead of calling the
+policy closed. No ErrorId changed.
 
 ## [1.1.3] - 2026-10-07
 
