@@ -378,7 +378,9 @@ Result:
 
 ```powershell
 Import-S103Module
-if (-not (Test-Path -LiteralPath $ProfileDir)) { New-Item -ItemType Directory -Path $ProfileDir | Out-Null }
+# A clean temporary profile folder for this block, so it can run again.
+if (Test-Path -LiteralPath $ProfileDir) { Remove-Item -LiteralPath $ProfileDir -Recurse -Force }
+New-Item -ItemType Directory -Path $ProfileDir | Out-Null
 New-OERConfiguration -TenantAlias 'oer-s103-set' -TenantId 'contoso.onmicrosoft.com' -BasePath $ProfileDir -Confirm:$false -ErrorAction Stop | Out-Null
 $File = Join-Path $ProfileDir 'oer-s103-set.psd1'
 $Hash = (Get-FileHash -LiteralPath $File).Hash
@@ -388,10 +390,12 @@ try {
 } catch {
     Write-S103Error -Label 'typed' -Record $PSItem
 }
-$E = $null
-$Out = @([pscustomobject]@{ TenantAlias = 'oer-s103-set'; TenantId = '  ' } | Set-OERConfiguration -BasePath $ProfileDir -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable E)
+# A binding failure on PIPELINE input never reaches -ErrorVariable (measured in Task 3, and in 3.2's first
+# run), so the refusal is read from $Error, cleared just before the call.
+$Error.Clear()
+$Out = @([pscustomobject]@{ TenantAlias = 'oer-s103-set'; TenantId = '  ' } | Set-OERConfiguration -BasePath $ProfileDir -Confirm:$false -ErrorAction SilentlyContinue)
 Write-OerLiveStep "piped: objects returned $($Out.Count)"
-Write-S103Errors -Label 'piped' -Errors $E -Ids @('ParameterArgumentValidationError')
+Write-S103Errors -Label 'piped' -Errors @($Error) -Ids @('ParameterArgumentValidationError')
 $Read = Get-OERConfiguration -TenantAlias 'oer-s103-set' -BasePath $ProfileDir -ErrorAction Stop
 Write-OerLiveStep "The profile file is unchanged: $((Get-FileHash -LiteralPath $File).Hash -eq $Hash); it still names contoso.onmicrosoft.com: $([string]$Read.TenantId -eq 'contoso.onmicrosoft.com')"
 ```
@@ -409,7 +413,9 @@ Result:
 
 ```powershell
 Import-S103Module
-if (-not (Test-Path -LiteralPath $ProfileDir)) { New-Item -ItemType Directory -Path $ProfileDir | Out-Null }
+# A clean temporary profile folder for this block, so it can run again.
+if (Test-Path -LiteralPath $ProfileDir) { Remove-Item -LiteralPath $ProfileDir -Recurse -Force }
+New-Item -ItemType Directory -Path $ProfileDir | Out-Null
 New-OERConfiguration -TenantAlias 'oer-s103-stored' -TenantId 'contoso.onmicrosoft.com' -BasePath $ProfileDir -Confirm:$false -ErrorAction Stop | Out-Null
 $File = Join-Path $ProfileDir 'oer-s103-stored.psd1'
 $Text = [System.IO.File]::ReadAllText($File)
