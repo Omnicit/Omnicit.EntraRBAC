@@ -261,7 +261,7 @@ function Test-S102Advice {
 
 ### S.1. The module loads from this branch's build in the step's own worktree
 
-- [ ] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
+- [x] **S.1** The session's `Repo` is the step's worktree, whose build carries this branch, and the main clone is on `main`, never switched.
 
 ```powershell
 $List = @(git -C $Cfg.Repo worktree list --porcelain)
@@ -283,13 +283,27 @@ changes; `The worktree's build carries A: True; B: True; C: True; D: True`.
 clone; a `False` on the last line -- build the worktree first (`./build.ps1 -Tasks build`), never
 while the gate runs.
 
-Result:
+Result: 2026-10-08 13:33 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-08 13:33 UTC. The session's Repo is the step's own worktree, not the main clone; the main clone is on main at 6817b33, never switched; the worktree on this branch at 3888f84 with 0 tracked changes (the build is of 510ab34's source; 3888f84 adds only this checklist); the build carries A, B, C and D.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK S.1 ===
+[oer-s102] The module loads from a worktree that is not the main clone: True
+[oer-s102] Main clone: branch main; HEAD 6817b33
+[oer-s102] Worktree: branch fix/report-an-opened-policy-first; HEAD 3888f84 docs: add the live checklist for reporting an opened policy first; tracked changes: 0
+[oer-s102] The worktree's build carries A: True; B: True; C: True; D: True
+RUNNER: check S.1 exit code 0; started 2026-10-08T13:33:24Z; took 3 s.
+```
 
 ## 0. Preparation
 
 ### 0.1. Identity check as oer-live-cc, the module session
 
-- [ ] **0.1** The module session passes the identity check, and the module is this branch's build.
+- [x] **0.1** The module session passes the identity check, and the module is this branch's build.
 
 ```powershell
 Connect-OerLive -Arm
@@ -304,11 +318,32 @@ worktree's build: True`.
 **Failure looks like:** any `False`, or `application is disabled` -- STOP: the identity is not enabled
 for this run; never sign in another way.
 
-Result:
+Result: 2026-10-08 13:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Every identity line True for the module session as oer-live-cc (app-only certificate session, app name, test tenant, the service principal and the token's signed-in object, organization, verified domain, ARM token from the certificate, test subscription Enabled); identity check passed; the module is the worktree's build (1.1.4).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.1 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] The module is the worktree's build: True
+RUNNER: check 0.1 exit code 0; started 2026-10-08T13:33:47Z; took 6 s.
+```
 
 ### 0.2. The prerequisite plan names only oer-s102- objects
 
-- [ ] **0.2** `Initialize-OerS102Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s102-`.
+- [x] **0.2** `Initialize-OerS102Prereq.ps1 -WhatIf` signs in, passes the identity check, writes nothing, and every tenant `What if:` target starts with `oer-s102-`.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS102Prereq.ps1') -WhatIf 2>&1 | ForEach-Object { "$_" })
@@ -329,11 +364,47 @@ groups do not exist yet.
 **Failure looks like:** a target without the prefix -- STOP; any `Refusing to run` -- read the reason
 before anything else is run.
 
-Result:
+Result: 2026-10-08 13:34 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Identity check passed; no residue; the sweep finds nothing with the prefix; no baseline yet. The plan: 2 local files under raw\s102\ (the transcript and the count baseline) and 3 tenant targets, oer-s102-user, oer-s102-cmd and oer-s102-eng, every one with the prefix (True); a No member-policy baseline line for each group; WhatIf: nothing was created or written. (The runner's partial-id mask also masked the transcript file's timestamp, a harmless over-mask.)
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.2 ===
+[oer-s102] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s102] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s102] What if: Performing the operation "Start the redacted transcript" on target "raw\s102\prereq-PARTIAL-ID-REDACTEDZ.log".
+[oer-s102] [oer-s102] Mode: CREATE or complete. Prefix 'oer-s102-'. Objects (fixed): oer-s102-user (disabled); oer-s102-cmd and oer-s102-eng (no member, each member PIM policy baselined and set to the starting state, eligible assignments must expire). OerLive 1.0.3.
+[oer-s102] [oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s102] [oer-s102] Residue: raw\residue.json holds no rows.
+[oer-s102] [oer-s102] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s102-' is left.
+[oer-s102] [oer-s102] Found: oer-s102-user exists: False; oer-s102-cmd exists: False; oer-s102-eng exists: False.
+[oer-s102] [oer-s102] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98).
+[oer-s102] What if: Performing the operation "Write the baseline (JSON, no BOM)" on target "raw\s102\baseline-s102.json".
+[oer-s102] What if: Performing the operation "Create a DISABLED test user with a random, unprinted password (Graph v1.0 POST users)" on target "oer-s102-user".
+[oer-s102] What if: Performing the operation "Create a plain security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s102-cmd".
+[oer-s102] What if: Performing the operation "Create a plain security group with no member (Graph v1.0 POST groups: not role-assignable, not mail-enabled, assigned membership)" on target "oer-s102-eng".
+[oer-s102] [oer-s102] No member-policy baseline and no starting state: oer-s102-cmd does not exist (WhatIf).
+[oer-s102] [oer-s102] No member-policy baseline and no starting state: oer-s102-eng does not exist (WhatIf).
+[oer-s102] [oer-s102] Summary: oer-s102-user absent; oer-s102-cmd absent; oer-s102-eng absent; written to the tenant: False (WhatIf: nothing was created or written).
+[oer-s102] [oer-s102] WhatIf: nothing was created, removed or written.
+[oer-s102] [oer-s102] Done.
+[oer-s102] Planned writes: 5; local files under raw\s102\: 2; tenant targets: 3; every tenant target starts with oer-s102-: True
+RUNNER: check 0.2 exit code 0; started 2026-10-08T13:34:02Z; took 7 s.
+```
 
 ### 0.3. The prerequisite objects, the baselines and the starting state
 
-- [ ] **0.3** `Initialize-OerS102Prereq.ps1 -Unattended` writes the count baseline, creates the user and the two groups, records each group's member-policy baseline and brings each policy to the starting state (eligible assignments must expire).
+- [x] **0.3** `Initialize-OerS102Prereq.ps1 -Unattended` writes the count baseline, creates the user and the two groups, records each group's member-policy baseline and brings each policy to the starting state (eligible assignments must expire).
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS102Prereq.ps1') -Unattended 2>&1 | ForEach-Object { "$_" })
@@ -348,11 +419,61 @@ either `already at the checklist's starting state` or `Sent rule Expiration_Admi
 **Failure looks like:** exit code `1` -- read the `Stopped` line; a policy that does not converge on
 the starting state -- the checklist cannot open it, so stop and tear down.
 
-Result:
+Result: 2026-10-08 13:35 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Identity check passed; no residue; the count baseline written before the first write (users 23, groups 98); created the disabled user oer-s102-user and the groups oer-s102-cmd and oer-s102-eng (201 each, converged); each member policy's baseline recorded: eligible assignments must expire True, eligible maximum P365D, activation maximum PT8H, MFA on activation False, authentication context off. A new group's default member policy already requires eligible assignments to expire, so both policies were already at the starting state and no policy write was sent. Exit code 0.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.3 ===
+[oer-s102] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s102] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s102] [oer-s102] Transcript (redacted): raw\s102\prereq-PARTIAL-ID-REDACTEDZ.log; OerLive 1.0.3.
+[oer-s102] [oer-s102] Mode: CREATE or complete. Prefix 'oer-s102-'. Objects (fixed): oer-s102-user (disabled); oer-s102-cmd and oer-s102-eng (no member, each member PIM policy baselined and set to the starting state, eligible assignments must expire). OerLive 1.0.3.
+[oer-s102] [oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s102] [oer-s102] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s102] [oer-s102] Residue: raw\residue.json holds no rows.
+[oer-s102] [oer-s102] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s102-' is left.
+[oer-s102] [oer-s102] Found: oer-s102-user exists: False; oer-s102-cmd exists: False; oer-s102-eng exists: False.
+[oer-s102] [oer-s102] No baseline yet: it is written now, before the first write to the tenant (users 23, groups 98).
+[oer-s102] [oer-s102] Wrote the baseline raw\s102\baseline-s102.json and read it back.
+[oer-s102] [oer-s102] Created user oer-s102-user (disabled): 201.
+[oer-s102] [oer-s102] oer-s102-user resolves by its user principal name: not yet (read 1, 0.2 s, likely replication delay) -- reading again in 2 s.
+[oer-s102] [oer-s102] oer-s102-user resolves by its user principal name: not yet (read 2, 2.3 s, likely replication delay) -- reading again in 4 s.
+[oer-s102] [oer-s102] oer-s102-user resolves by its user principal name: converged after 3 read(s), 6.3 s.
+[oer-s102] [oer-s102] Created group oer-s102-cmd: 201.
+[oer-s102] [oer-s102] oer-s102-cmd resolves by its display name: not yet (read 1, 0.1 s, likely replication delay) -- reading again in 2 s.
+[oer-s102] [oer-s102] oer-s102-cmd resolves by its display name: converged after 2 read(s), 2.1 s.
+[oer-s102] [oer-s102] Created group oer-s102-eng: 201.
+[oer-s102] [oer-s102] oer-s102-eng resolves by its display name: converged after 1 read(s), 0.1 s.
+[oer-s102] [oer-s102] oer-s102-cmd's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s102] [oer-s102] Reading rule Expiration_EndUser_Assignment of oer-s102-cmd's member policy answered 404 ResourceNotFound (attempt 1 of 6, likely replication delay) -- trying again in 5 s.
+[oer-s102] [oer-s102] Member policy of oer-s102-cmd (baseline): eligible assignments must expire: True; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off
+[oer-s102] [oer-s102] Wrote the baseline raw\s102\baseline-s102-cmd-policy.json and read it back.
+[oer-s102] [oer-s102] The member policy of oer-s102-cmd is already at the checklist's starting state (eligible assignments must expire).
+[oer-s102] [oer-s102] oer-s102-eng's member PIM policy is listed: not yet (read 1, 0.4 s, likely replication delay) -- reading again in 2 s.
+[oer-s102] [oer-s102] oer-s102-eng's member PIM policy is listed: converged after 2 read(s), 2.8 s.
+[oer-s102] [oer-s102] Member policy of oer-s102-eng (baseline): eligible assignments must expire: True; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off
+[oer-s102] [oer-s102] Wrote the baseline raw\s102\baseline-s102-eng-policy.json and read it back.
+[oer-s102] [oer-s102] The member policy of oer-s102-eng is already at the checklist's starting state (eligible assignments must expire).
+[oer-s102] [oer-s102] Summary: oer-s102-user present; oer-s102-cmd present; oer-s102-eng present; written to the tenant: True.
+[oer-s102] [oer-s102] Done.
+[oer-s102] Exit code: 0
+RUNNER: check 0.3 exit code 0; started 2026-10-08T13:34:20Z; took 77 s.
+```
 
 ### 0.4. The starting state as the module reads it
 
-- [ ] **0.4** The module reads both member policies as not allowing permanent eligibility, and neither group holds an eligibility.
+- [x] **0.4** The module reads both member policies as not allowing permanent eligibility, and neither group holds an eligibility.
 
 ```powershell
 Connect-OerLive -Arm
@@ -369,13 +490,35 @@ Disconnect-OerLive
 **Failure looks like:** `permanent eligibility allowed: True` -- the starting state did not take; a
 read error -- a group created moments ago, so wait a minute and run 0.4 again.
 
-Result:
+Result: 2026-10-08 13:36 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The module reads both member policies as not allowing permanent eligibility (eligible maximum P365D, activation maximum 8 hours), and neither group holds an eligibility of oer-s102-user, of the made-up id, or of anyone else.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 0.4 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 0.4 oer-s102-cmd: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8; eligibility of oer-s102-user: 0 (permanent: 0); of the made-up id: 0; of anyone else: 0
+[oer-s102] 0.4 oer-s102-eng: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8; eligibility of oer-s102-user: 0 (permanent: 0); of the made-up id: 0; of anyone else: 0
+RUNNER: check 0.4 exit code 0; started 2026-10-08T13:35:47Z; took 8 s.
+```
 
 ## 1. The cmdlet: Add-OERGroupEligibility on oer-s102-cmd (A, B)
 
 ### 1.1. A refused grant after an open, under -ErrorAction Stop, in a script with no try
 
-- [ ] **1.1** `Add-OERGroupEligibility -Group oer-s102-cmd -PrincipalId` with the made-up id and `-ErrorAction Stop`, the last statement that runs in a script with no `try`, warns, opens the policy, is refused by Microsoft Graph, and stops the script with `PolicyOpenedButGrantFailed`, whose message names the opened policy, gives the corrected advice and then the reason the request failed.
+- [x] **1.1** `Add-OERGroupEligibility -Group oer-s102-cmd -PrincipalId` with the made-up id and `-ErrorAction Stop`, the last statement that runs in a script with no `try`, warns, opens the policy, is refused by Microsoft Graph, and stops the script with `PolicyOpenedButGrantFailed`, whose message names the opened policy, gives the corrected advice and then the reason the request failed.
 
 ```powershell
 Connect-OerLive -Arm
@@ -403,11 +546,41 @@ does not exist and answered it Failed, so the refusal cannot be produced here an
 (record what Graph answered, and close the policy with 1.2 before going on); a `PolicyOpenFailed` --
 the open itself was refused (a 403 is a STOP).
 
-Result:
+Result: 2026-10-08 13:40 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Run 2026-10-08 13:40 UTC, about six minutes after the groups were created. The policy before: permanent eligibility allowed False. The cmdlet warned that the eligibility requires opening the policy, opened it, and Microsoft Graph REFUSED the grant for the made-up principal (SubjectNotFound: The subject is not found.). The script stopped there: exit code 1, no REACHED line, and the ONE error on standard error is PolicyOpenedButGrantFailed,Add-OERGroupEligibility, category InvalidOperation, target the policy id, whose message names the opened policy, gives the corrected advice (Set-OERGroupPimPolicy -Group ...-AccessType member -AllowPermanentEligibility:$false) and then "The request failed with:" and Graph's refusal. The grant's own error is not on standard error: the first error stopped the script. NormalView shortened the CategoryInfo target with an ellipsis; the runner masked the id fragments (PARTIAL-ID-REDACTED). The refusal path is therefore class A, not class B.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.1 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 1.1 policy before: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 1.1 the next call is the last statement that runs: no try stands around it, it runs with -ErrorAction Stop, and the line after it says REACHED.
+WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000003' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+--- stderr ---
+Add-OERGroupEligibility : The PIM member eligibility grant failed after PIM-for-groups policy 'Group_00000000-0000-0000-0000-000000000003_00000000-0000-0000-0000-000000000004' had been opened to allow permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000003'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry. The request failed with: SubjectNotFound: The subject is not found.
+At REPO\docs\live-verification\raw\s102\run-1.1-c93928db.ps1:130 char:1
++ Add-OERGroupEligibility -Group 'oer-s102-cmd' -PrincipalId $Missing - ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
++ CategoryInfo          : InvalidOperation: (Group_PARTIAL-ID-REDACTED...f-PARTIAL-ID-REDACTED:String) [Add-OERGroupEligibility], Exception
++ FullyQualifiedErrorId : PolicyOpenedButGrantFailed,Add-OERGroupEligibility
+RUNNER: check 1.1 exit code 1; started 2026-10-08T13:40:15Z; took 8 s.
+```
 
 ### 1.2. The policy 1.1 opened is open, nothing was granted, and the module's advice closes it
 
-- [ ] **1.2** After 1.1 the member policy of `oer-s102-cmd` allows permanent eligibility and no eligibility was created; running the module's own advice, exactly as it reads, closes it again without changing the eligible or the activation maximum.
+- [x] **1.2** After 1.1 the member policy of `oer-s102-cmd` allows permanent eligibility and no eligibility was created; running the module's own advice, exactly as it reads, closes it again without changing the eligible or the activation maximum.
 
 ```powershell
 Connect-OerLive -Arm
@@ -427,11 +600,37 @@ eligibility allowed: False`, `eligible maximum unchanged: True`, `activation max
 out -- the advice does not close the policy (Ruling R1 wrong); a changed maximum -- the advice
 rewrites more than it says.
 
-Result:
+Result: 2026-10-08 13:40 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After 1.1 no eligibility exists (oer-s102-user 0, the made-up id 0, anyone else 0) and the policy allows permanent eligibility (1.1 opened it). The module's own advice, run exactly as Get-OERGroupPimPolicyCloseAdvice gives it (Set-OERGroupPimPolicy -Group ... -AccessType member -AllowPermanentEligibility:$false, plus -Confirm:$false), closed it: converged after 1 read, permanent eligibility allowed False, eligible maximum (P365D) and activation maximum (8 hours) unchanged. Ruling R1 holds live.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.2 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 1.2 eligibility of oer-s102-user: 0 (permanent: 0); of the made-up id: 0; of anyone else: 0
+[oer-s102] 1.2 advice: close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000003'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry.
+[oer-s102] 1.2 policy before the advice: permanent eligibility allowed: True; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 1.2 the advice ran: objects returned 1
+[oer-s102] oer-s102-cmd's member policy no longer allows permanent eligibility: converged after 1 read(s), 0.7 s.
+[oer-s102] 1.2 policy after the advice (1 read(s)): permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8; eligible maximum unchanged: True; activation maximum unchanged: True
+RUNNER: check 1.2 exit code 0; started 2026-10-08T13:40:36Z; took 8 s.
+```
 
 ### 1.3. The same refusal without -ErrorAction Stop: both errors, the opened policy first
 
-- [ ] **1.3** Without `-ErrorAction Stop` the same call writes two errors in this order -- `PolicyOpenedButGrantFailed` with the advice and the cause, then the grant's own error -- emits no object and the script goes on; the module's advice then closes the policy again.
+- [x] **1.3** Without `-ErrorAction Stop` the same call writes two errors in this order -- `PolicyOpenedButGrantFailed` with the advice and the cause, then the grant's own error -- emits no object and the script goes on; the module's advice then closes the policy again.
 
 ```powershell
 Connect-OerLive -Arm
@@ -459,11 +658,45 @@ maxima unchanged).
 **Failure looks like:** `own [1]` is the grant's own error -- the old order; a `False` in the advice
 line; the second own error missing -- the grant's own error is no longer re-published.
 
-Result:
+Result: 2026-10-08 13:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS, on the third run (13:44 UTC). Without -ErrorAction Stop the refused grant (SubjectNotFound) after the open emits no object and writes exactly two records of the cmdlet's own, in this order: own [1] PolicyOpenedButGrantFailed,Add-OERGroupEligibility (InvalidOperation, target the policy id) with the opened policy, the corrected advice and the cause, and own [2] the grant's own record SubjectNotFound,Add-OERGroupEligibility, whose message own [1] quotes as its cause (True); the script went on (REACHED); the module's advice then closed the policy again (allowed False, both maxima unchanged). Runs 1 and 2 (13:40 and 13:43 UTC) gave the same records in the same order -- the cmdlet's own as items 7 and 8 -- but the block then read the first item of -ErrorVariable, which also holds the records the inner layers write on the way (the transport's and the Graph SDK's, 8 items here), so its verdict lines read an inner record and said False. That was a defect of the checklist, not of the module: the blocks now count only a command's own records (commit "docs: count only a command's own errors in the live checklist"), and run 2 used the old block because the note had not been regenerated yet. Each run opened the policy and closed it again with the advice.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.3 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 1.3 policy before: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8
+WARNING: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000003' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s102] 1.3 objects: 0
+[oer-s102] 1.3 own [1] error: PolicyOpenedButGrantFailed,Add-OERGroupEligibility (InvalidOperation, target 'Group_00000000-0000-0000-0000-000000000003_00000000-0000-0000-0000-000000000007'): The PIM member eligibility grant failed after PIM-for-groups policy 'Group_00000000-0000-0000-0000-000000000003_00000000-0000-0000-0000-000000000007' had been opened to allow permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000003'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry. The request failed with: SubjectNotFound: The subject is not found.
+[oer-s102] 1.3 own [2] error: SubjectNotFound,Add-OERGroupEligibility (OperationStopped, target ''): SubjectNotFound: The subject is not found.
+[oer-s102] 1.3 Add-OERGroupEligibility's own error records: 2; other items in -ErrorVariable (inner layers, counted, not printed): 8
+[oer-s102] 1.3 own [1] opened policy named: True; corrected advice: True; cause after the advice: True
+[oer-s102] 1.3 own [1] quotes own [2]'s message as its cause: True
+[oer-s102] 1.3 REACHED: the script went on, as it does without -ErrorAction Stop.
+[oer-s102] 1.3 advice: close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000003'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry.
+[oer-s102] 1.3 policy before the advice: permanent eligibility allowed: True; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 1.3 the advice ran: objects returned 1
+[oer-s102] oer-s102-cmd's member policy no longer allows permanent eligibility: converged after 1 read(s), 0.7 s.
+[oer-s102] 1.3 policy after the advice (1 read(s)): permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8; eligible maximum unchanged: True; activation maximum unchanged: True
+RUNNER: check 1.3 exit code 0; started 2026-10-08T13:44:27Z; took 18 s.
+```
 
 ### 1.4. The success path still opens the policy and grants (regression)
 
-- [ ] **1.4** `Add-OERGroupEligibility -Group oer-s102-cmd -User oer-s102-user` (permanent) warns, opens the policy, emits the request object with a status that is not in the Failed family, writes no error, and the user is then permanently eligible.
+- [x] **1.4** `Add-OERGroupEligibility -Group oer-s102-cmd -User oer-s102-user` (permanent) warns, opens the policy, emits the request object with a status that is not in the Failed family, writes no error, and the user is then permanently eligible.
 
 ```powershell
 Connect-OerLive -Arm
@@ -494,13 +727,41 @@ and `permanent eligibility allowed: True`.
 path regressed (or, for a group created minutes ago, Microsoft Graph does not know it yet: wait
 five minutes and run 1.4 again, recording both runs).
 
-Result:
+Result: 2026-10-08 13:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The policy before: permanent eligibility allowed False. Add-OERGroupEligibility -User oer-s102-user (permanent) wrote the one permanent-eligibility warning, opened the policy and emitted one Omnicit.EntraRBAC.GroupEligibility object, status Provisioned, action adminAssign; nothing in -ErrorVariable. oer-s102-user is then permanently eligible (1, permanent 1; converged after 1 read) and the policy allows permanent eligibility.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 1.4 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 1.4 policy before: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 1.4 warning: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000003' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s102] 1.4 object: Omnicit.EntraRBAC.GroupEligibility; status Provisioned; action adminAssign
+[oer-s102] 1.4 Add-OERGroupEligibility's own error records: 0; other items in -ErrorVariable (inner layers, counted, not printed): 0
+[oer-s102] 1.4 objects: 1; items in -ErrorVariable: 0; warnings: 1
+[oer-s102] oer-s102-user is permanently eligible in oer-s102-cmd: converged after 1 read(s), 0.7 s.
+[oer-s102] 1.4 eligibility of oer-s102-user: 1 (permanent: 1); of the made-up id: 0; of anyone else: 0
+[oer-s102] 1.4 policy after: permanent eligibility allowed: True; eligible maximum: P365D; activation maximum hours: 8
+RUNNER: check 1.4 exit code 0; started 2026-10-08T13:45:00Z; took 23 s.
+```
 
 ## 2. The engine: Invoke-OERStructure on oer-s102-eng (A)
 
 ### 2.1. A refused grant after an open: the engine's Failed row carries the advice
 
-- [ ] **2.1** `Invoke-OERStructure` with a document declaring a permanent member eligibility of the made-up id on `oer-s102-eng` warns, opens the policy and reports ONE `Failed` row whose Detail carries `PolicyOpenedButGrantFailed`'s message -- the opened policy, the corrected advice and the cause -- with that record as the row's error.
+- [x] **2.1** `Invoke-OERStructure` with a document declaring a permanent member eligibility of the made-up id on `oer-s102-eng` warns, opens the policy and reports ONE `Failed` row whose Detail carries `PolicyOpenedButGrantFailed`'s message -- the opened policy, the corrected advice and the cause -- with that record as the row's error.
 
 ```powershell
 Connect-OerLive -Arm
@@ -534,11 +795,40 @@ calls the cmdlet with `-ErrorAction Stop`, so its first error stops it).
 **Failure looks like:** the Detail carries only Microsoft Graph's refusal and no advice -- the old
 order (BL-98 not fixed in the engine's view); more than one Failed row.
 
-Result:
+Result: 2026-10-08 13:45 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The policy before: permanent eligibility allowed False. Invoke-OERStructure with a permanent member eligibility of the made-up id on oer-s102-eng wrote the one permanent-eligibility warning, and Add-OERGroupEligibility opened the policy before Microsoft Graph refused the grant (SubjectNotFound). Rows: Unchanged (group properties) and ONE Failed row whose Detail is "failed to add permanent eligibility for ...099: " followed by PolicyOpenedButGrantFailed's message -- the opened policy, the corrected advice, the cause, in that order (True, True, True); the row's error is PolicyOpenedButGrantFailed. Among the cmdlet's and the engine's ids in -ErrorVariable: PolicyOpenedButGrantFailed,Add-OERGroupEligibility and PolicyOpenedButGrantFailed,Invoke-OERStructure (the engine re-publishes the record), and the grant's own record SubjectNotFound,Add-OERGroupEligibility is absent (False): the engine calls the cmdlet with -ErrorAction Stop, so its first error stopped it. The policy id's second segment matches oer-s102-cmd's before its onboarding: a group not yet onboarded to PIM for Groups lists a policy id of the same shape (as in Sprint 9 step 4).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.1 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 2.1 policy before: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 2.1 warning: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000005' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s102] 2.1 row: groups | oer-s102-eng | Unchanged | group properties match
+[oer-s102] 2.1 row: groups | oer-s102-eng | Failed | failed to add permanent eligibility for '00000000-0000-0000-0000-000000000099': The PIM member eligibility grant failed after PIM-for-groups policy 'Group_00000000-0000-0000-0000-000000000005_00000000-0000-0000-0000-000000000004' had been opened to allow permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000005'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry. The request failed with: SubjectNotFound: The subject is not found.
+[oer-s102] 2.1 error ids of the cmdlet and the engine in -ErrorVariable (unique): PolicyOpenedButGrantFailed,Add-OERGroupEligibility; PolicyOpenedButGrantFailed,Invoke-OERStructure
+[oer-s102] 2.1 the grant's own record (SubjectNotFound,Add-OERGroupEligibility) in -ErrorVariable: False
+[oer-s102] 2.1 Failed rows: 1; items in -ErrorVariable: 11; warnings: 1
+[oer-s102] 2.1 the Failed row's Detail: opened policy named: True; corrected advice: True; cause after the advice: True
+[oer-s102] 2.1 the Failed row's error: PolicyOpenedButGrantFailed
+RUNNER: check 2.1 exit code 0; started 2026-10-08T13:45:32Z; took 9 s.
+```
 
 ### 2.2. The policy 2.1 opened is open, nothing was granted, and the module's advice closes it
 
-- [ ] **2.2** After 2.1 the member policy of `oer-s102-eng` allows permanent eligibility and no eligibility was created; the module's advice closes it again.
+- [x] **2.2** After 2.1 the member policy of `oer-s102-eng` allows permanent eligibility and no eligibility was created; the module's advice closes it again.
 
 ```powershell
 Connect-OerLive -Arm
@@ -552,11 +842,37 @@ Disconnect-OerLive
 **Expect:** as 1.2, for `oer-s102-eng`.
 **Failure looks like:** as 1.2.
 
-Result:
+Result: 2026-10-08 13:46 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. After 2.1 no eligibility exists in oer-s102-eng and its policy allows permanent eligibility (2.1 opened it). The module's own advice closed it: converged after 1 read, permanent eligibility allowed False, both maxima unchanged.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.2 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 2.2 eligibility of oer-s102-user: 0 (permanent: 0); of the made-up id: 0; of anyone else: 0
+[oer-s102] 2.2 advice: close it with 'Set-OERGroupPimPolicy -Group ''00000000-0000-0000-0000-000000000005'' -AccessType member -AllowPermanentEligibility:$false' if you do not intend to retry.
+[oer-s102] 2.2 policy before the advice: permanent eligibility allowed: True; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 2.2 the advice ran: objects returned 1
+[oer-s102] oer-s102-eng's member policy no longer allows permanent eligibility: converged after 1 read(s), 2.4 s.
+[oer-s102] 2.2 policy after the advice (1 read(s)): permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8; eligible maximum unchanged: True; activation maximum unchanged: True
+RUNNER: check 2.2 exit code 0; started 2026-10-08T13:45:56Z; took 10 s.
+```
 
 ### 2.3. The success path still opens the policy and grants (regression)
 
-- [ ] **2.3** `Invoke-OERStructure` with a document declaring a permanent member eligibility of `oer-s102-user` on `oer-s102-eng` warns once, reports `Updated` for it, writes no error, and the user is then permanently eligible; the state then reads the same three times, 5 s apart.
+- [x] **2.3** `Invoke-OERStructure` with a document declaring a permanent member eligibility of `oer-s102-user` on `oer-s102-eng` warns once, reports `Updated` for it, writes no error, and the user is then permanently eligible; the state then reads the same three times, 5 s apart.
 
 ```powershell
 Connect-OerLive -Arm
@@ -589,11 +905,40 @@ allowed: True`, and three reads that agree (`True`).
 **Failure looks like:** a `Failed` row -- read its Detail; for a group created minutes ago Microsoft
 Graph may not know it yet: wait five minutes and run 2.3 again, recording both runs.
 
-Result:
+Result: 2026-10-08 13:46 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. The policy before: permanent eligibility allowed False. Invoke-OERStructure with a permanent member eligibility of oer-s102-user on oer-s102-eng wrote the one permanent-eligibility warning; rows Unchanged (group properties) and Updated (set permanent member eligibility for oer-s102-user: permanent member eligibility is absent); nothing in -ErrorVariable; 2 Graph writes (PATCH, the opened rule; POST, the eligibility request). The state then reads as applied after 1 read -- oer-s102-user permanently eligible (1, permanent 1), the policy allowing permanent eligibility -- and three reads 5 s apart agree.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.3 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 2.3 policy before: permanent eligibility allowed: False; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 2.3 warning: This eligibility requires opening the PIM-for-groups policy for group '00000000-0000-0000-0000-000000000005' (member access) to allow PERMANENT eligible assignments, which affects ALL member eligibility for this group.
+[oer-s102] 2.3 row: groups | oer-s102-eng | Unchanged | group properties match
+[oer-s102] 2.3 row: groups | oer-s102-eng | Updated | set permanent member eligibility for 'oer-s102-user@example.com': permanent member eligibility is absent
+[oer-s102] 2.3 Invoke-OERStructure's own error records: 0; other items in -ErrorVariable (inner layers, counted, not printed): 0
+[oer-s102] 2.3 rows: Unchanged, Updated; items in -ErrorVariable: 0; warnings: 1; Graph writes: 2 (PATCH, POST)
+[oer-s102] oer-s102-user is permanently eligible in oer-s102-eng: converged after 1 read(s), 1.4 s.
+[oer-s102] 2.3 state after 1 read(s): eligibility of oer-s102-user: 1 (permanent: 1); of the made-up id: 0; of anyone else: 0; permanent eligibility allowed: True; eligible maximum: P365D; activation maximum hours: 8
+[oer-s102] 2.3 three reads 5 s apart agree: True
+RUNNER: check 2.3 exit code 0; started 2026-10-08T13:46:14Z; took 29 s.
+```
 
 ### 2.4. The same document again: only Unchanged, no warning, nothing written (G8)
 
-- [ ] **2.4** A second real run of the 2.3 document reports only `Unchanged`, writes no warning and sends no Graph write.
+- [x] **2.4** A second real run of the 2.3 document reports only `Unchanged`, writes no warning and sends no Graph write.
 
 ```powershell
 Connect-OerLive -Arm
@@ -614,13 +959,37 @@ matches); `items in -ErrorVariable: 0; warnings: 0; Graph writes: 0`.
 **Failure looks like:** an `Updated` row -- the second run does not converge (G8); a warning -- the
 engine plans an open that is not needed.
 
-Result:
+Result: 2026-10-08 13:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS (G8). The second real run of the 2.3 document reports only Unchanged (group properties; permanent eligibility for oer-s102-user already matches), writes no warning, leaves nothing in -ErrorVariable and sends no Graph write (0).
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK 2.4 ===
+[oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc and is the token's signed-in object: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identity check: the module holds an ARM token for the test tenant, from the certificate: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc identification: the test subscription belongs to the test tenant and is Enabled: True
+[oer-s102] Azure Resource Manager sign-in as oer-live-cc: identity check passed: True
+[oer-s102] 2.4 row: groups | oer-s102-eng | Unchanged | group properties match
+[oer-s102] 2.4 row: groups | oer-s102-eng | Unchanged | permanent eligibility for 'oer-s102-user@example.com' (member) already matches
+[oer-s102] 2.4 Invoke-OERStructure's own error records: 0; other items in -ErrorVariable (inner layers, counted, not printed): 0
+[oer-s102] 2.4 rows: Unchanged, Unchanged; items in -ErrorVariable: 0; warnings: 0; Graph writes: 0
+RUNNER: check 2.4 exit code 0; started 2026-10-08T13:46:54Z; took 6 s.
+```
 
 ## Teardown
 
 ### T.1. The eligibility removed, the policies put back, the objects removed, nothing carries the prefix
 
-- [ ] **T.1** `Initialize-OerS102Prereq.ps1 -Teardown -Unattended` removes the two eligibility schedules, puts both member policies back to their baselines, removes the user and the two groups, finds nothing with the prefix and the counts back at the baseline.
+- [x] **T.1** `Initialize-OerS102Prereq.ps1 -Teardown -Unattended` removes the two eligibility schedules, puts both member policies back to their baselines, removes the user and the two groups, finds nothing with the prefix and the counts back at the baseline.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS102Prereq.ps1') -Teardown -Unattended 2>&1 | ForEach-Object { "$_" })
@@ -635,11 +1004,73 @@ the prefix; the user and group counts equal the baseline; `Exit code: 0`.
 **Failure looks like:** a `STOP` line -- a policy could not be put back, so its group was not deleted;
 `Exit code: 3` -- residue, named on its `RESIDUE` line; a count that differs -- name the object.
 
-Result:
+Result: 2026-10-08 13:47 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS for the teardown's work, with the sweep read back in T.2. Teardown A removed one direct eligibility schedule in each group (201 Revoked; none for the made-up id, which was never granted). Teardown B found each member policy by the group's scope (onboarding to PIM for Groups had given it a new id), found 1 rule differing from the baseline (Expiration_Admin_Eligibility: eligible assignments must expire False, opened by 1.4 and 2.3), sent it back (200) and read it restored: True (eligible assignments must expire True, P365D, PT8H, MFA False, context off). OerLive's fixed order deleted both groups (204) and the user (204, first attempt): removed 3, residue 0, unreadable 0. The sweep straight after still listed the three objects and the counts read 24 and 100 against 23 and 98 -- the known lag after a DELETE (Sprint 7 step 1, Sprint 9 step 2); T.2 reads it back minutes later. Exit code 0.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.1 ===
+[oer-s102] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s102] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s102] [oer-s102] Transcript (redacted): raw\s102\teardown-PARTIAL-ID-REDACTEDZ.log; OerLive 1.0.3.
+[oer-s102] [oer-s102] Mode: REMOVE. Prefix 'oer-s102-'. Objects (fixed): oer-s102-user (disabled); oer-s102-cmd and oer-s102-eng (no member, each member PIM policy baselined and set to the starting state, eligible assignments must expire). OerLive 1.0.3.
+[oer-s102] [oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s102] [oer-s102] Unattended run: the confirmation question is not asked; the identity check above passed.
+[oer-s102] [oer-s102] Residue: raw\residue.json holds no rows.
+[oer-s102] [oer-s102] Teardown A: oer-s102-cmd: direct eligibility schedules 1.
+[oer-s102] [oer-s102] Teardown A: removed oer-s102-cmd: member eligibility schedule (201 Revoked).
+[oer-s102] [oer-s102] oer-s102-cmd: no eligibility schedule listed: converged after 1 read(s), 0.4 s.
+[oer-s102] [oer-s102] Teardown A: oer-s102-eng: direct eligibility schedules 1.
+[oer-s102] [oer-s102] Teardown A: removed oer-s102-eng: member eligibility schedule (201 Revoked).
+[oer-s102] [oer-s102] oer-s102-eng: no eligibility schedule listed: converged after 1 read(s), 0.3 s.
+[oer-s102] [oer-s102] oer-s102-cmd's member PIM policy is listed: converged after 1 read(s), 0.4 s.
+[oer-s102] [oer-s102] Teardown B: the member policy of oer-s102-cmd has another id than when the baseline was recorded (onboarding to PIM for Groups changes it); the baseline's rules are put back on the policy the group's scope lists now.
+[oer-s102] [oer-s102] Teardown B: member policy of oer-s102-cmd now: eligible assignments must expire: False; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off; rules differing from the baseline: 1 (Expiration_Admin_Eligibility)
+[oer-s102] [oer-s102] Teardown B: sent rule Expiration_Admin_Eligibility of oer-s102-cmd from the baseline: 200.
+[oer-s102] [oer-s102] oer-s102-cmd's member PIM policy is listed: converged after 1 read(s), 0.3 s.
+[oer-s102] [oer-s102] oer-s102-cmd's member policy back at its baseline: converged after 1 read(s), 1.5 s.
+[oer-s102] [oer-s102] Teardown B: member policy of oer-s102-cmd restored: True (1 read(s), 1.5 s); eligible assignments must expire: True; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off
+[oer-s102] [oer-s102] oer-s102-eng's member PIM policy is listed: converged after 1 read(s), 0.2 s.
+[oer-s102] [oer-s102] Teardown B: the member policy of oer-s102-eng has another id than when the baseline was recorded (onboarding to PIM for Groups changes it); the baseline's rules are put back on the policy the group's scope lists now.
+[oer-s102] [oer-s102] Teardown B: member policy of oer-s102-eng now: eligible assignments must expire: False; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off; rules differing from the baseline: 1 (Expiration_Admin_Eligibility)
+[oer-s102] [oer-s102] Teardown B: sent rule Expiration_Admin_Eligibility of oer-s102-eng from the baseline: 200.
+[oer-s102] [oer-s102] oer-s102-eng's member PIM policy is listed: converged after 1 read(s), 0.3 s.
+[oer-s102] [oer-s102] oer-s102-eng's member policy back at its baseline: converged after 1 read(s), 1.7 s.
+[oer-s102] [oer-s102] Teardown B: member policy of oer-s102-eng restored: True (1 read(s), 1.7 s); eligible assignments must expire: True; eligible maximum: P365D; activation maximum: PT8H; MFA on activation: False; authentication context: off
+[oer-s102] [oer-s102] Teardown of 'oer-s102-': users 1, groups 2, access packages 0, catalogs 0; administrative units 0 and app registrations 0 are reported only.
+[oer-s102] [oer-s102] Teardown 1/6: directory role assignments of the prefixed principals.
+[oer-s102] [oer-s102] Teardown 2/6: PIM for Groups eligibility and assignments in the prefixed groups.
+[oer-s102] [oer-s102] Teardown 3/6: access package resource roles, access packages, catalog resources, catalogs.
+[oer-s102] [oer-s102] Teardown 4/6: members of the prefixed role-assignable groups.
+[oer-s102] [oer-s102] Teardown 5/6: the prefixed groups.
+[oer-s102] [oer-s102] Deleted: group oer-s102-cmd (204).
+[oer-s102] [oer-s102] Deleted: group oer-s102-eng (204).
+[oer-s102] [oer-s102] Teardown 6/6: the prefixed users.
+[oer-s102] [oer-s102] DELETE user oer-s102-user@example.com: 204  after 1 attempt(s), 0.2 s; first attempt no membership removed in this run.
+[oer-s102] [oer-s102] Teardown of 'oer-s102-': removed 3, residue 0, unreadable 0.
+[oer-s102] [oer-s102] Sweep: user 'oer-s102-user@example.com' (00000000-0000-0000-0000-000000000010) carries the prefix.
+[oer-s102] [oer-s102] Sweep: group 'oer-s102-cmd' (00000000-0000-0000-0000-000000000003) carries the prefix.
+[oer-s102] [oer-s102] Sweep: group 'oer-s102-eng' (00000000-0000-0000-0000-000000000005) carries the prefix.
+[oer-s102] [oer-s102] Counts: users now 24, at the baseline 23; equal: False
+[oer-s102] [oer-s102] Counts: groups now 100, at the baseline 98; equal: False
+[oer-s102] [oer-s102] Done.
+[oer-s102] Exit code: 0
+RUNNER: check T.1 exit code 0; started 2026-10-08T13:47:09Z; took 26 s.
+```
 
 ### T.2. Read back, a few minutes later
 
-- [ ] **T.2** A few minutes after T.1, `-ReadBack` finds nothing with the prefix and no residue, the counts equal the baseline, and the main clone is still on `main` at the HEAD S.1 recorded.
+- [x] **T.2** A few minutes after T.1, `-ReadBack` finds nothing with the prefix and no residue, the counts equal the baseline, and the main clone is still on `main` at the HEAD S.1 recorded.
 
 ```powershell
 $Out = @(& pwsh -NoProfile -File (Join-Path $VaultDir 'Initialize-OerS102Prereq.ps1') -ReadBack 2>&1 | ForEach-Object { "$_" })
@@ -655,4 +1086,32 @@ True`; the main clone on `main` at the HEAD S.1 recorded.
 **Failure looks like:** a prefixed object listed -- a deletion that has not replicated yet; run T.2
 again a few minutes later before treating it as residue.
 
-Result:
+Result: 2026-10-08 13:51 UTC, written by Write-OerLiveResult (OerLive 1.0.3).
+
+```text
+Verdict: PASS. Read back about four minutes after T.1 (13:51 UTC): the sweep finds nothing with the prefix (prefixed objects left 0, unread collections 0, residue rows 0); users 23 and groups 98, both equal to the baseline; the main clone still on main at 6817b33, the HEAD S.1 recorded.
+
+oer-testmiljo.psd1: 9 keys; oer-cc-identitet.psd1: 4 keys; worktree exists: True
+[OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+=== CHECK T.2 ===
+[oer-s102] [OerLive] OerLive 1.0.3; config keys: AppId, CertificateNotAfter, CertificateThumbprint, Domain, ExpectedTenantDisplayName, NoPermAppId, OrgName, Repo, ScriptDir, SubscriptionId, TenantAlias, TenantId, UserDomain
+[oer-s102] [OerLive] Redactor self-test: no psd1 value survives: True; the module name is kept: True
+[oer-s102] [oer-s102] Transcript (redacted): raw\s102\readback-PARTIAL-ID-REDACTEDZ.log; OerLive 1.0.3.
+[oer-s102] [oer-s102] Mode: READ BACK. Prefix 'oer-s102-'. Objects (fixed): oer-s102-user (disabled); oer-s102-cmd and oer-s102-eng (no member, each member PIM policy baselined and set to the starting state, eligible assignments must expire). OerLive 1.0.3.
+[oer-s102] [oer-s102] Omnicit.EntraRBAC 1.1.4 loaded from REPO\.claude\worktrees\s10-steg2\output\module\Omnicit.EntraRBAC\1.1.4.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: Disconnect-OER and Disconnect-MgGraph first, then app-only with the certificate from Cert:\CurrentUser\My.
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app-only certificate session with the identity's app id: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: app name in the session is oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: tenant is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identity check: service principal of that app id is named oer-live-cc: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc identification: organization name is the expected one: True; user domain is verified: True; organization id is the test tenant: True
+[oer-s102] [oer-s102] Microsoft Graph sign-in as oer-live-cc: identity check passed: True
+[oer-s102] [oer-s102] Sweep: no user, group, administrative unit, catalog, access package or app registration starting with 'oer-s102-' is left.
+[oer-s102] [oer-s102] Counts: users now 23, at the baseline 23; equal: True
+[oer-s102] [oer-s102] Counts: groups now 98, at the baseline 98; equal: True
+[oer-s102] [oer-s102] Read-back: prefixed objects left: 0; unread collections: 0; residue rows: 0.
+[oer-s102] [oer-s102] Done.
+[oer-s102] Main clone: branch main; HEAD 6817b33
+RUNNER: check T.2 exit code 0; started 2026-10-08T13:51:10Z; took 6 s.
+```
