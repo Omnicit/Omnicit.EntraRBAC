@@ -28,16 +28,27 @@ reaches `main` through a pull request.
    there the old rule still holds, because the push would succeed.
 4. Open a pull request against `main` when the work is ready. Never merge it without being asked to.
 
-**Merge requirements, enforced by GitHub on `main`:**
+**Merge requirements, enforced by GitHub on `main` (as measured on 2026-10-08):**
 
-- **Three status checks are required: `ubuntu-latest`, `windows-latest` and `macos-latest`.** Those
-  names come from the build-and-test matrix's `name: ${{ matrix.os }}`, so the job name IS the
-  required check name -- renaming the job, or changing the matrix, orphans the protection rule and
-  blocks every open PR until the rule is renamed to match. Change both together.
-- **The branch must be up to date with `main` before it can merge.** A branch that has fallen
-  behind is rebased onto `main` and force-pushed; the checks then re-run against the rebased tip.
+- **Four status checks are required: `ubuntu-latest`, `windows-latest`, `macos-latest` and
+  `package`.** The first three come from the build-and-test matrix's `name: ${{ matrix.os }}`, so
+  the job name IS the required check name -- renaming the job, or changing the matrix, orphans the
+  protection rule and blocks every open PR until the rule is renamed to match. `package` is the
+  `package` job's own `name: package` in the same workflow: the job that runs after all three legs
+  (`needs: build-and-test`) and proves on the pull request that the artefact is publishable,
+  without publishing it. Renaming its `name:` (or, with `name:` removed, its job id, which the check
+  name then falls back to) orphans the fourth rule the same way. Change both together.
+- **`package` never holds the gate alone.** It has no `if:` of its own, so when a leg fails or is
+  skipped GitHub skips `package` too, and a skipped check counts as passed ("Troubleshooting
+  required status checks": successful statuses are `success`, `skipped` and `neutral`). The three
+  leg checks are what stop a red pull request, so never drop them from the rule in favour of
+  `package`.
+- **The branch must be up to date with `main` before it can merge** (the rule is strict). A branch
+  that has fallen behind is rebased onto `main` and force-pushed; the checks then re-run against the
+  rebased tip.
 - **Linear history is required**, so a merge commit is refused. Squash merge is the convention here.
 - **Every conversation on the PR must be resolved** before merge.
+- **The rule binds administrators too** (`enforce_admins` is on), so no account merges past it.
 
 **Branch naming convention:**
 
@@ -55,9 +66,9 @@ reaches `main` through a pull request.
 
 ## Project Overview
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built by Omnicit AB for its own and its
-customers' tenants. MIT licensed and **published on the public PowerShell Gallery**: 1.0.0 went out
-by hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
+`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module built and maintained by Omnicit AB. MIT
+licensed and **published on the public PowerShell Gallery for anyone to use**: 1.0.0 went out by
+hand on 2026-09-18, and everything since publishes itself -- see **Publishing** below.
 
 It manages RBAC building blocks across many Entra ID and Azure tenants: Entra ID groups, PIM,
 Administrative Units, Entitlement Management, Access Reviews, Azure resources and RBAC, plus a JSON
@@ -116,24 +127,28 @@ billing guard alone, and do not reason about it from GitHub's general rule for s
 job is declared
 `if: ${{ !github.event.repository.private || github.event_name == 'workflow_dispatch' }}`, because
 standard runners are free and unmetered only on a PUBLIC repository. `ubuntu-latest`,
-`windows-latest` and `macos-latest` are REQUIRED checks on `main`, and that condition decides
-whether those three checks ever come into existence.
+`windows-latest`, `macos-latest` and `package` are the four REQUIRED checks on `main`, and that
+condition decides whether the first three ever come into existence; `package` follows them through
+`needs: build-and-test`.
 
 **The mechanism is the MATRIX, not the skip.** GitHub documents the opposite of what happens here:
 a job skipped by a condition reports Success and does NOT block a pull request ("Troubleshooting
 required status checks"). That rule does not rescue this workflow, because `build-and-test` is a
 matrix job and a job-level `if:` is evaluated BEFORE the matrix expands. The three legs are
 therefore never created, so nothing ever reports the three check names -- and a required check that
-never reports stays pending forever instead of passing (community discussion #9141). Make this
-repository private again and every pull request blocks permanently, including the pull request that
-would fix it. Turning the repository private is therefore a change to this condition, or to the
-protection rule, made in the SAME change and never afterwards.
+never reports stays pending forever instead of passing (community discussion #9141). The fourth
+check does not change that: `package` is skipped with the job it needs, and a skipped check counts
+as passed, but the three matrix names still never report. Make this repository private again and
+every pull request blocks permanently, including the pull request that would fix it. Turning the
+repository private is therefore a change to this condition, or to the protection rule, made in the
+SAME change and never afterwards.
 
 **Rewriting this workflow as three separate jobs without a matrix INVERTS the failure, into the
 worse one.** Without a matrix there is nothing to expand: the job-level `if:` would then skip three
 jobs that do exist, each would report Success under the documented rule, and the merge gate would
-go GREEN having run not one test. The matrix is what makes a skip fail loudly here, so keep it --
-or, if the jobs are ever split, make the required checks something a skipped job cannot satisfy.
+go GREEN having run not one test -- `package` included, since it would be skipped with them. The
+matrix is what makes a skip fail loudly here, so keep it -- or, if the jobs are ever split, make the
+required checks something a skipped job cannot satisfy.
 
 **Do not maintain a function roster in this file.** Read it from the tree instead:
 
@@ -328,7 +343,7 @@ publish it.
   path filter and must not be given one. Accepted in Decision 4 -- a preview per merge is the
   price of the merge-to-main trigger, not a defect to be filtered away.
 - **`paths-ignore` must never be added to the `pull_request` trigger**, for the reason the matrix
-  exists: a run that never happens never reports the three required checks, and a required check
+  exists: a run that never happens never reports the four required checks, and a required check
   that never reports stays Pending forever.
 - **The publish job tags every publish, and the tag is load-bearing.** `GitVersion.yml` runs
   `mode: ContinuousDelivery`, where the preview counter advances on a TAG and not per commit:
@@ -365,12 +380,12 @@ publish it.
 
 **To cut a full release:**
 
-1. Push `v<X.Y.Z>` on the `main` tip, once that commit's three checks are green. Only the
-   `Stable Version` ruleset's bypass list can create that tag -- today the users PhilipHaglund and
-   M2ckan, plus the Repository admin role -- and the push IS the release decision: nothing asks for
-   an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of 10 or
-   more, or a minor or patch of 100 or more) is refused by the environment, visibly, and publishes
-   nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
+1. Push `v<X.Y.Z>` on the `main` tip, once that commit's four required checks are green. Only the
+   `Stable Version` ruleset's bypass list can create that tag -- as measured on 2026-10-08, the
+   Repository admin role and the user PhilipHaglund -- and the push IS the release decision: nothing
+   asks for an approval after it. A tag outside the `Entra RBAC` environment's patterns (a major of
+   10 or more, or a minor or patch of 100 or more) is refused by the environment, visibly, and
+   publishes nothing; the repair is a new pattern the ruleset also covers, never a return to `v*`.
 2. Make the close-out the FIRST merge after the tag, exactly as the **close-out after a stable
    release** rule under **CHANGELOG and Version** describes. The invariant to check it against is
    `git show v<X.Y.Z>:CHANGELOG.md` -- the dated section must say what that tag actually shipped.

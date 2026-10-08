@@ -1,11 +1,10 @@
 # Omnicit.EntraRBAC
 
-`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module for Omnicit AB and its customers for
-managing RBAC building blocks across many Entra ID and Azure tenants. It covers Entra ID groups
-and PIM, Administrative Units, Entitlement Management (Catalogs, Access Packages, Resources),
-Access Reviews, Azure resources and RBAC, Azure PIM, plus a JSON inventory and a declarative apply
-engine. It is built by Omnicit AB for its own and its customers' tenants, is MIT licensed, and is
-published on the public PowerShell Gallery.
+`Omnicit.EntraRBAC` is a PowerShell 7.2+ (Core-only) module for managing RBAC building blocks
+across many Entra ID and Azure tenants. It covers Entra ID groups and PIM, Administrative Units,
+Entitlement Management (Catalogs, Access Packages, Resources), Access Reviews, Azure resources and
+RBAC, Azure PIM, plus a JSON inventory and a declarative apply engine. It is built and maintained by
+Omnicit AB, is MIT licensed, and is published on the public PowerShell Gallery for anyone to use.
 
 All 92 cmdlets carry the `OER` command prefix. Every cmdlet has full comment-based help, so
 `Get-Help <cmdlet> -Full` and `Get-Help about_Omnicit.EntraRBAC` are authoritative for details this
@@ -712,6 +711,10 @@ Invoke-OERStructure -Path ./exports/<bundle>/inventory.json
 # A read-only round trip needs no file at all
 Get-OERInventory -Include Groups, Catalogs | Test-OERStructure
 ```
+
+`-Prune` never removes a service principal from a group, as a member or as an owner: one the
+document does not list is reported `Extra`, or `Skipped` with `-Prune`, and left in place. Remove
+one by hand with `Remove-OERGroupMember -ServicePrincipal` (add `-AccessType owner` for an owner).
 
 ---
 

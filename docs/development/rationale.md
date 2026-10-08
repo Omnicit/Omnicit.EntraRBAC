@@ -4054,16 +4054,24 @@ the rows are in the table below so that nobody has to guess.
 
 The branch default is `Patch` on `main` and on every branch prefix this repo's convention uses
 (`chore/`, `feat/`, `fix/`, `refactor/`, `test/`). It is `Minor` on any branch matching the
-`feature:` block's `f(eature(s)?)?[\/-]` regex -- measured, that is `feature/`, `feature-`,
-`features/`, `features-`, `f/` and `f-`. **The regex is unanchored, so it tests the WHOLE branch
-name, not the prefix**, and it beats the `hotfix:` block when both match: `chore/feature-flags`,
-`feat/f-x` and `fix/feature-parity` all take the `Minor` default, and all three are conventional
-names under the prefix table in `CLAUDE.md`. `feat/` alone does not match, since `feat` is neither
-`f` nor `feature` followed by a separator. So no branch PREFIX this repo's convention produces gets
-the `Minor` default, but a name carrying `feature/`, `feature-`, `features/`, `features-`, `f/` or
-`f-` anywhere in it does. The separator is part of the match, not decoration: measured against a
-`v0.9.0` ancestor, `chore/feature`, `chore/features`, `chore/featurex` and `chore/xfeature` all
-compute `0.9.1`, while `chore/feature-flags` computes `0.10.0`.
+`feature:` block's `^f(eature(s)?)?[\/-]` regex -- measured, that is a name STARTING with
+`feature/`, `feature-`, `features/`, `features-`, `f/` or `f-`. **Both branch regexes are anchored
+at the start of the name since 2026-10-08 (BL-57)** -- `feature:` as above and `hotfix:` as
+`^(hot)?fix(es)?[\/-]` -- so, like the inherited `release:` regex, they test the PREFIX. `feat/`
+alone does not match `feature:`, since `feat` is neither `f` nor `feature` followed by a separator,
+so no branch this repo's convention produces gets the `Minor` default, whatever follows its prefix.
+
+Before the anchor both regexes were unanchored and tested the WHOLE branch name, and `feature:` beat
+`hotfix:` when both matched: measured against a `v0.9.0` ancestor, `chore/feature-flags`, `feat/f-x`
+and `fix/feature-parity` all took the `Minor` default, although all three are conventional names
+under the prefix table in `CLAUDE.md`, while `chore/feature`, `chore/features`, `chore/featurex` and
+`chore/xfeature` computed `0.9.1` -- the separator was part of the match, not decoration. Classified
+on 2026-10-08 with `[regex]::IsMatch` and `IgnoreCase`, the .NET match GitVersion makes, the anchor
+changes five such names: `chore/feature-flags`, `feat/f-x` and `test/off-the-shelf-x` no longer
+match `feature:`, `fix/feature-parity` matches `hotfix:` alone, and `chore/prefix-cleanup` no longer
+matches `hotfix:`, so its prerelease label comes from its own name instead of `fix`. The versions
+those names now compute were not re-measured with `gitversion.exe`; by the `chore/x` and `fix/x`
+rows below they take the `Patch` default. Only `main` publishes, and `^main$` did not change.
 
 **Which base GitVersion picks.** Branch `main` unless a row names one; no `+semver:` commit is
 reachable in any of these:
@@ -4087,7 +4095,7 @@ reachable in any of these:
 | no tag, branch NAMED `release/2.0.0` | `2.0.0` -- a branch NAME is a third base candidate; no tag is involved anywhere |
 | no tag, branch NAMED `release/0.5.0` | `0.8.0` -- it joins the same greatest-wins comparison, and `next-version` outranks it |
 | no tag, branch `releases/2.0.0` or `release-2.0.0` | `2.0.0` on both -- the inherited `release:` regex takes those spellings; `rel/2.0.0` measures `0.8.0` and does not |
-| no tag, branch `xrelease/2.0.0`, `my-release/2.0.0`, `chore/release/2.0.0` or `pre-release-2.0.0` | `0.8.0` on all four -- unlike `feature:`, the `release:` regex is ANCHORED at the START of the branch name |
+| no tag, branch `xrelease/2.0.0`, `my-release/2.0.0`, `chore/release/2.0.0` or `pre-release-2.0.0` | `0.8.0` on all four -- the `release:` regex is ANCHORED at the START of the branch name, as `feature:` and `hotfix:` are too since BL-57 |
 | no tag, branch `chore/release-blockers` (a real branch from this repo's history) | `0.8.0`, with its ordinary branch-name label -- names that merely CONTAIN `release` are unaffected |
 | no tag, branch `release/blockers` (matches, but no parsable version) | `0.8.0` -- the `release:` block applies (the label becomes `beta`) but nothing parses out, so `next-version` stands |
 | `v3.0.0` on an ancestor, branch `release/2.0.0` | `3.0.0` -- the higher candidate wins, here the tag, and it takes no increment, since the `release:` block sets `increment: None` (on `main` the same tag computes `3.0.1`) |
@@ -4127,8 +4135,8 @@ sequence, it is history order, earliest first:
 | branch `feature/x`, `v0.9.0` ancestor, one `+semver: fix` | `0.10.0` -- the GREATER of branch default and message level wins; a message cannot lower it |
 | branch `feature/x`, no tag, one `+semver: fix` | `0.8.1` -- on a `next-version` base the branch default contributes nothing at all |
 | `v0.9.0` ancestor on `chore/x`, `feat/x`, `fix/x`, `refactor/x`, `test/x` | `0.9.1` on all five -- every prefix this repo's convention uses defaults to `Patch` |
-| `v0.9.0` ancestor on `f/x`, `features/x`, `feature-x` | `0.10.0` on all three -- the `feature:` regex is unanchored, so several spellings reach the `Minor` default; `feat/` is not one of them |
-| `v0.9.0` ancestor on `chore/feature-flags`, `feat/f-x`, `fix/feature-parity` | `0.10.0` on all three -- the regex tests the WHOLE name, so conventional names under this repo's own prefixes reach the `Minor` default, and `feature:` beats `hotfix:` when both match |
+| `v0.9.0` ancestor on `f/x`, `features/x`, `feature-x` | `0.10.0` on all three -- the `feature:` regex takes several spellings, and all three still START the name under BL-57's anchor; `feat/` is not one of them |
+| `v0.9.0` ancestor on `chore/feature-flags`, `feat/f-x`, `fix/feature-parity` | `0.10.0` on all three BEFORE BL-57's anchor (2026-10-08), when the regex tested the WHOLE name and `feature:` beat `hotfix:`; with the anchor none of the three matches `feature:` (classified, not re-measured), so all three take the `Patch` default, as the `chore/x` and `fix/x` row above |
 | branch `release/2.0.0`, no tag, no `+semver:` commit | `2.0.0` -- like `next-version`, a `release/x.y.z` base takes NO default increment |
 | branch `release/2.0.0`, no tag, one `+semver: minor` | `2.1.0` -- but a bump message moves it, exactly as it moves a `next-version` base |
 | branch `release/2.0.0`, no tag, one `+semver: fix` | `2.0.1` -- same at patch level |
@@ -4161,12 +4169,12 @@ one is the natural first move when the release is finally called -- which is pre
 is still supposed to be holding. Do not create one, or a `releases/...` or `release-...` name, until
 the cap is lifted.
 
-**The blast radius is narrow, and measured.** Unlike the `feature:` regex, `release:` is ANCHORED at
-the start of the branch name: `xrelease/2.0.0`, `my-release/2.0.0`, `chore/release/2.0.0` and
-`pre-release-2.0.0` all compute `0.8.0`, and so does this repo's own historical
-`chore/release-blockers`. A matching name with no parsable version (`release/blockers`) is harmless
-too -- it changes the prerelease label to `beta` and leaves `next-version` standing. None of this
-repo's own prefixes carry the hazard either: `fix/2.0.0`, `hotfix/2.0.0`, `feat/2.0.0`,
+**The blast radius is narrow, and measured.** `release:` is ANCHORED at the start of the branch
+name, as `feature:` and `hotfix:` are too since BL-57: `xrelease/2.0.0`, `my-release/2.0.0`,
+`chore/release/2.0.0` and `pre-release-2.0.0` all compute `0.8.0`, and so does this repo's own
+historical `chore/release-blockers`. A matching name with no parsable version (`release/blockers`)
+is harmless too -- it changes the prerelease label to `beta` and leaves `next-version` standing.
+None of this repo's own prefixes carry the hazard either: `fix/2.0.0`, `hotfix/2.0.0`, `feat/2.0.0`,
 `chore/2.0.0`, `support/2.0.0` and even `feature/2.0.0` all measure `0.8.0`. And every one of the 53
 merges reachable from this branch is the GitHub owner-prefixed form
 (`Merge pull request #77 from PhilipHaglund/fix/graph-retry-after`), which does NOT feed the release
@@ -4407,9 +4415,10 @@ own; a tag pushed with `GITHUB_TOKEN` does not trigger a workflow in the first p
 exclusion is the second lock on that door rather than the only one.
 
 `paths-ignore` must never be added to the `pull_request` trigger. `ubuntu-latest`,
-`windows-latest` and `macos-latest` are required checks on `main`, and a run that never happens
-never reports them -- a required check that never reports stays Pending forever. That is the same
-failure mode the matrix protects against, described in CLAUDE.md under Module Layout.
+`windows-latest`, `macos-latest` and `package` are required checks on `main` (measured 2026-10-08),
+and a run that never happens never reports them -- a required check that never reports stays
+Pending forever. That is the same failure mode the matrix protects against, described in CLAUDE.md
+under Module Layout.
 
 ### No deployment approval: the gate is in the settings
 
@@ -4425,9 +4434,10 @@ removed:
   outside the patterns -- a major of 10 or more, or a minor or patch of 100 or more -- is refused at
   deployment, visibly, and the repair is to add a pattern.
 - **The tag ruleset `Stable Version`** includes `v*`, excludes `v*-*`, restricts creation, update
-  and deletion, and blocks force pushes. Its bypass list is the users PhilipHaglund and M2ckan plus
-  the Repository admin role (the owner account, Omnicit). Only they can create, move or delete a
-  stable tag; everyone else is refused, the workflow's own `GITHUB_TOKEN` included.
+  and deletion, and blocks force pushes. Its bypass list, as measured on 2026-10-08, is the
+  Repository admin role (the owner account, Omnicit) and the user PhilipHaglund. Only they can
+  create, move or delete a stable tag; everyone else is refused, the workflow's own `GITHUB_TOKEN`
+  included.
 
 The two are built to fit: every tag the environment admits is a tag the ruleset protects, since
 each pattern starts with `v` and none admits a hyphen. A pattern added later must keep that
@@ -5118,9 +5128,12 @@ added and reported like any other principal, and a member or owner of any other 
 pruned exactly as before. `ConvertTo-OERPruneWithheldResult` owns the rule and both texts, as the
 single owner of "prune withheld" (its `-ObjectType` form); the handler calls it straight after the
 unresolved-entry rule and, for owners, before the last-owner guard, so a lone service principal
-owner is withheld for its type and still counts as an owner standing. Removing one stays possible
-on purpose, one at a time, with `Remove-OERGroupMember`. Whether the engine should ever prune
-service principals is a separate decision, recorded as BL-82.
+owner is withheld for its type and still counts as an owner standing. Whether the engine should
+ever prune service principals was decided on 2026-10-08 (BL-82): never. Every document exported
+before 1.1.3 lacks service principals, so the first `-Prune` with such a document would remove them
+all; a service principal in a group is often put there by something other than the document; and
+the signed-in app could remove itself. Removing one stays possible on purpose, one at a time, with
+`Remove-OERGroupMember -ServicePrincipal`.
 
 **What A9 takes away: self-removal.** The group prune has no guard for the signed-in identity, unlike
 the directory role prune, which never removes the signed-in identity's own assignment nor one held
