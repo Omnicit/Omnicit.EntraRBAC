@@ -211,9 +211,10 @@ count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-Ten
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
 loop over tenants no longer stands for the current session's tenant. `New-OERConfiguration` and
 `Set-OERConfiguration` store the tenant instead of signing in to it, so they also refuse a
-`-TenantId` of white space only while PowerShell binds their parameters, and no profile is written
-with a blank tenant; a profile already on disk with one is still read as it is. On any other cmdlet,
-a `-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
+`-TenantId` of white space only while PowerShell binds their parameters: a blank tenant can no
+longer be entered into a profile through them. A profile already on disk with one is still read as
+it is, and keeps it through an update that does not name `-TenantId`. On any other cmdlet, a
+`-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
 `TenantResolutionFailed` when it names no tenant.
 
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to

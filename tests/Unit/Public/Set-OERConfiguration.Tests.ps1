@@ -263,8 +263,11 @@ Describe 'Set-OERConfiguration' {
             $Error.Clear()
             $Result = @($Piped | Set-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue)
 
-            @($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'ParameterArgumentValidationError,Set-OERConfiguration' }).Count |
-                Should -Be 1
+            $Refusals = @($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'ParameterArgumentValidationError,Set-OERConfiguration' })
+            $Refusals.Count | Should -Be 1
+            # The message pins WHICH validator refused the first object: the id alone is the id of
+            # every validation attribute on this cmdlet.
+            $Refusals[0].Exception.Message | Should -BeLike "*$script:BlankTenantMessage*"
             @($Result).Count | Should -Be 1
             $Result[0].TenantAlias | Should -BeExactly 'oer-bl96-ok'
             $Result[0].TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'

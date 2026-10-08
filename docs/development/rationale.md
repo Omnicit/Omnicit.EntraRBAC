@@ -3725,9 +3725,12 @@ nothing more.
   processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
   repair is `Set-OERConfiguration -TenantAlias <alias> -TenantId <tenant>`. That refusal reaches
   `$Error` and not `-ErrorVariable`, as the round-trip tests of `Set-OERConfiguration.Tests.ps1`
-  already record for a binding failure on pipeline input. Existing profiles are read as before:
-  `Get-OERConfiguration` and `Connect-OER -TenantAlias` are unchanged, and a stored blank `TenantId`
-  is read and emitted as it is.
+  already record for a binding failure on pipeline input. The refusal covers what is typed or piped
+  in, not what is already stored. Existing profiles are read as before: `Get-OERConfiguration` and
+  `Connect-OER -TenantAlias` are unchanged, and a stored blank `TenantId` is read and emitted as it
+  is. `Set-OERConfiguration` takes the tenant from the file when `-TenantId` is not bound, and its
+  guard on the resolved value tests truthiness, which `'   '` passes, so an update that names no
+  `-TenantId` writes a stored blank back unchanged; only a real `-TenantId` replaces it.
 - A no-tenant command after a refusal is refused even when the operator meant the previous tenant, and
   even when the module holds no session at all and the command would have signed in to
   `organizations`. Both are on the safe side; `-TenantId`, `Connect-OER` or `Disconnect-OER` sends
@@ -3761,10 +3764,11 @@ so it leaves nothing behind; an empty `-TenantAlias`, typed or piped, is refused
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`, both
 counting as a refused sign-in; every other cmdlet refuses an empty or `$null` `-TenantId` at
 parameter binding, so that command never runs and sends nothing; `New-OERConfiguration` and
-`Set-OERConfiguration` also refuse a `-TenantId` of white space only at binding (BL-96), and a
-profile already on disk with one is still read as it is; and on any other cmdlet a `-TenantId` of
-spaces is looked up like any value that is not a tenant ID. `Connect-OER`'s and
-`Disconnect-OER`'s help carry
+`Set-OERConfiguration` also refuse a `-TenantId` of white space only at binding (BL-96), so a blank
+tenant can no longer be entered into a profile through them, while a profile already on disk with
+one is still read as it is and keeps it through an update that does not name `-TenantId`; and on any
+other cmdlet a `-TenantId` of spaces is looked up like any value that is not a tenant ID.
+`Connect-OER`'s and `Disconnect-OER`'s help carry
 the rule for their own side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the
 two empty values.
 
@@ -3858,14 +3862,16 @@ Mutation-proved on copies of `source/`, one exact edit per mutant. Deleting the 
 turns the five blank-value tests red in New, and those five and the pipeline test in Set. Swapping
 the two attributes turns the `''` test red in each. `IsNullOrEmpty` for `IsNullOrWhiteSpace` turns
 the five blank-value tests red in each, and the pipeline test in Set. A script that trims only ASCII
-spaces turns the tab, the line break and the no-break-space tests red; an ASCII-whitespace regex
-turns only the no-break-space test red, in each. Dropping `ErrorMessage` turns the five message
-assertions red in each, since PowerShell then names the script in the message. Deleting
+spaces, run in `New-OERConfiguration` only, turns the tab, the line break and the no-break-space
+tests red; an ASCII-whitespace regex turns only the no-break-space test red, in each. Dropping
+`ErrorMessage` turns the five message assertions red in each (and, in Set, the pipeline test's
+message assertion), since PowerShell then names the script in the message. Deleting
 `[ValidateNotNullOrEmpty()]` from `New-OERConfiguration` turns the `''` test and the cohort's
 attribute test for it red; the cohort's run-time row for it stays green, since the script refuses
-`''` with the same id too, so the attribute test is the one that holds the attribute. Inverting the
-script's test turns the controls red. One mutant is equivalent: `Trim()` for `IsNullOrWhiteSpace`,
-which trims every Unicode white space as the .NET method does.
+`''` with the same id too, so the attribute test is the one that holds the attribute. In
+`Set-OERConfiguration` only, inverting the script's test turns its control red. One mutant is
+equivalent, run in `New-OERConfiguration` only: `Trim()` for `IsNullOrWhiteSpace`, which trims every
+Unicode white space as the .NET method does.
 
 ## profile-path
 

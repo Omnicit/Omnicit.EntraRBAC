@@ -693,11 +693,12 @@ as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds 
 `Connect-OER` the one named exception; a new public `-TenantId` takes the attribute.
 `New-OERConfiguration` and `Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in
 to, also refuse a value of white space only at binding, with a `[ValidateScript()]` declared above
-that attribute (BL-96); a stored blank `TenantId` is still read as it is. The `(BL-96)` Contexts of
+that attribute (BL-96); a stored blank `TenantId` is still read as it is, and an update that names
+no `-TenantId` keeps it. The `(BL-96)` Contexts of
 `tests/Unit/Public/New-OERConfiguration.Tests.ps1` and `Set-OERConfiguration.Tests.ps1` hold it. An
-internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value -- except
-`Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither `-TenantId` nor
-`-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
+internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty
+value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither
+`-TenantId` nor `-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
