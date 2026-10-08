@@ -15,12 +15,14 @@ function New-OEREligibleRoleAssignment {
     policy opened opens it only once the assignment itself is confirmed (declining the prompt
     weakens nothing, while -WhatIf still plans the policy change). A grant that is then refused
     rolls the policy back first, then reports a PolicyOpenedButGrantFailed error naming the
-    policy, whether the rollback succeeded and how the request failed, and only then re-publishes
-    the grant's own error, so a caller running with -ErrorAction Stop is stopped by
-    PolicyOpenedButGrantFailed after the rollback. The rollback is not asked again, even under
-    -Confirm: it puts back this invocation's own change, which the operator already confirmed.
-    Principal resolution runs BEFORE scope resolution, so a call supplying both an unresolvable
-    principal and an invalid scope reports the principal error, not InvalidScope.
+    policy, how the rollback went (it rolled the policy back, it found the policy already
+    disallowing permanent assignments again so changed nothing, or it failed and left the policy
+    open) and how the request failed, and only then re-publishes the grant's own error, so a
+    caller running with -ErrorAction Stop is stopped by PolicyOpenedButGrantFailed after the
+    rollback. The rollback is not asked again, even under -Confirm: it puts back this invocation's
+    own change, which the operator already confirmed. Principal resolution runs BEFORE scope
+    resolution, so a call supplying both an unresolvable principal and an invalid scope reports
+    the principal error, not InvalidScope.
 
     Because -PrincipalId binds from the pipeline by property name and takes precedence over the
     friendly parameters, supplying -User, -Group or -ServicePrincipal while piping objects that carry
@@ -38,9 +40,11 @@ function New-OEREligibleRoleAssignment {
     object, for example through -OutVariable, before the error stops it. When this invocation had
     opened the role management policy for a permanent grant, the policy is rolled back first --
     before the object is emitted, as it is before any error for a refused grant -- and the
-    EligibilityRequestFailed message says whether the rollback succeeded; it is the one record, not
-    a PolicyOpenedButGrantFailed as well, since the request was accepted rather than refused. Every
-    other status is not an error -- Provisioned and PendingApproval included.
+    EligibilityRequestFailed message says how the rollback went (it rolled the policy back, it found
+    the policy already disallowing permanent assignments again so changed nothing, or it failed and
+    left the policy open); it is the one record, not a PolicyOpenedButGrantFailed as well, since the
+    request was accepted rather than refused. Every other status is not an error -- Provisioned and
+    PendingApproval included.
     .PARAMETER Role
     The role: display name (e.g. 'Reader'), role definition GUID, or full ARM id. Pipeline by
     property name (RoleDefinitionId). Tab-completion offers the five curated common Azure RBAC
@@ -335,16 +339,28 @@ function New-OEREligibleRoleAssignment {
             # that did not throw, never from its output: the rollback cannot be declined
             # (-Confirm:$false), and under -ErrorAction Stop every failure of it, NoChange included,
             # throws, so a call that returns is a rollback written.
+            #
+            # There are three outcomes, not two. NoChange is the one failure that leaves the policy
+            # closed: Set-OERRoleManagementPolicy writes it when no rule differs, that is when the
+            # policy already disallows permanent assignments again by the time the rollback reads it
+            # (BL-99). Reporting that as "ALSO failed, so the policy is still open" would send the
+            # operator to close a policy that is closed. It is decided on the error id, the first
+            # comma-separated segment of FullyQualifiedErrorId compared ordinally, never on the
+            # message: another failure can carry the same words, and the id is what the cmdlet owns.
             $RollBackOpenedPolicy = {
                 $Reverted = $false
+                $AnsweredNoChange = $false
                 try {
                     $null = Set-OERRoleManagementPolicy -PolicyId $OpenedPolicyId -AllowPermanentEligibility $false -Confirm:$false -ErrorAction Stop
                     $Reverted = $true
                 } catch {
                     Remove-OERErrorRecord -Record $PSItem
+                    $AnsweredNoChange = [string]::Equals(([string]$PSItem.FullyQualifiedErrorId -split ',', 2)[0].Trim(), 'NoChange', [System.StringComparison]::Ordinal)
                 }
                 if ($Reverted) {
                     'It was rolled back to disallow permanent assignments.'
+                } elseif ($AnsweredNoChange) {
+                    'It already disallowed permanent assignments again when the rollback read it, so it is not open and the rollback changed nothing.'
                 } else {
                     "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentEligibility `$false' to close it."
                 }
