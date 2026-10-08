@@ -2767,9 +2767,9 @@ identity -- `'a script block'` when that frame has no command name. The comparis
 `-eq`, which ignores case, as `$ArmIdentityUnchanged` compares its terms. A frame the table
 does not hold is not compared, so a command with no memory is never refused by this gate. When it
 returns a name, the transport throws the record `New-OERSignInSupersededError` builds --
-`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and fixed text that
-names no tenant, account or token -- followed by a `return`, for fact 2 under
-[The Graph SDK session](#the-graph-sdk-session).
+`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and text that names no
+tenant, account or token and fits the cause (see "Why no state counts as a difference" below) --
+followed by a `return`, for fact 2 under [The Graph SDK session](#the-graph-sdk-session).
 
 **Why any frame, and not the nearest.** The nested case. The apply handlers and several public
 cmdlets call public cmdlets that sign in again without `-TenantId` (see "Why the key is the command"
@@ -2790,6 +2790,36 @@ remembered string is never `-eq` to `$null`, so every remembering frame differs 
 refused with `SignInSuperseded`. Refusing is the safe direction: the request would otherwise go out
 under no session of the module's, or with no token. The cost is that such a pipeline reports
 `SignInSuperseded` instead of an authentication failure.
+
+**The text fits the cause (BL-92, Sprint 10 step 3).** The record used to carry one text for both
+causes, saying that another OER command in the same pipeline signed in to a different tenant or
+identity -- which is untrue after a `Disconnect-OER`, where no command signed in at all.
+`New-OERSignInSupersededError` now builds four texts, with the same id, category and target, by cause
+and by effect:
+
+- By cause, from the module's state. When it holds a session, another command's sign-in replaced it,
+  and the text says so and advises separate statements. When it holds none, `Disconnect-OER` ended the
+  module's session after the command began, and the text says that and advises running `Disconnect-OER`
+  as a statement of its own, after the commands that use the session. The function reads the state
+  itself (`$null -eq $script:_OERAuthState`, the test `Get-OERSignInIdentity` makes for "not signed
+  in") and takes no argument for it. Ruling: the callers do not pass the cause, since gate 10 of
+  `tests/QA/sourcehygiene.tests.ps1` matches the transports' statements in the shape
+  `throw (New-OERSignInSupersededError -Command $X)`, and `Disconnect-OER` is the only place under
+  `source/` that sets the state to `$null` (a module that never signed in also holds `$null`, but then
+  no command remembers an identity and no snapshot differs, so nothing is refused).
+- By effect, from the new `-Document` switch. A request says that the module sends nothing while the
+  command runs and that "this request was not sent". With `-Document` the text says the command "did
+  not apply this document" and that Omnicit.EntraRBAC "sent nothing for it". Only `Invoke-OERStructure`
+  passes it, since what it refuses is a whole document, before it signs in. The two transports refuse
+  one request, and the three builders keep the request wording too (Ruling: what a builder refuses is
+  its lookup request, which is a request, and not an object it was asked to apply).
+- The command's name is the only value in any of the four. It is the argument of the last `-f`, and
+  the format string is composed from fixed fragments alone, so a name that holds `{0}` is written as
+  passed.
+
+The tests build every variant under the state it names and put the state back; the cause tests also
+hold the state `@{}`, which is a held session and not the ended one, and a mutation that keys the cause
+on a field of the state instead of on `$null` turns it red.
 
 **The order of the three gates.** In `Invoke-OERGraphRequest` the supersession gate stands straight
 after each latch gate, which stands straight after each session gate: at the head of each attempt
@@ -3090,9 +3120,13 @@ looked up: `Invoke-OERStructure` applies nothing of that document and goes on to
 builder builds nothing. With `-TenantId` nothing changes: the sign-in names its tenant, and the
 supersession gate covers the rest. A builder called nested, as `Sync-OERStructureAccessPackage` calls
 the two access package builders, runs its `begin` and `process` blocks back to back under one
-identity and is never refused. The `SignInSuperseded` message now says the other sign-in came
-"after X began" instead of "after X signed in": a command refused here has not signed in at all,
-and "began" is true of every A20 refusal too.
+identity and is never refused. The `SignInSuperseded` message says the change came "after X began"
+instead of "after X signed in": a command refused here has not signed in at all, and "began" is true
+of every A20 refusal too. `Invoke-OERStructure` refuses a whole document, so since Sprint 10 step 3
+(BL-92) it passes `-Document` and the text says the command did not apply this document and sent
+nothing for it; the three builders pass nothing and keep the wording for a request, since what they
+refuse is their lookup. See "Why no state counts as a difference" under
+[A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced).
 
 **Why a snapshot, and never `-TenantId` from `begin` (A6, decided 2026-10-06).** The fix that the
 known limit above sketched, while it was open until this step, was to capture the tenant in `begin`
@@ -3156,8 +3190,10 @@ refuses every request the caller makes while it runs.
   method, client and cloud. X still signs in again, since the cache is keyed on the name, and a
   sign-in that differs in method -- the default interactive one, on an app-only session -- is still a
   change. The answer to that is the same rule to name the tenant explicitly and consistently.
-- A `Disconnect-OER` in the pipeline refuses the same way, and the record's fixed text, shared with
-  A20, then speaks of another command's sign-in.
+- A `Disconnect-OER` in the pipeline refuses the same way, and since Sprint 10 step 3 (BL-92) the
+  record says so: the module holds no state then, and the text says that `Disconnect-OER` ended the
+  module's session after the command began, with advice to run it as a statement of its own. Until
+  then the text, shared with A20, spoke of another command's sign-in, which no command had made.
 - Under BL-74 a cmdlet a refused command calls gets `SignInRefused` at its own entry, where it used
   to sign in, or hit the cache, and be refused at its first request. `SignInRefused`'s fixed message
   says "this request was not sent", which then means the sign-in. In the apply engine the handler's
@@ -3173,7 +3209,10 @@ tenant switch, another application, a cleared state and a first sign-in from no 
 controls for an unchanged identity, `-TenantId`, two documents from no session and an upstream
 command that signed in in its `begin` block; the two validation-order tests; and the snapshot taken
 again only after a sign-in -- every piped document refused under a switch, and the documents after
-one whose rows a downstream command answered by switching. The three builders' test files each hold
+one whose rows a downstream command answered by switching; since BL-92 the refusals of a switch, of
+another application and of a first sign-in from no session also pin the message of a refused
+document with another command's sign-in as its cause, and the cleared-state refusal the one that
+says `Disconnect-OER` ended the session. The three builders' test files each hold
 a Describe `... looks a name up only under the session it began with (BL-81)` (`a target` for the
 requestor scope): the refusal, the fail-safe refusal, an argument error as itself (the no-target
 scope for the requestor scope, which also has a non-specific scope given `-User`, built with its
@@ -3536,8 +3575,10 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
   which names none -- when the marker it found was set and the call is not `Connect-OER`'s
   (`-ReclaimGraphSession`). The refusal is a terminating `SignInRefused` from
   `New-OERSignInRefusedError -SessionUncertain`: the calling command's name as its target and fixed
-  text that names no tenant, saying that an earlier sign-in failed or was refused, that nothing was
-  sent, and that `-TenantId`, `Connect-OER` or `Disconnect-OER` sends again. No token is requested
+  text that names no tenant, saying that an earlier sign-in failed or was refused and that the
+  module's session is not the one that sign-in asked for, that nothing was sent, and that
+  `-TenantId`, `Connect-OER` or `Disconnect-OER` sends again (see the next paragraph for why that is
+  one text for every refusal that sets the marker). No token is requested
   and nothing is looked up or connected. The caller stays latched, so the transports refuse each of
   its requests with `SignInRefused`, and BL-74 refuses the sign-ins of the cmdlets it calls. It
   stands after the `GraphSessionChanged` refusal so that a changed session still reads
@@ -3545,6 +3586,20 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
 - At each of the two success ends, directly after `Register-OERSignInIdentity`, it clears the marker
   when the call named its tenant and is not a transport's own refresh, or is `Connect-OER`'s; any
   other success puts back the value it found.
+
+**One text for every refusal that sets the marker (BL-93, Sprint 10 step 3).** The marker holds one
+boolean and nothing about the sign-in that set it, by design, so the refusal cannot say whose session
+the module still holds. The text used to say the session "may still belong to the tenant before it",
+which is not true after a failed renewal of the session's own token within the same tenant: that
+sign-in asked for the very tenant the session already holds. It now says only that the session is not
+the one the earlier sign-in asked for, which holds for every refusal that sets the marker: a sign-in
+for another tenant that failed or was refused, a failed renewal of the session's own token, an Azure
+Resource Manager step that failed after the Graph half connected, and a changed Graph SDK session.
+The id, category and target are unchanged. (Ruling: one text and no second variant, since telling
+the cases apart would need the marker to hold a cause, and it holds none.) The unit test of
+`New-OERSignInRefusedError` pins the exact text and that it matches neither `tenant before` nor
+`belong`; putting the old wording back turns both red. README and the about topic keep their
+description that such a sign-in usually leaves the session as it was.
 
 **What clears it.** A successful sign-in of a command that names its tenant: `-TenantId`, or
 `Connect-OER -TenantAlias`, whose profile names it. A successful `Connect-OER`, with or without a

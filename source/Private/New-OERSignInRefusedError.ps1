@@ -23,11 +23,17 @@ function New-OERSignInRefusedError {
     the request the fixed message calls "this request" is the sign-in, which is not made.
 
     With -SessionUncertain it builds the record Initialize-OERAuth raises for A10 (BL-89): an earlier
-    sign-in in the session failed or was refused, so the module's session may still belong to the tenant
-    before it, and a sign-in that names no tenant is refused before any token call or Connect-MgGraph. The
+    sign-in in the session failed or was refused, so the module's session is not the one that sign-in
+    asked for, and a sign-in that names no tenant is refused before any token call or Connect-MgGraph. The
     id and the category are the same, and the target is the command whose sign-in is refused, which stays
     latched; the message is fixed text of its own, which names no tenant and tells the operator to name
-    the tenant or to run Connect-OER or Disconnect-OER.
+    the tenant or to run Connect-OER or Disconnect-OER. It is one text for every sign-in that sets the
+    marker (BL-93), since the marker holds one boolean and nothing about the sign-in that set it: a
+    sign-in for another tenant that was refused or failed, a renewal of the session's own token that
+    failed within the same tenant, an Azure Resource Manager step that failed after the Graph half
+    connected, and a Microsoft Graph PowerShell SDK session another Connect-MgGraph changed. So it does
+    not say whose session the module still holds, only that the session is not the one the sign-in
+    asked for.
 
     .PARAMETER Command
     The name of the command whose sign-in was refused, as Get-OERSignInRefusal returns it, with or
@@ -36,7 +42,8 @@ function New-OERSignInRefusedError {
 
     .PARAMETER SessionUncertain
     Builds the session-uncertain variant (A10): the same id, category and target, with the message for a
-    sign-in that names no tenant while an earlier sign-in's failure leaves the session uncertain.
+    sign-in that names no tenant while an earlier sign-in's failure leaves the session uncertain. The
+    message is the same whichever sign-in set the marker.
 
     .EXAMPLE
     throw (New-OERSignInRefusedError -Command 'Get-OERGroup')
@@ -60,7 +67,7 @@ function New-OERSignInRefusedError {
     )
     [string]$Message = if ($SessionUncertain) {
         "An earlier sign-in in this PowerShell session failed or was refused, so the module's session " +
-        "may still belong to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that " +
+        "is not the one that sign-in asked for, and Omnicit.EntraRBAC sends nothing for a command that " +
         "names no tenant: this request was not sent. Name the tenant with -TenantId, or run Connect-OER or " +
         "Disconnect-OER, to send requests again."
     }
