@@ -161,7 +161,11 @@ function Stop-S103Count {
 }
 
 function Get-S103Sent {
-    "token requests: $global:S103TokenCalls; Microsoft Graph requests: $(@($global:S103Graph).Count); Azure Resource Manager requests: $(@($global:S103Arm).Count)$(if (@($global:S103Arm).Count) { " (hosts: $((@($global:S103Arm) | Sort-Object -Unique) -join ', '))" })"
+    # A block that never started the request counters says so: @($null).Count is 1, not 0 (1.1's first run).
+    $Graph = if ($null -eq $global:S103Graph) { 'not counted in this block' } else { [string]$global:S103Graph.Count }
+    $Arm = if ($null -eq $global:S103Arm) { 'not counted in this block' } else { [string]$global:S103Arm.Count }
+    $Hosts = if ($null -ne $global:S103Arm -and $global:S103Arm.Count -gt 0) { " (hosts: $((@($global:S103Arm) | Sort-Object -Unique) -join ', '))" } else { '' }
+    "token requests: $global:S103TokenCalls; Microsoft Graph requests: $Graph; Azure Resource Manager requests: $Arm$Hosts"
 }
 
 function Get-S103GraphSession {
