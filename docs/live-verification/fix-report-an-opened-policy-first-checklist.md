@@ -213,6 +213,24 @@ function Write-S102Error {
     Write-OerLiveStep "$Label error: $([string]$Record.FullyQualifiedErrorId) ($($Record.CategoryInfo.Category), target '$([string]$Record.TargetObject)'): $([string]$Record.Exception.Message)"
 }
 
+function Get-S102OwnError {
+    # -ErrorVariable also collects the records the inner layers wrote on the way -- the transport's and the
+    # Graph SDK's own, measured in 1.3's first run -- so a command's OWN records are told apart by its
+    # name, the last comma segment of the error id.
+    param([AllowEmptyCollection()][object[]]$Errors, [Parameter(Mandatory)][string]$Command)
+    @($Errors | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] -and ([string]$_.FullyQualifiedErrorId).EndsWith(",$Command", [System.StringComparison]::Ordinal) })
+}
+
+function Write-S102OwnError {
+    # Prints a command's own error records in full and only COUNTS the rest: an inner layer's record can
+    # carry the raw request as its target, which is never printed here.
+    param([Parameter(Mandatory)][string]$Label, [AllowEmptyCollection()][object[]]$Errors, [Parameter(Mandatory)][string]$Command)
+    $Own = @(Get-S102OwnError -Errors $Errors -Command $Command)
+    $I = 0
+    foreach ($E in $Own) { $I++; Write-S102Error -Label "$Label own [$I]" -Record $E }
+    Write-OerLiveStep "$Label $Command's own error records: $($Own.Count); other items in -ErrorVariable (inner layers, counted, not printed): $(@($Errors).Count - $Own.Count)"
+}
+
 function Get-S102Document {
     # The engine's document: oer-s102-eng with ONE permanent member eligibility (no durationDays), of the
     # given principal -- oer-s102-user's UPN for the success path, the made-up id for the refusal.
@@ -421,25 +439,25 @@ Start-S102NoPrompt
 Write-OerLiveStep "1.3 policy before: $(Get-S102PolicyText -Policy (Get-S102Policy -Name 'oer-s102-cmd'))"
 $Err = @()
 $Out = @(Add-OERGroupEligibility -Group 'oer-s102-cmd' -PrincipalId $Missing -Confirm:$false -ErrorAction Continue -ErrorVariable Err 2>$null)
-$Records = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
-Write-OerLiveStep "1.3 objects: $($Out.Count); error records: $($Records.Count) (other items in -ErrorVariable: $(@($Err).Count - $Records.Count))"
-$I = 0
-foreach ($E in $Records) { $I++; Write-S102Error -Label "1.3 [$I]" -Record $E }
-if ($Records.Count -ge 1) { Write-OerLiveStep "1.3 [1] $(Test-S102Advice -Message ([string]$Records[0].Exception.Message))" }
-if ($Records.Count -ge 2) { Write-OerLiveStep "1.3 [1] quotes [2]'s message as its cause: $(([string]$Records[0].Exception.Message).EndsWith(' The request failed with: ' + [string]$Records[1].Exception.Message, [System.StringComparison]::Ordinal))" }
+Write-OerLiveStep "1.3 objects: $($Out.Count)"
+Write-S102OwnError -Label '1.3' -Errors $Err -Command 'Add-OERGroupEligibility'
+$Own = @(Get-S102OwnError -Errors $Err -Command 'Add-OERGroupEligibility')
+if ($Own.Count -ge 1) { Write-OerLiveStep "1.3 own [1] $(Test-S102Advice -Message ([string]$Own[0].Exception.Message))" }
+if ($Own.Count -ge 2) { Write-OerLiveStep "1.3 own [1] quotes own [2]'s message as its cause: $(([string]$Own[0].Exception.Message).EndsWith(' The request failed with: ' + [string]$Own[1].Exception.Message, [System.StringComparison]::Ordinal))" }
 Write-OerLiveStep '1.3 REACHED: the script went on, as it does without -ErrorAction Stop.'
 Invoke-S102Close -Name 'oer-s102-cmd' -Label '1.3'
 Disconnect-OerLive
 ```
 
-**Expect:** `permanent eligibility allowed: False` before; `objects: 0; error records: 2`; `[1]` is
+**Expect:** `permanent eligibility allowed: False` before; `objects: 0`; `Add-OERGroupEligibility's
+own error records: 2`, with other items from the inner layers counted but not printed; `own [1]` is
 `PolicyOpenedButGrantFailed,Add-OERGroupEligibility (InvalidOperation, target 'Group_...')` and
-`opened policy named: True; corrected advice: True; cause after the advice: True`; `[2]` is the
-grant's own record with Microsoft Graph's code; `[1] quotes [2]'s message as its cause: True`; the
-`REACHED` line; then the advice closes the policy (`permanent eligibility allowed: False`, both
+`opened policy named: True; corrected advice: True; cause after the advice: True`; `own [2]` is the
+grant's own record with Microsoft Graph's code; `own [1] quotes own [2]'s message as its cause: True`;
+the `REACHED` line; then the advice closes the policy (`permanent eligibility allowed: False`, both
 maxima unchanged).
-**Failure looks like:** `[1]` is the grant's own error -- the old order; a `False` in the advice line;
-the second error missing -- the grant's own error is no longer re-published.
+**Failure looks like:** `own [1]` is the grant's own error -- the old order; a `False` in the advice
+line; the second own error missing -- the grant's own error is no longer re-published.
 
 Result:
 
@@ -457,8 +475,8 @@ $Warn = @()
 $Out = @(Add-OERGroupEligibility -Group 'oer-s102-cmd' -User $UserUpn -Confirm:$false -ErrorAction Continue -ErrorVariable Err -WarningVariable Warn 2>$null 3>$null)
 foreach ($W in $Warn) { Write-OerLiveStep "1.4 warning: $W" }
 foreach ($O in $Out) { Write-OerLiveStep "1.4 object: $($O.PSObject.TypeNames[0]); status $($O.Status); action $($O.Action)" }
-foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-S102Error -Label '1.4' -Record $E }
-Write-OerLiveStep "1.4 objects: $($Out.Count); errors: $(@($Err).Count); warnings: $($Warn.Count)"
+Write-S102OwnError -Label '1.4' -Errors $Err -Command 'Add-OERGroupEligibility'
+Write-OerLiveStep "1.4 objects: $($Out.Count); items in -ErrorVariable: $(@($Err).Count); warnings: $($Warn.Count)"
 $Wait = Wait-OerLiveConverged -Activity 'oer-s102-user is permanently eligible in oer-s102-cmd' -Read { Get-S102EligibilityText -Name 'oer-s102-cmd' -UserId $UserId } -Test { $args[0] -like 'eligibility of oer-s102-user: 1 (permanent: 1);*' }
 Write-OerLiveStep "1.4 $($Wait.Value)"
 Write-OerLiveStep "1.4 policy after: $(Get-S102PolicyText -Policy (Get-S102Policy -Name 'oer-s102-cmd'))"
@@ -469,7 +487,8 @@ Disconnect-OerLive
 opening the PIM-for-groups policy for group '...' (member access) to allow PERMANENT eligible
 assignments, which affects ALL member eligibility for this group.`; one object
 `Omnicit.EntraRBAC.GroupEligibility` with status `Provisioned` (or another status outside the Failed
-family) and action `adminAssign`; `errors: 0`; then `eligibility of oer-s102-user: 1 (permanent: 1)`
+family) and action `adminAssign`; `own error records: 0` and `items in -ErrorVariable: 0`; then
+`eligibility of oer-s102-user: 1 (permanent: 1)`
 and `permanent eligibility allowed: True`.
 **Failure looks like:** a `PolicyOpenedButGrantFailed` or `EligibilityRequestFailed` -- the success
 path regressed (or, for a group created minutes ago, Microsoft Graph does not know it yet: wait
@@ -492,9 +511,12 @@ $Warn = @()
 $Rows = @(Invoke-OERStructure -Json (Get-S102Document -Principal $Missing) -Confirm:$false -ErrorAction Continue -ErrorVariable Err -WarningVariable Warn 2>$null 3>$null)
 foreach ($W in $Warn) { Write-OerLiveStep "2.1 warning: $W" }
 Write-S102Rows -Label '2.1' -Rows $Rows
-foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-S102Error -Label '2.1' -Record $E }
+# The engine re-publishes the cmdlet's record; only records of the cmdlet or the engine are printed, by id.
+$Ids = @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] } | ForEach-Object { [string]$_.FullyQualifiedErrorId } | Where-Object { $_ -match ',(Add-OERGroupEligibility|Invoke-OERStructure)$' } | Select-Object -Unique)
+Write-OerLiveStep "2.1 error ids of the cmdlet and the engine in -ErrorVariable (unique): $($Ids -join '; ')"
+Write-OerLiveStep "2.1 the grant's own record (SubjectNotFound,Add-OERGroupEligibility) in -ErrorVariable: $($Ids -contains 'SubjectNotFound,Add-OERGroupEligibility')"
 $Failed = @($Rows | Where-Object { $_.PSObject.Properties['Action'] -and $_.Action -eq 'Failed' })
-Write-OerLiveStep "2.1 Failed rows: $($Failed.Count); errors: $(@($Err).Count); warnings: $($Warn.Count)"
+Write-OerLiveStep "2.1 Failed rows: $($Failed.Count); items in -ErrorVariable: $(@($Err).Count); warnings: $($Warn.Count)"
 if ($Failed.Count -eq 1) {
     Write-OerLiveStep "2.1 the Failed row's Detail: $(Test-S102Advice -Message ([string]$Failed[0].Detail))"
     Write-OerLiveStep "2.1 the Failed row's error: $(([string]$Failed[0].Error.FullyQualifiedErrorId -split ',')[0])"
@@ -506,8 +528,9 @@ Disconnect-OerLive
 `Failed` row `failed to add permanent eligibility for '00000000-0000-0000-0000-000000000099': The PIM
 member eligibility grant failed after PIM-for-groups policy '...' had been opened ...`; `Failed rows:
 1`; `opened policy named: True; corrected advice: True; cause after the advice: True`; the row's error
-`PolicyOpenedButGrantFailed`; in `-ErrorVariable` the `PolicyOpenedButGrantFailed` record and no
-record of the grant's own (the engine calls the cmdlet with `-ErrorAction Stop`).
+`PolicyOpenedButGrantFailed`; among the cmdlet's and the engine's ids in `-ErrorVariable` a
+`PolicyOpenedButGrantFailed` id, and `the grant's own record ... in -ErrorVariable: False` (the engine
+calls the cmdlet with `-ErrorAction Stop`, so its first error stops it).
 **Failure looks like:** the Detail carries only Microsoft Graph's refusal and no advice -- the old
 order (BL-98 not fixed in the engine's view); more than one Failed row.
 
@@ -547,8 +570,8 @@ $Rows = @(Invoke-OERStructure -Json (Get-S102Document -Principal $UserUpn) -Conf
 Stop-S102Fence
 foreach ($W in $Warn) { Write-OerLiveStep "2.3 warning: $W" }
 Write-S102Rows -Label '2.3' -Rows $Rows
-foreach ($E in @($Err | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })) { Write-S102Error -Label '2.3' -Record $E }
-Write-OerLiveStep "2.3 rows: $(@($Rows | ForEach-Object { $_.Action }) -join ', '); errors: $(@($Err).Count); warnings: $($Warn.Count); Graph writes: $($global:S102Writes.Count) ($(@($global:S102Writes) -join ', '))"
+Write-S102OwnError -Label '2.3' -Errors $Err -Command 'Invoke-OERStructure'
+Write-OerLiveStep "2.3 rows: $(@($Rows | ForEach-Object { $_.Action }) -join ', '); items in -ErrorVariable: $(@($Err).Count); warnings: $($Warn.Count); Graph writes: $($global:S102Writes.Count) ($(@($global:S102Writes) -join ', '))"
 # G8 waits for a state that reads the same three times, 5 s apart (Sprint 9 step 2).
 $State = { "$(Get-S102EligibilityText -Name 'oer-s102-eng' -UserId $UserId); $(Get-S102PolicyText -Policy (Get-S102Policy -Name 'oer-s102-eng'))" }
 $Wait = Wait-OerLiveConverged -Activity 'oer-s102-user is permanently eligible in oer-s102-eng' -Read { & $State } -Test { $args[0] -like 'eligibility of oer-s102-user: 1 (permanent: 1);*permanent eligibility allowed: True*' }
@@ -560,7 +583,7 @@ Disconnect-OerLive
 
 **Expect:** `permanent eligibility allowed: False` before; one warning (the permanent-eligibility
 one); the rows `Unchanged` (group properties) and `Updated` (`set permanent member eligibility for
-'oer-s102-user@...'`); `errors: 0`; Graph writes for the opened rule and the eligibility request (a
+'oer-s102-user@...'`); `items in -ErrorVariable: 0`; Graph writes for the opened rule and the eligibility request (a
 PATCH and a POST); then `eligibility of oer-s102-user: 1 (permanent: 1)`, `permanent eligibility
 allowed: True`, and three reads that agree (`True`).
 **Failure looks like:** a `Failed` row -- read its Detail; for a group created minutes ago Microsoft
@@ -581,12 +604,13 @@ $Warn = @()
 $Rows = @(Invoke-OERStructure -Json (Get-S102Document -Principal $UserUpn) -Confirm:$false -ErrorAction Continue -ErrorVariable Err -WarningVariable Warn 2>$null 3>$null)
 Stop-S102Fence
 Write-S102Rows -Label '2.4' -Rows $Rows
-Write-OerLiveStep "2.4 rows: $(@($Rows | ForEach-Object { $_.Action }) -join ', '); errors: $(@($Err).Count); warnings: $($Warn.Count); Graph writes: $($global:S102Writes.Count)"
+Write-S102OwnError -Label '2.4' -Errors $Err -Command 'Invoke-OERStructure'
+Write-OerLiveStep "2.4 rows: $(@($Rows | ForEach-Object { $_.Action }) -join ', '); items in -ErrorVariable: $(@($Err).Count); warnings: $($Warn.Count); Graph writes: $($global:S102Writes.Count)"
 Disconnect-OerLive
 ```
 
 **Expect:** `rows: Unchanged, Unchanged` (group properties; the permanent eligibility already
-matches); `errors: 0; warnings: 0; Graph writes: 0`.
+matches); `items in -ErrorVariable: 0; warnings: 0; Graph writes: 0`.
 **Failure looks like:** an `Updated` row -- the second run does not converge (G8); a warning -- the
 engine plans an open that is not needed.
 
