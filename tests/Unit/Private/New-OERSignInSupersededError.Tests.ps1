@@ -219,8 +219,9 @@ Describe 'New-OERSignInSupersededError' {
     }
 
     Context 'the text is chosen by the state alone' {
-        It 'reads a held session of any shape as a session another sign-in replaced, and only no state as ended' {
-            # Get-OERSignInIdentity reads $null as not signed in and nothing else; the text follows the same test.
+        It 'reads a held but empty state as a held session another sign-in replaced, not as the ended one' {
+            # Get-OERSignInIdentity reads $null as not signed in and nothing else, so an empty state is still
+            # a held session; the text follows the same test and never looks at a field of the state.
             $Message = InModuleScope Omnicit.EntraRBAC {
                 $Found = $script:_OERAuthState
                 try {

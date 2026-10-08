@@ -71,11 +71,11 @@ function Connect-OER {
     request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
     tenant with one identity, so run such commands as separate statements. And after a sign-in that
     failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
-    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session is not the one
-    that sign-in asked for (usually it is the previous session, or none), so a later OER command that
-    names no tenant sends nothing: its sign-in is refused with a SignInRefused error that says so. A
-    command that names its tenant with -TenantId, a successful Connect-OER, or Disconnect-OER makes the
-    module send again.
+    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may not be the
+    one that sign-in asked for (usually it is the previous session, or none), so a later OER command
+    that names no tenant sends nothing: its sign-in is refused with a SignInRefused error that says
+    so. A command that names its tenant with -TenantId, a successful Connect-OER, or Disconnect-OER
+    makes the module send again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with

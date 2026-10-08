@@ -66,7 +66,7 @@ Describe 'New-OERSignInRefusedError' {
         It 'carries the exact session-uncertain message, naming no tenant' {
             $script:UncertainRecord.Exception | Should -BeOfType ([System.Exception])
             $script:UncertainRecord.Exception.Message | Should -BeExactly (
-                "An earlier sign-in in this PowerShell session failed or was refused, so the module's session is not the one " +
+                "An earlier sign-in in this PowerShell session failed or was refused, so the module's session may not be the one " +
                 'that sign-in asked for, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request ' +
                 'was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.')
         }

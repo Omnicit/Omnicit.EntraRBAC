@@ -69,16 +69,16 @@ function Invoke-OERStructure {
     upstream in the process block that emits the document. When the module held no session as this
     command began, any such sign-in counts, even one that names no tenant. Run such commands as
     separate statements. The error says this command did not apply the document and sent nothing for
-    it, and names the cause: Disconnect-OER ended the module's session, when the module holds none by
-    then, and another command's sign-in otherwise. A document that cannot be read or does not
-    validate reports its own error, as before. Several documents piped into one call are each compared with the session the last
-    sign-in of this call left, whether that sign-in succeeded or was refused, or, before its first
-    sign-in, with the session the call began with. So a first sign-in from no session does not refuse
-    the next document, while a document refused with SignInSuperseded, or one that could not be read
-    or did not validate, signs nothing in and moves nothing: the document after it is compared with
-    the same session. With -TenantId the command signs in to that tenant as before, except that a
-    document naming another tenant than a -TenantId that is a tenant ID is refused before that
-    sign-in (see the document tenant rule below).
+    it, and names the cause: Disconnect-OER ended the module's session, when the module holds none
+    by then, and another command's sign-in otherwise. A document that cannot be read or does not
+    validate reports its own error, as before. Several documents piped into one call are each
+    compared with the session the last sign-in of this call left, whether that sign-in succeeded or
+    was refused, or, before its first sign-in, with the session the call began with. So a first
+    sign-in from no session does not refuse the next document, while a document refused with
+    SignInSuperseded, or one that could not be read or did not validate, signs nothing in and moves
+    nothing: the document after it is compared with the same session. With -TenantId the command
+    signs in to that tenant as before, except that a document naming another tenant than a -TenantId
+    that is a tenant ID is refused before that sign-in (see the document tenant rule below).
 
     Document tenant rule: a document whose top-level tenantId names a tenant -- as Get-OERInventory
     and Export-OERInventory write it -- is applied only in that tenant. With a -TenantId that is a

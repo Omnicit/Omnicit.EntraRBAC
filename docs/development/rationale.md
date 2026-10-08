@@ -3576,7 +3576,7 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
   (`-ReclaimGraphSession`). The refusal is a terminating `SignInRefused` from
   `New-OERSignInRefusedError -SessionUncertain`: the calling command's name as its target and fixed
   text that names no tenant, saying that an earlier sign-in failed or was refused and that the
-  module's session is not the one that sign-in asked for, that nothing was sent, and that
+  module's session may not be the one that sign-in asked for, that nothing was sent, and that
   `-TenantId`, `Connect-OER` or `Disconnect-OER` sends again (see the next paragraph for why that is
   one text for every refusal that sets the marker). No token is requested
   and nothing is looked up or connected. The caller stays latched, so the transports refuse each of
@@ -3589,17 +3589,19 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
 
 **One text for every refusal that sets the marker (BL-93, Sprint 10 step 3).** The marker holds one
 boolean and nothing about the sign-in that set it, by design, so the refusal cannot say whose session
-the module still holds. The text used to say the session "may still belong to the tenant before it",
-which is not true after a failed renewal of the session's own token within the same tenant: that
-sign-in asked for the very tenant the session already holds. It now says only that the session is not
-the one the earlier sign-in asked for, which holds for every refusal that sets the marker: a sign-in
-for another tenant that failed or was refused, a failed renewal of the session's own token, an Azure
-Resource Manager step that failed after the Graph half connected, and a changed Graph SDK session.
-The id, category and target are unchanged. (Ruling: one text and no second variant, since telling
-the cases apart would need the marker to hold a cause, and it holds none.) The unit test of
-`New-OERSignInRefusedError` pins the exact text and that it matches neither `tenant before` nor
-`belong`; putting the old wording back turns both red. README and the about topic keep their
-description that such a sign-in usually leaves the session as it was.
+the module still holds. The text used to say the session "may still belong to the tenant before it".
+That was literally true after a failed renewal of the session's own token within the same tenant,
+where the tenant before is the same tenant, but misleading: it read as a switch to another tenant
+that did not happen. The text now names no cause and no tenant, and says only that the session may
+not be the one the earlier sign-in asked for. That holds for every refusal that sets the marker: a
+sign-in for another tenant that failed or was refused, a failed renewal of the session's own token,
+an Azure Resource Manager step that failed after the Graph half connected -- where the session is the
+requested tenant's Graph session without its Azure half, which is why the text says "may not be" and
+not "is not" -- and a changed Graph SDK session. The id, category and target are unchanged. (Ruling:
+one text and no second variant, since telling the cases apart would need the marker to hold a cause,
+and it holds none.) The unit test of `New-OERSignInRefusedError` pins the exact text and that it
+matches neither `tenant before` nor `belong`; putting the old wording back turns both red. README and
+the about topic keep their description that such a sign-in usually leaves the session as it was.
 
 **What clears it.** A successful sign-in of a command that names its tenant: `-TenantId`, or
 `Connect-OER -TenantAlias`, whose profile names it. A successful `Connect-OER`, with or without a

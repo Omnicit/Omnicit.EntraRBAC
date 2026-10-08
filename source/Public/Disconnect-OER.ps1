@@ -33,7 +33,7 @@ function Disconnect-OER {
     the secret or certificate.
 
     Disconnect-OER also ends the uncertainty a failed or refused sign-in leaves: after such a sign-in
-    the module's session is not the one that sign-in asked for, so an OER command that names no
+    the module's session may not be the one that sign-in asked for, so an OER command that names no
     tenant sends nothing and reports a SignInRefused error. After Disconnect-OER there is no session to
     be uncertain about, and the next command signs in afresh.
 
