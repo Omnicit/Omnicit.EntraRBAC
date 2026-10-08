@@ -36,13 +36,13 @@ function Connect-OER {
     unlabelled default. To sign in to a different tenant, pass an explicit -TenantId (or
     -TenantAlias). A client secret sign-in for the same application also needs -Force to move to
     another tenant in the same PowerShell session: AzAuth keeps its credential for the whole
-    process, and Disconnect-OER clears this module's session and the Graph SDK session, not that
-    credential.
+    process, and Disconnect-OER clears this module's session and the Graph SDK session the module
+    connected, not that credential.
 
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
-    OER cmdlet. Disconnect-OER closes whichever session the process holds, even one another
-    Connect-MgGraph started.
+    OER cmdlet. Disconnect-OER closes that session, and leaves one another Connect-MgGraph started,
+    with a warning.
 
     If another Connect-MgGraph -- your own, or another tool's -- replaces the module's session in
     the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a

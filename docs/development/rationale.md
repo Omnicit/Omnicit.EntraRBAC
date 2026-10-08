@@ -1911,8 +1911,8 @@ instead of refreshing.
 references to `TokenManager` at all -- it only ever touches the on-disk MSAL token cache, never the
 static credential field. MEASURED: removing and re-importing the AzAuth module leaves the same
 credential instance in place. `Disconnect-OER` clears only `$script:_OERAuthState` (this module's
-own session state) and calls `Disconnect-MgGraph` (it called `Disconnect-AzAccount` too until
-2026-09-21); reading its source shows
+own session state) and calls `Disconnect-MgGraph` for the session the module connected (A4; it
+called `Disconnect-AzAccount` too until 2026-09-21); reading its source shows
 it never touches AzAuth's credential at all, so it was never capable of clearing it. Decompiling
 AzAuth shows the only call site that clears the static credential is `Get-AzToken`'s own `-Force`
 handling.
@@ -2128,8 +2128,8 @@ sign-in, a different tenant, identity or cloud, `-ForceRefresh`, a claims challe
 within five minutes of expiry, a process that holds no SDK session at all, or, under `Connect-OER`
 only, a session another `Connect-MgGraph` started -- so the SDK session is started per sign-in or
 token refresh and not once per cmdlet; a call whose Graph session is still valid never reaches it.
-`Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears `$script:_OERAuthState`
-and calls `Disconnect-MgGraph`.
+`Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears `$script:_OERAuthState`,
+and it calls `Disconnect-MgGraph` there only when the session is the module's own (A4, below).
 
 **Why the module checks which session the process holds.** The SDK keeps one session per process,
 and `Invoke-OERGraphRequest` passes no token of its own: it calls `Invoke-MgGraphRequest`, so every
@@ -2253,12 +2253,74 @@ Review alone held the one-caller rule until Sprint 9 step 3 (final review I2, Ru
 [#static-source-gates](#static-source-gates) now holds the NAME `ReclaimGraphSession` to
 `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 
-**`Disconnect-OER`** clears `$script:_OERAuthState`, and the fingerprint with it, so the next
-cmdlet is `Untracked` and signs in from the start. It still calls `Disconnect-MgGraph` whatever
-session the process holds, so after another `Connect-MgGraph` it ends that session too, exactly as it
-did before the check existed; its help says so. That is the opposite of the choice for Az, which
-`Disconnect-OER` leaves alone since the module never establishes an Az context. The alternative,
-skipping `Disconnect-MgGraph` when the state is `Changed`, would be one condition and a help change.
+**`Disconnect-OER` (A4, BL-67, Sprint 10 step 3).** Decision A4 (Philip): `Disconnect-OER` ends
+only the Graph SDK session the module connected, the same stance it takes for an Az session, which
+it leaves alone since the module never establishes an Az context. Until this change it called
+`Disconnect-MgGraph` whatever session the process held, so after another `Connect-MgGraph` it ended
+that session too, exactly as it did before the check existed. The alternative this paragraph used to
+name -- skipping `Disconnect-MgGraph` when the state is `Changed`, one condition and a help change --
+is the one taken, and widened to the other states below. `Disconnect-OER` reads
+`Get-OERGraphSessionState` ONCE, into `$GraphSessionState`, before its `ShouldProcess` gate and so
+before `$script:_OERAuthState` is cleared: the fingerprint lives in that state, and once it is
+cleared every state reads `Untracked`. Inside the gate it clears the state, the fingerprint with it,
+and the A10 marker in every case, so the next cmdlet is `Untracked` and signs in from the start; only
+`Own` then calls `Disconnect-MgGraph`.
+
+- `Own` -- the process holds the session the module connected. `Disconnect-MgGraph`, no warning.
+- `Changed` -- another `Connect-MgGraph` replaced it. Left connected, with the warning.
+- `Untracked` -- the module holds no record of a session of its own. With a session in the process
+  (`Get-OERGraphSessionFingerprint` returns a value) it is left connected, with the warning; with
+  none there is nothing to leave, so no warning.
+- `Absent` -- the session the module connected is already gone. Nothing to disconnect, no warning.
+
+The warning is one string, written once by `Write-Warning` when a session exists and is left -- for
+`Changed`, and for `Untracked` with a session in the process: `Disconnect-OER leaves the Microsoft
+Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC did not connect it.
+Run Disconnect-MgGraph to end that session.` The `ShouldProcess` target and action strings are
+unchanged.
+
+Ruling: a warning before the gate, not after it, and not Verbose or Information. It is shown by
+default, it shows under `-WhatIf` and before a `-Confirm` prompt is answered, it is about what the
+command will leave and not an outcome of the answer, and the rule of
+[#warning-before-confirmation](#warning-before-confirmation) -- no `Write-Warning` after a public
+cmdlet's first `$PSCmdlet.ShouldProcess` -- allows it with no allowlist entry, so the allowlist stays
+at nine. The state is read before the gate for the same reason: the warning has to know it. Cost if
+wrong: a declined `-Confirm` has shown a warning about a command that then did nothing, and the
+warning stays true, since the session stays connected either way.
+
+Ruling: an `Untracked` session that the process holds is treated as not the module's. The module
+cannot prove it is its own, and leaving it is the safe direction. A session from an earlier import
+of the module reads `Untracked` -- re-importing clears `$script:_OERAuthState` and the fingerprint
+with it, while the SDK session stays in the process -- so it is left, and the warning names
+`Disconnect-MgGraph`. Cost if wrong: after a re-import the operator ends that session by hand.
+
+Leaving a session does not protect it from the module's next sign-in. After `Disconnect-OER` the
+state is `Untracked`, and the next `Initialize-OERAuth` sign-in runs `Connect-MgGraph`, which
+replaces whatever session the process held, as any `Connect-MgGraph` does (above). What A4 changes is
+only that `Disconnect-OER` no longer ends a session it did not start; the help, the README and the
+about topic say both halves. The one gap is the gap every gate read has: another runspace's
+`Connect-MgGraph` between the read and the disconnect is not seen (see "What is still not covered"
+below).
+
+The tests are in `tests/Unit/Public/Disconnect-OER.Tests.ps1`, Describe `Disconnect-OER ends only the
+Graph SDK session the module connected (A4, BL-67)`: one test per state -- `Own`, `Changed`,
+`Untracked` with no state and with a state that has no fingerprint, `Untracked` with no session, and
+`Absent` -- each pinning the exact warning text and its count (one, or none), whether
+`Disconnect-MgGraph` ran, and that the state is cleared; `Changed` also the A10 marker. A `-WhatIf`
+test on `Changed` proves the warning is written and the state and marker are untouched, which a
+warning inside the gate could not do. An AST test, read from the loaded function, requires the one
+`Write-Warning` to start before the first `ShouldProcess` call. The A18 test now expects the one
+read the decision makes (`Get-MgContext` once after the disconnect, and still once after the module
+is asked what it tracks). MUTATIONS (G5), each one edit to a copy of `source/` run through the
+covering tests: (a) `Disconnect-MgGraph` called unconditionally (`if ($true)`) turns the `Changed`,
+both `Untracked`-with-a-session, `Untracked`-with-none and `Absent` tests red; (b) the `Untracked`
+arm of the warning condition dropped turns the two `Untracked`-with-a-session tests red; (c)
+`$null -ne (Get-OERGraphSessionFingerprint)` dropped, so every `Untracked` warns, turns the
+`Untracked`-with-none test red; (d) the `Write-Warning` block moved inside the gate turns the
+`-WhatIf` test, the AST order test and the cohort's after-the-gate rule red (the last with
+`OER_COHORT_SOURCE_ROOT` pointed at the mutated copy); (e) `'Own'` swapped for `'Changed'` in the
+disconnect condition turns the `Own` test, the first Describe's `calls Disconnect-MgGraph for the
+session the module connected` and the `Changed` test red.
 
 **Why `Invoke-OERGraphRequest` checks again before every call.** MEASURED 2026-10-05 in
 PowerShell 7, with plain functions and no module code:
@@ -2361,7 +2423,8 @@ switches the session back by itself, and `Connect-OER` run with the same sign-in
 (for an app-only session, its certificate or client secret, since a bare `Connect-OER` signs in
 interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
 instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
-and `Disconnect-OER` ends whichever session the process holds. The README and the about topic add
+and `Disconnect-OER` ends only the session the module connected, leaving any other with a warning
+(A4). The README and the about topic add
 one sentence the two help texts do not carry: runspaces in one process (`ForEach-Object -Parallel`,
 `Start-ThreadJob`) share one Graph SDK session, so a parallel fan-out across tenants in one process
 gets `GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate

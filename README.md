@@ -158,14 +158,17 @@ automatically on first use.
 Disconnect-OER
 ```
 
-Clears this module's cached tokens and session state and disconnects Microsoft Graph. An Az
-PowerShell session you started yourself is left connected -- run `Disconnect-AzAccount` yourself if
-you want to end that one too.
+Clears this module's cached tokens and session state and disconnects the Microsoft Graph session the
+module connected. An Az PowerShell session you started yourself is left connected -- run
+`Disconnect-AzAccount` yourself if you want to end that one too.
 
 `Connect-OER` sets up a Microsoft Graph PowerShell SDK session in the current process: it calls
 `Connect-MgGraph` with the module's token, and so does the automatic sign-in of any other OER
-cmdlet. `Disconnect-OER` closes whichever session the process holds, even one another
-`Connect-MgGraph` started.
+cmdlet. `Disconnect-OER` closes only the session the module connected. A session it did not
+connect, or has no record of connecting -- one another `Connect-MgGraph` started, say -- is left
+connected, with a warning written before the confirmation, so `-WhatIf` shows it. Run
+`Disconnect-MgGraph` to end that one; the next OER cmdlet signs in again, and its own
+`Connect-MgGraph` replaces it, as any `Connect-MgGraph` does.
 
 If another `Connect-MgGraph` -- yours, or another tool's -- replaces the module's session in the
 same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with
@@ -324,9 +327,10 @@ The warning does not stop the sign-in, but under `-WarningAction Stop` (or
 `$WarningPreference = 'Stop'`) it does, before any token is requested -- the same safe direction as
 the module's existing ambient `AZURE_AUTHORITY_HOST` warning.
 
-`Disconnect-OER` clears this module's own session state and closes the Graph SDK session; it does
-not clear the credential AzAuth keeps for the process. `Connect-OER -Force` is the supported way,
-inside the same PowerShell process, to move a client secret sign-in to a new tenant.
+`Disconnect-OER` clears this module's own session state and closes the Graph SDK session the module
+connected; it does not clear the credential AzAuth keeps for the process. `Connect-OER -Force` is
+the supported way, inside the same PowerShell process, to move a client secret sign-in to a new
+tenant.
 
 Name a tenant by its tenant ID (a GUID) or by a verified domain -- a Tenant Profile's `TenantId`
 included. Both are checked, and a token issued for another tenant is refused either way; a GUID

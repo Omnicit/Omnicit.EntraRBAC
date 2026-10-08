@@ -28,6 +28,11 @@ Describe 'Disconnect-OER' {
     BeforeEach {
         Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
         Mock -ModuleName $script:moduleName Disconnect-AzAccount {}
+        # Disconnect-OER reads the Graph SDK session once, to decide whether it is the one the module
+        # connected (A4, BL-67). Mocked, so no test reads the real, process-wide session: it answers no
+        # session unless a test sets $script:SessionContext.
+        $script:SessionContext = $null
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:SessionContext }
     }
 
     It 'clears the cached auth state' {
@@ -36,10 +41,19 @@ Describe 'Disconnect-OER' {
         InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
     }
 
-    It 'calls Disconnect-MgGraph' {
-        InModuleScope $script:moduleName { $script:_OERAuthState = @{ TenantId = 'x' } }
+    It 'calls Disconnect-MgGraph for the session the module connected' {
+        # An 'Own' state: the process holds the session whose fingerprint the state carries.
+        $script:SessionContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        InModuleScope $script:moduleName -Parameters @{ C = $script:SessionContext } {
+            param($C)
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = (Get-OERGraphSessionFingerprint -Context $C) }
+        }
         Disconnect-OER -Confirm:$false
-        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1 -Exactly
     }
 
     It 'leaves an Az PowerShell session the operator started alone' {
@@ -101,6 +115,9 @@ Describe 'Disconnect-OER and the sovereign cloud state' {
     BeforeEach {
         Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
         Mock -ModuleName $script:moduleName Disconnect-AzAccount {}
+        # Disconnect-OER reads the Graph SDK session once (A4, BL-67); no session here, so these tests
+        # neither read the real, process-wide session nor see the warning for a session left connected.
+        Mock -ModuleName $script:moduleName Get-MgContext { $null }
     }
 
     It 'drops the session cloud along with the rest of the auth state' {
@@ -170,12 +187,186 @@ Describe 'Disconnect-OER and the Graph SDK session fingerprint (A18)' {
             $script:_OERAuthState.ContainsKey('GraphSessionFingerprint') | Should -BeTrue
         }
 
-        Disconnect-OER -Confirm:$false
+        # The state's fingerprint is not the mocked session's, so this is a 'Changed' session and
+        # Disconnect-OER writes its warning (A4, BL-67); silenced here, asserted in the Describe below.
+        Disconnect-OER -Confirm:$false -WarningAction SilentlyContinue
 
+        # Disconnect-OER reads the session once, to decide whether it is the module's own. That is its
+        # own decision, made before the state is cleared.
+        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 1 -Exactly
         InModuleScope $script:moduleName {
             $script:_OERAuthState | Should -BeNullOrEmpty
             Get-OERGraphSessionState | Should -Be 'Untracked'
         }
-        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 0 -Exactly
+        # The module tracks nothing now, so finding that out does not read the session: still the one read.
+        Should -Invoke -ModuleName $script:moduleName Get-MgContext -Times 1 -Exactly
+    }
+}
+
+# -------------------------------------------------------------------------------------------------
+# Disconnect-OER ends only the Graph SDK session the module connected (A4, BL-67, Sprint 10 step 3).
+#
+# The state is read once, before the gate: Get-OERGraphSessionState says Own (the process holds the
+# session the module connected -- disconnected), Changed (another Connect-MgGraph replaced it),
+# Absent (no session) or Untracked (the module holds no record of a session of its own -- an earlier
+# import of the module, say). Only Own is disconnected. A session that exists and is left -- Changed,
+# or Untracked with a session in the process -- gets one warning, written BEFORE the gate so that
+# -WhatIf and a -Confirm prompt show it. The state and the A10 marker are cleared in every case.
+# -------------------------------------------------------------------------------------------------
+Describe 'Disconnect-OER ends only the Graph SDK session the module connected (A4, BL-67)' {
+    BeforeAll {
+        # One string; the help, README and about topic say the same in their own words.
+        $script:LeftWarning = 'Disconnect-OER leaves the Microsoft Graph PowerShell SDK session in this process ' +
+            'connected, since Omnicit.EntraRBAC did not connect it. Run Disconnect-MgGraph to end that session.'
+    }
+
+    BeforeEach {
+        Mock -ModuleName $script:moduleName Disconnect-MgGraph {}
+        Mock -ModuleName $script:moduleName Disconnect-AzAccount {}
+        # The session the process holds: a stable fake, so nothing reads the real, process-wide one.
+        $script:SessionContext = [pscustomobject]@{
+            AuthType = 'UserProvidedAccessToken'; TokenCredentialType = 'UserProvidedAccessToken'
+            ClientId = '11111111-1111-1111-1111-111111111111'; TenantId = '22222222-2222-2222-2222-222222222222'
+            Account = $null; AppName = 'oer-test-app'; Environment = 'Global'; Scopes = @('Group.ReadWrite.All')
+        }
+        Mock -ModuleName $script:moduleName Get-MgContext { $script:SessionContext }
+        # The fingerprint of that session, which an 'Own' state carries.
+        $script:SessionFingerprint = InModuleScope $script:moduleName -Parameters @{ C = $script:SessionContext } {
+            param($C)
+            Get-OERGraphSessionFingerprint -Context $C
+        }
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            $script:_OERSessionUncertain = $false
+        }
+    }
+
+    It 'Own: disconnects the session the module connected, writes no warning and clears the state' {
+        InModuleScope $script:moduleName -Parameters @{ F = $script:SessionFingerprint } {
+            param($F)
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = $F }
+            # The precondition: the state really reads Own, so the Disconnect-MgGraph below is its doing.
+            Get-OERGraphSessionState | Should -BeExactly 'Own'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 1 -Exactly
+        InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
+        @($Warnings).Count | Should -Be 0
+    }
+
+    It 'Changed: leaves the session another Connect-MgGraph started, with exactly one warning, and still clears the state and the marker' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = '{"TenantId":"other"}' }
+            $script:_OERSessionUncertain = $true
+            Get-OERGraphSessionState | Should -BeExactly 'Changed'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState | Should -BeNullOrEmpty
+            $script:_OERSessionUncertain | Should -BeFalse
+        }
+        @($Warnings).Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:LeftWarning
+    }
+
+    It 'Untracked, no state, a session in the process: leaves it, with exactly one warning' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Get-OERGraphSessionState | Should -BeExactly 'Untracked'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
+        @($Warnings).Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:LeftWarning
+    }
+
+    It 'Untracked, a state with no fingerprint, a session in the process: leaves it, with exactly one warning' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x' }
+            Get-OERGraphSessionState | Should -BeExactly 'Untracked'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
+        @($Warnings).Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:LeftWarning
+    }
+
+    It 'Untracked and no session in the process: nothing is left connected, so no warning and no Disconnect-MgGraph' {
+        $script:SessionContext = $null
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = $null
+            Get-OERGraphSessionState | Should -BeExactly 'Untracked'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
+        @($Warnings).Count | Should -Be 0
+    }
+
+    It 'Absent: the session the module connected is already gone, so no warning and no Disconnect-MgGraph' {
+        $script:SessionContext = $null
+        InModuleScope $script:moduleName -Parameters @{ F = $script:SessionFingerprint } {
+            param($F)
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = $F }
+            Get-OERGraphSessionState | Should -BeExactly 'Absent'
+        }
+
+        Disconnect-OER -Confirm:$false -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName { $script:_OERAuthState | Should -BeNullOrEmpty }
+        @($Warnings).Count | Should -Be 0
+    }
+
+    It 'under -WhatIf on a Changed session, shows the warning and changes nothing' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = '{"TenantId":"other"}' }
+            $script:_OERSessionUncertain = $true
+        }
+
+        Disconnect-OER -WhatIf -WarningVariable Warnings -WarningAction SilentlyContinue
+
+        # The warning is written before the gate: a warning inside it is never written under -WhatIf.
+        @($Warnings).Count | Should -Be 1
+        $Warnings[0].Message | Should -BeExactly $script:LeftWarning
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0 -Exactly
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.TenantId | Should -BeExactly 'x'
+            $script:_OERSessionUncertain | Should -BeTrue
+        }
+    }
+
+    It 'writes its one warning before its first $PSCmdlet.ShouldProcess call, read from the loaded function' {
+        # From the loaded command, so a mutated copy under the harness and the built module in the gate
+        # are both what is read. The run-time half of the same fact is the -WhatIf test above.
+        $Ast = (Get-Command -Module $script:moduleName -Name Disconnect-OER).ScriptBlock.Ast
+        $Warnings = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.CommandAst] -and $Node.GetCommandName() -eq 'Write-Warning'
+                }, $true))
+        $Gates = @($Ast.FindAll({
+                    param($Node)
+                    $Node -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                    $Node.Member -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                    $Node.Member.Value -eq 'ShouldProcess'
+                }, $true))
+
+        $Warnings.Count | Should -Be 1
+        $Gates.Count | Should -BeGreaterThan 0
+        $FirstGate = $Gates | Sort-Object -Property { $_.Extent.StartOffset } | Select-Object -First 1
+        $Warnings[0].Extent.StartOffset | Should -BeLessThan $FirstGate.Extent.StartOffset
     }
 }
