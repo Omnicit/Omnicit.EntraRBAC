@@ -5765,7 +5765,7 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
             }
         }
 
-        It 'b: when <Case>, the caught message ends with the statement "<Outcome>"' -ForEach @(
+        It 'b: when <Case>, the caught message ends with the "<Outcome>" statement' -ForEach @(
             # A read after the calls that is refused, unlisted, answers 404 or reads no boolean is
             # UNKNOWN, never "not opened". The poll read the policy closed before the first call.
             @{ Case = 'the listing after the calls is refused'; Outcome = 'unknown'; Refused = $true
@@ -5926,35 +5926,67 @@ Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$
         }
 
         It 'e: publishes the caught record''s own error id when the second call fails with <Shape>' -ForEach @(
-            @{ Shape = 'an error id that contains a comma'; Published = 'Odd,Id' }
+            @{ Kind = 'comma'; Shape = 'an error id that contains a comma'; Published = 'Odd,Id' }
             # Thrown, so written by no command: the suffix is none, and a trailing comma is the id's own.
-            @{ Shape = 'an error id that ends with a comma'; Published = 'Trailing,' }
-            @{ Shape = 'the error of a compiled cmdlet'; Published = 'System.ArgumentException' }
-            @{ Shape = 'the error a [CmdletBinding()] function writes under -ErrorAction Stop'; Published = 'Helper_Refused' }
+            @{ Kind = 'trailing'; Shape = 'an error id that ends with a comma'; Published = 'Trailing,' }
+            @{ Kind = 'cmdlet'; Shape = 'the error of a compiled cmdlet'; Published = 'System.ArgumentException' }
+            @{ Kind = 'function'; Shape = 'the error a [CmdletBinding()] function writes under -ErrorAction Stop'; Published = 'Helper_Refused' }
+            # Its command has an empty name, so PowerShell appends no suffix (the record reads 'Anon_Id'),
+            # while the one computed from the command is ',': the id ends with no suffix and stays whole.
+            @{ Kind = 'anonymous'; Shape = 'the error an anonymous [CmdletBinding()] scriptblock writes under -ErrorAction Stop'; Published = 'Anon_Id' }
+            # Not the cmdlet's PolicyOpenedButGrantFailed, which it writes in exactly that spelling: the
+            # comparison is Ordinal, so this record gets the read and the statement like any other.
+            @{ Kind = 'case'; Shape = 'the id PolicyOpenedButGrantFailed in another case'; Published = 'policyopenedbutgrantfailed' }
         ) {
-            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Shape = $Shape; Published = $Published } {
-                param($Prefix, $Shape, $Published)
+            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Kind = $Kind; Published = $Published } {
+                param($Prefix, $Kind, $Published)
                 $script:ReadPlan = @('closed', 'open')
                 # The caught record as this process makes it, read here first: its message and category.
-                $Second = switch -Wildcard ($Shape) {
-                    '*contains a comma*' {
+                $Second = switch ($Kind) {
+                    'comma' {
                         {
                             throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Odd: an error id with a comma.'), 'Odd,Id',
                                 [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
                         }
                     }
-                    '*ends with a comma*' {
+                    'trailing' {
                         {
                             throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Trailing: an error id that ends with a comma.'), 'Trailing,',
                                 [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
                         }
                     }
-                    '*compiled*' { { ConvertFrom-Json -InputObject '{' -ErrorAction Stop } }
-                    default {
+                    'cmdlet' { { ConvertFrom-Json -InputObject '{' -ErrorAction Stop } }
+                    'function' {
                         { Write-LaterAttemptRefusal -ErrorId 'Helper_Refused' -Exception ([System.Exception]::new('Helper refused the grant.')) -ErrorAction Stop }
                     }
+                    'anonymous' {
+                        {
+                            & {
+                                [CmdletBinding()]
+                                param()
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new('Anon: refused by an anonymous scriptblock.'), 'Anon_Id',
+                                        [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1'))
+                            } -ErrorAction Stop
+                        }
+                    }
+                    'case' {
+                        {
+                            throw [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new('Lower-case id: not the PolicyOpenedButGrantFailed the cmdlet writes.'), 'policyopenedbutgrantfailed',
+                                [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                        }
+                    }
                 }
+                @($Second).Count | Should -Be 1
                 $Probe = try { & $Second } catch { $PSItem }
+                if ($Kind -eq 'anonymous') {
+                    # The shape the strip's EndsWith check exists for: a command is recorded, with an
+                    # empty name, and the id carries no suffix.
+                    $Probe.InvocationInfo.MyCommand | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+                    $Probe.InvocationInfo.MyCommand.Name | Should -BeExactly ''
+                    [string]$Probe.FullyQualifiedErrorId | Should -BeExactly 'Anon_Id'
+                }
                 $script:AddPlan = @('failed', $Second)
                 $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
                 $Err = $null

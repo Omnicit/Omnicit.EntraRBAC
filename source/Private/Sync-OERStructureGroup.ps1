@@ -1522,10 +1522,16 @@ function Sync-OERStructureGroup {
                                 # The caught record's own error id: its FullyQualifiedErrorId without the
                                 # suffix PowerShell appends for the command that wrote it -- ',' and the
                                 # implementing type's full name for a compiled cmdlet, ',' and the name for
-                                # any other command, and none (the empty suffix, which strips nothing) when
-                                # there is no command -- stripped only when the id ends with it. Never the
-                                # first comma segment: an error id can itself contain a comma (a thrown
-                                # string, for example).
+                                # any other command that has a name, and none when there is no command (the
+                                # empty suffix here, which strips nothing) -- stripped only when the id ends
+                                # with it. That check is what keeps the id whole where PowerShell appended
+                                # no suffix for a command it does record: an anonymous [CmdletBinding()]
+                                # scriptblock has an empty name, so its record reads '<id>' alone (measured)
+                                # while the suffix computed here is ','. Never the first comma segment: an
+                                # error id can itself contain a comma (a thrown string, for example). Both
+                                # comparisons are Ordinal: the suffix PowerShell appends is the very string read
+                                # here, and the cmdlet writes PolicyOpenedButGrantFailed in exactly that
+                                # spelling, so any other spelling is another record and gets the read.
                                 $CaughtId = [string]$PSItem.FullyQualifiedErrorId
                                 $CaughtCommand = $PSItem.InvocationInfo.MyCommand
                                 $CaughtSuffix = if ($CaughtCommand -is [System.Management.Automation.CmdletInfo]) {
