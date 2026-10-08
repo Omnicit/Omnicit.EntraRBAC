@@ -19,7 +19,7 @@ function Disconnect-OER {
     certificate or client secret, since a bare Connect-OER signs in interactively -- connects the
     module again and takes the session back, and a new PowerShell process is the other way.
 
-    Disconnect-OER always clears the module's state, including its record of the Microsoft Graph
+    Disconnect-OER clears the module's state, including its record of the Microsoft Graph
     PowerShell SDK session the module connected, and calls Disconnect-MgGraph only when the process
     still holds that session. A session the module did not connect, or holds no record of having
     connected -- one another Connect-MgGraph started or replaced the module's with, or one left by
@@ -31,6 +31,11 @@ function Disconnect-OER {
     and the next OER cmdlet signs in again by itself, except on an app-only session (client secret
     or certificate), which reports AppOnlySessionCredentialUnavailable until Connect-OER is run with
     the secret or certificate.
+
+    Under -WarningAction Stop (or a global $WarningPreference of Stop), a Disconnect-OER that would
+    leave another session stops at that warning and clears nothing: not the module's state, and not
+    the uncertainty described below. Run it with the default warning preference, or end the other
+    session first with Disconnect-MgGraph.
 
     Disconnect-OER also ends the uncertainty a failed or refused sign-in leaves: after such a sign-in
     the module's session may not be the one that sign-in asked for, so an OER command that names no
@@ -50,12 +55,14 @@ function Disconnect-OER {
     Disconnect-OER
     Clears the cached Omnicit.EntraRBAC tokens and disconnects the Microsoft Graph session the
     module connected. An Az PowerShell session started outside this module, and a Graph SDK session
-    the module did not connect, are left connected.
+    the module did not connect, or has no record of connecting, are left connected.
 
     .EXAMPLE
-    Disconnect-OER; Disconnect-MgGraph
-    Clears the module's session and also ends a Graph SDK session the module did not connect, which
-    Disconnect-OER leaves connected with a warning.
+    Disconnect-OER; Disconnect-MgGraph -ErrorAction SilentlyContinue
+    Clears the module's session and also ends a Graph SDK session the module did not connect, or has
+    no record of connecting, which Disconnect-OER leaves connected with a warning. When the session
+    was the module's own, Disconnect-OER has already ended it, and the silenced Disconnect-MgGraph
+    has nothing left to end.
     #>
     [CmdletBinding(SupportsShouldProcess)]
     [OutputType([void])]

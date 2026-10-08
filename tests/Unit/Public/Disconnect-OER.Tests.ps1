@@ -381,6 +381,56 @@ Describe 'Disconnect-OER ends only the Graph SDK session the module connected (A
         @($Warnings).Count | Should -Be 0
     }
 
+    # The ruling for the warning before the gate (Sprint 10 step 3, M1): under -WarningAction Stop a
+    # command that would leave another session stops AT that warning, so its gate never runs and it
+    # clears nothing. That is the safe side: the Changed state stays and the session gate refuses the
+    # next OER command, and the A10 marker stays set. Plain PowerShell measurement (7.6.6): the record's
+    # FullyQualifiedErrorId is 'ActionPreferenceStop,Microsoft.PowerShell.Commands.WriteWarningCommand'.
+    It 'under -WarningAction Stop on a Changed session, stops at the warning and clears nothing' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x'; GraphSessionFingerprint = '{"TenantId":"other"}' }
+            $script:_OERSessionUncertain = $true
+            Get-OERGraphSessionState | Should -BeExactly 'Changed'
+        }
+
+        { Disconnect-OER -Confirm:$false -WarningAction Stop } |
+            Should -Throw -ErrorId 'ActionPreferenceStop,Microsoft.PowerShell.Commands.WriteWarningCommand'
+
+        # The gate body never ran: the state, its fingerprint and the marker are as they were.
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.TenantId | Should -BeExactly 'x'
+            $script:_OERAuthState.GraphSessionFingerprint | Should -BeExactly '{"TenantId":"other"}'
+            $script:_OERSessionUncertain | Should -BeTrue
+            Get-OERGraphSessionState | Should -BeExactly 'Changed'
+        }
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0
+    }
+
+    It 'under a global $WarningPreference of Stop on an Untracked session, stops at the warning and clears nothing' {
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState = @{ TenantId = 'x' }
+            $script:_OERSessionUncertain = $true
+            Get-OERGraphSessionState | Should -BeExactly 'Untracked'
+        }
+
+        # Global, since module code reads the GLOBAL preference variable and a test-local one is not
+        # seen from the module's scope (first measured here: a local assignment threw nothing).
+        $Saved = $global:WarningPreference
+        try {
+            $global:WarningPreference = 'Stop'
+            { Disconnect-OER -Confirm:$false } |
+                Should -Throw -ErrorId 'ActionPreferenceStop,Microsoft.PowerShell.Commands.WriteWarningCommand'
+        } finally {
+            $global:WarningPreference = $Saved
+        }
+
+        InModuleScope $script:moduleName {
+            $script:_OERAuthState.TenantId | Should -BeExactly 'x'
+            $script:_OERSessionUncertain | Should -BeTrue
+        }
+        Should -Invoke -ModuleName $script:moduleName Disconnect-MgGraph -Times 0
+    }
+
     It 'writes its one warning before its first $PSCmdlet.ShouldProcess call, read from the loaded function' {
         # From the loaded command, so a mutated copy under the harness and the built module in the gate
         # are both what is read. The run-time half of the same fact is the -WhatIf test above.

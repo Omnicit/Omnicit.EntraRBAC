@@ -17,10 +17,10 @@ assignment cmdlets no longer report a rollback that finds nothing to change as f
 a confirming read. No ErrorId changed.
 
 `Disconnect-OER` now ends only the Graph SDK session the module connected and warns when it leaves
-another, such as your own `Connect-MgGraph`'s. An Azure Resource Manager request without a token is
-refused (`ArmTokenAcquisitionFailed`), not sent. `New-`/`Set-OERConfiguration` refuse a white-space
-`-TenantId`, and `SignInSuperseded` and the `SignInRefused` after a failed sign-in name their actual
-cause.
+another. An Azure Resource Manager request without a token is refused (`ArmTokenAcquisitionFailed`),
+not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignInSuperseded` names
+its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
+the previous tenant's.
 
 ## [1.1.3] - 2026-10-07
 

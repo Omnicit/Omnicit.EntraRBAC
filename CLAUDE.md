@@ -717,10 +717,10 @@ re-authenticates rather than reusing a token minted at the previous cloud's auth
 365 GCC runs on the commercial (`Global`) endpoints and needs no `-Environment` at all** -- only GCC
 High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`) are separate cloud boundaries.
 `Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph` only when
-`Get-OERGraphSessionState` reports `Own` (A4, BL-67): a session the module did not connect is left,
-with a warning written before its `ShouldProcess`. It deliberately does NOT call
-`Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the machine is
-the operator's own (Philip's decision, 2026-09-21).
+`Get-OERGraphSessionState` reports `Own` (A4, BL-67): a session the module did not connect, or has no
+record of connecting, is left, with a warning written before its `ShouldProcess`. It deliberately
+does NOT call `Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the
+machine is the operator's own (Philip's decision, 2026-09-21).
 `Why: docs/development/rationale.md#sovereign-clouds`
 
 **IMPORTANT:** `-ClientSecret` is a `[securestring]`. Never accept or store client secrets as plain

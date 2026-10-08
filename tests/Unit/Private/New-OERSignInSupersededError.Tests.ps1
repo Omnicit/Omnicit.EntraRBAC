@@ -253,4 +253,54 @@ Describe 'New-OERSignInSupersededError' {
             $Same.NoneKept | Should -BeTrue
         }
     }
+
+    # Who passes -Document is a fact about the callers, and no gate holds it: gate 10 of
+    # tests/QA/sourcehygiene.tests.ps1 (Test-OERGateBody) matches the factory by call name only, so a
+    # transport that passed -Document would stay green there. Read here from the LOADED functions, so a
+    # mutated copy under the harness and the built module in the gate are both what is read. An
+    # abbreviated name (-Doc) or a splat could carry the switch too, so each counts as binding it.
+    Context 'only Invoke-OERStructure passes -Document (BL-92)' {
+        BeforeAll {
+            $script:CallFacts = InModuleScope Omnicit.EntraRBAC {
+                $Facts = @{}
+                foreach ($FunctionName in 'Invoke-OERGraphRequest', 'Invoke-OERArmRequest', 'Invoke-OERStructure') {
+                    $Ast = (Get-Command -Name $FunctionName).ScriptBlock.Ast
+                    $Calls = @($Ast.FindAll({
+                                param($Node)
+                                $Node -is [System.Management.Automation.Language.CommandAst] -and
+                                $Node.GetCommandName() -eq 'New-OERSignInSupersededError'
+                            }, $true))
+                    $WithDocument = 0
+                    foreach ($Call in $Calls) {
+                        $Binds = $false
+                        foreach ($Element in $Call.CommandElements) {
+                            if ($Element -is [System.Management.Automation.Language.CommandParameterAst] -and
+                                'Document'.StartsWith($Element.ParameterName, [System.StringComparison]::OrdinalIgnoreCase)) {
+                                $Binds = $true
+                            }
+                            if ($Element -is [System.Management.Automation.Language.VariableExpressionAst] -and $Element.Splatted) {
+                                $Binds = $true
+                            }
+                        }
+                        if ($Binds) { $WithDocument++ }
+                    }
+                    $Facts[$FunctionName] = [PSCustomObject]@{ Calls = $Calls.Count; WithDocument = $WithDocument }
+                }
+                $Facts
+            }
+        }
+
+        It 'refuses a request in <Name> without -Document, at every call' -ForEach @(
+            @{ Name = 'Invoke-OERGraphRequest' }
+            @{ Name = 'Invoke-OERArmRequest' }
+        ) {
+            $script:CallFacts[$Name].Calls | Should -BeGreaterThan 0
+            $script:CallFacts[$Name].WithDocument | Should -Be 0
+        }
+
+        It 'refuses a document in Invoke-OERStructure with -Document, at its one call' {
+            $script:CallFacts['Invoke-OERStructure'].Calls | Should -Be 1
+            $script:CallFacts['Invoke-OERStructure'].WithDocument | Should -Be 1
+        }
+    }
 }
