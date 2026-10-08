@@ -5585,34 +5585,34 @@ is the error that stops it, so the engine's Failed row for the item carries it. 
 rollback, since the single-rule open it makes has no public inverse.
 
 **What a new group's `GroupNotOnboarded` says about its policy (Sprint 10 step 2, BL-51).** For a
-group created in the same run, the engine's permanent wait calls `Add-OERGroupEligibility`, which opens
-the group's policy to allow permanent eligibility before it sends the request. When the wait ran out,
-`GroupNotOnboarded` said nothing about that, so a policy the run had opened stayed open unreported. The
-engine now decides it itself, not through a flag threaded out of the cmdlet: the readiness poll has
-just read the policy before each call, and its read before the FIRST call is the before-state -- kept
-from that call only, since a later poll reads a policy the first call may already have opened, and
-unknown when the poll was refused or its read carried no permanent-eligibility setting. After the
-attempts the engine reads the policy once more, with the poll's own two calls and no wait of its
-own, and the message gives one of seven outcomes, decided in this order: nothing sent and nothing
-opened, not readable after the attempts, not left open, a closed read that may be out of date, open
-and possibly opened, already allowed before the first request, or opened and still open. A read
-after the attempts that fails, is unlisted, answers 404 or reads no setting is unknown, and an
-unknown is never written as "not opened": the message says the policy may have been opened and gives
-the command that closes it, since a reader who acts on "not opened" leaves a weakened policy in
-place. A closed read is "not left open" only when the poll did not read the policy closed just
-before the first request (Sprint 10 step 2, Ruling R4). When it did, that request would have opened
-it, and a read made seconds after the open can come from a replica that has not seen it yet: the
-message then says the read may be out of date and gives the close command for the case that the
-policy allows permanent eligibility. That errs toward advice that may prove unneeded, never toward a
-weakened policy left unreported. A closed read after a before-state that is unknown can still be
-such a stale read; that is the cost of not threading a flag out of the cmdlet. The command comes
-from `Get-OERGroupPimPolicyCloseAdvice`, which `Add-OERGroupEligibility` uses too, and is
-`Set-OERGroupPimPolicy -Group G -AccessType A -AllowPermanentEligibility:$false` (Ruling R1). The
-advice before this step named `-ActivationMaxHours` without the switch, and `Set-OERGroupPimPolicy`
-patches `Expiration_Admin_Eligibility` only when `-EligibleDuration` or `-AllowPermanentEligibility` is
-bound, so that command left the policy open. Binding the switch to false sends the rule with
-`isExpirationRequired` true and the live `maximumDuration`; the helper's own tests run the advice's
-text against the cmdlet to hold that.
+group created in the same run, the engine's permanent wait calls `Add-OERGroupEligibility`, which
+opens the group's policy to allow permanent eligibility before it sends the request. When the wait
+ran out, `GroupNotOnboarded` said nothing about that, so a policy the run had opened stayed open
+unreported. The engine now decides it itself, not through a flag threaded out of the cmdlet: the
+readiness poll has just read the policy before each call, and its read before the FIRST call is the
+before-state -- kept from that call only, since a later poll reads a policy the first call may
+already have opened, and unknown when the poll was refused or its read carried no
+permanent-eligibility setting. After the attempts the engine reads the policy once more, with the
+poll's own two calls and no wait of its own, and the message gives one of seven outcomes, decided in
+this order: nothing sent and nothing opened, not readable after the attempts, not left open, a
+closed read that may be out of date, open and possibly opened, already allowed before the first
+request, or opened and still open. A read after the attempts that fails, is unlisted, answers 404 or
+reads no setting is unknown, and an unknown is never written as "not opened": the message says the
+policy may have been opened and gives the command that closes it, since a reader who acts on "not
+opened" leaves a weakened policy in place. A closed read is "not left open" only when the poll did
+not read the policy closed just before the first request (Sprint 10 step 2, Ruling R4). When it did,
+that request would have opened it, and a read made seconds after the open can come from a replica
+that has not seen it yet: the message then says the read may be out of date and gives the close
+command for the case that the policy allows permanent eligibility. That errs toward advice that may
+prove unneeded, never toward a weakened policy left unreported. A closed read after a before-state
+that is unknown can still be such a stale read; that is the cost of not threading a flag out of the
+cmdlet. The command comes from `Get-OERGroupPimPolicyCloseAdvice`, which `Add-OERGroupEligibility`
+uses too, and is `Set-OERGroupPimPolicy -Group G -AccessType A -AllowPermanentEligibility:$false`
+(Sprint 10 step 2, Ruling R1). The advice before this step named `-ActivationMaxHours` without the
+switch, and `Set-OERGroupPimPolicy` patches `Expiration_Admin_Eligibility` only when
+`-EligibleDuration` or `-AllowPermanentEligibility` is bound, so that command left the policy open.
+Binding the switch to false sends the rule with `isExpirationRequired` true and the live
+`maximumDuration`; the helper's own tests run the advice's text against the cmdlet to hold that.
 
 ## warning-before-confirmation
 
