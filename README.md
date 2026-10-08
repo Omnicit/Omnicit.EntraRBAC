@@ -209,8 +209,11 @@ nothing behind for the module to see. An empty `-TenantAlias`, typed or piped, i
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`; both
 count as a refused sign-in. Every other cmdlet refuses an empty or `$null` `-TenantId` while
 PowerShell binds its parameters, so that command never runs and sends nothing: an empty cell in a
-loop over tenants no longer stands for the current session's tenant. On any other cmdlet, a
-`-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
+loop over tenants no longer stands for the current session's tenant. `New-OERConfiguration` and
+`Set-OERConfiguration` store the tenant instead of signing in to it, so they also refuse a
+`-TenantId` of white space only while PowerShell binds their parameters, and no profile is written
+with a blank tenant; a profile already on disk with one is still read as it is. On any other cmdlet,
+a `-TenantId` of spaces is looked up like any value that is not a tenant ID, and refused with
 `TenantResolutionFailed` when it names no tenant.
 
 One OER pipeline works in one tenant with one identity. If commands in the same pipeline sign in to

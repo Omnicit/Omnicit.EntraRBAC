@@ -3641,15 +3641,38 @@ nothing more.
 - A `Connect-OER` whose parameters cannot be bound -- a mandatory parameter bound to an empty string,
   for example -- is refused by PowerShell before its `process` block runs, so it marks nothing, and a
   no-tenant command after it inherits the previous session as before.
-- A `-TenantId` of spaces on any cmdlet but `Connect-OER` passes `[ValidateNotNullOrEmpty()]` (A12,
-  above). On a cmdlet that signs in it names a tenant that is not the session's and is looked up like
-  any value that is not a tenant ID, and refused with `TenantResolutionFailed` when the authority
-  resolves it to no tenant; `New-OERConfiguration` and `Set-OERConfiguration` store it, and a later
-  `Connect-OER -TenantAlias` with that profile is refused the same way at its lookup. Every path ends
-  in a refusal, so decision A12's attribute stands as decided: PowerShell 7.4's
+- A `-TenantId` of spaces on any cmdlet that signs in, other than `Connect-OER`, passes
+  `[ValidateNotNullOrEmpty()]` and nothing more (A12, above). It names a tenant that is not the
+  session's and is looked up like any value that is not a tenant ID, and refused with
+  `TenantResolutionFailed` when the authority resolves it to no tenant. That path ends in a refusal,
+  so decision A12's attribute stands as decided for those cmdlets: PowerShell 7.4's
   `[ValidateNotNullOrWhiteSpace()]` does not exist on 7.2, which the module supports, and a
   `[ValidatePattern()]` or `[ValidateScript()]` that refused spaces at binding on 7.2 would replace
-  the attribute A12 names on ninety cmdlets for a value that is already refused.
+  the attribute A12 names on every one of them for a value that is already refused.
+- **`New-OERConfiguration` and `Set-OERConfiguration` refuse a `-TenantId` of white space only at
+  binding** (Sprint 10 step 3, BL-96). They store the tenant and look nothing up, so such a value was
+  written to the profile and refused only later, when a `Connect-OER -TenantAlias` read it back at its
+  lookup: a profile nobody could use, found at sign-in time. Both now carry
+  `[ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = '...')]` declared ABOVE
+  `[ValidateNotNullOrEmpty()]`, with the message `The TenantId consists only of white space. Supply
+  the tenant ID or a verified domain of the tenant.` A script, since 7.2 has no
+  `[ValidateNotNullOrWhiteSpace()]`; `IsNullOrWhiteSpace` is exactly what 7.4's attribute tests, so a
+  tab, a line break and a no-break space count as white space as a space does; and `ErrorMessage` on
+  `[ValidateScript()]` exists since PowerShell 6, so it is available on 7.2. The order is measured,
+  in plain PowerShell 7.6: validation attributes run in REVERSE declaration order, so with the script
+  declared first an empty value still reaches `[ValidateNotNullOrEmpty()]` first and reads its own
+  message (`The argument is null or empty`), a blank one reads the script's, and both carry
+  `ParameterArgumentValidationError,<cmdlet>`. Declared the other way round, an empty value would
+  read the white-space message, which is wrong for it. The attribute stays, since
+  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`.
+  `Set-OERConfiguration` binds `-TenantId` from the pipeline, so a piped profile object whose
+  `TenantId` is blank is refused per input object, at binding, and the next object is still
+  processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
+  repair is `Set-OERConfiguration -TenantAlias <alias> -TenantId <tenant>`. That refusal reaches
+  `$Error` and not `-ErrorVariable`, as the round-trip tests of `Set-OERConfiguration.Tests.ps1`
+  already record for a binding failure on pipeline input. Existing profiles are read as before:
+  `Get-OERConfiguration` and `Connect-OER -TenantAlias` are unchanged, and a stored blank `TenantId`
+  is read and emitted as it is.
 - A no-tenant command after a refusal is refused even when the operator meant the previous tenant, and
   even when the module holds no session at all and the command would have signed in to
   `organizations`. Both are on the safe side; `-TenantId`, `Connect-OER` or `Disconnect-OER` sends
@@ -3682,8 +3705,10 @@ it after one whose sign-in was refused; a `Connect-OER` whose parameters cannot 
 so it leaves nothing behind; an empty `-TenantAlias`, typed or piped, is refused with
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`, both
 counting as a refused sign-in; every other cmdlet refuses an empty or `$null` `-TenantId` at
-parameter binding, so that command never runs and sends nothing; and on any other cmdlet a
-`-TenantId` of spaces is looked up like any value that is not a tenant ID. `Connect-OER`'s and
+parameter binding, so that command never runs and sends nothing; `New-OERConfiguration` and
+`Set-OERConfiguration` also refuse a `-TenantId` of white space only at binding (BL-96), and a
+profile already on disk with one is still read as it is; and on any other cmdlet a `-TenantId` of
+spaces is looked up like any value that is not a tenant ID. `Connect-OER`'s and
 `Disconnect-OER`'s help carry
 the rule for their own side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the
 two empty values.
@@ -3757,6 +3782,35 @@ either GUID term turns its (d) case red; and dropping the no-expected-tenant ter
 No end-to-end pipeline test was added for F3: the A20 Describe's stubs answer one tenant per request
 for both resources and record no header, so showing which token an ARM request carried would need
 new stub machinery; the unit tests show that the refused ARM token is never cached.
+
+**The proof of the white-space refusal** (Sprint 10 step 3, BL-96). The Context
+`refuses a white-space -TenantId at binding (BL-96)` in `tests/Unit/Public/New-OERConfiguration.Tests.ps1`
+and in `tests/Unit/Public/Set-OERConfiguration.Tests.ps1` binds a space, three spaces, a tab, a
+carriage return and line feed, and a no-break space (U+00A0) with every mandatory parameter given,
+in a `try` under `-ErrorAction Stop`. Each expects exactly `ParameterArgumentValidationError,<cmdlet>`,
+a `ParameterBindingException`, the message carrying the text above, and `Export-OERConfiguration`
+mocked in module scope and counted at zero. The mock writes a file when it is called, so the check
+that no profile file exists (New) or that the existing one is byte-unchanged (Set) does not restate
+the mock. One more test per file binds `''` and expects `The argument is null or empty` and not the
+white-space message, which fixes the declaration order. Set adds the pipeline test: two piped
+objects, the first with `TenantId = '  '`, give exactly one `ParameterArgumentValidationError,Set-OERConfiguration`
+in `$Error`, the second object written once and the first one's file unchanged. Each file also has a
+control with a real tenant, and `tests/Unit/Public/Get-OERConfiguration.Tests.ps1` a profile whose
+stored `TenantId` is three spaces, read and emitted as it is; those passed before the change, and
+are there to hold the unchanged half.
+
+Mutation-proved on copies of `source/`, one exact edit per mutant. Deleting the `[ValidateScript()]`
+turns the five blank-value tests red in New, and those five and the pipeline test in Set. Swapping
+the two attributes turns the `''` test red in each. `IsNullOrEmpty` for `IsNullOrWhiteSpace` turns
+the five blank-value tests red in each, and the pipeline test in Set. A script that trims only ASCII
+spaces turns the tab, the line break and the no-break-space tests red; an ASCII-whitespace regex
+turns only the no-break-space test red, in each. Dropping `ErrorMessage` turns the five message
+assertions red in each, since PowerShell then names the script in the message. Deleting
+`[ValidateNotNullOrEmpty()]` from `New-OERConfiguration` turns the `''` test and the cohort's
+attribute test for it red; the cohort's run-time row for it stays green, since the script refuses
+`''` with the same id too, so the attribute test is the one that holds the attribute. Inverting the
+script's test turns the controls red. One mutant is equivalent: `Trim()` for `IsNullOrWhiteSpace`,
+which trims every Unicode white space as the .NET method does.
 
 ## profile-path
 

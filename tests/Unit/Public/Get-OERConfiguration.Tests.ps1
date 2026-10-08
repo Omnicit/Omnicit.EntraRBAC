@@ -171,6 +171,27 @@ Describe 'Get-OERConfiguration' {
         @($Result).Count | Should -Be 0
     }
 
+    It 'still reads and emits a profile whose stored TenantId is white space only, as it did before BL-96' {
+        # Sprint 10 step 3 (BL-96): New-/Set-OERConfiguration refuse a white-space -TenantId at parameter
+        # binding, but a profile already on disk with one is read exactly as before -- the refusal is on
+        # the write path, and this read path is deliberately unchanged. The file is seeded directly, since
+        # the write cmdlets can no longer produce it.
+        $Base = Join-Path $TestDrive 'BlankTenantIdProfiles'
+        New-Item -ItemType Directory -Path $Base -Force | Out-Null
+        Set-Content -Path (Join-Path $Base 'blank-tenant.psd1') -Value "@{ TenantId = '   ' }" -Encoding utf8
+
+        $Single = @(Get-OERConfiguration -TenantAlias 'blank-tenant' -BasePath $Base -ErrorAction SilentlyContinue -ErrorVariable Err)
+        @($Err).Count | Should -Be 0
+        $Single.Count | Should -Be 1
+        $Single[0].TenantAlias | Should -BeExactly 'blank-tenant'
+        $Single[0].TenantId | Should -BeExactly '   '
+
+        $All = @(Get-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue -ErrorVariable ErrAll)
+        @($ErrAll).Count | Should -Be 0
+        $All.Count | Should -Be 1
+        $All[0].TenantId | Should -BeExactly '   '
+    }
+
     # -------------------------------------------------------------------------------------------
     # Sovereign clouds (Sprint 1.5, issue #81, Task 5): the Environment key on a Tenant Profile.
     # -------------------------------------------------------------------------------------------

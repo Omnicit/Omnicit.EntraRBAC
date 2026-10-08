@@ -29,7 +29,9 @@ function Set-OERConfiguration {
 
     .PARAMETER TenantId
     Optional new tenant GUID or domain. When omitted, the existing value is preserved. Accepts
-    pipeline input by property name so a piped Get-OERConfiguration object flows its TenantId.
+    pipeline input by property name so a piped Get-OERConfiguration object flows its TenantId. An
+    empty value, or one of white space only, is refused at parameter binding; for a piped object that
+    refuses that one object, and the next one is still processed.
 
     .PARAMETER Naming
     Optional replacement naming-template hashtable. When omitted, the existing value is preserved.
@@ -67,6 +69,14 @@ function Set-OERConfiguration {
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
         [string]$TenantAlias,
         [Parameter(ValueFromPipelineByPropertyName)]
+        # BL-96: a TenantId of white space only is refused here, at binding, as an empty one is. The
+        # module supports PowerShell 7.2, which has no [ValidateNotNullOrWhiteSpace()] (7.4+), so the
+        # same test runs as a script. Declared ABOVE [ValidateNotNullOrEmpty()] on purpose: validation
+        # attributes run in reverse declaration order (measured), so an empty value still reads the
+        # NotNullOrEmpty message. That attribute stays: TenantIdNotEmpty.Cohort.Tests.ps1 requires it.
+        # A piped profile object carrying a blank TenantId is refused per input object, at binding,
+        # and the next object is still processed.
+        [ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.')]
         [ValidateNotNullOrEmpty()]
         [string]$TenantId,
         [Parameter(ValueFromPipelineByPropertyName)]
