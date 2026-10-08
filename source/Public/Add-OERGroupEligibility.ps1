@@ -21,20 +21,24 @@ function Add-OERGroupEligibility {
     eligible. The request body is built by the private New-OERGroupEligibilityBody helper. The result is
     a tagged Omnicit.EntraRBAC.GroupEligibility object. Supports -WhatIf and -Confirm. A permanent
     grant that needs the PIM-for-groups policy opened opens it only once the grant itself is
-    confirmed (declining the prompt weakens nothing, while -WhatIf still plans the policy change),
-    and a grant that then fails reports a PolicyOpenedButGrantFailed error naming the policy that is
-    left open -- there is no public inverse for that surgical single-rule open, so it is not rolled
-    back automatically.
-    Microsoft Graph can accept a request and answer it with a status in the Failed family (Failed, or
-    any status that starts with Failed, in any letter case), which grants nothing. The cmdlet then
-    still emits the request object (its Status reads as answered) and afterwards writes a
-    non-terminating EligibilityRequestFailed error (category InvalidResult, target the group id), so
-    a caller running with -ErrorAction Stop still receives the object, for example through
-    -OutVariable, before the error stops it. Re-running the same request usually succeeds: a group
-    created moments ago can take a while to be known to PIM for Groups. Only the Failed family is an
-    error; PendingApproval, Provisioned and every other status are not. When this invocation had
-    opened the policy for a permanent grant, the EligibilityRequestFailed message also names that
-    policy, which is left open, and how to close it, as PolicyOpenedButGrantFailed does.
+    confirmed (declining the prompt weakens nothing, while -WhatIf still plans the policy change).
+    When Microsoft Graph then REFUSES the grant, meaning the request itself fails, the cmdlet writes
+    a PolicyOpenedButGrantFailed error FIRST and only then the request's own error. It names the
+    policy that is still open, the command that closes it (Set-OERGroupPimPolicy with
+    -AllowPermanentEligibility:$false) and the reason the request failed, so under -ErrorAction Stop
+    PolicyOpenedButGrantFailed is the error that stops the caller. There is no public inverse for
+    that surgical single-rule open, so it is not rolled back automatically.
+    Microsoft Graph can also accept a request and answer it with a status in the Failed family
+    (Failed, or any status that starts with Failed, in any letter case), which grants nothing. That
+    is not a refusal: the cmdlet then still emits the request object (its Status reads as answered)
+    and afterwards writes a non-terminating EligibilityRequestFailed error (category InvalidResult,
+    target the group id), so a caller running with -ErrorAction Stop still receives the object, for
+    example through -OutVariable, before the error stops it. Re-running the same request usually
+    succeeds: a group created moments ago can take a while to be known to PIM for Groups. Only the
+    Failed family is an error; PendingApproval, Provisioned and every other status are not. When this
+    invocation had opened the policy for a permanent grant, the EligibilityRequestFailed message
+    carries the same advice as PolicyOpenedButGrantFailed: it names the policy, which is still open,
+    and the command that closes it.
 
     .PARAMETER Group
     The target group whose member or owner eligibility is granted, given as a display name or object id
