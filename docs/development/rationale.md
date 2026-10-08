@@ -5562,9 +5562,14 @@ by `PolicyOpenedButGrantFailed`, after the rollback, and the grant's own message
 since under Stop its own record is never reached. `New-OERActiveRoleAssignment` also opens the policy
 only once the assignment is confirmed, as `New-OEREligibleRoleAssignment` already did, so a declined
 prompt weakens nothing while `-WhatIf` still plans the policy change.
-`Add-OERGroupEligibility` keeps its older order, where its grant error is written before
+`Add-OERGroupEligibility` kept its older order through this step, its grant error written before
 `PolicyOpenedButGrantFailed`, so under `-ErrorAction Stop` the advice naming the policy it left open
-is not written there. There is no rollback in it to skip, and the order was left alone in this step.
+was never written. Sprint 10 step 2 (BL-98) gave it the same order: on a grant refused after it
+opened the policy, it writes `PolicyOpenedButGrantFailed` first -- the policy left open, the
+`Set-OERGroupPimPolicy` command that closes it, and the grant's own message inside it -- and only
+then the grant's own error. Under `-ErrorAction Stop`, the way the apply engine calls it, the advice
+is the error that stops it, so the engine's Failed row for the item carries it. There is still no
+rollback, since the single-rule open it makes has no public inverse.
 
 ## warning-before-confirmation
 

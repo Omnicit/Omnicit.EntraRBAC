@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -6571,6 +6572,145 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Exactly
                 Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
             }
+        }
+    }
+
+    Context 'a permanent grant refused after Add-OERGroupEligibility opened the policy of a group that already existed (BL-98)' {
+        # The handler calls Add-OERGroupEligibility with -ErrorAction Stop, so the first error the cmdlet
+        # writes is the one that ends it, and the one the handler's catch turns into the item's Failed
+        # row. On a grant refused after the cmdlet opened the group's policy, that first error is
+        # PolicyOpenedButGrantFailed: the row then carries the advice to close the policy and the
+        # grant's own message, and the grant's own record is never written. Add-OERGroupEligibility runs
+        # for REAL; mocked are auth, the group and principal lookups, the handler's group read, the
+        # policy-state read (the policy forbids permanent eligibility), the policy open (it succeeds)
+        # and the Graph transport, which refuses the eligibility POST.
+        BeforeAll {
+            $script:RefusedItem = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }'
+            $script:RefusedAdvice = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-perm' had been opened to allow " +
+                "permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group " +
+                "''33333333-3333-3333-3333-3333333333c3'' -AccessType member -ActivationMaxHours <n>' (without " +
+                '-AllowPermanentEligibility) if you do not intend to retry.'
+            $script:RefusedRowPrefix = "failed to add permanent eligibility for 'person1@example.com': "
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncGroupRefusedViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+            }
+            function Get-TestLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERGroupId { '33333333-3333-3333-3333-3333333333c3' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{ Id = '33333333-3333-3333-3333-3333333333c3'; DisplayName = 'role_sec_perm'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+                }
+                Mock Resolve-OERStructurePrincipal { '22222222-2222-2222-2222-2222222222b2' }
+                Mock Get-OERGroupPermanentEligibilityState { [PSCustomObject]@{ HasPolicy = $true; PolicyId = 'pol-perm'; PermanentAllowed = $false } }
+                Mock Enable-OERGroupPermanentEligibility { $true }
+                # The real cmdlet's request (POST), refused. Anything else is not simulated and throws.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests') {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.'),
+                            'Request_BadRequest',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                            $null)
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+            }
+        }
+
+        It 'reports one Failed row carrying the advice and the cause, and the grant''s own record is never written' {
+            $Expected = $script:RefusedRowPrefix + $script:RefusedAdvice + ' The request failed with: Request_BadRequest: Graph rejected the eligibility request.'
+            InModuleScope $script:moduleName -Parameters @{ Json = $script:RefusedItem; Expected = $Expected } {
+                param($Json, $Expected)
+                $Err = $null
+                $Rows = @(Invoke-SyncGroupRefusedViaCaller -Item ($Json | ConvertFrom-Json) -Confirm:$false `
+                        -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the real cmdlet opened the policy and sent the POST, once each.
+                Should -Invoke Enable-OERGroupPermanentEligibility -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'pol-perm' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests' }
+                @($Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
+                $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly $Expected
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'PolicyOpenedButGrantFailed*'
+                # -ErrorVariable also holds the records the mock layers raise as the refused POST unwinds
+                # (a bare Request_BadRequest, naming no command), and the record that stopped the cmdlet
+                # also inside the ActionPreferenceStopException (measured), so each id is read from a
+                # record or from the record an exception carries.
+                $Ids = @($Err | ForEach-Object {
+                        if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId }
+                        elseif ($_ -is [System.Management.Automation.IContainsErrorRecord]) { [string]$_.ErrorRecord.FullyQualifiedErrorId }
+                    })
+                # The handler re-published the advice, and the cmdlet wrote the advice alone: the grant's
+                # own record is never written.
+                @($Ids | Where-Object { $_ -eq 'PolicyOpenedButGrantFailed,Invoke-SyncGroupRefusedViaCaller' }).Count | Should -Be 1
+                @($Ids | Where-Object { $_ -like '*,Add-OERGroupEligibility' } | Sort-Object -Unique) |
+                    Should -Be @('PolicyOpenedButGrantFailed,Add-OERGroupEligibility')
+            }
+        }
+
+        It 'reaches the end of a script with no try, and the Failed row carries the advice and the cause' {
+            # The same refused grant where no try stands above the handler, as at a prompt. The script is
+            # transported as text into a runspace through Invoke-OERWithConfirmAnswer and installs its
+            # own fakes in ITS copy of the module scope; Add-OERGroupEligibility stays real. The policy
+            # open and the POST are logged with AppendAllText, whose path is substituted into the text.
+            # The handler's one gate is asked under -Confirm and answered Yes.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { '33333333-3333-3333-3333-3333333333c3' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = '33333333-3333-3333-3333-3333333333c3'; DisplayName = 'role_sec_perm'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { '22222222-2222-2222-2222-2222222222b2' }
+    Set-Item -Path function:script:Get-OERGroupPermanentEligibilityState -Value {
+        [pscustomobject]@{ HasPolicy = $true; PolicyId = 'pol-perm'; PermanentAllowed = $false }
+    }
+    Set-Item -Path function:script:Enable-OERGroupPermanentEligibility -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "open`n")
+        $true
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "grant $Method`n")
+        throw 'Graph rejected the request'
+    }
+    function script:Invoke-SyncGroupNoTry {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+    }
+}
+$Item = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }' | ConvertFrom-Json
+& $Module { param($Item) Invoke-SyncGroupNoTry -Item $Item -Confirm -WarningAction SilentlyContinue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            # Reached: the handler's gate was asked once and accepted, and the real cmdlet opened the
+            # policy and sent the POST.
+            @($Run.Prompts).Count | Should -Be 1
+            @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant POST')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Failed = @($Run.Output | Where-Object { $_ -like 'ROW:Failed:*' })
+            $Failed.Count | Should -Be 1
+            $Failed[0] | Should -BeExactly ('ROW:Failed:' + $script:RefusedRowPrefix + $script:RefusedAdvice + ' The request failed with: Graph rejected the request')
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated:*' }).Count | Should -Be 0
+            # The one error the script shows is the advice, re-published by the handler; the grant's own
+            # error is never written.
+            @($Run.Errors) | Should -Be @($script:RefusedAdvice + ' The request failed with: Graph rejected the request')
         }
     }
 }

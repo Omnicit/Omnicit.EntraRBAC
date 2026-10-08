@@ -296,13 +296,17 @@ function Add-OERGroupEligibility {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri (Get-OERPimGroupsGraphPath -Path 'identityGovernance/privilegedAccess/group/eligibilityScheduleRequests') -Body $Body
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $PSCmdlet.WriteError($PSItem)
+                $GrantError = $PSItem
                 if ($PolicyOpened) {
                     # The grant failed AFTER this invocation weakened the governing policy. There is
                     # no public inverse for the surgical single-rule open, so name the policy that is
                     # left open instead of attempting a rollback this module cannot perform correctly.
-                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. $PolicyStillOpenAdvice")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
+                    # Report it FIRST, with the grant's own message inside it, and only then re-publish
+                    # the grant's own error: under -ErrorAction Stop the first error written stops this
+                    # command, so the advice must be in that first error or it is never written.
+                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. $PolicyStillOpenAdvice The request failed with: $($GrantError.Exception.Message)")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
                 }
+                $PSCmdlet.WriteError($GrantError)
                 return
             }
             $Request = ConvertTo-OERGroupEligibilityRequest -InputObject $Response `

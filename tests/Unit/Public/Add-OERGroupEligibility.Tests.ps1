@@ -270,6 +270,29 @@ Describe 'Add-OERGroupEligibility' {
             Mock -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility { $true }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest { @{ id = 'req-x'; status = 'Provisioned'; action = 'adminAssign' } }
         }
+        BeforeAll {
+            # -ErrorVariable also collects records the mock layers raise as the refused POST unwinds;
+            # the cmdlet's OWN records are the ones that carry its name, in the order written.
+            function Get-TestOwnRecord ($Records) {
+                @($Records | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,Add-OERGroupEligibility' })
+            }
+            # Under -ErrorAction Stop the record that stopped the cmdlet reaches -ErrorVariable only
+            # inside the ActionPreferenceStopException (measured), so read each id from a record, or
+            # from the record an exception carries.
+            function Get-TestRecordId ($Records) {
+                foreach ($Record in $Records) {
+                    if ($Record -is [System.Management.Automation.ErrorRecord]) { [string]$Record.FullyQualifiedErrorId }
+                    elseif ($Record -is [System.Management.Automation.IContainsErrorRecord]) { [string]$Record.ErrorRecord.FullyQualifiedErrorId }
+                }
+            }
+            # The refused grant's message, and the full PolicyOpenedButGrantFailed text: the advice, with
+            # that message inside it.
+            $script:GrantRefusedMessage = 'Request_BadRequest: Graph rejected the eligibility request.'
+            $script:OpenedButFailedText = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-1' had been opened " +
+                'to allow permanent eligibility. The policy is still open; close it with ' +
+                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
+                '-AllowPermanentEligibility) if you do not intend to retry. The request failed with: ' + $script:GrantRefusedMessage
+        }
 
         It 'makes NO policy change when the operator genuinely declines the confirmation prompt' {
             # The decline is the state this guard exists for, and it is the one state an in-process
@@ -359,7 +382,59 @@ Describe 'Add-OERGroupEligibility' {
             ($Warnings.Message -join ' ') | Should -BeLike '*affects ALL member eligibility for this group*'
         }
 
-        It 'reports PolicyOpenedButGrantFailed and names the policy left open when the grant fails' {
+        It 'reports PolicyOpenedButGrantFailed FIRST, naming the policy left open and the cause, then the grant''s own error, when the grant fails (BL-98)' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.'),
+                    'Request_BadRequest',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null)
+            }
+            $Err = $null
+            $Out = @(Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 0
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'pol-1' }
+            # The cmdlet's own records, in the order written: PolicyOpenedButGrantFailed first, with the
+            # advice and the grant's message inside it, then the grant's own record, re-published unchanged.
+            $Own = Get-TestOwnRecord $Err
+            $Own.Count | Should -Be 2
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility'
+            $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+            $Own[0].TargetObject | Should -BeExactly 'pol-1'
+            $Own[0].Exception.Message | Should -BeExactly $script:OpenedButFailedText
+            $Own[1].FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Add-OERGroupEligibility'
+            $Own[1].Exception.Message | Should -BeExactly $script:GrantRefusedMessage
+        }
+
+        It 'stops a caller under -ErrorAction Stop with PolicyOpenedButGrantFailed, carrying the advice and the cause, and never writes the grant''s own error (BL-98)' {
+            Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
+                throw [System.Management.Automation.ErrorRecord]::new(
+                    [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.'),
+                    'Request_BadRequest',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $null)
+            }
+            $Err = $null
+            $Thrown = $null
+            try {
+                Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                    -WarningAction SilentlyContinue -ErrorAction Stop -ErrorVariable Err | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility'
+            $Thrown.Exception.Message | Should -BeExactly $script:OpenedButFailedText
+            # The cmdlet's own ids are the advice alone: the grant's own record, which the old order
+            # wrote first, is never reached under Stop.
+            @(Get-TestRecordId $Err | Where-Object { $_ -like '*,Add-OERGroupEligibility' }) |
+                Should -Be @('PolicyOpenedButGrantFailed,Add-OERGroupEligibility')
+        }
+
+        It 'scrubs the refused POST record before re-publishing it, on the opened-policy path (bearer hygiene)' {
+            # The catch re-publishes the caught record, so the proof is a mocked scrub asked for that
+            # very record: an $Error-based proof passes with the Remove-OERErrorRecord line deleted.
             Mock -ModuleName $script:moduleName Remove-OERErrorRecord { }
             Mock -ModuleName $script:moduleName Invoke-OERGraphRequest {
                 throw [System.Management.Automation.ErrorRecord]::new(
@@ -369,13 +444,14 @@ Describe 'Add-OERGroupEligibility' {
                     $null)
             }
             $Err = $null
-            Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
-                -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
-            $Reported = @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility' })
-            $Reported.Count | Should -Be 1
-            $Reported[0].Exception.Message | Should -BeLike '*pol-1*'
-            $Reported[0].Exception.Message | Should -BeLike '*still open*'
-            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1
+            Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid -Confirm:$false `
+                -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            # Reached: the policy was opened and the refused POST took the opened-policy path.
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -Exactly
+            @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility' }).Count | Should -Be 1
+            Should -Invoke -ModuleName $script:moduleName Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                $Record.Exception.Message -eq 'Request_BadRequest: Graph rejected the eligibility request.'
+            }
         }
 
         It 'does NOT report PolicyOpenedButGrantFailed when the grant fails without an open' {
@@ -393,8 +469,14 @@ Describe 'Add-OERGroupEligibility' {
             $Err = $null
             Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
                 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 0
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility' }).Count |
                 Should -Be 0
+            # Exactly one record of the cmdlet's own: the grant's, re-published unchanged.
+            $Own = Get-TestOwnRecord $Err
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Add-OERGroupEligibility'
+            $Own[0].Exception.Message | Should -BeExactly $script:GrantRefusedMessage
         }
 
         It 'does NOT report PolicyOpenedButGrantFailed when the nested policy open was DECLINED' {
@@ -413,9 +495,14 @@ Describe 'Add-OERGroupEligibility' {
             $Err = $null
             Add-OERGroupEligibility -Group 'gid-1' -PrincipalId $script:PrincipalGuid `
                 -Confirm:$false -ErrorAction SilentlyContinue -ErrorVariable Err | Out-Null
-            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1
+            Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 1 -Exactly
             @($Err | Where-Object { $_.FullyQualifiedErrorId -eq 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility' }).Count |
                 Should -Be 0
+            # Exactly one record of the cmdlet's own: the grant's, re-published unchanged.
+            $Own = Get-TestOwnRecord $Err
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Add-OERGroupEligibility'
+            $Own[0].Exception.Message | Should -BeExactly $script:GrantRefusedMessage
         }
     }
 
@@ -772,5 +859,74 @@ Describe 'Add-OERGroupEligibility -- a failed policy-id read is not GroupNotOnbo
         Should -Invoke -ModuleName $script:moduleName Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' }
         Should -Invoke -ModuleName $script:moduleName Enable-OERGroupPermanentEligibility -Times 0 -Exactly
         $Result.Count | Should -Be 1
+    }
+}
+
+Describe 'Add-OERGroupEligibility: the advice for an opened policy in a script with no try (BL-98)' {
+    # Where no try stands anywhere up the call stack, as at a prompt, a grant refused after this
+    # invocation opened the group's policy must still say that the policy is open and how to close it.
+    # Under -ErrorAction Stop the first error written ends the whole script, so that first error is
+    # PolicyOpenedButGrantFailed, carrying the advice and the grant's own message. The script runs in a
+    # runspace through Invoke-OERWithConfirmAnswer, so it is transported as text and installs its own
+    # fakes in ITS copy of the module scope; they append the policy open and the POST to a log file
+    # whose path is substituted into the text, since a stopped script prints nothing. The control runs
+    # the same script without Stop. The log is written with AppendAllText, never Add-Content, which
+    # could prompt on its own under a propagated $ConfirmPreference.
+    BeforeAll {
+        $script:NoTryScenario = {
+            param([string]$Log, [string]$Stop)
+            [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { 'gid-1' }
+    Set-Item -Path function:script:Resolve-OERPrincipalOrId -Value { [pscustomobject]@{ PrincipalId = '11111111-1111-1111-1111-111111111111' } }
+    Set-Item -Path function:script:Get-OERGroupPermanentEligibilityState -Value {
+        [pscustomobject]@{ HasPolicy = $true; PolicyId = 'pol-1'; PermanentAllowed = $false }
+    }
+    Set-Item -Path function:script:Enable-OERGroupPermanentEligibility -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "open`n")
+        $true
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "grant $Method`n")
+        throw 'Graph rejected the request'
+    }
+}
+$Result = Add-OERGroupEligibility -Group 'gid-1' -PrincipalId '11111111-1111-1111-1111-111111111111' -Confirm:$false -WarningAction SilentlyContinue #STOP#
+"REACHED:$(@($Result).Count)"
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
+        }
+        $script:NoTryAdviceText = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-1' had been opened " +
+            'to allow permanent eligibility. The policy is still open; close it with ' +
+            "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
+            '-AllowPermanentEligibility) if you do not intend to retry. The request failed with: Graph rejected the request'
+        function Get-TestLoggedLine ([string]$Log) {
+            if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+        }
+    }
+
+    It 'a refused grant after an open, under -ErrorAction Stop, ends the script with PolicyOpenedButGrantFailed, carrying the advice and the cause' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NoTryScenario -Log $Log -Stop '-ErrorAction Stop'
+        # Measured: a stop outside any try ends the whole script, so the runner throws to its caller.
+        $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } | Should -Throw -PassThru
+        $Thrown.Exception.InnerException | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+        $Thrown.Exception.InnerException.ErrorRecord.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,Add-OERGroupEligibility'
+        $Thrown.Exception.InnerException.ErrorRecord.Exception.Message | Should -BeExactly $script:NoTryAdviceText
+        # The policy was opened and the POST sent before that error stopped the script.
+        @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant POST')
+    }
+
+    It 'the control: without Stop the same script reaches the end, PolicyOpenedButGrantFailed written before the grant''s own error' {
+        $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+        $Scenario = & $script:NoTryScenario -Log $Log -Stop ''
+        $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+        ($Run.Output -join '|') | Should -Be 'REACHED:0|END'
+        @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant POST')
+        @($Run.Errors) | Should -Be @($script:NoTryAdviceText, 'Graph rejected the request')
     }
 }
