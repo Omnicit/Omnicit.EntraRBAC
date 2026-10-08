@@ -4,6 +4,7 @@ BeforeAll {
     Import-Module $script:moduleName -Force -ErrorAction Stop
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
+    . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
 }
 
 AfterAll {
@@ -4419,7 +4420,8 @@ Describe 'Sync-OERStructureGroup' {
                     "this run, Microsoft Graph did not list a readable PIM-for-groups policy for 'member' access, or accepted " +
                     "the request but answered status Failed, every time within the 30-second wait. A new group's policies can " +
                     'take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); ' +
-                    're-running the same document usually applies it.')
+                    're-running the same document usually applies it. No eligibility request was sent, so no ' +
+                    'PIM-for-groups policy was opened for it.')
                 # The id Add-OERGroupEligibility publishes for the same condition, not the transport's.
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
                 # Exactly the Failed row's own record: none of the five 404s left one.
@@ -4533,7 +4535,8 @@ Describe 'Sync-OERStructureGroup' {
                     "this run, Microsoft Graph did not list a readable PIM-for-groups policy for 'member' access, or accepted " +
                     "the request but answered status Failed, every time within the 30-second wait. A new group's policies can " +
                     'take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); ' +
-                    're-running the same document usually applies it.')
+                    're-running the same document usually applies it. No eligibility request was sent, so no ' +
+                    'PIM-for-groups policy was opened for it.')
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
                 # Exactly the Failed row's own record: none of the ten 404s left one.
                 @($Err).Count | Should -Be 1
@@ -4695,11 +4698,15 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
                 $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
                 $Failed.Count | Should -Be 1
+                # BL-51 case 6: this fixture's rules lack Expiration_Admin_Eligibility, so the read after the requests finds no boolean.
                 $Failed[0].Detail | Should -BeExactly ("permanent eligibility for 'person16@example.com' (member) not applied: for group 'role_sec_x', created in " +
                     "this run, Microsoft Graph did not list a readable PIM-for-groups policy for 'member' access, or accepted " +
                     "the request but answered status Failed, every time within the 30-second wait. A new group's policies can " +
                     'take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); ' +
-                    're-running the same document usually applies it.')
+                    're-running the same document usually applies it. Its PIM-for-groups policy for ''member'' access ' +
+                    'may have been opened to allow permanent eligibility before the request was sent, and it could not ' +
+                    'be read afterwards. If it allows permanent eligibility, close it with ''Set-OERGroupPimPolicy ' +
+                    '-Group ''''g-1'''' -AccessType member -AllowPermanentEligibility:$false'' if you do not intend to retry.')
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
                 # A request Graph answered Failed is not an applied one.
                 @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
@@ -5001,11 +5008,15 @@ Describe 'Sync-OERStructureGroup' {
                 $script:Posts | Should -Be 5
                 $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
                 $Failed.Count | Should -Be 1
+                # BL-51 case 6: this fixture's rules lack Expiration_Admin_Eligibility, so the read after the requests finds no boolean.
                 $Failed[0].Detail | Should -BeExactly ("permanent eligibility for 'person16@example.com' (member) not applied: for group 'role_sec_x', created in " +
                     "this run, Microsoft Graph did not list a readable PIM-for-groups policy for 'member' access, or accepted " +
                     "the request but answered status Failed, every time within the 30-second wait. A new group's policies can " +
                     'take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); ' +
-                    're-running the same document usually applies it.')
+                    're-running the same document usually applies it. Its PIM-for-groups policy for ''member'' access ' +
+                    'may have been opened to allow permanent eligibility before the request was sent, and it could not ' +
+                    'be read afterwards. If it allows permanent eligibility, close it with ''Set-OERGroupPimPolicy ' +
+                    '-Group ''''g-1'''' -AccessType member -AllowPermanentEligibility:$false'' if you do not intend to retry.')
                 $Failed[0].Error.FullyQualifiedErrorId | Should -Match '^GroupNotOnboarded'
                 @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
                 # Exactly the Failed row's own record: none of the five Failed answers left one.
@@ -5120,6 +5131,911 @@ Describe 'Sync-OERStructureGroup' {
                 $Out.Count | Should -Be 1
                 @($Direct | Where-Object { $_.FullyQualifiedErrorId -eq 'EligibilityRequestFailed,Add-OERGroupEligibility' }).Count | Should -Be 1
             }
+        }
+    }
+
+    Context 'GroupNotOnboarded for a group created in this run says whether its policy was opened (Sprint 10 step 2, BL-51)' {
+        # When the permanent wait for a group THIS run created ends GroupNotOnboarded, the message ends
+        # with one sentence group saying whether the group's PIM-for-groups policy was opened for the
+        # entry. The handler decides it itself: when Add-OERGroupEligibility was never called, nothing
+        # was sent and nothing opened; otherwise it reads the policy once more after the attempts, with
+        # the poll's own functions (Get-OERPimGroupPolicyId -NotFoundAsUnlisted, then
+        # Get-OERListedGroupPimPolicy -- both REAL here), and compares that with what the poll read just
+        # before the FIRST call. A read after the attempts that fails, is unlisted, answers 404 or reads
+        # no boolean is unknown, and never "not opened". Add-OERGroupEligibility is mocked and answers status
+        # Failed every time, so an entry that reaches it spends the whole budget. The transport mock
+        # answers the listings and the rules reads from the per-test plans $script:ListPlan and
+        # $script:ReadPlan, one entry per call, the last entry repeating: 'ok', 'notfound' or 'refused'
+        # for a listing; 'open' (permanent eligibility allowed), 'closed', 'none' (no
+        # Expiration_Admin_Eligibility rule, so no boolean), 'notfound' or 'refused' for a read.
+        # $script:Calls records every listing, read and call in order.
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Get-BL51Base ([string]$AccessType) {
+                    "permanent eligibility for 'person16@example.com' ($AccessType) not applied: for group 'role_sec_x', created in " +
+                    "this run, Microsoft Graph did not list a readable PIM-for-groups policy for '$AccessType' access, or accepted " +
+                    "the request but answered status Failed, every time within the 30-second wait. A new group's policies can " +
+                    'take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); ' +
+                    're-running the same document usually applies it.'
+                }
+                function script:Get-BL51Advice ([string]$AccessType) {
+                    "close it with 'Set-OERGroupPimPolicy -Group ''g-1'' -AccessType $AccessType " +
+                    '-AllowPermanentEligibility:$false'' if you do not intend to retry.'
+                }
+                function script:Invoke-SyncGroupBL51ViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+                # The one Failed row, and the record it carries: GroupNotOnboarded, ObjectNotFound, the
+                # item's name, and the message under test as both the Detail and the record's message.
+                function script:Assert-BL51GroupNotOnboarded ($Rows, [string]$Expected) {
+                    @($Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
+                    $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+                    $Failed.Count | Should -Be 1
+                    $Failed[0].Detail | Should -BeExactly $Expected
+                    $Record = $Failed[0].Error
+                    $Record.Exception.Message | Should -BeExactly $Expected
+                    ([string]$Record.FullyQualifiedErrorId).Split(',')[0] | Should -BeExactly 'GroupNotOnboarded'
+                    $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::ObjectNotFound)
+                    $Record.TargetObject | Should -BeExactly 'role_sec_x'
+                }
+                # What the caller's -ErrorVariable holds, as ids: read from a record, or from the record
+                # an exception carries; anything else by its type name, so nothing goes unseen.
+                function script:Get-BL51ErrorId ($Records) {
+                    foreach ($Entry in @($Records)) {
+                        if ($Entry -is [System.Management.Automation.ErrorRecord]) { [string]$Entry.FullyQualifiedErrorId }
+                        elseif ($Entry -is [System.Management.Automation.IContainsErrorRecord]) { [string]$Entry.ErrorRecord.FullyQualifiedErrorId }
+                        else { $Entry.GetType().FullName }
+                    }
+                }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:Slept = [System.Collections.Generic.List[int]]::new()
+                $script:Calls = [System.Collections.Generic.List[string]]::new()
+                $script:Looks = 0
+                $script:Reads = 0
+                $script:ListPlan = @('ok')
+                $script:ReadPlan = @('open')
+                $script:BL51Transport = {
+                    param([string]$Uri, [string[]]$ExpectedErrorCode)
+                    # A 404 comes back as the declared-error marker, as Invoke-OERGraphRequest returns it;
+                    # an undeclared one would be a defect, so it fails the test loudly.
+                    $NotFound = {
+                        if (@($ExpectedErrorCode) -notcontains 'ResourceNotFound') { throw "undeclared 404: $Uri" }
+                        $Marker = [PSCustomObject]@{
+                            ExpectedErrorCode = 'ResourceNotFound'; StatusCode = 404
+                            Message = 'ResourceNotFound: The resource is not found.'; Uri = $Uri
+                        }
+                        $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                        $Marker
+                    }
+                    $Refused = {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to read the policy after the requests.'),
+                            'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::OperationStopped, $null)
+                    }
+                    if ($Uri -like '*roleManagementPolicyAssignments*') {
+                        $script:Looks++
+                        $script:Calls.Add('list')
+                        $Answer = $script:ListPlan[[System.Math]::Min($script:Looks, $script:ListPlan.Count) - 1]
+                        if ($Answer -eq 'notfound') { return (& $NotFound) }
+                        if ($Answer -eq 'refused') { & $Refused }
+                        return @{ value = @(
+                                [PSCustomObject]@{ roleDefinitionId = 'member'; policyId = 'pol-member' }
+                                [PSCustomObject]@{ roleDefinitionId = 'owner'; policyId = 'pol-owner' }
+                            ) }
+                    }
+                    if ($Uri -like '*roleManagementPolicies/pol-*/rules') {
+                        $script:Reads++
+                        $script:Calls.Add('read')
+                        $Answer = $script:ReadPlan[[System.Math]::Min($script:Reads, $script:ReadPlan.Count) - 1]
+                        if ($Answer -eq 'notfound') { return (& $NotFound) }
+                        if ($Answer -eq 'refused') { & $Refused }
+                        # 'none': a rule set without Expiration_Admin_Eligibility, which reads as no
+                        # boolean permanent-eligibility setting at all.
+                        if ($Answer -eq 'none') { return @{ value = @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }) } }
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = ($Answer -eq 'closed'); maximumDuration = 'P180D' }
+                            ) }
+                    }
+                    throw "unexpected request: $Uri"
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:BL51Transport -Uri $Uri -ExpectedErrorCode $ExpectedErrorCode }
+                Mock Add-OERGroupEligibility {
+                    $script:Calls.Add('add')
+                    [PSCustomObject]@{ Status = 'Failed' }
+                }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+                Mock Resolve-OERStructureDefault { $null }
+            }
+        }
+
+        It 'case 1: says no request was sent, so no policy was opened, and reads nothing after the wait, when Add-OERGroupEligibility was never called' {
+            InModuleScope $script:moduleName {
+                # Listed every time, but the read of the listed policy answers 404 for the whole budget.
+                $script:ReadPlan = @('notfound')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # The poll's own ten calls and nothing after them.
+                @($script:Calls) | Should -Be @('list', 'read', 'list', 'read', 'list', 'read', 'list', 'read', 'list', 'read')
+                Should -Invoke Add-OERGroupEligibility -Times 0
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    ' No eligibility request was sent, so no PIM-for-groups policy was opened for it.')
+                @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 2: says the policy was not left open when the read after the requests finds it does not allow permanent eligibility and the poll read it <Before> before the first call' -ForEach @(
+            # Open before every call, closed after them: the before-state is $true.
+            @{ Before = 'open'; ReadPlan = @('open', 'open', 'open', 'open', 'open', 'closed') }
+            # No Expiration_Admin_Eligibility rule before the first call, closed on every read after
+            # it: the before-state is unknown, never $false.
+            @{ Before = 'with no boolean setting'; ReadPlan = @('none', 'closed') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ ReadPlan = $ReadPlan } {
+                param($ReadPlan)
+                $script:ReadPlan = $ReadPlan
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Five polls and calls, then ONE listing and ONE read after them, with no wait of their own.
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-member/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " Its PIM-for-groups policy for 'member' access does not allow permanent eligibility as read after the requests, so it was not left open.")
+                @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 2b: never says the <AccessType> policy was not left open when the poll read it closed before the FIRST call and the read after the requests reads it closed too' -ForEach @(
+            @{ AccessType = 'member' }
+            @{ AccessType = 'owner' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ AccessType = $AccessType } {
+                param($AccessType)
+                # Closed on every read, the one after the requests included. The first call would have
+                # opened a policy the poll read closed just before it, so a closed read seconds later
+                # may come from a replica that has not seen the open: it is never "not left open".
+                $script:ReadPlan = @('closed')
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com'; accessType = $AccessType })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-*/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType $AccessType) +
+                    " Its PIM-for-groups policy for '$AccessType' access reads as not allowing permanent eligibility after the requests, " +
+                    'but the first request would have opened it, so that read may be out of date. If it allows permanent eligibility, ' +
+                    (Get-BL51Advice -AccessType $AccessType))
+                @(Get-BL51ErrorId -Records $Err) | Should -Be @('GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller')
+            }
+        }
+
+        It 'case 3: says the policy already allowed permanent eligibility before the first request when the poll read it so' {
+            InModuleScope $script:moduleName {
+                $script:ReadPlan = @('open')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-member/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " Its PIM-for-groups policy for 'member' access already allowed permanent eligibility before the first request, so it was not opened for it.")
+                @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 4: names the <AccessType> policy as opened and still open, with the command that closes it, when the poll read it closed before the FIRST call' -ForEach @(
+            @{ AccessType = 'member' }
+            @{ AccessType = 'owner' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ AccessType = $AccessType } {
+                param($AccessType)
+                # Closed when the poll read it before the first call, open on every read after that (the
+                # first call opened it): the before-state is the FIRST call's, never a later poll's.
+                $script:ReadPlan = @('closed', 'open')
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com'; accessType = $AccessType })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-*/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType $AccessType) +
+                    " PIM-for-groups policy 'pol-$AccessType' had been opened to allow permanent eligibility before the request was sent. " +
+                    'The policy is still open; ' + (Get-BL51Advice -AccessType $AccessType))
+                @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 5: names the policy as open and maybe opened, with the command that closes it, when the poll was refused before the first call' {
+            InModuleScope $script:moduleName {
+                # The first listing is refused, so the cmdlet is called directly and the before-state is
+                # unknown; every later listing answers, and every read finds the policy open.
+                $script:ListPlan = @('refused', 'ok')
+                $script:ReadPlan = @('open')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 5 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-member/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " PIM-for-groups policy 'pol-member' allows permanent eligibility after the requests and may have been opened for them, " +
+                    'since whether it allowed it before the first request is not known. The policy is open; ' + (Get-BL51Advice -AccessType 'member'))
+                @($Err | Where-Object { ([string]$_.FullyQualifiedErrorId).Split(',')[0] -eq 'GroupNotOnboarded' }).Count | Should -Be 1
+            }
+        }
+
+        It 'case 5: takes a poll read with no boolean permanent-eligibility setting before the first call for unknown, never for "did not allow"' {
+            InModuleScope $script:moduleName {
+                # The poll reads the policy before the first call, but its rule set carries no
+                # Expiration_Admin_Eligibility rule, so there is no boolean: the before-state is unknown,
+                # not false. Every later read, the one after the requests included, finds it open.
+                $script:ReadPlan = @('none', 'open')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-member/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " PIM-for-groups policy 'pol-member' allows permanent eligibility after the requests and may have been opened for them, " +
+                    'since whether it allowed it before the first request is not known. The policy is open; ' + (Get-BL51Advice -AccessType 'member'))
+                @(Get-BL51ErrorId -Records $Err) | Should -Be @('GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller')
+            }
+        }
+
+        It 'case 6: never says "not opened" when the <Refused> after the requests is refused, and scrubs the refusal first' -ForEach @(
+            @{ Refused = 'listing'; ListPlan = @('ok', 'ok', 'ok', 'ok', 'ok', 'refused'); ReadPlan = @('open'); After = @('list') }
+            @{ Refused = 'read'; ListPlan = @('ok'); ReadPlan = @('open', 'open', 'open', 'open', 'open', 'refused'); After = @('list', 'read') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ ListPlan = $ListPlan; ReadPlan = $ReadPlan; After = $After } {
+                param($ListPlan, $ReadPlan, $After)
+                # The poll read the policy open before the first call; the read after the requests is
+                # refused. A failed read is UNKNOWN, never "not opened".
+                $script:ListPlan = $ListPlan
+                $script:ReadPlan = $ReadPlan
+                # The scrub proof: the record the read-after's catch scrubs is the refusal itself.
+                Mock Remove-OERErrorRecord { param($Record) }
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $Out = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+                $r = @($Out | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                @($script:Calls) | Should -Be (@('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                        'list', 'read', 'add') + $After)
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter {
+                    $Record.Exception.Message -eq 'Authorization_RequestDenied: Insufficient privileges to read the policy after the requests.'
+                }
+                @($Out | Where-Object {
+                        $_ -is [System.Management.Automation.VerboseRecord] -and
+                        $_.Message -like "Sync-OERStructureGroup: could not read the member policy of new group 'role_sec_x' after its permanent eligibility requests (Authorization_RequestDenied: *"
+                    }).Count | Should -Be 1
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " Its PIM-for-groups policy for 'member' access may have been opened to allow permanent eligibility before the request was sent, " +
+                    'and it could not be read afterwards. If it allows permanent eligibility, ' + (Get-BL51Advice -AccessType 'member'))
+                # What the caller's -ErrorVariable holds. The handler publishes only the Failed row's own
+                # record, last. Before it, the refusal it caught and scrubbed is there too: -ErrorVariable
+                # keeps the copies a throw leaves as it unwinds through the transport and the two read
+                # functions, even when it is caught (measured: 18 copies for a refused listing, 19 for a
+                # refused read, ErrorRecords and RuntimeExceptions). That count follows the call layers,
+                # so it is not pinned; that every copy is the refusal itself, and nothing else, is.
+                $ErrIds = @(Get-BL51ErrorId -Records $Err)
+                $ErrIds[-1] | Should -BeExactly 'GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller'
+                @($ErrIds | Where-Object { $_ -eq 'GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller' }).Count | Should -Be 1
+                $Copies = @($Err | Select-Object -SkipLast 1)
+                $Copies.Count | Should -BeGreaterThan 0
+                @($ErrIds | Select-Object -SkipLast 1 | Sort-Object -Unique) | Should -Be @('Authorization_RequestDenied')
+                @($Copies | ForEach-Object {
+                        if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.Exception.Message } else { [string]$_.Message }
+                    } | Sort-Object -Unique) | Should -Be @('Authorization_RequestDenied: Insufficient privileges to read the policy after the requests.')
+            }
+        }
+
+        It 'case 6: never says "not opened" when the policy is <Answer> after the requests, and the declared 404 leaves no record' -ForEach @(
+            @{ Answer = 'unlisted'; ListPlan = @('ok', 'ok', 'ok', 'ok', 'ok', 'notfound'); ReadPlan = @('open'); After = @('list') }
+            @{ Answer = 'listed but its read answers 404'; ListPlan = @('ok'); ReadPlan = @('open', 'open', 'open', 'open', 'open', 'notfound'); After = @('list', 'read') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ ListPlan = $ListPlan; ReadPlan = $ReadPlan; After = $After } {
+                param($ListPlan, $ReadPlan, $After)
+                $script:ListPlan = $ListPlan
+                $script:ReadPlan = $ReadPlan
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be (@('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                        'list', 'read', 'add') + $After)
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " Its PIM-for-groups policy for 'member' access may have been opened to allow permanent eligibility before the request was sent, " +
+                    'and it could not be read afterwards. If it allows permanent eligibility, ' + (Get-BL51Advice -AccessType 'member'))
+                # Exactly the Failed row's own record: the 404 after the requests was declared.
+                @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 6: never says "not opened" when the read after the requests carries no boolean permanent-eligibility setting' {
+            InModuleScope $script:moduleName {
+                # The poll read the policy open before every call; the read after the requests answers,
+                # but its rule set carries no Expiration_Admin_Eligibility rule, so there is no boolean.
+                # No boolean is unknown, never "does not allow".
+                $script:ReadPlan = @('open', 'open', 'open', 'open', 'open', 'none')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
+                    " Its PIM-for-groups policy for 'member' access may have been opened to allow permanent eligibility before the request was sent, " +
+                    'and it could not be read afterwards. If it allows permanent eligibility, ' + (Get-BL51Advice -AccessType 'member'))
+                @(Get-BL51ErrorId -Records $Err) | Should -Be @('GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller')
+            }
+        }
+    }
+
+    Context 'a later attempt in a new group''s permanent wait that fails says whether its policy was opened (Sprint 10 step 2 round 1, finding 1)' {
+        # In the permanent wait for a group THIS run created, a call of Add-OERGroupEligibility can throw
+        # after an EARLIER call of the same entry was sent and answered status Failed. That earlier
+        # request may have opened the group's policy, while the later call opened nothing, so its error
+        # carries no advice. The handler then makes the read after the attempts that GroupNotOnboarded
+        # makes, and appends its statement to the caught message in a NEW record with the caught
+        # record's own error id, category and target. The approach is the BL-51 Context's: the transport
+        # mock answers the listings and the rules reads from $script:ListPlan and $script:ReadPlan, one
+        # entry per call, the last entry repeating ('ok', 'notfound' or 'refused' for a listing; 'open',
+        # 'closed', 'none', 'notfound' or 'refused' for a read), and Get-OERPimGroupPolicyId and
+        # Get-OERListedGroupPimPolicy run for REAL over it. Add-OERGroupEligibility answers from the
+        # per-test plan $script:AddPlan, one entry per call, the last repeating: 'failed' returns a
+        # request with status Failed, and a scriptblock is run (it throws). $script:Calls records every
+        # listing, read and call in order. Every expected sentence is typed out here.
+        BeforeAll {
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncGroupLaterAttemptViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+                function script:Get-LaterAttemptAdvice ([string]$AccessType) {
+                    "close it with 'Set-OERGroupPimPolicy -Group ''g-1'' -AccessType $AccessType " +
+                    '-AllowPermanentEligibility:$false'' if you do not intend to retry.'
+                }
+                # Writes its record through $PSCmdlet.WriteError, as this module's cmdlets do: called with
+                # -ErrorAction Stop, the record that stops it reads '<id>,Write-LaterAttemptRefusal'.
+                function script:Write-LaterAttemptRefusal {
+                    [CmdletBinding()]
+                    param([string]$ErrorId, [System.Exception]$Exception)
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            $Exception, $ErrorId, [System.Management.Automation.ErrorCategory]::PermissionDenied, 'g-1'))
+                }
+                # What the caller's -ErrorVariable holds, as '<id>|<message>': read from a record, or from
+                # the record an exception carries; anything else by its type name, so nothing goes unseen.
+                function script:Get-LaterAttemptError ($Records) {
+                    foreach ($Entry in @($Records)) {
+                        $Held = if ($Entry -is [System.Management.Automation.ErrorRecord]) { $Entry }
+                        elseif ($Entry -is [System.Management.Automation.IContainsErrorRecord]) { $Entry.ErrorRecord }
+                        if ($Held) { '{0}|{1}' -f $Held.FullyQualifiedErrorId, $Held.Exception.Message } else { $Entry.GetType().FullName }
+                    }
+                }
+                # The handler publishes exactly ONE record to the caller, and last: its id, read by the
+                # caller's suffix, and its message. Before it, -ErrorVariable keeps the copies a throw
+                # leaves as it unwinds through the mock layers even when it is caught (measured: 14 of the
+                # caught refusal in (a)); that count follows the call layers, so it is not pinned, but
+                # every copy must be one of $Copies -- never a record the handler published.
+                function script:Assert-LaterAttemptPublished ($Records, [string]$Id, [string]$Message, [string[]]$Copies) {
+                    $Held = @(Get-LaterAttemptError -Records $Records)
+                    $Held.Count | Should -BeGreaterThan 0
+                    $Held[-1] | Should -BeExactly ('{0},Invoke-SyncGroupLaterAttemptViaCaller|{1}' -f $Id, $Message)
+                    @($Held | Where-Object { $_ -like '*,Invoke-SyncGroupLaterAttemptViaCaller|*' }).Count | Should -Be 1
+                    (@($Held | Select-Object -SkipLast 1 | Where-Object { $Copies -notcontains $_ }) -join ' || ') | Should -BeExactly ''
+                }
+            }
+            $script:LaterAttemptPrefix = "failed to add permanent eligibility for 'person16@example.com': "
+            $script:LaterAttemptCaught = 'Request_BadRequest: Graph rejected the eligibility request.'
+            # Test (f): the public Invoke-OERStructure, in a runspace with no try above it. The fakes:
+            # auth, the group lookup (none), New-OERGroup, Start-Sleep, the principal, the transport
+            # (the member policy is listed every time, and its rules read closed on the FIRST read and
+            # open on every read after it) and Add-OERGroupEligibility (status Failed on the first call,
+            # a refused grant thrown on the second). Each listing, read and call appends a line to the log
+            # with AppendAllText, which never prompts. The document carries no tenantId, so the engine's
+            # tenant comparison has nothing to refuse, and the sign-in snapshot finds no session before or
+            # after the faked sign-in.
+            $script:LaterAttemptNoTry = {
+                param([string]$Log, [string]$Stop)
+                [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    $script:NoTryReads = 0
+    $script:NoTryAdds = 0
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { $null }
+    Set-Item -Path function:script:New-OERGroup -Value { [pscustomobject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+    Set-Item -Path function:script:Start-Sleep -Value { }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { 'id-person16' }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body, [string[]]$ExpectedErrorCode, [switch]$All)
+        if ($Uri -like '*roleManagementPolicyAssignments*') {
+            [System.IO.File]::AppendAllText('#LOG#', "list`n")
+            return @{ value = @([pscustomobject]@{ roleDefinitionId = 'member'; policyId = 'pol-member' }) }
+        }
+        if ($Uri -like '*roleManagementPolicies/pol-member/rules') {
+            $script:NoTryReads++
+            [System.IO.File]::AppendAllText('#LOG#', "read`n")
+            return @{ value = @(
+                    @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                    @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = ($script:NoTryReads -eq 1); maximumDuration = 'P180D' }
+                ) }
+        }
+        throw "unexpected $Method $Uri"
+    }
+    Set-Item -Path function:script:Add-OERGroupEligibility -Value {
+        $script:NoTryAdds++
+        [System.IO.File]::AppendAllText('#LOG#', "add`n")
+        if ($script:NoTryAdds -eq 1) { return [pscustomobject]@{ Status = 'Failed' } }
+        throw [System.Management.Automation.ErrorRecord]::new(
+            [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.'), 'Request_BadRequest',
+            [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+    }
+}
+$Json = '{ "version": "1.0", "groups": [ { "displayName": "role_sec_x", "members": null, "eligibility": [ { "principal": "person16@example.com" } ] } ] }'
+Invoke-OERStructure -Json $Json -Confirm:$false #STOP# | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")).Replace('#STOP#', $Stop))
+            }
+            $script:LaterAttemptNoTryText = 'Request_BadRequest: Graph rejected the eligibility request. ' +
+                "PIM-for-groups policy 'pol-member' had been opened to allow permanent eligibility before the request was sent. " +
+                "The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''g-1'' -AccessType member " +
+                "-AllowPermanentEligibility:`$false' if you do not intend to retry."
+            function Get-TestLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+        }
+
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                $script:Slept = [System.Collections.Generic.List[int]]::new()
+                $script:Calls = [System.Collections.Generic.List[string]]::new()
+                $script:Looks = 0
+                $script:Reads = 0
+                $script:Adds = 0
+                $script:ListPlan = @('ok')
+                $script:ReadPlan = @('open')
+                # The second call throws the refusal of (a): Request_BadRequest, InvalidOperation, 'g-1'.
+                $script:ThrownException = [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.')
+                $script:AddPlan = @('failed', {
+                        throw [System.Management.Automation.ErrorRecord]::new($script:ThrownException, 'Request_BadRequest',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                    })
+                $script:LaterAttemptTransport = {
+                    param([string]$Uri, [string[]]$ExpectedErrorCode)
+                    # A 404 comes back as the declared-error marker, as Invoke-OERGraphRequest returns it;
+                    # an undeclared one would be a defect, so it fails the test loudly.
+                    $NotFound = {
+                        if (@($ExpectedErrorCode) -notcontains 'ResourceNotFound') { throw "undeclared 404: $Uri" }
+                        $Marker = [PSCustomObject]@{
+                            ExpectedErrorCode = 'ResourceNotFound'; StatusCode = 404
+                            Message = 'ResourceNotFound: The resource is not found.'; Uri = $Uri
+                        }
+                        $Marker.PSObject.TypeNames.Insert(0, 'Omnicit.EntraRBAC.GraphExpectedError')
+                        $Marker
+                    }
+                    $Refused = {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Authorization_RequestDenied: Insufficient privileges to read the policy after the requests.'),
+                            'Authorization_RequestDenied', [System.Management.Automation.ErrorCategory]::OperationStopped, $null)
+                    }
+                    if ($Uri -like '*roleManagementPolicyAssignments*') {
+                        $script:Looks++
+                        $script:Calls.Add('list')
+                        $Answer = $script:ListPlan[[System.Math]::Min($script:Looks, $script:ListPlan.Count) - 1]
+                        if ($Answer -eq 'notfound') { return (& $NotFound) }
+                        if ($Answer -eq 'refused') { & $Refused }
+                        return @{ value = @(
+                                [PSCustomObject]@{ roleDefinitionId = 'member'; policyId = 'pol-member' }
+                                [PSCustomObject]@{ roleDefinitionId = 'owner'; policyId = 'pol-owner' }
+                            ) }
+                    }
+                    if ($Uri -like '*roleManagementPolicies/pol-*/rules') {
+                        $script:Reads++
+                        $script:Calls.Add('read')
+                        $Answer = $script:ReadPlan[[System.Math]::Min($script:Reads, $script:ReadPlan.Count) - 1]
+                        if ($Answer -eq 'notfound') { return (& $NotFound) }
+                        if ($Answer -eq 'refused') { & $Refused }
+                        # 'none': a rule set without Expiration_Admin_Eligibility, which reads as no
+                        # boolean permanent-eligibility setting at all.
+                        if ($Answer -eq 'none') { return @{ value = @(@{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }) } }
+                        return @{ value = @(
+                                @{ id = 'Expiration_EndUser_Assignment'; maximumDuration = 'PT8H' }
+                                @{ id = 'Expiration_Admin_Eligibility'; isExpirationRequired = ($Answer -eq 'closed'); maximumDuration = 'P180D' }
+                            ) }
+                    }
+                    throw "unexpected request: $Uri"
+                }
+                Mock Initialize-OERAuth { }
+                Mock Resolve-OERGroupId { $null }
+                Mock New-OERGroup { [PSCustomObject]@{ Id = 'g-1'; DisplayName = 'role_sec_x' } }
+                Mock Start-Sleep { $script:Slept.Add($Seconds) }
+                Mock Invoke-OERGraphRequest { & $script:LaterAttemptTransport -Uri $Uri -ExpectedErrorCode $ExpectedErrorCode }
+                Mock Add-OERGroupEligibility {
+                    $script:Adds++
+                    $script:Calls.Add('add')
+                    $Step = $script:AddPlan[[System.Math]::Min($script:Adds, $script:AddPlan.Count) - 1]
+                    if ($Step -is [scriptblock]) { & $Step } else { [PSCustomObject]@{ Status = 'Failed' } }
+                }
+                Mock Resolve-OERStructurePrincipal { param($Reference) "id-$Reference" }
+            }
+        }
+
+        It 'a: names the policy the first call opened as still open, with the command that closes it, when the second call throws' {
+            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Caught = $script:LaterAttemptCaught } {
+                param($Prefix, $Caught)
+                # Closed when the poll read it before the first call, open on every read after that: the
+                # first call, answered Failed, opened it; the second throws and opened nothing.
+                $script:ReadPlan = @('closed', 'open')
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupLaterAttemptViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Two polls and calls, then ONE listing and ONE read after the last call, with no wait
+                # of their own, through the poll's own functions (the 404 declared to the transport).
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2)
+                Should -Invoke Add-OERGroupEligibility -Times 2 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 3 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-member/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                $Expected = $Caught + " PIM-for-groups policy 'pol-member' had been opened to allow permanent eligibility before the " +
+                    'request was sent. The policy is still open; ' + (Get-LaterAttemptAdvice -AccessType 'member')
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ($Prefix + $Expected)
+                $Record = $Failed[0].Error
+                $Record.Exception.Message | Should -BeExactly $Expected
+                $Record.Exception.InnerException | Should -BeNullOrEmpty
+                [string]$Record.FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Invoke-SyncGroupLaterAttemptViaCaller'
+                $Record.CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+                $Record.TargetObject | Should -BeExactly 'g-1'
+                # A NEW record, and the only one the handler publishes: the caught one never beside it.
+                [object]::ReferenceEquals($Record.Exception, $script:ThrownException) | Should -BeFalse
+                Assert-LaterAttemptPublished -Records $Err -Id 'Request_BadRequest' -Message $Expected -Copies @("Request_BadRequest|$Caught")
+            }
+        }
+
+        It 'b: when <Case>, the caught message ends with the "<Outcome>" statement' -ForEach @(
+            # A read after the calls that is refused, unlisted, answers 404 or reads no boolean is
+            # UNKNOWN, never "not opened". The poll read the policy closed before the first call.
+            @{ Case = 'the listing after the calls is refused'; Outcome = 'unknown'; Refused = $true
+                ListPlan = @('ok', 'ok', 'refused'); ReadPlan = @('closed', 'open')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list') }
+            @{ Case = 'the read after the calls is refused'; Outcome = 'unknown'; Refused = $true
+                ListPlan = @('ok'); ReadPlan = @('closed', 'open', 'refused')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            @{ Case = 'the policy is unlisted after the calls'; Outcome = 'unknown'; Refused = $false
+                ListPlan = @('ok', 'ok', 'notfound'); ReadPlan = @('closed', 'open')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list') }
+            @{ Case = 'the read after the calls answers 404'; Outcome = 'unknown'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('closed', 'open', 'notfound')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            @{ Case = 'the read after the calls carries no boolean'; Outcome = 'unknown'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('closed', 'open', 'none')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            # Closed after the calls, and the poll read it open before the first: not left open.
+            @{ Case = 'the policy reads closed after the calls and open before the first'; Outcome = 'not left open'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('open', 'open', 'closed')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            # Closed after the calls, and closed before the first, which would have opened it.
+            @{ Case = 'the policy reads closed after the calls and closed before the first'; Outcome = 'may be out of date'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('closed')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            # Open after the calls, and the state before the first is unknown: no boolean, or a refused poll.
+            @{ Case = 'the policy reads open after the calls and with no boolean before the first'; Outcome = 'may have been opened for them'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('none', 'open')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+            @{ Case = 'the policy reads open after the calls and the poll before the first was refused'; Outcome = 'may have been opened for them'; Refused = $false
+                ListPlan = @('refused', 'ok'); ReadPlan = @('open')
+                Calls = @('list', 'add', 'list', 'read', 'add', 'list', 'read') }
+            # Open after the calls, and already open before the first.
+            @{ Case = 'the policy reads open after the calls and open before the first'; Outcome = 'already allowed'; Refused = $false
+                ListPlan = @('ok'); ReadPlan = @('open')
+                Calls = @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read') }
+        ) {
+            $Parameters = @{
+                Prefix = $script:LaterAttemptPrefix; Caught = $script:LaterAttemptCaught; Outcome = $Outcome; Refused = $Refused
+                ListPlan = $ListPlan; ReadPlan = $ReadPlan; Calls = $Calls
+            }
+            InModuleScope $script:moduleName -Parameters $Parameters {
+                param($Prefix, $Caught, $Outcome, $Refused, $ListPlan, $ReadPlan, $Calls)
+                $script:ListPlan = $ListPlan
+                $script:ReadPlan = $ReadPlan
+                # The scrub proof for a refused read after the calls: the record the read's catch
+                # scrubs is the refusal itself.
+                Mock Remove-OERErrorRecord { param($Record) }
+                $Advice = Get-LaterAttemptAdvice -AccessType 'member'
+                $Statement = switch ($Outcome) {
+                    'unknown' {
+                        "Its PIM-for-groups policy for 'member' access may have been opened to allow permanent eligibility before the request " +
+                        "was sent, and it could not be read afterwards. If it allows permanent eligibility, $Advice"
+                    }
+                    'not left open' {
+                        "Its PIM-for-groups policy for 'member' access does not allow permanent eligibility as read after the requests, so it was not left open."
+                    }
+                    'may be out of date' {
+                        "Its PIM-for-groups policy for 'member' access reads as not allowing permanent eligibility after the requests, but the " +
+                        "first request would have opened it, so that read may be out of date. If it allows permanent eligibility, $Advice"
+                    }
+                    'may have been opened for them' {
+                        "PIM-for-groups policy 'pol-member' allows permanent eligibility after the requests and may have been opened for them, " +
+                        "since whether it allowed it before the first request is not known. The policy is open; $Advice"
+                    }
+                    'already allowed' {
+                        "Its PIM-for-groups policy for 'member' access already allowed permanent eligibility before the first request, so it was not opened for it."
+                    }
+                }
+                $Expected = "$Caught $Statement"
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $Out = @(Invoke-SyncGroupLaterAttemptViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err -Verbose 4>&1)
+                $r = @($Out | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                # Reached: two calls, the second throwing, and the read after them.
+                @($script:Calls) | Should -Be $Calls
+                Should -Invoke Add-OERGroupEligibility -Times 2 -Exactly
+                @($r | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ($Prefix + $Expected)
+                $Failed[0].Error.Exception.Message | Should -BeExactly $Expected
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Invoke-SyncGroupLaterAttemptViaCaller'
+                $Refusal = 'Authorization_RequestDenied: Insufficient privileges to read the policy after the requests.'
+                $Copies = @("Request_BadRequest|$Caught", "Authorization_RequestDenied|$Refusal")
+                Assert-LaterAttemptPublished -Records $Err -Id 'Request_BadRequest' -Message $Expected -Copies $Copies
+                if ($Refused) {
+                    # Scrubbed once, logged, and never published: no command published the refusal.
+                    Should -Invoke Remove-OERErrorRecord -Times 1 -Exactly -ParameterFilter { $Record.Exception.Message -eq $Refusal }
+                    @($Out | Where-Object {
+                            $_ -is [System.Management.Automation.VerboseRecord] -and
+                            $_.Message -like "Sync-OERStructureGroup: could not read the member policy of new group 'role_sec_x' after its permanent eligibility requests (Authorization_RequestDenied: *"
+                        }).Count | Should -Be 1
+                    @(Get-LaterAttemptError -Records $Err | Where-Object { $_ -like 'Authorization_RequestDenied,*' }).Count | Should -Be 0
+                }
+            }
+        }
+
+        It 'c: publishes a PolicyOpenedButGrantFailed the second call <Shape> as itself, with no read after the calls' -ForEach @(
+            @{ Shape = 'throws' }
+            @{ Shape = 'writes through a [CmdletBinding()] function under -ErrorAction Stop' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Shape = $Shape } {
+                param($Prefix, $Shape)
+                # That record already carries the advice for the policy that call opened, so it is
+                # published as itself, whatever the state the read would find (here: opened).
+                $script:ReadPlan = @('closed', 'open')
+                $Advice = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-member' had been opened to allow " +
+                    'permanent eligibility. The policy is still open; ' + (Get-LaterAttemptAdvice -AccessType 'member') +
+                    ' The request failed with: Request_BadRequest: Graph rejected the eligibility request.'
+                $script:PogfException = [System.Exception]::new($Advice)
+                $Second = if ($Shape -eq 'throws') {
+                    {
+                        throw [System.Management.Automation.ErrorRecord]::new($script:PogfException, 'PolicyOpenedButGrantFailed',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                    }
+                } else {
+                    { Write-LaterAttemptRefusal -ErrorId 'PolicyOpenedButGrantFailed' -Exception $script:PogfException -ErrorAction Stop }
+                }
+                $script:AddPlan = @('failed', $Second)
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupLaterAttemptViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the second call threw. Nothing is read after it.
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add')
+                Should -Invoke Add-OERGroupEligibility -Times 2 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ($Prefix + $Advice)
+                # The caught record itself, re-published by the caller.
+                [object]::ReferenceEquals($Failed[0].Error.Exception, $script:PogfException) | Should -BeTrue
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,Invoke-SyncGroupLaterAttemptViaCaller'
+                $Copies = @("PolicyOpenedButGrantFailed|$Advice", "PolicyOpenedButGrantFailed,Write-LaterAttemptRefusal|$Advice")
+                Assert-LaterAttemptPublished -Records $Err -Id 'PolicyOpenedButGrantFailed' -Message $Advice -Copies $Copies
+            }
+        }
+
+        It 'd: publishes what the FIRST call throws as itself, with no read after it' {
+            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Caught = $script:LaterAttemptCaught } {
+                param($Prefix, $Caught)
+                # No request was sent before it, so the call opened nothing it does not say itself.
+                $script:ReadPlan = @('closed', 'open')
+                $script:AddPlan = @($script:AddPlan[1])
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupLaterAttemptViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the poll, then the one call, which threw. Nothing is read after it.
+                @($script:Calls) | Should -Be @('list', 'read', 'add')
+                @($script:Slept).Count | Should -Be 0
+                Should -Invoke Add-OERGroupEligibility -Times 1 -Exactly
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ($Prefix + $Caught)
+                [object]::ReferenceEquals($Failed[0].Error.Exception, $script:ThrownException) | Should -BeTrue
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Invoke-SyncGroupLaterAttemptViaCaller'
+                Assert-LaterAttemptPublished -Records $Err -Id 'Request_BadRequest' -Message $Caught -Copies @("Request_BadRequest|$Caught")
+            }
+        }
+
+        It 'e: publishes the caught record''s own error id when the second call fails with <Shape>' -ForEach @(
+            @{ Kind = 'comma'; Shape = 'an error id that contains a comma'; Published = 'Odd,Id' }
+            # Thrown, so written by no command: the suffix is none, and a trailing comma is the id's own.
+            @{ Kind = 'trailing'; Shape = 'an error id that ends with a comma'; Published = 'Trailing,' }
+            @{ Kind = 'cmdlet'; Shape = 'the error of a compiled cmdlet'; Published = 'System.ArgumentException' }
+            @{ Kind = 'function'; Shape = 'the error a [CmdletBinding()] function writes under -ErrorAction Stop'; Published = 'Helper_Refused' }
+            # Its command has an empty name, so PowerShell appends no suffix (the record reads 'Anon_Id'),
+            # while the one computed from the command is ',': the id ends with no suffix and stays whole.
+            @{ Kind = 'anonymous'; Shape = 'the error an anonymous [CmdletBinding()] scriptblock writes under -ErrorAction Stop'; Published = 'Anon_Id' }
+            # Not the cmdlet's PolicyOpenedButGrantFailed, which it writes in exactly that spelling: the
+            # comparison is Ordinal, so this record gets the read and the statement like any other.
+            @{ Kind = 'case'; Shape = 'the id PolicyOpenedButGrantFailed in another case'; Published = 'policyopenedbutgrantfailed' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ Prefix = $script:LaterAttemptPrefix; Kind = $Kind; Published = $Published } {
+                param($Prefix, $Kind, $Published)
+                $script:ReadPlan = @('closed', 'open')
+                # The caught record as this process makes it, read here first: its message and category.
+                $Second = switch ($Kind) {
+                    'comma' {
+                        {
+                            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Odd: an error id with a comma.'), 'Odd,Id',
+                                [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                        }
+                    }
+                    'trailing' {
+                        {
+                            throw [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('Trailing: an error id that ends with a comma.'), 'Trailing,',
+                                [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                        }
+                    }
+                    'cmdlet' { { ConvertFrom-Json -InputObject '{' -ErrorAction Stop } }
+                    'function' {
+                        { Write-LaterAttemptRefusal -ErrorId 'Helper_Refused' -Exception ([System.Exception]::new('Helper refused the grant.')) -ErrorAction Stop }
+                    }
+                    'anonymous' {
+                        {
+                            & {
+                                [CmdletBinding()]
+                                param()
+                                $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                                        [System.Exception]::new('Anon: refused by an anonymous scriptblock.'), 'Anon_Id',
+                                        [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1'))
+                            } -ErrorAction Stop
+                        }
+                    }
+                    'case' {
+                        {
+                            throw [System.Management.Automation.ErrorRecord]::new(
+                                [System.Exception]::new('Lower-case id: not the PolicyOpenedButGrantFailed the cmdlet writes.'), 'policyopenedbutgrantfailed',
+                                [System.Management.Automation.ErrorCategory]::InvalidOperation, 'g-1')
+                        }
+                    }
+                }
+                @($Second).Count | Should -Be 1
+                $Probe = try { & $Second } catch { $PSItem }
+                if ($Kind -eq 'anonymous') {
+                    # The shape the strip's EndsWith check exists for: a command is recorded, with an
+                    # empty name, and the id carries no suffix.
+                    $Probe.InvocationInfo.MyCommand | Should -BeOfType ([System.Management.Automation.FunctionInfo])
+                    $Probe.InvocationInfo.MyCommand.Name | Should -BeExactly ''
+                    [string]$Probe.FullyQualifiedErrorId | Should -BeExactly 'Anon_Id'
+                }
+                $script:AddPlan = @('failed', $Second)
+                $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
+                $Err = $null
+                $r = @(Invoke-SyncGroupLaterAttemptViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the second call failed, and the read after it was made.
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read')
+                $Expected = $Probe.Exception.Message + " PIM-for-groups policy 'pol-member' had been opened to allow permanent eligibility " +
+                    'before the request was sent. The policy is still open; ' + (Get-LaterAttemptAdvice -AccessType 'member')
+                $Failed = @($r | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly ($Prefix + $Expected)
+                $Record = $Failed[0].Error
+                $Record.Exception.Message | Should -BeExactly $Expected
+                # What a plain re-publish of the caught record through the caller reads: '<id>,<caller>'.
+                [string]$Record.FullyQualifiedErrorId | Should -BeExactly ('{0},Invoke-SyncGroupLaterAttemptViaCaller' -f $Published)
+                $Record.CategoryInfo.Category | Should -Be $Probe.CategoryInfo.Category
+            }
+        }
+
+        It 'f: in a script with no try, -ErrorAction Stop on Invoke-OERStructure ends the script with the caught message and the statement, read before it' {
+            # The public engine applies a document with one NEW group and one permanent eligibility, in a
+            # runspace through Invoke-OERWithConfirmAnswer, so no try stands anywhere above it, as at a
+            # prompt. The script is transported as text and installs its own fakes in ITS copy of the
+            # module scope; the listings, reads and calls are logged with AppendAllText, whose path is
+            # substituted into the text, since a stopped script prints nothing.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = & $script:LaterAttemptNoTry -Log $Log -Stop '-ErrorAction Stop'
+            # Measured: a stop outside any try ends the whole script, so the runner throws to its caller
+            # and no line after the engine, 'END' included, is reached.
+            $Thrown = { Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario } | Should -Throw -PassThru
+            $Thrown.Exception.InnerException | Should -BeOfType ([System.Management.Automation.ActionPreferenceStopException])
+            $Stopped = $Thrown.Exception.InnerException.ErrorRecord
+            [string]$Stopped.FullyQualifiedErrorId | Should -BeExactly 'Request_BadRequest,Invoke-OERStructure'
+            $Stopped.Exception.Message | Should -BeExactly $script:LaterAttemptNoTryText
+            # Reached: two polls and calls, the second refused, and the read after them -- before the
+            # error that stopped the script.
+            @(Get-TestLoggedLine -Log $Log) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read')
+        }
+
+        It 'f, the control: without Stop the same script reaches the end, and its one error is the caught message and the statement' {
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script (& $script:LaterAttemptNoTry -Log $Log -Stop '')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            @($Run.Output | Where-Object { $_ -like 'ROW:Failed:*' }) |
+                Should -Be @('ROW:Failed:' + $script:LaterAttemptPrefix + $script:LaterAttemptNoTryText)
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated:*' }).Count | Should -Be 0
+            @($Run.Errors) | Should -Be @($script:LaterAttemptNoTryText)
+            @($Run.Prompts).Count | Should -Be 0
+            @(Get-TestLoggedLine -Log $Log) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read')
         }
     }
 
@@ -6571,6 +7487,145 @@ Describe 'Sync-OERStructureGroup' {
                 Should -Invoke -ModuleName $script:moduleName Add-OERGroupMember -Times 0 -Exactly
                 Should -Invoke -ModuleName $script:moduleName Remove-OERGroupMember -Times 0 -Exactly
             }
+        }
+    }
+
+    Context 'a permanent grant refused after Add-OERGroupEligibility opened the policy of a group that already existed (BL-98)' {
+        # The handler calls Add-OERGroupEligibility with -ErrorAction Stop, so the first error the cmdlet
+        # writes is the one that ends it, and the one the handler's catch turns into the item's Failed
+        # row. On a grant refused after the cmdlet opened the group's policy, that first error is
+        # PolicyOpenedButGrantFailed: the row then carries the advice to close the policy and the
+        # grant's own message, and the grant's own record is never written. Add-OERGroupEligibility runs
+        # for REAL; mocked are auth, the group and principal lookups, the handler's group read, the
+        # policy-state read (the policy forbids permanent eligibility), the policy open (it succeeds)
+        # and the Graph transport, which refuses the eligibility POST.
+        BeforeAll {
+            $script:RefusedItem = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }'
+            $script:RefusedAdvice = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-perm' had been opened to allow " +
+                "permanent eligibility. The policy is still open; close it with 'Set-OERGroupPimPolicy -Group " +
+                "''33333333-3333-3333-3333-3333333333c3'' -AccessType member -AllowPermanentEligibility:`$false' " +
+                'if you do not intend to retry.'
+            $script:RefusedRowPrefix = "failed to add permanent eligibility for 'person1@example.com': "
+            InModuleScope $script:moduleName {
+                function script:Invoke-SyncGroupRefusedViaCaller {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([PSCustomObject]$Item)
+                    Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+                }
+            }
+            function Get-TestLoggedLine ([string]$Log) {
+                if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
+            }
+        }
+        BeforeEach {
+            InModuleScope $script:moduleName {
+                Mock Initialize-OERAuth {}
+                Mock Resolve-OERGroupId { '33333333-3333-3333-3333-3333333333c3' }
+                Mock Get-OERGroup {
+                    [PSCustomObject]@{ Id = '33333333-3333-3333-3333-3333333333c3'; DisplayName = 'role_sec_perm'; Description = $null; MailNickname = $null
+                        GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+                }
+                Mock Resolve-OERStructurePrincipal { '22222222-2222-2222-2222-2222222222b2' }
+                Mock Get-OERGroupPermanentEligibilityState { [PSCustomObject]@{ HasPolicy = $true; PolicyId = 'pol-perm'; PermanentAllowed = $false } }
+                Mock Enable-OERGroupPermanentEligibility { $true }
+                # The real cmdlet's request (POST), refused. Anything else is not simulated and throws.
+                Mock Invoke-OERGraphRequest {
+                    if ($Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests') {
+                        throw [System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('Request_BadRequest: Graph rejected the eligibility request.'),
+                            'Request_BadRequest',
+                            [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                            $null)
+                    }
+                    throw "unexpected $Method $Uri"
+                }
+            }
+        }
+
+        It 'reports one Failed row carrying the advice and the cause, and the grant''s own record is never written' {
+            $Expected = $script:RefusedRowPrefix + $script:RefusedAdvice + ' The request failed with: Request_BadRequest: Graph rejected the eligibility request.'
+            InModuleScope $script:moduleName -Parameters @{ Json = $script:RefusedItem; Expected = $Expected } {
+                param($Json, $Expected)
+                $Err = $null
+                $Rows = @(Invoke-SyncGroupRefusedViaCaller -Item ($Json | ConvertFrom-Json) -Confirm:$false `
+                        -WarningAction SilentlyContinue -ErrorAction SilentlyContinue -ErrorVariable Err)
+                # Reached: the real cmdlet opened the policy and sent the POST, once each.
+                Should -Invoke Enable-OERGroupPermanentEligibility -Times 1 -Exactly -ParameterFilter { $PolicyId -eq 'pol-perm' }
+                Should -Invoke Invoke-OERGraphRequest -Times 1 -Exactly -ParameterFilter { $Method -eq 'POST' -and $Uri -like '*eligibilityScheduleRequests' }
+                @($Rows | Where-Object { $_.Action -eq 'Updated' }).Count | Should -Be 0
+                $Failed = @($Rows | Where-Object { $_.Action -eq 'Failed' })
+                $Failed.Count | Should -Be 1
+                $Failed[0].Detail | Should -BeExactly $Expected
+                [string]$Failed[0].Error.FullyQualifiedErrorId | Should -BeLike 'PolicyOpenedButGrantFailed*'
+                # -ErrorVariable also holds the records the mock layers raise as the refused POST unwinds
+                # (a bare Request_BadRequest, naming no command), and the record that stopped the cmdlet
+                # also inside the ActionPreferenceStopException (measured), so each id is read from a
+                # record or from the record an exception carries.
+                $Ids = @($Err | ForEach-Object {
+                        if ($_ -is [System.Management.Automation.ErrorRecord]) { [string]$_.FullyQualifiedErrorId }
+                        elseif ($_ -is [System.Management.Automation.IContainsErrorRecord]) { [string]$_.ErrorRecord.FullyQualifiedErrorId }
+                    })
+                # The handler re-published the advice, and the cmdlet wrote the advice alone: the grant's
+                # own record is never written.
+                @($Ids | Where-Object { $_ -eq 'PolicyOpenedButGrantFailed,Invoke-SyncGroupRefusedViaCaller' }).Count | Should -Be 1
+                @($Ids | Where-Object { $_ -like '*,Add-OERGroupEligibility' } | Sort-Object -Unique) |
+                    Should -Be @('PolicyOpenedButGrantFailed,Add-OERGroupEligibility')
+            }
+        }
+
+        It 'reaches the end of a script with no try, and the Failed row carries the advice and the cause' {
+            # The same refused grant where no try stands above the handler, as at a prompt. The script is
+            # transported as text into a runspace through Invoke-OERWithConfirmAnswer and installs its
+            # own fakes in ITS copy of the module scope; Add-OERGroupEligibility stays real. The policy
+            # open and the POST are logged with AppendAllText, whose path is substituted into the text.
+            # The handler's one gate is asked under -Confirm and answered Yes.
+            $Log = Join-Path $TestDrive ('{0}.log' -f [guid]::NewGuid())
+            $Scenario = [scriptblock]::Create((@'
+Import-Module Omnicit.EntraRBAC -Force -ErrorAction Stop
+$Module = Get-Module Omnicit.EntraRBAC
+& $Module {
+    Set-Item -Path function:script:Initialize-OERAuth -Value { }
+    Set-Item -Path function:script:Resolve-OERGroupId -Value { '33333333-3333-3333-3333-3333333333c3' }
+    Set-Item -Path function:script:Get-OERGroup -Value {
+        [pscustomobject]@{ Id = '33333333-3333-3333-3333-3333333333c3'; DisplayName = 'role_sec_perm'; Description = $null; MailNickname = $null
+            GroupType = 'Assigned'; IsAssignableToRole = $false; Members = @(); PimEligibility = @() }
+    }
+    Set-Item -Path function:script:Resolve-OERStructurePrincipal -Value { '22222222-2222-2222-2222-2222222222b2' }
+    Set-Item -Path function:script:Get-OERGroupPermanentEligibilityState -Value {
+        [pscustomobject]@{ HasPolicy = $true; PolicyId = 'pol-perm'; PermanentAllowed = $false }
+    }
+    Set-Item -Path function:script:Enable-OERGroupPermanentEligibility -Value {
+        [System.IO.File]::AppendAllText('#LOG#', "open`n")
+        $true
+    }
+    Set-Item -Path function:script:Invoke-OERGraphRequest -Value {
+        param([string]$Method = 'GET', [string]$Uri, $Body)
+        [System.IO.File]::AppendAllText('#LOG#', "grant $Method`n")
+        throw 'Graph rejected the request'
+    }
+    function script:Invoke-SyncGroupNoTry {
+        [CmdletBinding(SupportsShouldProcess)]
+        param([PSCustomObject]$Item)
+        Sync-OERStructureGroup -Item $Item -Caller $PSCmdlet
+    }
+}
+$Item = '{ "displayName": "role_sec_perm", "members": null, "eligibility": [ { "principal": "person1@example.com", "accessType": "member" } ] }' | ConvertFrom-Json
+& $Module { param($Item) Invoke-SyncGroupNoTry -Item $Item -Confirm -WarningAction SilentlyContinue } $Item | ForEach-Object { "ROW:$($_.Action):$($_.Detail)" }
+'END'
+'@).Replace('#LOG#', $Log.Replace("'", "''")))
+            $Run = Invoke-OERWithConfirmAnswer -Answer '&Yes' -Script $Scenario
+            # Reached: the handler's gate was asked once and accepted, and the real cmdlet opened the
+            # policy and sent the POST.
+            @($Run.Prompts).Count | Should -Be 1
+            @(Get-TestLoggedLine -Log $Log) | Should -Be @('open', 'grant POST')
+            $Run.Output[-1] | Should -BeExactly 'END'
+            $Failed = @($Run.Output | Where-Object { $_ -like 'ROW:Failed:*' })
+            $Failed.Count | Should -Be 1
+            $Failed[0] | Should -BeExactly ('ROW:Failed:' + $script:RefusedRowPrefix + $script:RefusedAdvice + ' The request failed with: Graph rejected the request')
+            @($Run.Output | Where-Object { $_ -like 'ROW:Updated:*' }).Count | Should -Be 0
+            # The one error the script shows is the advice, re-published by the handler; the grant's own
+            # error is never written.
+            @($Run.Errors) | Should -Be @($script:RefusedAdvice + ' The request failed with: Graph rejected the request')
         }
     }
 }

@@ -21,20 +21,24 @@ function Add-OERGroupEligibility {
     eligible. The request body is built by the private New-OERGroupEligibilityBody helper. The result is
     a tagged Omnicit.EntraRBAC.GroupEligibility object. Supports -WhatIf and -Confirm. A permanent
     grant that needs the PIM-for-groups policy opened opens it only once the grant itself is
-    confirmed (declining the prompt weakens nothing, while -WhatIf still plans the policy change),
-    and a grant that then fails reports a PolicyOpenedButGrantFailed error naming the policy that is
-    left open -- there is no public inverse for that surgical single-rule open, so it is not rolled
-    back automatically.
-    Microsoft Graph can accept a request and answer it with a status in the Failed family (Failed, or
-    any status that starts with Failed, in any letter case), which grants nothing. The cmdlet then
-    still emits the request object (its Status reads as answered) and afterwards writes a
-    non-terminating EligibilityRequestFailed error (category InvalidResult, target the group id), so
-    a caller running with -ErrorAction Stop still receives the object, for example through
-    -OutVariable, before the error stops it. Re-running the same request usually succeeds: a group
-    created moments ago can take a while to be known to PIM for Groups. Only the Failed family is an
-    error; PendingApproval, Provisioned and every other status are not. When this invocation had
-    opened the policy for a permanent grant, the EligibilityRequestFailed message also names that
-    policy, which is left open, and how to close it, as PolicyOpenedButGrantFailed does.
+    confirmed (declining the prompt weakens nothing, while -WhatIf still plans the policy change).
+    When Microsoft Graph then REFUSES the grant, meaning the request itself fails, the cmdlet writes
+    a PolicyOpenedButGrantFailed error FIRST and only then the request's own error. It names the
+    policy that is still open, the command that closes it (Set-OERGroupPimPolicy with
+    -AllowPermanentEligibility:$false) and the reason the request failed, so under -ErrorAction Stop
+    PolicyOpenedButGrantFailed is the error that stops the caller. There is no public inverse for
+    that surgical single-rule open, so it is not rolled back automatically.
+    Microsoft Graph can also accept a request and answer it with a status in the Failed family
+    (Failed, or any status that starts with Failed, in any letter case), which grants nothing. That
+    is not a refusal: the cmdlet then still emits the request object (its Status reads as answered)
+    and afterwards writes a non-terminating EligibilityRequestFailed error (category InvalidResult,
+    target the group id), so a caller running with -ErrorAction Stop still receives the object, for
+    example through -OutVariable, before the error stops it. Re-running the same request usually
+    succeeds: a group created moments ago can take a while to be known to PIM for Groups. Only the
+    Failed family is an error; PendingApproval, Provisioned and every other status are not. When this
+    invocation had opened the policy for a permanent grant, the EligibilityRequestFailed message
+    carries the same advice as PolicyOpenedButGrantFailed: it names the policy, which is still open,
+    and the command that closes it.
 
     .PARAMETER Group
     The target group whose member or owner eligibility is granted, given as a display name or object id
@@ -270,7 +274,7 @@ function Add-OERGroupEligibility {
                 }
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                Write-CmdletError -Message ([System.Exception]::new("Could not open the PIM-for-groups policy to allow permanent eligibility: $($PSItem.Exception.Message) Run 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n> -AllowPermanentEligibility' with sufficient permissions, or grant a time-bound eligibility with -DurationDays.")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
+                Write-CmdletError -Message ([System.Exception]::new("Could not open the PIM-for-groups policy to allow permanent eligibility: $($PSItem.Exception.Message) $(Get-OERGroupPimPolicyOpenAdvice -GroupId $GroupId -AccessType $AccessType)")) -ErrorId 'PolicyOpenFailed' -Category PermissionDenied -TargetObject $PendingPolicyId -Cmdlet $PSCmdlet
                 return
             }
         }
@@ -288,21 +292,27 @@ function Add-OERGroupEligibility {
         $Body = New-OERGroupEligibilityBody @BodyParams
 
         # The one place the advice for a policy this invocation left open is written: the two
-        # messages below (PolicyOpenedButGrantFailed and EligibilityRequestFailed) both give it.
-        $PolicyStillOpenAdvice = "The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry."
+        # messages below (PolicyOpenedButGrantFailed and EligibilityRequestFailed) both give it. The
+        # close command itself comes from Get-OERGroupPimPolicyCloseAdvice, which the apply engine's
+        # GroupNotOnboarded record asks too.
+        $PolicyStillOpenAdvice = "The policy is still open; $(Get-OERGroupPimPolicyCloseAdvice -GroupId $GroupId -AccessType $AccessType)"
 
         if ($Proceed) {
             try {
                 $Response = Invoke-OERGraphRequest -Method POST -Uri (Get-OERPimGroupsGraphPath -Path 'identityGovernance/privilegedAccess/group/eligibilityScheduleRequests') -Body $Body
             } catch {
                 Remove-OERErrorRecord -Record $PSItem
-                $PSCmdlet.WriteError($PSItem)
+                $GrantError = $PSItem
                 if ($PolicyOpened) {
                     # The grant failed AFTER this invocation weakened the governing policy. There is
                     # no public inverse for the surgical single-rule open, so name the policy that is
                     # left open instead of attempting a rollback this module cannot perform correctly.
-                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. $PolicyStillOpenAdvice")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
+                    # Report it FIRST, with the grant's own message inside it, and only then re-publish
+                    # the grant's own error: under -ErrorAction Stop the first error written stops this
+                    # command, so the advice must be in that first error or it is never written.
+                    Write-CmdletError -Message ([System.Exception]::new("The PIM $AccessType eligibility grant failed after PIM-for-groups policy '$OpenedPolicyId' had been opened to allow permanent eligibility. $PolicyStillOpenAdvice The request failed with: $($GrantError.Exception.Message)")) -ErrorId 'PolicyOpenedButGrantFailed' -Category InvalidOperation -TargetObject $OpenedPolicyId -Cmdlet $PSCmdlet
                 }
+                $PSCmdlet.WriteError($GrantError)
                 return
             }
             $Request = ConvertTo-OERGroupEligibilityRequest -InputObject $Response `

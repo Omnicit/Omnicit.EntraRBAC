@@ -5537,15 +5537,38 @@ allowed, and send the grant afterwards. A request answered Failed grants nothing
 refused already rolls the policy back (`New-OERActiveRoleAssignment` gained that rollback in the same
 step, see below). Leaving the policy open on a Failed answer would be the very weakening that
 rollback exists to undo, so a Failed answer rolls it back too. The one record,
-`EligibilityRequestFailed` or `AssignmentRequestFailed`, carries the rollback text: whether the
-rollback succeeded and, when it did not, the `Set-OERRoleManagementPolicy` command that closes the
-policy by hand. It is one record and not a `PolicyOpenedButGrantFailed` as well, since the request
-was accepted, not refused. The rollback runs BEFORE the object is emitted, not only before the error:
-a consumer that stops the pipeline at the object, `Select-Object -First 1` for example, would
-otherwise skip it exactly as `-ErrorAction Stop` skips what follows the error, and the policy would
-stay open. The object is still emitted before the error. `Add-OERGroupEligibility` has no rollback to
-run, since the single-rule open it makes has no public inverse, so its Failed record only names the
-policy that is left open.
+`EligibilityRequestFailed` or `AssignmentRequestFailed`, carries the rollback text: how the rollback
+went and, when it failed, the `Set-OERRoleManagementPolicy` command that closes the policy by hand.
+It is one record and not a `PolicyOpenedButGrantFailed` as well, since the request was accepted, not
+refused. The rollback text has three outcomes. A rollback answered `NoChange` --
+`Set-OERRoleManagementPolicy` writes it when no rule differs, so the rollback READ the policy as
+already disallowing permanent assignments -- used to read as "The rollback ALSO failed, so the
+policy is still open", which sent the operator to close a policy that may be closed. Sprint 10
+step 2 (BL-99) first made it say that the policy was already closed and the rollback changed
+nothing, and round 1 of that step (Sprint 10 step 2 round 1, finding 3) took that back. The read
+shows only what the policy looked like to the rollback, and read-after-write consistency of
+`roleManagementPolicies` is NOT measured: a read made seconds after the open may come from a
+replica that has not seen it yet. "Already closed" and "not open" claimed more than that read
+shows, and either could be false with the policy still open. The text now says that the rollback
+read the policy as already disallowing permanent assignments and changed nothing, and that the
+read may not reflect the open yet. It asks for a confirming `Get-OERRoleManagementPolicy
+-PolicyId` read, and gives the `Set-OERRoleManagementPolicy` command that closes the policy if
+that read still shows the permanent property True (`AllowPermanentEligibility` for the eligible
+cmdlet, `AllowPermanentActiveAssignment` for the active one). That errs the way the group wait's
+out-of-date read does, toward advice that may prove unneeded and never toward a weakened policy
+left unreported. It stands in the refused grant's `PolicyOpenedButGrantFailed` and in the Failed
+answer's record alike, since both come from the one rollback block. The block decides on the
+error id, never on the message: the first comma-separated segment of the caught record's
+`FullyQualifiedErrorId`, compared ordinally, must be `NoChange` (the real cmdlet's record reads
+`NoChange,Set-OERRoleManagementPolicy` under `-ErrorAction Stop`, measured against a mocked
+transport). The error id is the contract the cmdlet owns, while its message, "No applicable policy
+rule changed.", is prose that can be reworded, or reused by another failure, and deciding on it
+could turn a failed rollback into a closed policy. The rollback runs BEFORE the object is emitted,
+not only before the error: a consumer that stops the pipeline at the object,
+`Select-Object -First 1` for example, would otherwise skip it exactly as `-ErrorAction Stop` skips
+what follows the error, and the policy would stay open. The object is still emitted before the
+error. `Add-OERGroupEligibility` has no rollback to run, since the single-rule open it makes has no
+public inverse, so its Failed record only names the policy that is left open.
 
 **The order on a refused grant.** In `New-OEREligibleRoleAssignment`, a grant that threw after the
 policy was opened wrote the grant's own error first, then rolled back, then wrote
@@ -5556,15 +5579,98 @@ the rollback nor the `PolicyOpenedButGrantFailed` record ever ran, and the polic
 copied it: `New-OERActiveRoleAssignment` opened the policy before it asked for confirmation and had no
 rollback at all. Each of the two cmdlets now has one rollback block, shared by the refused-grant path
 and the Failed path. On a refused grant it runs first, then the cmdlet writes
-`PolicyOpenedButGrantFailed`, which names the policy, whether the rollback succeeded and how the
-request failed, and only then the grant's own error. Under `-ErrorAction Stop` the cmdlet is stopped
-by `PolicyOpenedButGrantFailed`, after the rollback, and the grant's own message travels inside it,
-since under Stop its own record is never reached. `New-OERActiveRoleAssignment` also opens the policy
-only once the assignment is confirmed, as `New-OEREligibleRoleAssignment` already did, so a declined
-prompt weakens nothing while `-WhatIf` still plans the policy change.
-`Add-OERGroupEligibility` keeps its older order, where its grant error is written before
+`PolicyOpenedButGrantFailed`, which names the policy, how the rollback went (rolled back, read as
+already disallowing permanent assignments and left unchanged, or failed) and how the request failed,
+and only then the grant's own error. Under `-ErrorAction Stop` the cmdlet is stopped by
+`PolicyOpenedButGrantFailed`, after the rollback, and the grant's own message travels inside it,
+since under Stop its own record is never reached.
+`New-OERActiveRoleAssignment` also opens the policy only once the assignment is confirmed, as
+`New-OEREligibleRoleAssignment` already did, so a declined prompt weakens nothing while `-WhatIf`
+still plans the policy change.
+`Add-OERGroupEligibility` kept its older order through this step, its grant error written before
 `PolicyOpenedButGrantFailed`, so under `-ErrorAction Stop` the advice naming the policy it left open
-is not written there. There is no rollback in it to skip, and the order was left alone in this step.
+was never written. Sprint 10 step 2 (BL-98) gave it the same order: on a grant refused after it
+opened the policy, it writes `PolicyOpenedButGrantFailed` first -- the policy left open, the
+`Set-OERGroupPimPolicy` command that closes it, and the grant's own message inside it -- and only
+then the grant's own error. Under `-ErrorAction Stop`, the way the apply engine calls it, the advice
+is the error that stops it, so the engine's Failed row for the item carries it. There is still no
+rollback, since the single-rule open it makes has no public inverse.
+
+**What a new group's `GroupNotOnboarded` says about its policy (Sprint 10 step 2, BL-51).** For a
+group created in the same run, the engine's permanent wait calls `Add-OERGroupEligibility`, which
+opens the group's policy to allow permanent eligibility before it sends the request. When the wait
+ran out, `GroupNotOnboarded` said nothing about that, so a policy the run had opened stayed open
+unreported. The engine now decides it itself, not through a flag threaded out of the cmdlet: the
+readiness poll has just read the policy before each call, and its read before the FIRST call is the
+before-state -- kept from that call only, since a later poll reads a policy the first call may
+already have opened, and unknown when the poll was refused or its read carried no
+permanent-eligibility setting. After the attempts the engine reads the policy once more, with the
+poll's own two calls and no wait of its own, and the message gives one of seven outcomes, decided in
+this order: nothing sent and nothing opened, not readable after the attempts, not left open, a
+closed read that may be out of date, open and possibly opened, already allowed before the first
+request, or opened and still open. A read after the attempts that fails, is unlisted, answers 404 or
+reads no setting is unknown, and an unknown is never written as "not opened": the message says the
+policy may have been opened and gives the command that closes it, since a reader who acts on "not
+opened" leaves a weakened policy in place. A closed read is "not left open" only when the poll did
+not read the policy closed just before the first request (Sprint 10 step 2, Ruling R4). When it did,
+that request would have opened it, and a read made seconds after the open can come from a replica
+that has not seen it yet: the message then says the read may be out of date and gives the close
+command for the case that the policy allows permanent eligibility. That errs toward advice that may
+prove unneeded, never toward a weakened policy left unreported. A closed read after a before-state
+that is unknown can still be such a stale read; that is the cost of not threading a flag out of the
+cmdlet. The command comes from `Get-OERGroupPimPolicyCloseAdvice`, which `Add-OERGroupEligibility`
+uses too, and is `Set-OERGroupPimPolicy -Group G -AccessType A -AllowPermanentEligibility:$false`
+(Sprint 10 step 2, Ruling R1). The advice before this step named `-ActivationMaxHours` without the
+switch, and `Set-OERGroupPimPolicy` patches `Expiration_Admin_Eligibility` only when
+`-EligibleDuration` or `-AllowPermanentEligibility` is bound, so that command left the policy open.
+Binding the switch to false sends the rule with `isExpirationRequired` true and the live
+`maximumDuration`; the helper's own tests run the advice's text against the cmdlet to hold that.
+
+Round 1 of the step (Sprint 10 step 2 round 1, finding 2) applied the same reading to the opposite
+instruction. `Add-OERGroupEligibility` tells the operator how to OPEN a policy by hand when its own
+open fails (`PolicyOpenFailed`), and that command now comes from the private
+`Get-OERGroupPimPolicyOpenAdvice`, the opening counterpart of the close advice. It names only
+`-AllowPermanentEligibility`, where it used to carry `-ActivationMaxHours <n>` as well. That text
+did not run as typed: PowerShell reserves the less-than operator, so the command failed to parse
+until the placeholder was replaced (measured in plain PowerShell), and a value put in its place
+rewrote the activation maximum, since `-ActivationMaxHours` patches the activation rule and the
+open does not touch it. With the switch alone `Set-OERGroupPimPolicy` reads the live eligibility
+`maximumDuration` and sends it back unchanged with `isExpirationRequired` false; if that read
+fails it warns and falls back to the `-EligibleDuration` default, which is the cmdlet's own
+behaviour and not the advice's. The helper's tests parse the text, run it against the cmdlet, and
+keep the old text as a record of why it changed. The id, category and target of `PolicyOpenFailed`
+are as they were.
+
+**A later attempt that throws after an earlier one failed (Sprint 10 step 2 round 1, finding 1).**
+The permanent wait calls `Add-OERGroupEligibility` again after a request answered `Failed`, since a
+new group may still be replicating. That first request may already have opened the policy, which the
+cmdlet does before it sends and cannot undo, and the handler suppresses the cmdlet's own
+`EligibilityRequestFailed` for the wait, so nothing else says so. A LATER call can then throw having
+opened nothing, with an error that says nothing of the policy the earlier request opened. Only
+`GroupNotOnboarded` reported it. Such an error now gets the same statement: the after-attempts read
+and its outcome, the six outcomes after a call was made, come from ONE scriptblock in the handler,
+`$PermanentPolicyAfterAttempts`, that `GroupNotOnboarded` calls too, so the two texts cannot drift
+(the idiom of `$RollBackOpenedPolicy` in the Azure cmdlets, not a new private function, since it
+reads the handler's own locals and the poll's functions; Sprint 10 step 2 round 1, ruling P3). The
+statement is appended to the caught message, and the Failed row carries the same text. It travels in
+a NEW record, not in `ErrorDetails` on a copy, since the codebase reads a record by its
+`Exception.Message`. That record keeps the caught record's error id, category and target, and does
+not chain the caught exception as its `InnerException`: only the message is reused (Sprint 10 step 2
+round 1, ruling P2). The id is republished, so it is derived exactly: the
+`FullyQualifiedErrorId` without the suffix PowerShell appends for the command that wrote it,
+stripped only when the id ends with it, and never the first comma segment, since an id can contain
+a comma. The read is made before the record is written, so a caller stopped by it under
+`-ErrorAction Stop` gets the statement too. A first call's error is published as it was, since
+nothing was sent before it, and so is a `PolicyOpenedButGrantFailed`, which already names the
+policy that call opened and how to close it. A later call's `PolicyOpenFailed` gets the statement
+like any other error, so one message can name the command that opens a policy and, when the read
+finds it open, the one that closes it. Known limit: an id from an anonymous script block that
+itself ends with a comma loses that comma, since PowerShell's format cannot tell it from the
+suffix. An EMPTY caught error id would derive as the writing command's name, since PowerShell then
+reads the `FullyQualifiedErrorId` as the bare command name (measured in plain PowerShell: an empty
+id written by a function reads `Write-T`, which the strip cannot tell from a suffix), so such a
+record would be published as `<command>,<caller>`. That is unreachable today, since every
+`Write-CmdletError` call passes an id and Graph records always carry a code.
 
 ## warning-before-confirmation
 

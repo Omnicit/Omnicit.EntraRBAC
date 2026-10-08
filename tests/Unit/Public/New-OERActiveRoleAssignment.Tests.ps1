@@ -3,6 +3,16 @@ BeforeAll {
     . "$PSScriptRoot/../TestHelpers/OERTransportTripwire.ps1"
     Install-OERTransportTripwire
     . "$PSScriptRoot/../TestHelpers/OERConfirmHost.ps1"
+
+    # The sentence a rollback answered NoChange adds (BL-99), held once for the refused-grant and the
+    # Failed-answer Contexts and for the end-to-end Contexts that run the real policy cmdlets. It says
+    # what the rollback READ and asks for a confirming read, since read-after-write consistency of the
+    # policy is not measured and that read may not reflect the open yet. Both commands sit inside ONE
+    # single-quoted PowerShell string literal each, so the policy id's quotes are doubled; this is
+    # built with the policy id 'pol-1' the Contexts below use.
+    $script:NoChangeRollbackText = "The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet. " +
+        "Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''pol-1''' and, if AllowPermanentActiveAssignment is True, " +
+        "run 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentActiveAssignment `$false' to close it."
 }
 
 AfterAll {
@@ -520,6 +530,86 @@ Describe 'New-OERActiveRoleAssignment' {
             $Own.Count | Should -Be 1
             $Own[0].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OERActiveRoleAssignment'
         }
+
+        Context 'a rollback the policy cmdlet answers NoChange (BL-99)' {
+            # Set-OERRoleManagementPolicy writes a non-terminating NoChange when no rule differs, that
+            # is when the policy already disallows the permanent assignment kind the rollback asks for.
+            # Under -ErrorAction Stop the rollback sees it as a failure, but what it read was a policy
+            # that disallows the kind: it must not be reported as one the operator has to close for
+            # certain, nor as one that is not open (that read may not reflect the open yet), so the
+            # message asks for a confirming read. The mock is an ADVANCED function
+            # that writes the record the way the real cmdlet does, so the rollback's catch sees what
+            # the real one produces under Stop; $script:RollbackErrorId and $script:RollbackMessage
+            # choose what it writes.
+            BeforeEach {
+                $script:RollbackErrorId = 'NoChange'
+                $script:RollbackMessage = 'No applicable policy rule changed.'
+                Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest { $script:Order.Add('grant'); throw 'ARM rejected the request' }
+                Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([string]$PolicyId, [bool]$AllowPermanentActiveAssignment, [bool]$AllowPermanentEligibility)
+                    if ($AllowPermanentActiveAssignment) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                    $script:Order.Add('rollback')
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new($script:RollbackMessage), $script:RollbackErrorId,
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument, $PolicyId))
+                }
+            }
+
+            It 'says what the rollback read and asks for a confirming read, not that the rollback failed, and still scrubs the rollback''s record' {
+                Mock -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord { }
+                $Err = $null
+                New-OERActiveRoleAssignment @script:Grant -Confirm:$false -WarningAction SilentlyContinue `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err
+                $script:Order -join ',' | Should -Be 'open,grant,rollback'
+                $Own = Get-TestOwnRecord $Err
+                $Own.Count | Should -Be 2
+                $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OERActiveRoleAssignment'
+                $Own[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidOperation)
+                $Own[0].TargetObject | Should -BeExactly 'pol-1'
+                $Own[0].Exception.Message | Should -BeExactly ($script:OpenedText + ' ' + $script:NoChangeRollbackText + $script:RefusedText)
+                $Own[1].FullyQualifiedErrorId | Should -BeExactly 'ARM rejected the request,New-OERActiveRoleAssignment'
+                # The refused grant's record and the rollback's record: NoChange is scrubbed like any failure.
+                Should -Invoke -ModuleName Omnicit.EntraRBAC Remove-OERErrorRecord -Times 2 -Exactly
+            }
+
+            It 'still stops a -ErrorAction Stop caller with PolicyOpenedButGrantFailed carrying the confirming-read sentence' {
+                $Thrown = $null
+                try {
+                    New-OERActiveRoleAssignment @script:Grant -Confirm:$false -WarningAction SilentlyContinue -ErrorAction Stop | Out-Null
+                } catch {
+                    $script:Order.Add('error')
+                    $Thrown = $PSItem
+                }
+                $script:Order -join ',' | Should -Be 'open,grant,rollback,error'
+                $Thrown.FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OERActiveRoleAssignment'
+                $Thrown.Exception.Message | Should -BeExactly ($script:OpenedText + ' ' + $script:NoChangeRollbackText + $script:RefusedText)
+            }
+
+            It 'decides on the error id, never the message (<Case>)' -ForEach @(
+                @{ Case = 'another id carrying the NoChange message'; ErrorId = 'PolicyNotFound'; Message = 'No applicable policy rule changed.'; NoChange = $false }
+                @{ Case = 'the NoChange id carrying an unrelated message'; ErrorId = 'NoChange'; Message = 'The policy could not be read.'; NoChange = $true }
+                @{ Case = 'an id that merely starts with NoChange'; ErrorId = 'NoChangeNeeded'; Message = 'No applicable policy rule changed.'; NoChange = $false }
+                @{ Case = 'the NoChange id in another letter case'; ErrorId = 'nochange'; Message = 'No applicable policy rule changed.'; NoChange = $false }
+            ) {
+                $script:RollbackErrorId = $ErrorId
+                $script:RollbackMessage = $Message
+                $Err = $null
+                New-OERActiveRoleAssignment @script:Grant -Confirm:$false -WarningAction SilentlyContinue `
+                    -ErrorAction SilentlyContinue -ErrorVariable Err
+                $script:Order -join ',' | Should -Be 'open,grant,rollback'
+                $Own = Get-TestOwnRecord $Err
+                $Own.Count | Should -Be 2
+                $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OERActiveRoleAssignment'
+                $RevertText = if ($NoChange) {
+                    $script:NoChangeRollbackText
+                } else {
+                    "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' " +
+                    "-AllowPermanentActiveAssignment `$false' to close it."
+                }
+                $Own[0].Exception.Message | Should -BeExactly ($script:OpenedText + ' ' + $RevertText + $script:RefusedText)
+            }
+        }
     }
 
     Context 'PrincipalId pipeline binding (audit B-new-roleassignment-principal-not-pipeable)' {
@@ -822,6 +912,301 @@ Describe 'New-OERActiveRoleAssignment' {
             $Out.Count | Should -Be 1
             $Out[0].Status | Should -BeExactly 'Provisioned'
             @($Err).Count | Should -Be 0
+        }
+
+        Context 'a rollback the policy cmdlet answers NoChange (BL-99)' {
+            # The same rollback serves a Failed answer. The policy cmdlet is mocked as an ADVANCED
+            # function that writes NoChange the way the real one does when no rule differs.
+            BeforeEach {
+                Mock -ModuleName Omnicit.EntraRBAC Set-OERRoleManagementPolicy {
+                    [CmdletBinding(SupportsShouldProcess)]
+                    param([string]$PolicyId, [bool]$AllowPermanentActiveAssignment, [bool]$AllowPermanentEligibility)
+                    if ($AllowPermanentActiveAssignment) { $script:Order.Add('open'); return [PSCustomObject]@{ PolicyId = 'pol-1' } }
+                    $script:Order.Add('rollback')
+                    $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(
+                            [System.Exception]::new('No applicable policy rule changed.'), 'NoChange',
+                            [System.Management.Automation.ErrorCategory]::InvalidArgument, $PolicyId))
+                }
+            }
+
+            It 'says what the rollback read, and asks for a confirming read, in the one AssignmentRequestFailed record, after the rollback and before the object' {
+                $Err = $null
+                $Out = @(New-OERActiveRoleAssignment @script:Grant -ErrorAction SilentlyContinue -ErrorVariable Err |
+                        ForEach-Object { $script:Order.Add("emit:$($_.Status)"); $_ })
+                $Out.Count | Should -Be 1
+                $script:Order -join ',' | Should -Be 'open,grant,rollback,emit:Failed'
+                $Reported = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OERActiveRoleAssignment' })
+                $Reported.Count | Should -Be 1
+                $Reported[0].FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,New-OERActiveRoleAssignment'
+                $Reported[0].CategoryInfo.Category | Should -Be ([System.Management.Automation.ErrorCategory]::InvalidResult)
+                $Reported[0].TargetObject | Should -BeExactly '/subscriptions/s1'
+                $Reported[0].Exception.Message | Should -BeExactly ($script:FailedMessage + $script:OpenedText + ' ' + $script:NoChangeRollbackText)
+            }
+
+            It 'still hands the object to -OutVariable under -ErrorAction Stop, and the throw carries the confirming-read sentence' {
+                $Out = $null
+                $Thrown = $null
+                try {
+                    New-OERActiveRoleAssignment @script:Grant -ErrorAction Stop -OutVariable Out |
+                        ForEach-Object { $script:Order.Add("emit:$($_.Status)") }
+                } catch {
+                    $script:Order.Add('error')
+                    $Thrown = $PSItem
+                }
+                $script:Order -join ',' | Should -Be 'open,grant,rollback,emit:Failed,error'
+                $Thrown.FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,New-OERActiveRoleAssignment'
+                $Thrown.Exception.Message | Should -BeExactly ($script:FailedMessage + $script:OpenedText + ' ' + $script:NoChangeRollbackText)
+                @($Out).Count | Should -Be 1
+            }
+        }
+    }
+
+    Context 'the real Set-OERRoleManagementPolicy answers the rollback NoChange (BL-99)' {
+        # End to end: only the transport is mocked, so the rollback is the REAL policy cmdlet reading a
+        # policy that already disallows permanent active assignments, which is what makes it write its
+        # own NoChange. The policy GET answers "permanent not allowed" every time: the open still has
+        # something to change (it PATCHes), and the rollback finds nothing to change (it PATCHes
+        # nothing). $script:Order records the transport calls in the order they are sent.
+        BeforeEach {
+            $script:Order = [System.Collections.Generic.List[string]]::new()
+            $script:AnsweredStatus = 'Failed'
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
+                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Assignment'; PermanentAllowed = $false }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                switch ($Method) {
+                    'PUT' {
+                        $script:Order.Add('put')
+                        if ($script:AnsweredStatus -eq 'Refused') { throw 'ARM rejected the request' }
+                        [PSCustomObject]@{
+                            id         = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/req-f1'
+                            name       = 'req-f1'
+                            properties = [PSCustomObject]@{
+                                scope = '/subscriptions/s1'; roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+                                principalId = 'p1'; principalType = 'User'; requestType = 'AdminAssign'; status = $script:AnsweredStatus
+                                scheduleInfo = [PSCustomObject]@{ startDateTime = 't'; expiration = [PSCustomObject]@{ type = 'NoExpiration' } }
+                            }
+                        }
+                    }
+                    'PATCH' {
+                        $script:Order.Add('patch')
+                        [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @(
+                                    [PSCustomObject]@{ id = 'Expiration_Admin_Assignment'; ruleType = 'RoleManagementPolicyExpirationRule'; isExpirationRequired = $false; maximumDuration = 'P90D' }
+                                ) } }
+                    }
+                    default {
+                        $script:Order.Add('get')
+                        [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @(
+                                    [PSCustomObject]@{ id = 'Expiration_Admin_Assignment'; ruleType = 'RoleManagementPolicyExpirationRule'; isExpirationRequired = $true; maximumDuration = 'P90D'; target = [PSCustomObject]@{ caller = 'Admin'; operations = @('All'); level = 'Assignment' } }
+                                ) } }
+                    }
+                }
+            }
+            $script:Grant = @{ Role = 'Reader'; Subscription = 'Prod'; User = 'anna@contoso.com'; Permanent = $true; Confirm = $false; WarningAction = 'SilentlyContinue' }
+        }
+
+        It 'writes NoChange, composed as NoChange,Set-OERRoleManagementPolicy, when it reads the policy as already disallowing the permanent kind it is asked to disallow' {
+            $Thrown = $null
+            try {
+                Set-OERRoleManagementPolicy -PolicyId 'pol-1' -AllowPermanentActiveAssignment $false -Confirm:$false -ErrorAction Stop | Out-Null
+            } catch {
+                $Thrown = $PSItem
+            }
+            $Thrown.FullyQualifiedErrorId | Should -BeExactly 'NoChange,Set-OERRoleManagementPolicy'
+            $script:Order -join ',' | Should -Be 'get'
+        }
+
+        It 'reports a refused grant''s rollback as a read of a policy already disallowing the kind, with the open PATCHed once and the rollback PATCHing nothing' {
+            $script:AnsweredStatus = 'Refused'
+            $Err = $null
+            New-OERActiveRoleAssignment @script:Grant -ErrorAction SilentlyContinue -ErrorVariable Err
+            $script:Order -join ',' | Should -Be 'get,patch,put,get'
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OERActiveRoleAssignment' })
+            $Own.Count | Should -Be 2
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'PolicyOpenedButGrantFailed,New-OERActiveRoleAssignment'
+            $Own[0].Exception.Message | Should -BeExactly ("The active role assignment failed after role management policy 'pol-1' had been opened to allow permanent assignments. " +
+                $script:NoChangeRollbackText + ' The request failed with: ARM rejected the request')
+        }
+
+        It 'reports a Failed answer''s rollback as a read of a policy already disallowing the kind in the one AssignmentRequestFailed record' {
+            $Err = $null
+            $Out = @(New-OERActiveRoleAssignment @script:Grant -ErrorAction SilentlyContinue -ErrorVariable Err)
+            $Out.Count | Should -Be 1
+            $script:Order -join ',' | Should -Be 'get,patch,put,get'
+            $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -like '*,New-OERActiveRoleAssignment' })
+            $Own.Count | Should -Be 1
+            $Own[0].FullyQualifiedErrorId | Should -BeExactly 'AssignmentRequestFailed,New-OERActiveRoleAssignment'
+            $Own[0].Exception.Message | Should -BeExactly ("Azure Resource Manager accepted the active role assignment request 'req-f1' (AdminAssign) of role " +
+                "'/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' for principal 'p1' at scope '/subscriptions/s1' " +
+                'but answered status Failed, so nothing was granted. Role management policy ''pol-1'' had been opened to allow permanent assignments before the request was sent. ' +
+                $script:NoChangeRollbackText)
+        }
+    }
+
+    Context 'the commands a NoChange rollback gives confirm and close the policy (finding 3)' {
+        # The sentence names two commands: a confirming Get-OERRoleManagementPolicy read and, if the
+        # named property reads True, the Set-OERRoleManagementPolicy call that closes the policy.
+        # These tests take both OUT of the message the cmdlet really writes -- not retyped from
+        # $script:NoChangeRollbackText, so a reworded or mis-keyed sentence fails here -- read each as
+        # the ONE single-quoted PowerShell string literal it is (the parser, not a regex, turns each
+        # doubled quote back into one), and run it against the REAL Get-/Set-OERRoleManagementPolicy
+        # with only the transport mocked. The policy first reads as disallowing permanent assignments,
+        # which is what makes the rollback answer NoChange (here a read that does not reflect the open
+        # yet); it is then switched to the policy the open left behind, which allows them.
+        BeforeAll {
+            function Get-TestMessageSegment ([string]$Message, [string]$After, [string]$Before) {
+                $Start = $Message.IndexOf($After, [System.StringComparison]::Ordinal)
+                $Start | Should -BeGreaterOrEqual 0 -Because "the message holds '$After'"
+                $Start += $After.Length
+                $End = $Message.IndexOf($Before, $Start, [System.StringComparison]::Ordinal)
+                $End | Should -BeGreaterThan $Start -Because "the message holds '$Before' after '$After'"
+                $Message.Substring($Start, $End - $Start)
+            }
+            function Get-TestLiteralValue ([string]$Literal) {
+                $Tokens = $null
+                $ParseErrors = $null
+                $null = [System.Management.Automation.Language.Parser]::ParseInput($Literal, [ref]$Tokens, [ref]$ParseErrors)
+                @($ParseErrors).Count | Should -Be 0 -Because "the command in the message ($Literal) parses"
+                # One single-quoted string literal and the end of the input, nothing else.
+                @($Tokens).Count | Should -Be 2 -Because "the command in the message ($Literal) is one string literal"
+                $Tokens[0].Kind | Should -Be ([System.Management.Automation.Language.TokenKind]::StringLiteral)
+                $Tokens[0].Extent.Text | Should -BeExactly $Literal
+                $Tokens[1].Kind | Should -Be ([System.Management.Automation.Language.TokenKind]::EndOfInput)
+                [string]$Tokens[0].Value
+            }
+            # Runs the grant and returns the message of the record that carries the rollback's report.
+            function Get-TestRollbackMessage ([hashtable]$Grant, [string]$ErrorId) {
+                $Err = $null
+                $null = New-OERActiveRoleAssignment @Grant -ErrorAction SilentlyContinue -ErrorVariable Err
+                $Own = @($Err | Where-Object { [string]$_.FullyQualifiedErrorId -ceq "$ErrorId,New-OERActiveRoleAssignment" })
+                $Own.Count | Should -Be 1 -Because "the cmdlet wrote one $ErrorId record"
+                $Own[0].Exception.Message
+            }
+        }
+
+        BeforeEach {
+            $script:Order = [System.Collections.Generic.List[string]]::new()
+            $script:Patches = [System.Collections.Generic.List[object]]::new()
+            $script:AnsweredStatus = 'Failed'
+            # Whether the active-assignment expiration rule requires an expiration: $true is the policy
+            # as the rollback reads it (permanent not allowed), $false the policy the open left behind.
+            $script:ExpirationRequired = $true
+            Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERScope { '/subscriptions/s1' }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERPrincipal { [PSCustomObject]@{ PrincipalId = 'p1'; PrincipalType = 'User' } }
+            Mock -ModuleName Omnicit.EntraRBAC Resolve-OERRoleDefinitionId { '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1' }
+            Mock -ModuleName Omnicit.EntraRBAC Get-OERPermanentPolicyState {
+                [PSCustomObject]@{ PolicyId = 'pol-1'; RoleName = 'Reader'; RuleId = 'Expiration_Admin_Assignment'; PermanentAllowed = $false }
+            }
+            Mock -ModuleName Omnicit.EntraRBAC Invoke-OERArmRequest {
+                switch ($Method) {
+                    'PUT' {
+                        $script:Order.Add('put')
+                        if ($script:AnsweredStatus -eq 'Refused') { throw 'ARM rejected the request' }
+                        [PSCustomObject]@{
+                            id         = '/subscriptions/s1/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/req-f1'
+                            name       = 'req-f1'
+                            properties = [PSCustomObject]@{
+                                scope = '/subscriptions/s1'; roleDefinitionId = '/subscriptions/s1/providers/Microsoft.Authorization/roleDefinitions/rd1'
+                                principalId = 'p1'; principalType = 'User'; requestType = 'AdminAssign'; status = $script:AnsweredStatus
+                                scheduleInfo = [PSCustomObject]@{ startDateTime = 't'; expiration = [PSCustomObject]@{ type = 'NoExpiration' } }
+                            }
+                        }
+                    }
+                    'PATCH' {
+                        $script:Order.Add('patch')
+                        $script:Patches.Add($Body)
+                        [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @($Body.properties.rules) } }
+                    }
+                    default {
+                        $script:Order.Add('get')
+                        [PSCustomObject]@{ properties = [PSCustomObject]@{ scope = '/subscriptions/s1'; rules = @(
+                                    [PSCustomObject]@{ id = 'Expiration_Admin_Eligibility'; ruleType = 'RoleManagementPolicyExpirationRule'; isExpirationRequired = $true; maximumDuration = 'P90D'; target = [PSCustomObject]@{ caller = 'Admin'; operations = @('All'); level = 'Eligibility' } }
+                                    [PSCustomObject]@{ id = 'Expiration_Admin_Assignment'; ruleType = 'RoleManagementPolicyExpirationRule'; isExpirationRequired = $script:ExpirationRequired; maximumDuration = 'P90D'; target = [PSCustomObject]@{ caller = 'Admin'; operations = @('All'); level = 'Assignment' } }
+                                ) } }
+                    }
+                }
+            }
+            $script:Grant = @{ Role = 'Reader'; Subscription = 'Prod'; User = 'anna@contoso.com'; Permanent = $true; Confirm = $false; WarningAction = 'SilentlyContinue' }
+        }
+
+        It 'says what the rollback read, and never that the policy is not open or was already closed, after <Path>' -ForEach @(
+            @{ Path = 'a Failed answer'; Status = 'Failed'; ErrorId = 'AssignmentRequestFailed' }
+            @{ Path = 'a refused grant'; Status = 'Refused'; ErrorId = 'PolicyOpenedButGrantFailed' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Message = Get-TestRollbackMessage -Grant $script:Grant -ErrorId $ErrorId
+            # The NoChange branch was reached: the open PATCHed once, the rollback read the policy
+            # again and PATCHed nothing.
+            $script:Order -join ',' | Should -Be 'get,patch,put,get'
+            $Message.Contains($script:NoChangeRollbackText) | Should -BeTrue
+            $Message | Should -BeLike '*The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet.*'
+            foreach ($Phrase in 'not open', 'already closed') {
+                $Message | Should -Not -BeLike "*$Phrase*"
+                $script:NoChangeRollbackText | Should -Not -BeLike "*$Phrase*"
+            }
+        }
+
+        It 'gives a confirming Get command that reads the named property as True on a policy that still allows permanent assignments, after <Path>' -ForEach @(
+            @{ Path = 'a Failed answer'; Status = 'Failed'; ErrorId = 'AssignmentRequestFailed' }
+            @{ Path = 'a refused grant'; Status = 'Refused'; ErrorId = 'PolicyOpenedButGrantFailed' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Message = Get-TestRollbackMessage -Grant $script:Grant -ErrorId $ErrorId
+            $script:Order -join ',' | Should -Be 'get,patch,put,get'
+            $Property = Get-TestMessageSegment -Message $Message -After ' and, if ' -Before ' is True, run '
+            $Property | Should -BeExactly 'AllowPermanentActiveAssignment'
+            $Command = Get-TestLiteralValue -Literal (Get-TestMessageSegment -Message $Message -After 'Confirm with ' -Before ' and, if ')
+            $Command | Should -BeExactly 'Get-OERRoleManagementPolicy -PolicyId ''pol-1'''
+            # The policy the open left behind: its expiration rule no longer requires an expiration.
+            $script:Order.Clear()
+            $script:ExpirationRequired = $false
+            $Open = @(& ([scriptblock]::Create($Command + ' -ErrorAction Stop')))
+            $script:Order -join ',' | Should -Be 'get'
+            $Open.Count | Should -Be 1
+            $Open[0].PSObject.TypeNames[0] | Should -BeExactly 'Omnicit.EntraRBAC.RoleManagementPolicy'
+            $Open[0].PolicyId | Should -BeExactly 'pol-1'
+            $Open[0].PSObject.Properties.Name | Should -Contain $Property
+            $Open[0].$Property | Should -BeOfType [bool]
+            $Open[0].$Property | Should -BeTrue
+            # The control: the same command on a policy that disallows them reads the property False.
+            $script:ExpirationRequired = $true
+            $Closed = @(& ([scriptblock]::Create($Command + ' -ErrorAction Stop')))
+            $Closed.Count | Should -Be 1
+            $Closed[0].$Property | Should -BeOfType [bool]
+            $Closed[0].$Property | Should -BeFalse
+        }
+
+        It 'gives a close command that sends the rule disallowing permanent assignments to a policy that still allows them, after <Path>' -ForEach @(
+            @{ Path = 'a Failed answer'; Status = 'Failed'; ErrorId = 'AssignmentRequestFailed' }
+            @{ Path = 'a refused grant'; Status = 'Refused'; ErrorId = 'PolicyOpenedButGrantFailed' }
+        ) {
+            $script:AnsweredStatus = $Status
+            $Message = Get-TestRollbackMessage -Grant $script:Grant -ErrorId $ErrorId
+            $script:Order -join ',' | Should -Be 'get,patch,put,get'
+            $Command = Get-TestLiteralValue -Literal (Get-TestMessageSegment -Message $Message -After ' is True, run ' -Before ' to close it.')
+            $Command | Should -BeExactly 'Set-OERRoleManagementPolicy -PolicyId ''pol-1'' -AllowPermanentActiveAssignment $false'
+            # The policy the open left behind, read by the command; nothing was PATCHed since the open.
+            $script:Order.Clear()
+            $script:Patches.Clear()
+            $script:ExpirationRequired = $false
+            $Closed = & ([scriptblock]::Create($Command + ' -Confirm:$false -ErrorAction Stop'))
+            $script:Order -join ',' | Should -Be 'get,patch'
+            $script:Patches.Count | Should -Be 1
+            $Rules = @($script:Patches[0].properties.rules)
+            $Sent = @($Rules | Where-Object { $_.id -ceq 'Expiration_Admin_Assignment' })
+            $Sent.Count | Should -Be 1
+            $Sent[0].isExpirationRequired | Should -BeOfType [bool]
+            $Sent[0].isExpirationRequired | Should -BeTrue
+            # That one rule and nothing else changed: the eligibility rule is sent as it was read.
+            @($Closed.ChangedRuleIds) -join ',' | Should -BeExactly 'Expiration_Admin_Assignment'
+            @($Rules | Where-Object { $_.id -ceq 'Expiration_Admin_Eligibility' }).Count | Should -Be 1
+            @($Rules | Where-Object { $_.id -ceq 'Expiration_Admin_Eligibility' })[0].isExpirationRequired | Should -BeTrue
+            $Closed.AllowPermanentActiveAssignment | Should -BeFalse
         }
     }
 }
