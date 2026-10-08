@@ -5578,14 +5578,15 @@ the group's policy to allow permanent eligibility before it sends the request. W
 engine now decides it itself, not through a flag threaded out of the cmdlet: the readiness poll has
 just read the policy before each call, and its read before the FIRST call is the before-state -- kept
 from that call only, since a later poll reads a policy the first call may already have opened, and
-unknown when the poll was refused. After the attempts the engine reads the policy once more, with the
-poll's own two calls and no wait of its own, and the message says which it is: nothing sent and
-nothing opened, not left open, already allowed before the first request, opened and still open, or
-open and possibly opened. A read after the attempts that fails, is unlisted, answers 404 or reads no
-setting is unknown, and an unknown is never written as "not opened": the message says the policy may
-have been opened and gives the command that closes it, since a reader who acts on "not opened" leaves
-a weakened policy in place. Under replication lag that read can still come from a replica that has
-not seen the open; that is the cost of not threading a flag out of the cmdlet. The command comes from
+unknown when the poll was refused or its read carried no permanent-eligibility setting. After the
+attempts the engine reads the policy once more, with the poll's own two calls and no wait of its
+own, and the message says which it is: nothing sent and nothing opened, not left open, already
+allowed before the first request, opened and still open, or open and possibly opened. A read after
+the attempts that fails, is unlisted, answers 404 or reads no setting is unknown, and an unknown is
+never written as "not opened": the message says the policy may have been opened and gives the
+command that closes it, since a reader who acts on "not opened" leaves a weakened policy in place.
+Under replication lag that read can still come from a replica that has not seen the open; that is
+the cost of not threading a flag out of the cmdlet. The command comes from
 `Get-OERGroupPimPolicyCloseAdvice`, which `Add-OERGroupEligibility` uses too, and is
 `Set-OERGroupPimPolicy -Group G -AccessType A -AllowPermanentEligibility:$false` (Ruling R1). The
 advice before this step named `-ActivationMaxHours` without the switch, and `Set-OERGroupPimPolicy`

@@ -190,9 +190,10 @@ function Sync-OERStructureGroup {
        poll's own two calls and no wait of its own, and compares it with the policy as the poll read
        it just before the FIRST call: one that does not allow permanent eligibility was not left open;
        one that already allowed it before the first request was not opened for it; one that did not
-       is named as opened and still open; one whose earlier state is unknown (the poll was refused) is
-       named as open and possibly opened. The last two carry the Set-OERGroupPimPolicy command that
-       closes the policy (Get-OERGroupPimPolicyCloseAdvice, the advice Add-OERGroupEligibility gives).
+       is named as opened and still open; one whose earlier state is unknown (the poll was refused, or
+       its read carried no permanent-eligibility setting) is named as open and possibly opened. The
+       last two carry the Set-OERGroupPimPolicy command that closes the policy
+       (Get-OERGroupPimPolicyCloseAdvice, the advice Add-OERGroupEligibility gives).
        A read after the attempts that is refused (scrubbed and logged), unlisted, answers 404 or
        reads no permanent-eligibility setting is never taken for "not opened": the message says the
        policy may have been opened and could not be read, and gives the same command for the case
