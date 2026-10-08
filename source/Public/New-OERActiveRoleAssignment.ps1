@@ -15,8 +15,10 @@ function New-OERActiveRoleAssignment {
     opens it only once the assignment itself is confirmed (declining the prompt weakens nothing,
     while -WhatIf still plans the policy change). A grant that is then refused rolls the policy
     back first, then reports a PolicyOpenedButGrantFailed error naming the policy, how the rollback
-    went (it rolled the policy back, it found the policy already disallowing permanent assignments
-    again so changed nothing, or it failed and left the policy open) and how the request failed,
+    went (it rolled the policy back; it read the policy as already disallowing permanent assignments
+    and changed nothing, which may be a read that does not reflect the open yet, so the report asks
+    for a confirming Get-OERRoleManagementPolicy read and gives the command that closes the policy;
+    or it failed and left the policy open) and how the request failed,
     and only then re-publishes the grant's own error, so a caller running with -ErrorAction Stop
     is stopped by PolicyOpenedButGrantFailed after the rollback. The rollback is not asked again,
     even under -Confirm: it puts back this invocation's own change, which the operator already
@@ -39,8 +41,10 @@ function New-OERActiveRoleAssignment {
     object, for example through -OutVariable, before the error stops it. When this invocation had
     opened the role management policy for a permanent grant, the policy is rolled back first --
     before the object is emitted, as it is before any error for a refused grant -- and the
-    AssignmentRequestFailed message says how the rollback went (it rolled the policy back, it found
-    the policy already disallowing permanent assignments again so changed nothing, or it failed and
+    AssignmentRequestFailed message says how the rollback went (it rolled the policy back; it read
+    the policy as already disallowing permanent assignments and changed nothing, which may be a read
+    that does not reflect the open yet, so the message asks for a confirming
+    Get-OERRoleManagementPolicy read and gives the command that closes the policy; or it failed and
     left the policy open); it is the one record, not a PolicyOpenedButGrantFailed as well, since the
     request was accepted rather than refused. Every other status is not an error -- Provisioned and
     PendingApproval included.
@@ -338,11 +342,17 @@ function New-OERActiveRoleAssignment {
             # (-Confirm:$false), and under -ErrorAction Stop every failure of it, NoChange included,
             # throws, so a call that returns is a rollback written.
             #
-            # There are three outcomes, not two. NoChange is the one failure that leaves the policy
-            # closed: Set-OERRoleManagementPolicy writes it when no rule differs, that is when the
-            # policy already disallows permanent assignments again by the time the rollback reads it
-            # (BL-99). Reporting that as "ALSO failed, so the policy is still open" would send the
-            # operator to close a policy that is closed. It is decided on the error id, the first
+            # There are three outcomes, not two: rolled back, read as already disallowing permanent
+            # assignments so changed nothing, and failed. NoChange is the second:
+            # Set-OERRoleManagementPolicy writes it when no rule differs, that is when the rollback
+            # READ the policy as already disallowing permanent assignments (BL-99). Nothing shows that
+            # read reflects the open: read-after-write consistency of roleManagementPolicies is not
+            # measured, so it may come from a replica that has not seen the open yet. So the text
+            # claims neither of the two things it cannot know. "ALSO failed, so the policy is still
+            # open" would send the operator to close a policy that may be closed, and a claim that
+            # the policy is not open could be false. It says what the rollback read, asks for a
+            # confirming Get-OERRoleManagementPolicy read, and gives the command that closes the
+            # policy if that read shows the property True. It is decided on the error id, the first
             # comma-separated segment of FullyQualifiedErrorId compared ordinally, never on the
             # message: the error id is the contract the cmdlet owns, while a message is prose that can
             # be reworded, or reused by another failure.
@@ -359,7 +369,7 @@ function New-OERActiveRoleAssignment {
                 if ($Reverted) {
                     'It was rolled back to disallow permanent assignments.'
                 } elseif ($AnsweredNoChange) {
-                    'It already disallowed permanent assignments again when the rollback read it, so it is not open and the rollback changed nothing.'
+                    "The rollback read it as already disallowing permanent assignments and changed nothing, but that read may not reflect the open yet. Confirm with 'Get-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId''' and, if AllowPermanentActiveAssignment is True, run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentActiveAssignment `$false' to close it."
                 } else {
                     "The rollback ALSO failed, so the policy is still open. Run 'Set-OERRoleManagementPolicy -PolicyId ''$OpenedPolicyId'' -AllowPermanentActiveAssignment `$false' to close it."
                 }
