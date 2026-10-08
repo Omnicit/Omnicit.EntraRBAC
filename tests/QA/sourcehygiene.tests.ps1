@@ -3626,7 +3626,7 @@ statement directly after its Unlock, passing the same -Invocation variable.
             'Initialize-OERAuth, Connect-OER and Disconnect-OER must each really call Set-OERSessionUncertain; an owner listed here that calls it nowhere is a stale rule, not a pass')
         $script:transportOwnerViolations['Set-OERSessionUncertain'] -join "`n" | Should -BeNullOrEmpty -Because @'
 The session-uncertain marker (A10, BL-89) says that the last sign-in did not succeed, so the module's
-session may still belong to the tenant before it; while it is set, Initialize-OERAuth refuses a sign-in
+session may not be the one that sign-in asked for; while it is set, Initialize-OERAuth refuses a sign-in
 that names no tenant. Initialize-OERAuth sets it at every entry and clears it only for a sign-in that
 named its tenant or was Connect-OER's, Connect-OER sets it first thing, and Disconnect-OER clears it. A
 fourth caller can clear it after a refused sign-in, and the next command that names no tenant then acts

@@ -1318,6 +1318,14 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
             }
         }
         $script:GroupDoc = '{ "version": "1.0", "groups": [ { "displayName": "oer-bl76-probe" } ] }'
+        # BL-92: what the refusal of a whole document says, by cause. Another command's sign-in replaced
+        # the session, or Disconnect-OER ended it and the module holds no state at all.
+        $script:DocumentIdentityText = 'Another OER command in the same pipeline signed in to a different tenant or identity after ' +
+            'Invoke-OERStructure began, so Invoke-OERStructure did not apply this document and Omnicit.EntraRBAC sent nothing ' +
+            'for it. Run the commands as separate statements, so that each one signs in and finishes before the next one starts.'
+        $script:DocumentEndedText = "Disconnect-OER ended the module's session after Invoke-OERStructure began, so Invoke-OERStructure " +
+            'did not apply this document and Omnicit.EntraRBAC sent nothing for it. Run Disconnect-OER as a statement of its ' +
+            'own, after the commands that use the session.'
     }
     BeforeEach {
         Set-ProbeState -TenantId '44444444-4444-4444-4444-444444444444'
@@ -1333,6 +1341,8 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         $Out | Should -BeNullOrEmpty
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].TargetObject | Should -Be 'Invoke-OERStructure'
+        # BL-92: the refusal says the document was not applied and that another sign-in replaced the session.
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].Exception.Message | Should -BeExactly $script:DocumentIdentityText
         @($Errs).Count | Should -Be 1
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
@@ -1345,6 +1355,7 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         $Out | Should -BeNullOrEmpty
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].TargetObject | Should -Be 'Invoke-OERStructure'
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].Exception.Message | Should -BeExactly $script:DocumentIdentityText
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
     }
@@ -1356,6 +1367,8 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         $Out | Should -BeNullOrEmpty
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].TargetObject | Should -Be 'Invoke-OERStructure'
+        # BL-92: the module holds no state, so the refusal says Disconnect-OER ended the session, not that another command signed in.
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].Exception.Message | Should -BeExactly $script:DocumentEndedText
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
     }
@@ -1368,6 +1381,8 @@ Describe 'Invoke-OERStructure acts only under the session it began with (BL-76)'
         $Out | Should -BeNullOrEmpty
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' }).Count | Should -Be 1
         @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].TargetObject | Should -Be 'Invoke-OERStructure'
+        # The state is held when the refusal is built (a sign-in happened), so this is the identity text, not the ended one.
+        @($Errs | Where-Object { $_.FullyQualifiedErrorId -like 'SignInSuperseded*' })[0].Exception.Message | Should -BeExactly $script:DocumentIdentityText
         Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 0
         Should -Invoke -ModuleName Omnicit.EntraRBAC Sync-OERStructureGroup -Times 0
     }

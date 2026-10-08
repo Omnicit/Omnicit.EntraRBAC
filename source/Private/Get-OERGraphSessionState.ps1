@@ -17,7 +17,9 @@ function Get-OERGraphSessionState {
     replaced it.
 
     Initialize-OERAuth calls this at every entry and Invoke-OERGraphRequest before every Graph call.
-    The fingerprint itself is Get-OERGraphSessionFingerprint's; this function only compares.
+    Disconnect-OER calls it once, before its confirmation gate and before it clears the module's
+    state, to decide whether to call Disconnect-MgGraph: only for Own. The fingerprint itself is
+    Get-OERGraphSessionFingerprint's; this function only compares.
 
     .EXAMPLE
     if ((Get-OERGraphSessionState) -eq 'Changed') { throw (New-OERGraphSessionChangedError) }

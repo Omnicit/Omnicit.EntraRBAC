@@ -6,12 +6,20 @@ function Invoke-OERArmRequest {
 
     .DESCRIPTION
     The single ARM call site of the module: nothing else issues ARM requests. The caller supplies the
-    ARM path INCLUDING the pinned api-version query parameter; the wrapper prepends the ARM host
-    (taken from $script:_OERAuthState.ArmResourceUrl, default https://management.azure.com) and sends
-    the request with Invoke-WebRequest, attaching the cached ARM token from $script:_OERAuthState as
-    an Authorization: Bearer header. The module deliberately does NOT use Connect-AzAccount /
-    Invoke-AzRestMethod: Az.Accounts cannot reliably reuse an externally acquired (AzAuth) access
-    token, so the bearer token is sent directly.
+    ARM path INCLUDING the pinned api-version query parameter; the wrapper prepends the ARM host and
+    sends the request with Invoke-WebRequest, attaching the cached ARM token from
+    $script:_OERAuthState as an Authorization: Bearer header. The host is, in this order:
+    $script:_OERAuthState.ArmResourceUrl when the session has one; otherwise, for a session that has
+    none, the ARM host of the session's cloud (the state's Environment, Global when it names none),
+    read from Get-OERCloudEndpoint; and https://management.azure.com when there is no session state
+    at all. The module deliberately does NOT use Connect-AzAccount / Invoke-AzRestMethod:
+    Az.Accounts cannot reliably reuse an externally acquired (AzAuth) access token, so the bearer
+    token is sent directly.
+
+    A request is never sent without an ARM token. When the session holds none -- no state, no
+    ArmToken, or an empty or blank one -- the request is refused after the sign-in latch and
+    supersession gates and before anything is sent, with ArmTokenAcquisitionFailed. Run
+    Connect-OER -IncludeARM to acquire the token.
 
     Invoke-WebRequest is called with -SkipHttpErrorCheck so HTTP errors do not throw. Each response is
     normalized to a { StatusCode; Content; Headers } object before the status logic runs; the header
@@ -79,10 +87,17 @@ function Invoke-OERArmRequest {
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
     $ProgressPreference = 'SilentlyContinue'
 
-    # ARM host: from the cached resource url (so sovereign clouds work once that is configurable),
-    # defaulting to public-cloud ARM.
+    # ARM host. The session's own resource url when it has one. A state without one takes the host of
+    # the session's cloud (BL-65), never the public cloud for a sovereign session; defence in depth,
+    # since no state the module builds holds a token without a url. With no state at all the
+    # documented public-cloud fallback stays, so the request is refused for its missing token below
+    # rather than failing on a null host (docs/development/rationale.md#arm-transport). The else
+    # literal is gate 7's exemption by shape.
     $ArmBaseUrl = if ($script:_OERAuthState -and $script:_OERAuthState.ArmResourceUrl) {
         ([string]$script:_OERAuthState.ArmResourceUrl).TrimEnd('/')
+    } elseif ($script:_OERAuthState) {
+        $SessionCloud = if ($script:_OERAuthState.Environment) { [string]$script:_OERAuthState.Environment } else { 'Global' }
+        ([string](Get-OERCloudEndpoint -Environment $SessionCloud).ArmResource).TrimEnd('/')
     } else {
         'https://management.azure.com'
     }
@@ -141,6 +156,23 @@ function Invoke-OERArmRequest {
 
         # Materialize the bearer token only at the request boundary; clear it in the finally block.
         $Plain = [System.Net.NetworkCredential]::new('', $script:_OERAuthState.ArmToken).Password
+        # SEC (BL-65, BL-96): never an ARM request without an ARM token. No state, no ArmToken and an
+        # empty or blank SecureString all materialize to an empty string (measured), and the request
+        # went out with "Bearer " -- to the public cloud when there was no state. Refused here, after
+        # the last gate and before anything is sent, with the existing ArmTokenAcquisitionFailed (A8).
+        # Read from $Plain, not from the state, so no second token read stands in this function.
+        # The return is load-bearing, as after each gate above.
+        if ([string]::IsNullOrWhiteSpace($Plain)) {
+            $Plain = $null
+            throw [System.Management.Automation.ErrorRecord]::new(
+                [System.Exception]::new(("No Azure Resource Manager request was sent: the module's session holds no " +
+                    'Azure Resource Manager token. Run Connect-OER -IncludeARM to acquire one -- for an app-only ' +
+                    'session with its certificate or client secret -- and run the command again.')),
+                'ArmTokenAcquisitionFailed',
+                [System.Management.Automation.ErrorCategory]::AuthenticationError,
+                $CallPath)
+            return
+        }
         $InvokeParams = @{
             Method             = $CallMethod
             Uri                = "$BaseUrl$CallPath"
@@ -496,8 +528,9 @@ function Invoke-OERArmRequest {
     # its OWN throw to its next statement -- and so does every caller of a nested function that threw,
     # since a return there ends only that nested function.
     #
-    # No response object at all means a nested function already raised and returned: the latch gate
-    # or the transport failure in Invoke-ArmCall, or the app-only refusal in Invoke-ArmCallWithRefresh.
+    # No response object at all means a nested function already raised and returned: the latch gate,
+    # the supersession gate, the missing-token refusal or the transport failure in Invoke-ArmCall, or
+    # the app-only refusal in Invoke-ArmCallWithRefresh.
     # Its record is the call's answer. Converting the missing response would add a parameter-binding
     # record of its own, since Convert-ArmHttpException requires one.
     if ($null -eq $Response) { return }

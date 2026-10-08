@@ -831,9 +831,10 @@ chokes on a stale `DefaultSubscriptionForLogin`.
 
 Instead, `Initialize-OERAuth -IncludeARM` caches the ARM bearer token (SecureString) in
 `$script:_OERAuthState.ArmToken`, and `Invoke-OERArmRequest` sends it directly via
-`Invoke-WebRequest -SkipHttpErrorCheck` against `$script:_OERAuthState.ArmResourceUrl` (default
-`https://management.azure.com`) with an `Authorization: Bearer` header. The token plaintext is
-materialized only at the request boundary and cleared in a `finally`; the transport `catch` scrubs
+`Invoke-WebRequest -SkipHttpErrorCheck` against the host of the session -- the state's
+`ArmResourceUrl`, else the ARM host of the state's cloud, else, with no state at all,
+`https://management.azure.com` (the `ArmResourceUrl` bullet below) -- with an
+`Authorization: Bearer` header. The token plaintext is materialized only at the request boundary and cleared in a `finally`; the transport `catch` scrubs
 first, because the failed request carries the bearer header.
 
 Behaviour that follows from this design:
@@ -895,6 +896,64 @@ Behaviour that follows from this design:
   is a controller ruling, not an oversight, and is exempted by name (not deleted) from the gate-7
   hardcoded-host-literal check in [#static-source-gates](#static-source-gates). See
   [#sovereign-clouds](#sovereign-clouds) for the sovereign-cloud design and its evidence.
+  **Since Sprint 10 step 3 (BL-65) the host is chosen in three steps:** the state's `ArmResourceUrl`
+  when it has one; otherwise, for a state that has none, the `ArmResource` host of the state's
+  `Environment` (`Global` when the key is missing, empty or null), read from `Get-OERCloudEndpoint`;
+  and the literal only when there is no state at all. Before that, a state without `ArmResourceUrl`
+  sent to the public cloud whatever cloud the session was in. The cloud-host branch is defence in
+  depth: no state the module builds holds a token without a url -- `Initialize-OERAuth` sets and
+  clears `ArmToken` and `ArmResourceUrl` together, in the drop under
+  [The Graph SDK session](#the-graph-sdk-session) as in the state rebuild -- and a state without a
+  token is refused before the host matters, so only a hand-built state reaches the branch with a
+  request to send, as the unit suite's states do. The literal now names only the host of a
+  request that is refused for its missing token (next bullet), so no request goes to it. An
+  `Environment` the cloud table does not know throws from `Get-OERCloudEndpoint`, which never falls
+  back to the public row; `Initialize-OERAuth` validates the name, so a real state cannot hold one,
+  and the unit suite pins that no request is sent for it.
+- **A request is never sent without an ARM token (BL-65, BL-96; decision A8).** A session with no
+  ARM token -- no state at all, no `ArmToken` key, a null token, an empty `SecureString` or a blank
+  one -- used to send `Authorization: Bearer ` with nothing after it: to the public cloud when there
+  was no state, and for the state `Initialize-OERAuth` leaves after it drops the token. ARM would have
+  answered it 401 (never measured). `Invoke-ArmCall` now refuses it directly after the `$Plain = ...` materialization and
+  before the request is built: `[string]::IsNullOrWhiteSpace($Plain)` throws the **existing**
+  `ArmTokenAcquisitionFailed` (category `AuthenticationError`, target the request path), whose
+  message says no request was sent and names `Connect-OER -IncludeARM`, with the app-only route
+  spelled out. The id is reused on purpose (A8: no new ErrorId, no new public value) -- it already
+  means "the session holds no ARM token it can use".
+  **The check reads `$Plain`, not the state, and that is what keeps gate 10 green.** The gate counts
+  exactly two bearer markers in `Invoke-ArmCall` -- the `$Plain = ...` assignment and the one
+  `.ArmToken` read -- and requires both after the supersession gate. An empty plaintext is exactly
+  "no token" for all the shapes (measured: `[System.Net.NetworkCredential]::new('', $null).Password`
+  and an empty `SecureString` both give an empty string without an error, and a blank one gives the
+  blanks back), so the test needs no second `.ArmToken` read, and `$Plain = $null` is not a marker
+  since the gate excludes a `$null` right-hand side. The refusal therefore stands after both gates: a
+  latched command still reads `SignInRefused` and a superseded one `SignInSuperseded`, never the
+  token refusal. The `return` after the `throw` is load-bearing like the one after each gate: under
+  `-ErrorAction SilentlyContinue`, with no `try` up the call stack, a function carries on past its
+  own `throw`, to the request. The `$Plain = $null` inside the block clears the plaintext of a blank
+  token before the throw; no test can observe it, since the variable is local, and it is kept by
+  review.
+  **Proofs** (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "sends nothing
+  without an ARM token (BL-65, BL-96)" drives the five shapes, the two order tests, the 401 retry
+  after a refresh that leaves no token (one request, never the retry) and a control that sends with a
+  token; "takes its host from the session's cloud (BL-65)" drives the host; and "... outside any try
+  (BL-65, BL-96)" runs the wrapper under `-ErrorAction SilentlyContinue` in a runspace with no `try`
+  (`Invoke-OERWithConfirmAnswer`) for a state without the key, a blank token and no state, with
+  `ARM CALLS: 0` and `ArmTokenAcquisitionFailed` the only record. **Mutations**, each run on a copy
+  of `source/`: deleting the whole block turned the five shapes, the 401 test and the three
+  no-`try` tests red (9); deleting only the `return` turned the three no-`try` tests red and nothing
+  else, which is the proof that Pester's own `try` hides it; `IsNullOrEmpty` for `IsNullOrWhiteSpace`
+  turned the blank shape and its no-`try` twin red; deleting the `elseif` host branch turned the
+  USGov, China, USGovDoD, dropped-url and unknown-cloud tests red; passing `Environment` on without
+  the `Global` default turned the three missing-or-empty-`Environment` tests red; making the session's
+  own `ArmResourceUrl` lose to the cloud table turned the precedence test red; and moving the block
+  with the materialization above the supersession gate turned the supersession order test and B6 red,
+  and above both gates also the latch order test and A6 -- and, against a scratch project root (the
+  gate reads `source/` from its own checkout), gate 10's "materializes the bearer token after both"
+  test in both cases. One mutation is equivalent and stays: dropping the `$script:_OERAuthState`
+  condition of the `elseif` changes nothing, since no state reads `Global`, whose ARM host is the same
+  string as the `else` literal; the literal stays all the same, as the documented fallback and
+  gate 7's exemption by shape.
 
 Verified 2026-08-25 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*' source/`, 43 hits):
 managementGroups 5 real call sites, the Azure PIM surface 13, roleDefinitions/roleAssignments 10,
@@ -1911,11 +1970,10 @@ instead of refreshing.
 references to `TokenManager` at all -- it only ever touches the on-disk MSAL token cache, never the
 static credential field. MEASURED: removing and re-importing the AzAuth module leaves the same
 credential instance in place. `Disconnect-OER` clears only `$script:_OERAuthState` (this module's
-own session state) and calls `Disconnect-MgGraph` (it called `Disconnect-AzAccount` too until
-2026-09-21); reading its source shows
-it never touches AzAuth's credential at all, so it was never capable of clearing it. Decompiling
-AzAuth shows the only call site that clears the static credential is `Get-AzToken`'s own `-Force`
-handling.
+own session state) and calls `Disconnect-MgGraph` for the session the module connected (A4; it
+called `Disconnect-AzAccount` too until 2026-09-21); reading its source shows it never touches
+AzAuth's credential at all, so it was never capable of clearing it. Decompiling AzAuth shows the
+only call site that clears the static credential is `Get-AzToken`'s own `-Force` handling.
 
 **The tenant lookup (BL-12, decided by Philip 2026-10-06, P-2).** HISTORY first: this paragraph
 used to record the lookup as a proposal, not built, since it is a new network call, and the gap it
@@ -2128,8 +2186,8 @@ sign-in, a different tenant, identity or cloud, `-ForceRefresh`, a claims challe
 within five minutes of expiry, a process that holds no SDK session at all, or, under `Connect-OER`
 only, a session another `Connect-MgGraph` started -- so the SDK session is started per sign-in or
 token refresh and not once per cmdlet; a call whose Graph session is still valid never reaches it.
-`Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears `$script:_OERAuthState`
-and calls `Disconnect-MgGraph`.
+`Disconnect-OER` is the matching end: inside its `ShouldProcess` it clears `$script:_OERAuthState`,
+and it calls `Disconnect-MgGraph` there only when the session is the module's own (A4, below).
 
 **Why the module checks which session the process holds.** The SDK keeps one session per process,
 and `Invoke-OERGraphRequest` passes no token of its own: it calls `Invoke-MgGraphRequest`, so every
@@ -2253,12 +2311,100 @@ Review alone held the one-caller rule until Sprint 9 step 3 (final review I2, Ru
 [#static-source-gates](#static-source-gates) now holds the NAME `ReclaimGraphSession` to
 `Connect-OER.ps1` and `Initialize-OERAuth.ps1`.
 
-**`Disconnect-OER`** clears `$script:_OERAuthState`, and the fingerprint with it, so the next
-cmdlet is `Untracked` and signs in from the start. It still calls `Disconnect-MgGraph` whatever
-session the process holds, so after another `Connect-MgGraph` it ends that session too, exactly as it
-did before the check existed; its help says so. That is the opposite of the choice for Az, which
-`Disconnect-OER` leaves alone since the module never establishes an Az context. The alternative,
-skipping `Disconnect-MgGraph` when the state is `Changed`, would be one condition and a help change.
+**`Disconnect-OER` (A4, BL-67, Sprint 10 step 3).** Decision A4 (Philip): `Disconnect-OER` ends
+only the Graph SDK session the module connected, the same stance it takes for an Az session, which
+it leaves alone since the module never establishes an Az context. Until this change it called
+`Disconnect-MgGraph` whatever session the process held, so after another `Connect-MgGraph` it ended
+that session too, exactly as it did before the check existed. The alternative this paragraph used to
+name -- skipping `Disconnect-MgGraph` when the state is `Changed`, one condition and a help change --
+is the one taken, and widened to the other states below. `Disconnect-OER` reads
+`Get-OERGraphSessionState` ONCE, into `$GraphSessionState`, before its `ShouldProcess` gate and so
+before `$script:_OERAuthState` is cleared: the fingerprint lives in that state, and once it is
+cleared every state reads `Untracked`. Inside the gate it clears the state, the fingerprint with it,
+and the A10 marker in every case, so the next cmdlet is `Untracked` and signs in from the start; only
+`Own` then calls `Disconnect-MgGraph`.
+
+- `Own` -- the process holds the session the module connected. `Disconnect-MgGraph`, no warning.
+- `Changed` -- another `Connect-MgGraph` replaced it. Left connected, with the warning.
+- `Untracked` -- the module holds no record of a session of its own. With a session in the process
+  (`Get-OERGraphSessionFingerprint` returns a value) it is left connected, with the warning; with
+  none there is nothing to leave, so no warning.
+- `Absent` -- the session the module connected is already gone. Nothing to disconnect, no warning.
+
+The warning is one string, written once by `Write-Warning` when a session exists and is left -- for
+`Changed`, and for `Untracked` with a session in the process: `Disconnect-OER leaves the Microsoft
+Graph PowerShell SDK session in this process connected, since Omnicit.EntraRBAC has no record of
+connecting it. Run Disconnect-MgGraph to end that session.` It says "has no record of connecting
+it" and not "did not connect it": for an `Untracked` session the module cannot know it did not
+connect it, since an earlier import of the module may have; it knows only that it holds no record.
+The `ShouldProcess` target and action strings are unchanged.
+
+Ruling: a warning before the gate, not after it, and not Verbose or Information. It is shown by
+default, it shows under `-WhatIf` and before a `-Confirm` prompt is answered, it is about what the
+command will leave and not an outcome of the answer, and the rule of
+[#warning-before-confirmation](#warning-before-confirmation) -- no `Write-Warning` after a public
+cmdlet's first `$PSCmdlet.ShouldProcess` -- allows it with no allowlist entry, so the allowlist stays
+at nine. The state is read before the gate for the same reason: the warning has to know it. Cost if
+wrong: a declined `-Confirm` has shown a warning about a command that then did nothing, and the
+warning stays true, since the session stays connected either way.
+
+Ruling: the warning before the gate stands under `-WarningAction Stop` and
+a global `$WarningPreference` of `Stop` too, and its cost is named and pinned. A `Disconnect-OER` that would
+leave another session (`Changed`, or `Untracked` with a session in the process) stops AT the warning
+-- measured in plain PowerShell 7.6.6 as a script-terminating `ActionPreferenceStop`, error id
+`ActionPreferenceStop,Microsoft.PowerShell.Commands.WriteWarningCommand` -- so its gate never runs and
+it clears nothing: the state, its fingerprint, the ARM token and the A10 marker all stay. That is
+the safe side. A `Changed` state is refused by the session gate at the next entry, and the marker
+stays set, so a command that names no tenant is refused with `SignInRefused`; the only cost is that
+the operator meets a stop where a disconnect was asked for. The alternative, the warning inside the
+gate, would let the command clear first, but it would then print only after the answer and never
+under `-WhatIf`, which is the case the rule of
+[#warning-before-confirmation](#warning-before-confirmation) exists for. So the help says to run it
+with the default warning preference, or to end the other session first with `Disconnect-MgGraph`,
+after which the state reads `Absent` and there is nothing to warn about. Two tests in the same
+Describe pin it, one per way to stop: `-WarningAction Stop` on a `Changed` state and a global
+`$WarningPreference` of `Stop` on an `Untracked` one each throw that error id, and the state, the
+marker and the `Disconnect-MgGraph` count are as they were (the fingerprint too, for `Changed`). The
+preference variable has to be set globally: module code does not see a caller's local one, measured
+by a first version of the test that set it locally and saw no exception.
+
+Ruling: an `Untracked` session that the process holds is treated as not the module's. The module
+cannot prove it is its own, and leaving it is the safe direction. A session from an earlier import
+of the module reads `Untracked` -- re-importing clears `$script:_OERAuthState` and the fingerprint
+with it, while the SDK session stays in the process -- so it is left, and the warning names
+`Disconnect-MgGraph`. Cost if wrong: after a re-import the operator ends that session by hand.
+
+Leaving a session does not protect it from the module's next sign-in. After `Disconnect-OER` the
+state is `Untracked`, and the next `Initialize-OERAuth` sign-in runs `Connect-MgGraph`, which
+replaces whatever session the process held, as any `Connect-MgGraph` does (above). What A4 changes is
+only that `Disconnect-OER` no longer ends a session it did not start; the help, the README and the
+about topic say both halves. The one gap is the gap every gate read has: another runspace's
+`Connect-MgGraph` between the read and the disconnect is not seen (see "What is still not covered"
+below).
+
+The tests are in `tests/Unit/Public/Disconnect-OER.Tests.ps1`, Describe `Disconnect-OER ends only
+the Graph SDK session the module connected (A4, BL-67)`: one test per state -- `Own`, `Changed`,
+`Untracked` with no state and with a state that has no fingerprint, `Untracked` with no session,
+and `Absent` -- each pinning the exact warning text and its count (one, or none), whether
+`Disconnect-MgGraph` ran, and that the state is cleared; `Changed` also the A10 marker. Two
+`-WhatIf` tests. On `Changed` the warning is written and the state and marker are untouched, which
+a warning inside the gate could not do. On `Own` `Disconnect-MgGraph` is not called, the state and
+marker stay and no warning is written: on every other state the call is not made whatever the gate
+does, so this is the one test that holds the disconnect itself inside the gate. An AST test, read
+from the loaded function, requires the one `Write-Warning` to start before the first `ShouldProcess`
+call. The A18 test now expects the one read the decision makes (`Get-MgContext` once after the
+disconnect, and still once after the module is asked what it tracks). MUTATIONS (G5), each one edit
+to a copy of `source/` run through the covering tests: (a) `Disconnect-MgGraph` called
+unconditionally (`if ($true)`) turns the `Changed`, both `Untracked`-with-a-session,
+`Untracked`-with-none and `Absent` tests red; (b) the `Untracked` arm of the warning condition
+dropped turns the two `Untracked`-with-a-session tests red; (c)
+`$null -ne (Get-OERGraphSessionFingerprint)` dropped, so every `Untracked` warns, turns the
+`Untracked`-with-none test red; (d) the `Write-Warning` block moved inside the gate turns the
+`-WhatIf`-on-`Changed` test, the AST order test and the cohort's after-the-gate rule red (the last
+with `OER_COHORT_SOURCE_ROOT` pointed at the mutated copy); (e) `'Own'` swapped for `'Changed'` in
+the disconnect condition turns the `Own` test, the first Describe's `calls Disconnect-MgGraph for
+the session the module connected` and the `Changed` test red; (f) the `if ($GraphSessionState -eq
+'Own')` block moved out of the gate, after it, turns the `-WhatIf`-on-`Own` test red.
 
 **Why `Invoke-OERGraphRequest` checks again before every call.** MEASURED 2026-10-05 in
 PowerShell 7, with plain functions and no module code:
@@ -2319,8 +2465,13 @@ The ARM token drop predates the latch and stays as a second guard that does not 
 refused request that names another tenant, identity or cloud -- the `$ArmIdentityUnchanged` rule the
 state rebuild already applies -- drops that token first (`ArmToken`, `ArmTokenExpiry`,
 `ArmResourceUrl` and `ArmTokenTenantId`), since `Invoke-OERArmRequest` compares nothing and sends
-whatever token the state holds: a request that reached the send would carry an empty bearer, ARM
-would refuse it with 401, and the 401 path raises, since its forced refresh is refused as well.
+whatever token the state holds. A request that reached the send after the drop used to carry an
+empty bearer, to the public cloud's host whatever cloud the session was in, and ARM would have
+answered it with 401 (never measured); since Sprint 10 step 3 (BL-65, BL-96) the wrapper refuses it
+with `ArmTokenAcquisitionFailed` before it is sent, instead of sending it
+([#arm-transport](#arm-transport) holds the refusal and its proofs). The same change makes a state
+without `ArmResourceUrl` take its cloud's ARM host from its `Environment`, not the public cloud's --
+which no state the module builds needs, since the drop clears the token and the url together.
 Before the drop existed, the final review of A18 MEASURED `Get-OERSubscription -TenantId` naming a
 second tenant, in a runspace with no `try`, being refused and then listing the first tenant's
 subscriptions with the first tenant's token. G10 in
@@ -2361,13 +2512,13 @@ switches the session back by itself, and `Connect-OER` run with the same sign-in
 (for an app-only session, its certificate or client secret, since a bare `Connect-OER` signs in
 interactively) or a new PowerShell process are the ways out; after a `Disconnect-MgGraph` run
 instead of `Disconnect-OER` the next cmdlet signs in again by itself, except on an app-only session;
-and `Disconnect-OER` ends whichever session the process holds. The README and the about topic add
-one sentence the two help texts do not carry: runspaces in one process (`ForEach-Object -Parallel`,
-`Start-ThreadJob`) share one Graph SDK session, so a parallel fan-out across tenants in one process
-gets `GraphSessionChanged`, and each tenant belongs in its own process (`Start-Job`, or a separate
-PowerShell process). `Connect-OER`'s `.DESCRIPTION` alone carries the general case as well: a cmdlet
-whose own sign-in fails or is refused sends no Microsoft Graph or Azure Resource Manager request
-(`SignInRefused`).
+and `Disconnect-OER` ends only the session the module connected, leaving any other with a warning
+(A4). The README and the about topic add one sentence the two help texts do not carry: runspaces in
+one process (`ForEach-Object -Parallel`, `Start-ThreadJob`) share one Graph SDK session, so a
+parallel fan-out across tenants in one process gets `GraphSessionChanged`, and each tenant belongs
+in its own process (`Start-Job`, or a separate PowerShell process). `Connect-OER`'s `.DESCRIPTION`
+alone carries the general case as well: a cmdlet whose own sign-in fails or is refused sends no
+Microsoft Graph or Azure Resource Manager request (`SignInRefused`).
 
 **The old guidance, and what was known about it.** Until the check existed, the same four texts
 told the operator to run `Disconnect-OER` before their own `Connect-MgGraph` in the same process, or
@@ -2527,7 +2678,11 @@ in with `-IncludeARM` and also calls Graph -- for example `Get-OERInventory -Inc
 `Export-OERInventory` and `Invoke-OERStructure` with ARM sections, and the `-IncludeARM` role
 assignment cmdlets that resolve a principal through Graph. The rule is that every early abort leaves
 the latch set, and this path is no exception; the cost is a whole command refused where only its
-Azure half failed.
+Azure half failed. This paragraph is about `Initialize-OERAuth`'s refusal. Since Sprint 10 step 3
+(BL-65, BL-96) the ARM wrapper raises the same id too, as a terminating throw before it sends a
+request that has no token to send; that refusal neither latches nor marks, since only
+`Initialize-OERAuth` does either (see the bullet on a request never sent without an ARM token under
+[#arm-transport](#arm-transport)).
 
 **Where the key is not the public cmdlet.** The latch keys on the IMMEDIATE caller of
 `Initialize-OERAuth`, which for the `begin`-block call of a public cmdlet is that cmdlet. Elsewhere:
@@ -2636,9 +2791,9 @@ identity -- `'a script block'` when that frame has no command name. The comparis
 `-eq`, which ignores case, as `$ArmIdentityUnchanged` compares its terms. A frame the table
 does not hold is not compared, so a command with no memory is never refused by this gate. When it
 returns a name, the transport throws the record `New-OERSignInSupersededError` builds --
-`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and fixed text that
-names no tenant, account or token -- followed by a `return`, for fact 2 under
-[The Graph SDK session](#the-graph-sdk-session).
+`SignInSuperseded`, `AuthenticationError`, that command's name as its target, and text that names no
+tenant, account or token and fits the cause (see "Why no state counts as a difference" below) --
+followed by a `return`, for fact 2 under [The Graph SDK session](#the-graph-sdk-session).
 
 **Why any frame, and not the nearest.** The nested case. The apply handlers and several public
 cmdlets call public cmdlets that sign in again without `-TenantId` (see "Why the key is the command"
@@ -2659,6 +2814,42 @@ remembered string is never `-eq` to `$null`, so every remembering frame differs 
 refused with `SignInSuperseded`. Refusing is the safe direction: the request would otherwise go out
 under no session of the module's, or with no token. The cost is that such a pipeline reports
 `SignInSuperseded` instead of an authentication failure.
+
+**The text fits the cause (BL-92, Sprint 10 step 3).** The record used to carry one text for both
+causes, saying that another OER command in the same pipeline signed in to a different tenant or
+identity -- which is untrue after a `Disconnect-OER`, where no command signed in at all.
+`New-OERSignInSupersededError` now builds four texts, with the same id, category and target, by cause
+and by effect:
+
+- By cause, from the module's state. When it holds a session, another command's sign-in replaced it,
+  and the text says so and advises separate statements. When it holds none, `Disconnect-OER` ended the
+  module's session after the command began, and the text says that and advises running `Disconnect-OER`
+  as a statement of its own, after the commands that use the session. The function reads the state
+  itself (`$null -eq $script:_OERAuthState`, the test `Get-OERSignInIdentity` makes for "not signed
+  in") and takes no argument for it. Ruling: the callers do not pass the cause, so the transports'
+  gated statements stay as they are, `throw (New-OERSignInSupersededError -Command $X)`, and
+  `Disconnect-OER` is the only place under `source/` that sets the state to `$null` (a module that
+  never signed in also holds `$null`, but then no command remembers an identity and no snapshot
+  differs, so nothing is refused). Gate 10 of `tests/QA/sourcehygiene.tests.ps1` does not hold the
+  arguments of that call: `Test-OERGateBody` matches the factory by call name only, so a transport
+  that passed `-Document` would stay green there. What holds it is the last Context of
+  `tests/Unit/Private/New-OERSignInSupersededError.Tests.ps1`, "only Invoke-OERStructure passes
+  -Document (BL-92)", which reads the loaded `Invoke-OERGraphRequest`, `Invoke-OERArmRequest` and
+  `Invoke-OERStructure` and requires every transport call to bind no `-Document` (an abbreviation or
+  a splat counts as binding it) and `Invoke-OERStructure`'s one call to bind it.
+- By effect, from the new `-Document` switch. A request says that the module sends nothing while the
+  command runs and that "this request was not sent". With `-Document` the text says the command "did
+  not apply this document" and that Omnicit.EntraRBAC "sent nothing for it". Only `Invoke-OERStructure`
+  passes it, since what it refuses is a whole document, before it signs in. The two transports refuse
+  one request, and the three builders keep the request wording too (Ruling: what a builder refuses is
+  its lookup request, which is a request, and not an object it was asked to apply).
+- The command's name is the only value in any of the four. It is the argument of the last `-f`, and
+  the format string is composed from fixed fragments alone, so a name that holds `{0}` is written as
+  passed.
+
+The tests build every variant under the state it names and put the state back; the cause tests also
+hold the state `@{}`, which is a held session and not the ended one, and a mutation that keys the cause
+on a field of the state instead of on `$null` turns it red.
 
 **The order of the three gates.** In `Invoke-OERGraphRequest` the supersession gate stands straight
 after each latch gate, which stands straight after each session gate: at the head of each attempt
@@ -2959,9 +3150,13 @@ looked up: `Invoke-OERStructure` applies nothing of that document and goes on to
 builder builds nothing. With `-TenantId` nothing changes: the sign-in names its tenant, and the
 supersession gate covers the rest. A builder called nested, as `Sync-OERStructureAccessPackage` calls
 the two access package builders, runs its `begin` and `process` blocks back to back under one
-identity and is never refused. The `SignInSuperseded` message now says the other sign-in came
-"after X began" instead of "after X signed in": a command refused here has not signed in at all,
-and "began" is true of every A20 refusal too.
+identity and is never refused. The `SignInSuperseded` message says the change came "after X began"
+instead of "after X signed in": a command refused here has not signed in at all, and "began" is true
+of every A20 refusal too. `Invoke-OERStructure` refuses a whole document, so since Sprint 10 step 3
+(BL-92) it passes `-Document` and the text says the command did not apply this document and sent
+nothing for it; the three builders pass nothing and keep the wording for a request, since what they
+refuse is their lookup. See "Why no state counts as a difference" under
+[A command sends nothing under a sign-in a later command replaced](#a-command-sends-nothing-under-a-sign-in-a-later-command-replaced).
 
 **Why a snapshot, and never `-TenantId` from `begin` (A6, decided 2026-10-06).** The fix that the
 known limit above sketched, while it was open until this step, was to capture the tenant in `begin`
@@ -3025,8 +3220,10 @@ refuses every request the caller makes while it runs.
   method, client and cloud. X still signs in again, since the cache is keyed on the name, and a
   sign-in that differs in method -- the default interactive one, on an app-only session -- is still a
   change. The answer to that is the same rule to name the tenant explicitly and consistently.
-- A `Disconnect-OER` in the pipeline refuses the same way, and the record's fixed text, shared with
-  A20, then speaks of another command's sign-in.
+- A `Disconnect-OER` in the pipeline refuses the same way, and since Sprint 10 step 3 (BL-92) the
+  record says so: the module holds no state then, and the text says that `Disconnect-OER` ended the
+  module's session after the command began, with advice to run it as a statement of its own. Until
+  then the text, shared with A20, spoke of another command's sign-in, which no command had made.
 - Under BL-74 a cmdlet a refused command calls gets `SignInRefused` at its own entry, where it used
   to sign in, or hit the cache, and be refused at its first request. `SignInRefused`'s fixed message
   says "this request was not sent", which then means the sign-in. In the apply engine the handler's
@@ -3042,7 +3239,10 @@ tenant switch, another application, a cleared state and a first sign-in from no 
 controls for an unchanged identity, `-TenantId`, two documents from no session and an upstream
 command that signed in in its `begin` block; the two validation-order tests; and the snapshot taken
 again only after a sign-in -- every piped document refused under a switch, and the documents after
-one whose rows a downstream command answered by switching. The three builders' test files each hold
+one whose rows a downstream command answered by switching; since BL-92 the refusals of a switch, of
+another application and of a first sign-in from no session also pin the message of a refused
+document with another command's sign-in as its cause, and the cleared-state refusal the one that
+says `Disconnect-OER` ended the session. The three builders' test files each hold
 a Describe `... looks a name up only under the session it began with (BL-81)` (`a target` for the
 requestor scope): the refusal, the fail-safe refusal, an argument error as itself (the no-target
 scope for the requestor scope, which also has a non-specific scope given `-User`, built with its
@@ -3405,8 +3605,10 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
   which names none -- when the marker it found was set and the call is not `Connect-OER`'s
   (`-ReclaimGraphSession`). The refusal is a terminating `SignInRefused` from
   `New-OERSignInRefusedError -SessionUncertain`: the calling command's name as its target and fixed
-  text that names no tenant, saying that an earlier sign-in failed or was refused, that nothing was
-  sent, and that `-TenantId`, `Connect-OER` or `Disconnect-OER` sends again. No token is requested
+  text that names no tenant, saying that an earlier sign-in failed or was refused and that the
+  module's session may not be the one that sign-in asked for, that nothing was sent, and that
+  `-TenantId`, `Connect-OER` or `Disconnect-OER` sends again (see the next paragraph for why that is
+  one text for every refusal that sets the marker). No token is requested
   and nothing is looked up or connected. The caller stays latched, so the transports refuse each of
   its requests with `SignInRefused`, and BL-74 refuses the sign-ins of the cmdlets it calls. It
   stands after the `GraphSessionChanged` refusal so that a changed session still reads
@@ -3414,6 +3616,22 @@ and nothing about the sign-in that set it -- no tenant, account or token. Only t
 - At each of the two success ends, directly after `Register-OERSignInIdentity`, it clears the marker
   when the call named its tenant and is not a transport's own refresh, or is `Connect-OER`'s; any
   other success puts back the value it found.
+
+**One text for every refusal that sets the marker (BL-93, Sprint 10 step 3).** The marker holds one
+boolean and nothing about the sign-in that set it, by design, so the refusal cannot say whose session
+the module still holds. The text used to say the session "may still belong to the tenant before it".
+That was literally true after a failed renewal of the session's own token within the same tenant,
+where the tenant before is the same tenant, but misleading: it read as a switch to another tenant
+that did not happen. The text now names no cause and no tenant, and says only that the session may
+not be the one the earlier sign-in asked for. That holds for every refusal that sets the marker: a
+sign-in for another tenant that failed or was refused, a failed renewal of the session's own token,
+an Azure Resource Manager step that failed after the Graph half connected -- where the session is the
+requested tenant's Graph session without its Azure half, which is why the text says "may not be" and
+not "is not" -- and a changed Graph SDK session. The id, category and target are unchanged. (Ruling:
+one text and no second variant, since telling the cases apart would need the marker to hold a cause,
+and it holds none.) The unit test of `New-OERSignInRefusedError` pins the exact text and that it
+matches neither `tenant before` nor `belong`; putting the old wording back turns both red. README and
+the about topic keep their description that such a sign-in usually leaves the session as it was.
 
 **What clears it.** A successful sign-in of a command that names its tenant: `-TenantId`, or
 `Connect-OER -TenantAlias`, whose profile names it. A successful `Connect-OER`, with or without a
@@ -3493,11 +3711,13 @@ for example -- is not forgotten because a token was renewed. Read in the code: a
 that itself named no tenant (`organizations`) names none either, and while the marker is set it is
 refused like any other such call.
 
-**Every refusal marks.** `ArmTokenAcquisitionFailed` marks although the Graph half of that sign-in
-connected, and `GraphSessionChanged` marks although no sign-in was attempted: the rule is that a
-sign-in that did not go the whole way leaves the session uncertain, as it leaves the latch set. The
-cost is a later no-tenant command refused where only an Azure token failed, or where another
-`Connect-MgGraph` replaced the session; naming the tenant, or `Connect-OER`, sends again.
+**Every refusal marks.** `Initialize-OERAuth`'s `ArmTokenAcquisitionFailed` marks although the Graph
+half of that sign-in connected, and `GraphSessionChanged` marks although no sign-in was attempted:
+the rule is that a sign-in that did not go the whole way leaves the session uncertain, as it leaves
+the latch set. The ARM wrapper's refusal of a request with no token, which raises the same id, is
+not a sign-in and marks nothing. The cost is a later no-tenant command refused where only an Azure
+token failed, or where another `Connect-MgGraph` replaced the session; naming the tenant, or
+`Connect-OER`, sends again.
 
 **`Invoke-OERStructure`, piped several documents** (Sprint 9 step 3, Ruling R14). With `-TenantId`,
 every document's sign-in names the tenant, so A19's same-frame retry is unchanged: after one
@@ -3510,15 +3730,41 @@ nothing more.
 - A `Connect-OER` whose parameters cannot be bound -- a mandatory parameter bound to an empty string,
   for example -- is refused by PowerShell before its `process` block runs, so it marks nothing, and a
   no-tenant command after it inherits the previous session as before.
-- A `-TenantId` of spaces on any cmdlet but `Connect-OER` passes `[ValidateNotNullOrEmpty()]` (A12,
-  above). On a cmdlet that signs in it names a tenant that is not the session's and is looked up like
-  any value that is not a tenant ID, and refused with `TenantResolutionFailed` when the authority
-  resolves it to no tenant; `New-OERConfiguration` and `Set-OERConfiguration` store it, and a later
-  `Connect-OER -TenantAlias` with that profile is refused the same way at its lookup. Every path ends
-  in a refusal, so decision A12's attribute stands as decided: PowerShell 7.4's
+- A `-TenantId` of spaces on any cmdlet that signs in, other than `Connect-OER`, passes
+  `[ValidateNotNullOrEmpty()]` and nothing more (A12, above). It names a tenant that is not the
+  session's and is looked up like any value that is not a tenant ID, and refused with
+  `TenantResolutionFailed` when the authority resolves it to no tenant. That path ends in a refusal,
+  so decision A12's attribute stands as decided for those cmdlets: PowerShell 7.4's
   `[ValidateNotNullOrWhiteSpace()]` does not exist on 7.2, which the module supports, and a
   `[ValidatePattern()]` or `[ValidateScript()]` that refused spaces at binding on 7.2 would replace
-  the attribute A12 names on ninety cmdlets for a value that is already refused.
+  the attribute A12 names on every one of them for a value that is already refused.
+- **`New-OERConfiguration` and `Set-OERConfiguration` refuse a `-TenantId` of white space only at
+  binding** (Sprint 10 step 3, BL-96). They store the tenant and look nothing up, so such a value was
+  written to the profile and refused only later, when a `Connect-OER -TenantAlias` read it back at its
+  lookup: a profile nobody could use, found at sign-in time. Both now carry
+  `[ValidateScript({ -not [string]::IsNullOrWhiteSpace($_) }, ErrorMessage = '...')]` declared ABOVE
+  `[ValidateNotNullOrEmpty()]`, with the message `The TenantId consists only of white space. Supply
+  the tenant ID or a verified domain of the tenant.` A script, since 7.2 has no
+  `[ValidateNotNullOrWhiteSpace()]`; `IsNullOrWhiteSpace` is exactly what 7.4's attribute tests, so a
+  tab, a line break and a no-break space count as white space as a space does; and `ErrorMessage` on
+  `[ValidateScript()]` exists since PowerShell 6, so it is available on 7.2. The order is measured,
+  in plain PowerShell 7.6: validation attributes run in REVERSE declaration order, so with the script
+  declared first an empty value still reaches `[ValidateNotNullOrEmpty()]` first and reads its own
+  message (`The argument is null or empty`), a blank one reads the script's, and both carry
+  `ParameterArgumentValidationError,<cmdlet>`. Declared the other way round, an empty value would
+  read the white-space message, which is wrong for it. The attribute stays, since
+  `TenantIdNotEmpty.Cohort.Tests.ps1` requires it on every carrier but `Connect-OER`.
+  `Set-OERConfiguration` binds `-TenantId` from the pipeline, so a piped profile object whose
+  `TenantId` is blank is refused per input object, at binding, and the next object is still
+  processed. That is the safe direction, since the write would otherwise keep a blank tenant; the
+  repair is `Set-OERConfiguration -TenantAlias <alias> -TenantId <tenant>`. That refusal reaches
+  `$Error` and not `-ErrorVariable`, as the round-trip tests of `Set-OERConfiguration.Tests.ps1`
+  already record for a binding failure on pipeline input. The refusal covers what is typed or piped
+  in, not what is already stored. Existing profiles are read as before: `Get-OERConfiguration` and
+  `Connect-OER -TenantAlias` are unchanged, and a stored blank `TenantId` is read and emitted as it
+  is. `Set-OERConfiguration` takes the tenant from the file when `-TenantId` is not bound, and its
+  guard on the resolved value tests truthiness, which `'   '` passes, so an update that names no
+  `-TenantId` writes a stored blank back unchanged; only a real `-TenantId` replaces it.
 - A no-tenant command after a refusal is refused even when the operator meant the previous tenant, and
   even when the module holds no session at all and the command would have signed in to
   `organizations`. Both are on the safe side; `-TenantId`, `Connect-OER` or `Disconnect-OER` sends
@@ -3551,9 +3797,12 @@ it after one whose sign-in was refused; a `Connect-OER` whose parameters cannot 
 so it leaves nothing behind; an empty `-TenantAlias`, typed or piped, is refused with
 `InvalidTenantAlias`, and an empty, whitespace or `$null` `-TenantId` with `InvalidTenantId`, both
 counting as a refused sign-in; every other cmdlet refuses an empty or `$null` `-TenantId` at
-parameter binding, so that command never runs and sends nothing; and on any other cmdlet a
-`-TenantId` of spaces is looked up like any value that is not a tenant ID. `Connect-OER`'s and
-`Disconnect-OER`'s help carry
+parameter binding, so that command never runs and sends nothing; `New-OERConfiguration` and
+`Set-OERConfiguration` also refuse a `-TenantId` of white space only at binding (BL-96), so a blank
+tenant can no longer be entered into a profile through them, while a profile already on disk with
+one is still read as it is and keeps it through an update that does not name `-TenantId`; and on any
+other cmdlet a `-TenantId` of spaces is looked up like any value that is not a tenant ID.
+`Connect-OER`'s and `Disconnect-OER`'s help carry
 the rule for their own side, `Connect-OER`'s `.PARAMETER TenantId` and `.PARAMETER TenantAlias` the
 two empty values.
 
@@ -3626,6 +3875,37 @@ either GUID term turns its (d) case red; and dropping the no-expected-tenant ter
 No end-to-end pipeline test was added for F3: the A20 Describe's stubs answer one tenant per request
 for both resources and record no header, so showing which token an ARM request carried would need
 new stub machinery; the unit tests show that the refused ARM token is never cached.
+
+**The proof of the white-space refusal** (Sprint 10 step 3, BL-96). The Context
+`refuses a white-space -TenantId at binding (BL-96)` in `tests/Unit/Public/New-OERConfiguration.Tests.ps1`
+and in `tests/Unit/Public/Set-OERConfiguration.Tests.ps1` binds a space, three spaces, a tab, a
+carriage return and line feed, and a no-break space (U+00A0) with every mandatory parameter given,
+in a `try` under `-ErrorAction Stop`. Each expects exactly `ParameterArgumentValidationError,<cmdlet>`,
+a `ParameterBindingException`, the message carrying the text above, and `Export-OERConfiguration`
+mocked in module scope and counted at zero. The mock writes a file when it is called, so the check
+that no profile file exists (New) or that the existing one is byte-unchanged (Set) does not restate
+the mock. One more test per file binds `''` and expects `The argument is null or empty` and not the
+white-space message, which fixes the declaration order. Set adds the pipeline test: two piped
+objects, the first with `TenantId = '  '`, give exactly one `ParameterArgumentValidationError,Set-OERConfiguration`
+in `$Error`, the second object written once and the first one's file unchanged. Each file also has a
+control with a real tenant, and `tests/Unit/Public/Get-OERConfiguration.Tests.ps1` a profile whose
+stored `TenantId` is three spaces, read and emitted as it is; those passed before the change, and
+are there to hold the unchanged half.
+
+Mutation-proved on copies of `source/`, one exact edit per mutant. Deleting the `[ValidateScript()]`
+turns the five blank-value tests red in New, and those five and the pipeline test in Set. Swapping
+the two attributes turns the `''` test red in each. `IsNullOrEmpty` for `IsNullOrWhiteSpace` turns
+the five blank-value tests red in each, and the pipeline test in Set. A script that trims only ASCII
+spaces, run in `New-OERConfiguration` only, turns the tab, the line break and the no-break-space
+tests red; an ASCII-whitespace regex turns only the no-break-space test red, in each. Dropping
+`ErrorMessage` turns the five message assertions red in each (and, in Set, the pipeline test's
+message assertion), since PowerShell then names the script in the message. Deleting
+`[ValidateNotNullOrEmpty()]` from `New-OERConfiguration` turns the `''` test and the cohort's
+attribute test for it red; the cohort's run-time row for it stays green, since the script refuses
+`''` with the same id too, so the attribute test is the one that holds the attribute. In
+`Set-OERConfiguration` only, inverting the script's test turns its control red. One mutant is
+equivalent, run in `New-OERConfiguration` only: `Trim()` for `IsNullOrWhiteSpace`, which trims every
+Unicode white space as the .NET method does.
 
 ## profile-path
 

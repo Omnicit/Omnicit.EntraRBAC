@@ -1771,3 +1771,362 @@ foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
     }
 }
+
+Describe 'Invoke-OERArmRequest sends nothing without an ARM token (BL-65, BL-96)' {
+    # The wrapper sent "Authorization: Bearer " when the session held no ARM token: no state, no
+    # ArmToken key, a null token and an empty or blank SecureString all materialize to an empty string.
+    # A request without a token is refused after the two gates and before the send, with the existing
+    # ArmTokenAcquisitionFailed (decision A8). These tests build each shape of "no token" by hand and
+    # call the wrapper through the module scope, with Invoke-WebRequest mocked at the module boundary.
+    BeforeAll {
+        $script:NoTokenMessage = 'No Azure Resource Manager request was sent: the module''s session holds no Azure Resource Manager token. Run Connect-OER -IncludeARM to acquire one -- for an app-only session with its certificate or client secret -- and run the command again.'
+        $script:NoTokenPath = '/subscriptions?api-version=2022-12-01'
+
+        function script:New-ArmTestState {
+            param([Parameter(Mandatory)][string]$Shape)
+            $State = @{
+                AuthMethod     = 'Interactive'
+                TenantId       = '44444444-4444-4444-4444-444444444444'
+                ClientId       = ''
+                Environment    = 'Global'
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+            switch ($Shape) {
+                'NoKey' { }
+                'Null' { $State.ArmToken = $null }
+                'Empty' { $State.ArmToken = [securestring]::new() }
+                'Blank' { $State.ArmToken = ConvertTo-SecureString '   ' -AsPlainText -Force }
+                'WithToken' { $State.ArmToken = ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force }
+                'NoState' { return $null }
+            }
+            $State
+        }
+
+        function script:Set-ArmTestState {
+            param([AllowNull()]$State)
+            & (Get-Module Omnicit.EntraRBAC) { param($S) $script:_OERAuthState = $S } $State
+        }
+
+        # The record the wrapper throws, caught in the module scope; $null when it threw nothing.
+        function script:Get-ArmRequestError {
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($P)
+                try { $null = Invoke-OERArmRequest -Path $P } catch { $PSItem }
+            } $script:NoTokenPath
+        }
+    }
+
+    AfterEach {
+        InModuleScope Omnicit.EntraRBAC {
+            $script:_OERAuthState = $null
+            Remove-Variable -Scope Script -Name _OERSignInIdentity -ErrorAction Ignore
+        }
+    }
+
+    It 'refuses a session with <Shape> as its ARM token before any request, with ArmTokenAcquisitionFailed' -ForEach @(
+        @{ Shape = 'NoKey' }
+        @{ Shape = 'Null' }
+        @{ Shape = 'Empty' }
+        @{ Shape = 'Blank' }
+        @{ Shape = 'NoState' }
+    ) {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+        Set-ArmTestState -State (New-ArmTestState -Shape $Shape)
+
+        $Caught = Get-ArmRequestError
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTokenAcquisitionFailed'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -BeExactly $script:NoTokenPath
+        $Caught.Exception.Message | Should -BeExactly $script:NoTokenMessage
+    }
+
+    It 'sends the request with its Bearer header, once, when the session holds a token' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{"id":"sent"}' } }
+        Set-ArmTestState -State (New-ArmTestState -Shape 'WithToken')
+
+        $Result = & (Get-Module Omnicit.EntraRBAC) { param($P) Invoke-OERArmRequest -Path $P } $script:NoTokenPath
+
+        $Result.id | Should -Be 'sent'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly -ParameterFilter {
+            $Headers.Authorization -eq 'Bearer NOT-A-REAL-TOKEN-arm' -and
+            $Uri -eq 'https://management.azure.com/subscriptions?api-version=2022-12-01'
+        }
+    }
+
+    It 'reads SignInRefused, not ArmTokenAcquisitionFailed, for a latched command without a token (the gates come first)' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+        Set-ArmTestState -State (New-ArmTestState -Shape 'NoKey')
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            function Initialize-StandIn { $null = Lock-OERSignIn }
+            function Invoke-RefusedCommand {
+                [CmdletBinding()]
+                param()
+                Initialize-StandIn
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-RefusedCommand
+        }
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInRefused*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-RefusedCommand'
+    }
+
+    It 'reads SignInSuperseded, not ArmTokenAcquisitionFailed, for a superseded command without a token (the gates come first)' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 200; Content = '{}' } }
+        Set-ArmTestState -State (New-ArmTestState -Shape 'NoKey')
+
+        $Caught = InModuleScope Omnicit.EntraRBAC {
+            function Invoke-SupersededCommand {
+                [CmdletBinding()]
+                param()
+                Register-OERSignInIdentity -Invocation $MyInvocation
+                # A later command's sign-in switches the state to another tenant.
+                $script:_OERAuthState.TenantId = '77777777-7777-7777-7777-777777777777'
+                $Caught = $null
+                try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $Caught = $PSItem }
+                $Caught
+            }
+            Invoke-SupersededCommand
+        }
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeLike 'SignInSuperseded*'
+        $Caught.TargetObject | Should -BeExactly 'Invoke-SupersededCommand'
+    }
+
+    It 'sends one request, then refuses the 401 retry, when the refresh leaves the session without an ARM token' {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest { [PSCustomObject]@{ StatusCode = 401; Content = '{}' } }
+        # An interactive session whose forced refresh succeeds but leaves no ARM token behind: the
+        # retry has nothing to send. Initialize-OERAuth is mocked, so nothing signs in.
+        Mock -ModuleName Omnicit.EntraRBAC Initialize-OERAuth { & (Get-Module Omnicit.EntraRBAC) { $script:_OERAuthState.Remove('ArmToken') } }
+        Set-ArmTestState -State (New-ArmTestState -Shape 'WithToken')
+
+        $Caught = Get-ArmRequestError
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Initialize-OERAuth -Times 1 -Exactly -ParameterFilter { $ForceRefresh -and $IncludeARM }
+        # The rejected first request only: the retry is never sent.
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.FullyQualifiedErrorId | Should -BeExactly 'ArmTokenAcquisitionFailed'
+        $Caught.CategoryInfo.Category | Should -Be 'AuthenticationError'
+        $Caught.TargetObject | Should -BeExactly $script:NoTokenPath
+    }
+}
+
+Describe 'Invoke-OERArmRequest takes its host from the session''s cloud (BL-65)' {
+    # A state that records no ArmResourceUrl used to send to the public cloud, whatever cloud the
+    # session was in. The host now comes from the state's Environment. This is defence in depth: no
+    # state the module builds holds a token without a url (Initialize-OERAuth clears ArmToken and
+    # ArmResourceUrl together, and a state without a token is refused before the host matters), so
+    # every state here is hand-built, with a token and without a recorded host.
+    BeforeAll {
+        function script:New-HostTestState {
+            param([hashtable]$Extra = @{})
+            $State = @{
+                AuthMethod = 'Interactive'
+                TenantId   = '44444444-4444-4444-4444-444444444444'
+                ArmToken   = (ConvertTo-SecureString 'NOT-A-REAL-TOKEN-arm' -AsPlainText -Force)
+            }
+            foreach ($Key in $Extra.Keys) { $State[$Key] = $Extra[$Key] }
+            $State
+        }
+
+        # The Uri the wrapper sent for a state, captured by the Invoke-WebRequest mock. A mock body does
+        # not run in the module's script scope, so it hands the Uri over through a global of its own.
+        function script:Get-SentArmUri {
+            param([Parameter(Mandatory)]$State)
+            $global:OERArmHostTestUri = $null
+            & (Get-Module Omnicit.EntraRBAC) {
+                param($S)
+                $script:_OERAuthState = $S
+                $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01'
+            } $State
+            $global:OERArmHostTestUri
+        }
+
+        # The ARM resource url the cloud table holds for a cloud, read here and never hardcoded twice.
+        function script:Get-CloudArmResource {
+            param([Parameter(Mandatory)][string]$Cloud)
+            & (Get-Module Omnicit.EntraRBAC) { param($C) (Get-OERCloudEndpoint -Environment $C).ArmResource } $Cloud
+        }
+    }
+
+    BeforeEach {
+        Mock -ModuleName Omnicit.EntraRBAC Invoke-WebRequest {
+            $global:OERArmHostTestUri = [string]$Uri
+            [PSCustomObject]@{ StatusCode = 200; Content = '{}' }
+        }
+    }
+
+    AfterEach {
+        Remove-Variable -Scope Global -Name OERArmHostTestUri -ErrorAction Ignore
+        InModuleScope Omnicit.EntraRBAC { $script:_OERAuthState = $null }
+    }
+
+    It 'uses the USGov ARM host for a USGov session without ArmResourceUrl' {
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'USGov' })
+        $Sent | Should -BeExactly 'https://management.usgovcloudapi.net/subscriptions?api-version=2022-12-01'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'uses the China ARM host for a China session without ArmResourceUrl' {
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'China' })
+        $Sent | Should -BeExactly 'https://management.chinacloudapi.cn/subscriptions?api-version=2022-12-01'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'uses the table''s ARM host for a USGovDoD session without ArmResourceUrl' {
+        $Expected = (Get-CloudArmResource -Cloud 'USGovDoD').TrimEnd('/')
+        $Expected | Should -Not -BeNullOrEmpty
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'USGovDoD' })
+        $Sent | Should -BeExactly "$Expected/subscriptions?api-version=2022-12-01"
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'uses the cloud''s host for a state with a token and an ArmResourceUrl key holding null (no recorded host)' {
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'USGov'; ArmResourceUrl = $null })
+        $Sent | Should -BeExactly 'https://management.usgovcloudapi.net/subscriptions?api-version=2022-12-01'
+    }
+
+    It 'uses the public-cloud host for a session with <Case> as its Environment, never an exception' -ForEach @(
+        @{ Case = 'no key'; Extra = @{} }
+        @{ Case = 'an empty value'; Extra = @{ Environment = '' } }
+        @{ Case = 'a null value'; Extra = @{ Environment = $null } }
+    ) {
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra $Extra)
+        $Sent | Should -BeExactly 'https://management.azure.com/subscriptions?api-version=2022-12-01'
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
+    }
+
+    It 'prefers the session''s own ArmResourceUrl over the cloud table' {
+        $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'USGov'; ArmResourceUrl = 'https://management.chinacloudapi.cn/' })
+        $Sent | Should -BeExactly 'https://management.chinacloudapi.cn/subscriptions?api-version=2022-12-01'
+    }
+
+    It 'sends nothing, and never falls back to the public cloud, for a cloud the table does not know' {
+        $Caught = & (Get-Module Omnicit.EntraRBAC) {
+            param($S)
+            $script:_OERAuthState = $S
+            try { $null = Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' } catch { $PSItem }
+        } (New-HostTestState -Extra @{ Environment = 'Germany' })
+
+        Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 0
+        $Caught | Should -Not -BeNullOrEmpty
+        $Caught.Exception.Message | Should -BeLike "*no endpoint table entry for cloud environment 'Germany'*"
+    }
+}
+
+Describe 'Invoke-OERArmRequest sends nothing without an ARM token, outside any try (BL-65, BL-96)' {
+    # Under -ErrorAction SilentlyContinue or Ignore, with no try up the call stack, a function carries
+    # on past its own throw to its next statement, so the refusal's own return is what keeps the request
+    # from going out with an empty bearer. Pester's It is a try, so the wrapper runs in a runspace with
+    # no try. The probe is the F3 probe's twin, with the state under test pasted in; the shared probe
+    # above is left as it is.
+    BeforeAll {
+        # Runs one probe in a runspace with no try. -State is pasted into a module-scope block that
+        # sets the session state; a MODULE-scope Invoke-WebRequest stub counts its calls
+        # ($global:OERNoTokenArmCalls), answers 200 (hang guard: exit past five calls) and is removed
+        # again, unqualified from the module scope, before the runspace check reads the module scope.
+        # The error ids are read from $Error, cleared just before the call: SilentlyContinue keeps a
+        # suppressed throw off the error stream, not out of $Error.
+        function script:Invoke-ArmNoTokenProbe {
+            param([Parameter(Mandatory)][scriptblock]$State)
+            $Text = @'
+Import-Module Omnicit.EntraRBAC
+& (Get-Module Omnicit.EntraRBAC) {
+__STATE__
+}
+$global:OERNoTokenArmCalls = 0
+& (Get-Module Omnicit.EntraRBAC) {
+    function script:Invoke-WebRequest {
+        [CmdletBinding()]
+        param($Method, $Uri, $Headers, [switch]$SkipHttpErrorCheck, $Body, $ContentType)
+        $global:OERNoTokenArmCalls++
+        if ($global:OERNoTokenArmCalls -gt 5) { exit }
+        [pscustomobject]@{ StatusCode = 200; Content = '{"value":["sent"]}'; Headers = @{} }
+    }
+}
+$Error.Clear()
+$Result = @(& (Get-Module Omnicit.EntraRBAC) {
+    Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -ErrorAction SilentlyContinue
+})
+$Ids = @($Error | ForEach-Object { [string]$_.FullyQualifiedErrorId })
+# Unqualified, from the module scope: removes the nearest definition, which is the stub.
+& (Get-Module Omnicit.EntraRBAC) { Remove-Item -Path function:Invoke-WebRequest }
+$Resolved = & (Get-Module Omnicit.EntraRBAC) { Get-Command -Name Invoke-WebRequest -CommandType Function -ErrorAction Ignore }
+'TRIPWIRE RESTORED: {0}' -f ([bool]$Resolved -and $Resolved.ScriptBlock.ToString().Contains('OER-TRANSPORT-TRIPWIRE'))
+'RESULT COUNT: {0}' -f $Result.Count
+'ARM CALLS: {0}' -f $global:OERNoTokenArmCalls
+foreach ($Id in $Ids) { 'ERROR ID: {0}' -f $Id }
+'END OF SCRIPT REACHED'
+'@
+            $Text = $Text.Replace('__STATE__', $State.ToString())
+            Invoke-OERWithConfirmAnswer -Answer '&No' -Script ([scriptblock]::Create($Text))
+        }
+
+        # The FullyQualifiedErrorId of every record a probe found in $Error.
+        function script:Get-NoTokenProbeErrorId {
+            param([Parameter(Mandatory)]$Probe)
+            @($Probe.Output | Where-Object { "$_" -like 'ERROR ID: *' } | ForEach-Object { "$_" -replace '^ERROR ID: ', '' })
+        }
+    }
+
+    It 'N1: a session with no ARM token key sends no request and leaves ArmTokenAcquisitionFailed as the only record' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmNoTokenProbe -State {
+            $script:_OERAuthState = @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                ClientId = ''; Environment = 'Global'
+                ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        Get-NoTokenProbeErrorId -Probe $R | Should -Be @('ArmTokenAcquisitionFailed')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'N2: a session whose ARM token is blank sends no request and leaves ArmTokenAcquisitionFailed as the only record' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmNoTokenProbe -State {
+            $script:_OERAuthState = @{
+                TenantId = '44444444-4444-4444-4444-444444444444'; AuthMethod = 'Interactive'
+                ClientId = ''; Environment = 'Global'
+                ArmToken = ConvertTo-SecureString '   ' -AsPlainText -Force
+                ArmTokenExpiry = [DateTime]::UtcNow.AddHours(1)
+                ArmResourceUrl = 'https://management.azure.com/'
+            }
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        Get-NoTokenProbeErrorId -Probe $R | Should -Be @('ArmTokenAcquisitionFailed')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+
+    It 'N3: a call with no session state at all sends no request to the public-cloud fallback and leaves ArmTokenAcquisitionFailed as the only record' {
+        $HitsBefore = @($global:OERTransportTripwireHits).Count
+        $R = Invoke-ArmNoTokenProbe -State {
+            $script:_OERAuthState = $null
+        }
+        $R.Output | Should -Contain 'END OF SCRIPT REACHED'
+        $R.Output | Should -Contain 'TRIPWIRE RESTORED: True'
+        $R.Output | Should -Contain 'ARM CALLS: 0'
+        $R.Output | Should -Contain 'RESULT COUNT: 0'
+        Get-NoTokenProbeErrorId -Probe $R | Should -Be @('ArmTokenAcquisitionFailed')
+        (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0
+    }
+}

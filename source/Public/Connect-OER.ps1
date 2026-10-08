@@ -36,13 +36,13 @@ function Connect-OER {
     unlabelled default. To sign in to a different tenant, pass an explicit -TenantId (or
     -TenantAlias). A client secret sign-in for the same application also needs -Force to move to
     another tenant in the same PowerShell session: AzAuth keeps its credential for the whole
-    process, and Disconnect-OER clears this module's session and the Graph SDK session, not that
-    credential.
+    process, and Disconnect-OER clears this module's session and the Graph SDK session the module
+    connected, not that credential.
 
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
-    OER cmdlet. Disconnect-OER closes whichever session the process holds, even one another
-    Connect-MgGraph started.
+    OER cmdlet. Disconnect-OER closes that session, and leaves one another Connect-MgGraph started,
+    with a warning.
 
     If another Connect-MgGraph -- your own, or another tool's -- replaces the module's session in
     the same process, the next OER cmdlet sends nothing: it refuses its Microsoft Graph calls with a
@@ -71,10 +71,11 @@ function Connect-OER {
     request made while it runs is refused with a SignInSuperseded error. One pipeline works in one
     tenant with one identity, so run such commands as separate statements. And after a sign-in that
     failed or was refused -- a Connect-OER among them, including one refused before it signs in, such
-    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may still belong
-    to the tenant before it, so a later OER command that names no tenant sends nothing: its sign-in is
-    refused with a SignInRefused error that says so. A command that names its tenant with -TenantId, a
-    successful Connect-OER, or Disconnect-OER makes the module send again.
+    as an unknown or empty -TenantAlias or an empty -TenantId -- the module's session may not be the
+    one that sign-in asked for (usually it is the previous session, or none), so a later OER command
+    that names no tenant sends nothing: its sign-in is refused with a SignInRefused error that says
+    so. A command that names its tenant with -TenantId, a successful Connect-OER, or Disconnect-OER
+    makes the module send again.
 
     .PARAMETER TenantId
     The Entra ID tenant GUID or verified domain to authenticate against. Mutually exclusive with

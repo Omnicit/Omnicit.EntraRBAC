@@ -5655,7 +5655,7 @@ $RecordLines
         Get-PipelineProbeSuperseded -Probe $R | Should -Be @('SignInSuperseded,Invoke-OERStructure | Invoke-OERStructure')
         $Records = @(Get-PipelineProbeLine -Probe $R -Prefix 'ERROR: ')
         $Records.Count | Should -Be 1
-        $Records[0] | Should -BeLike '*after Invoke-OERStructure began, so Omnicit.EntraRBAC sends nothing*'
+        $Records[0] | Should -BeLike '*after Invoke-OERStructure began, so Invoke-OERStructure did not apply this document and Omnicit.EntraRBAC sent nothing for it.*'
         @($R.Warnings | Where-Object { "$_".StartsWith('ROW: ') }) | Should -BeNullOrEmpty
         $R.Output | Should -Contain 'OUTPUT COUNT: 0'
         (@($global:OERTransportTripwireHits).Count - $HitsBefore) | Should -Be 0

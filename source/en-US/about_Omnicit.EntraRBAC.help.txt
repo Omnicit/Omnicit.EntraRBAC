@@ -266,9 +266,10 @@ SWITCHING TENANTS
     AZURE_AUTHORITY_HOST warning.
 
     Disconnect-OER clears this module's own session state and closes the
-    Graph SDK session; it does not clear the credential AzAuth keeps for the
-    process. Connect-OER -Force is the supported way, inside the same
-    PowerShell process, to move a client secret sign-in to a new tenant.
+    Graph SDK session the module connected; it does not clear the credential
+    AzAuth keeps for the process. Connect-OER -Force is the supported way,
+    inside the same PowerShell process, to move a client secret sign-in to a
+    new tenant.
 
     Name a tenant by its tenant ID (a GUID) or by a verified domain -- a
     Tenant Profile's TenantId included. Both are checked, and a token issued
@@ -283,8 +284,13 @@ GRAPH SDK SESSION
 
     Connect-OER sets up a Microsoft Graph PowerShell SDK session in the current
     process: it calls Connect-MgGraph with the module's token, and so does the
-    automatic sign-in of any other OER cmdlet. Disconnect-OER closes whichever
-    session the process holds, even one another Connect-MgGraph started.
+    automatic sign-in of any other OER cmdlet. Disconnect-OER closes only the
+    session the module connected. A session it did not connect, or has no
+    record of connecting -- one another Connect-MgGraph started, say -- is left
+    connected, with a warning written before the confirmation, so -WhatIf shows
+    it. Run Disconnect-MgGraph to end that one; the next OER cmdlet signs in
+    again, and its own Connect-MgGraph replaces it, as any Connect-MgGraph
+    does.
 
     If another Connect-MgGraph -- yours, or another tool's -- replaces the
     module's session in the same process, the next OER cmdlet sends nothing: it
@@ -335,9 +341,14 @@ GRAPH SDK SESSION
     refuses an empty or $null -TenantId while PowerShell binds its
     parameters, so that command never runs and sends nothing: an empty cell
     in a loop over tenants no longer stands for the current session's
-    tenant. On any other cmdlet, a -TenantId of spaces is looked up like any
-    value that is not a tenant ID, and refused with TenantResolutionFailed
-    when it names no tenant.
+    tenant. New-OERConfiguration and Set-OERConfiguration store the tenant
+    instead of signing in to it, so they also refuse a -TenantId of white
+    space only while PowerShell binds their parameters: a blank tenant can no
+    longer be entered into a profile through them. A profile already on disk
+    with one is still read as it is, and keeps it through an update that does
+    not name -TenantId. On any other cmdlet, a -TenantId of spaces is looked
+    up like any value that is not a tenant ID, and refused with
+    TenantResolutionFailed when it names no tenant.
 
     One OER pipeline works in one tenant with one identity. If commands in the
     same pipeline sign in to different tenants or identities, a command whose

@@ -173,6 +173,119 @@ Describe 'Set-OERConfiguration' {
     }
 
     # -------------------------------------------------------------------------------------------
+    # Sprint 10 step 3 (BL-96): a -TenantId of white space only is refused at parameter binding, as an
+    # empty one is (A12, BL-94). The profile stores the tenant, it does not sign in to it, so the
+    # lookup refusal that every other cmdlet gives a blank name never sees this value.
+    # -------------------------------------------------------------------------------------------
+    Context 'refuses a white-space -TenantId at binding (BL-96)' {
+        BeforeAll {
+            $script:BlankTenantMessage = 'The TenantId consists only of white space. Supply the tenant ID or a verified domain of the tenant.'
+            # The mock WRITES a file when it is called, so "the profile file is unchanged" below is
+            # a real check and not a restatement of the mock doing nothing.
+            Mock -ModuleName Omnicit.EntraRBAC Export-OERConfiguration {
+                Set-Content -LiteralPath $Path -Value 'WRITTEN-BY-THE-MOCK'
+            }
+        }
+
+        It '-TenantId <Label> is refused at parameter binding and the profile is left unchanged' -ForEach @(
+            @{ Label = 'one space'; Value = ' ' }
+            @{ Label = 'three spaces'; Value = '   ' }
+            @{ Label = 'a tab'; Value = "`t" }
+            @{ Label = 'a carriage return and a line feed'; Value = "`r`n" }
+            @{ Label = 'a no-break space (U+00A0)'; Value = [string][char]0x00A0 }
+        ) {
+            $Base = Join-Path $TestDrive ('bl96-set-' + [guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $Base -Force
+            $File = Join-Path $Base 'oer-bl96.psd1'
+            Set-Content -Path $File -Value "@{ TenantId = 'contoso.onmicrosoft.com' }" -Encoding utf8
+            $Before = (Get-FileHash -Path $File -Algorithm SHA256).Hash
+
+            $Caught = $null
+            try {
+                Set-OERConfiguration -TenantAlias 'oer-bl96' -TenantId $Value -BasePath $Base -ErrorAction Stop
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Set-OERConfiguration'
+            $Caught.Exception | Should -BeOfType [System.Management.Automation.ParameterBindingException]
+            $Caught.Exception.Message | Should -BeLike "*$script:BlankTenantMessage*"
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 0 -Scope It
+            (Get-FileHash -Path $File -Algorithm SHA256).Hash | Should -Be $Before
+        }
+
+        It 'an empty -TenantId still reads the NotNullOrEmpty message, so the script is declared above that attribute' {
+            # Validation attributes run in REVERSE declaration order. With the script declared
+            # first an empty value reaches NotNullOrEmpty first; with the two swapped it would reach
+            # the script first and read the white-space message, which is wrong for an empty value.
+            $Base = Join-Path $TestDrive ('bl96-set-' + [guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $Base -Force
+            $File = Join-Path $Base 'oer-bl96.psd1'
+            Set-Content -Path $File -Value "@{ TenantId = 'contoso.onmicrosoft.com' }" -Encoding utf8
+            $Before = (Get-FileHash -Path $File -Algorithm SHA256).Hash
+
+            $Caught = $null
+            try {
+                Set-OERConfiguration -TenantAlias 'oer-bl96' -TenantId '' -BasePath $Base -ErrorAction Stop
+            } catch {
+                $Caught = $PSItem
+            }
+
+            $Caught | Should -Not -BeNullOrEmpty
+            $Caught.FullyQualifiedErrorId | Should -BeExactly 'ParameterArgumentValidationError,Set-OERConfiguration'
+            $Caught.Exception.Message | Should -BeLike '*The argument is null or empty*'
+            $Caught.Exception.Message | Should -Not -BeLike '*consists only of white space*'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 0 -Scope It
+            (Get-FileHash -Path $File -Algorithm SHA256).Hash | Should -Be $Before
+        }
+
+        It 'refuses a piped profile whose stored TenantId is blank, for that object only, and still updates the next one' {
+            # -TenantId binds from the pipeline by property name, so a profile object carrying a
+            # blank TenantId is refused at binding, per input object: the write would otherwise keep
+            # a blank tenant. The repair is Set-OERConfiguration -TenantAlias <alias> -TenantId <tenant>.
+            #
+            # The refusal is read from $Error, not from -ErrorVariable. A binding failure on PIPELINE
+            # input is raised by the binder before the common parameters are in force, so
+            # -ErrorVariable stays empty (measured in plain pwsh, and by the round-trip tests below).
+            $Base = Join-Path $TestDrive ('bl96-set-' + [guid]::NewGuid().ToString('N'))
+            $null = New-Item -ItemType Directory -Path $Base -Force
+            $BlankFile = Join-Path $Base 'oer-bl96.psd1'
+            $GoodFile = Join-Path $Base 'oer-bl96-ok.psd1'
+            Set-Content -Path $BlankFile -Value "@{ TenantId = 'contoso.onmicrosoft.com' }" -Encoding utf8
+            Set-Content -Path $GoodFile -Value "@{ TenantId = 'contoso.onmicrosoft.com' }" -Encoding utf8
+            $BlankBefore = (Get-FileHash -Path $BlankFile -Algorithm SHA256).Hash
+
+            $Piped = @(
+                [pscustomobject]@{ TenantAlias = 'oer-bl96'; TenantId = '  ' }
+                [pscustomobject]@{ TenantAlias = 'oer-bl96-ok'; TenantId = 'fabrikam.onmicrosoft.com' }
+            )
+            $Error.Clear()
+            $Result = @($Piped | Set-OERConfiguration -BasePath $Base -ErrorAction SilentlyContinue)
+
+            $Refusals = @($Error | Where-Object { $_.FullyQualifiedErrorId -eq 'ParameterArgumentValidationError,Set-OERConfiguration' })
+            $Refusals.Count | Should -Be 1
+            # The message pins WHICH validator refused the first object: the id alone is the id of
+            # every validation attribute on this cmdlet.
+            $Refusals[0].Exception.Message | Should -BeLike "*$script:BlankTenantMessage*"
+            @($Result).Count | Should -Be 1
+            $Result[0].TenantAlias | Should -BeExactly 'oer-bl96-ok'
+            $Result[0].TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 1 -Exactly -Scope It
+            Should -Invoke -ModuleName Omnicit.EntraRBAC Export-OERConfiguration -Times 1 -Exactly -Scope It -ParameterFilter { $Path -like '*oer-bl96-ok.psd1' }
+            (Get-FileHash -Path $BlankFile -Algorithm SHA256).Hash | Should -Be $BlankBefore
+        }
+    }
+
+    It 'still updates a profile for a real -TenantId, which the white-space refusal does not touch (BL-96)' {
+        $Base = Join-Path $TestDrive 'bl96-set-control'
+        $null = New-OERConfiguration -TenantAlias 'oer-bl96' -TenantId 'contoso.onmicrosoft.com' -BasePath $Base
+        $Result = Set-OERConfiguration -TenantAlias 'oer-bl96' -TenantId 'fabrikam.onmicrosoft.com' -BasePath $Base -ErrorAction Stop
+        $Result.TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
+        (Get-OERConfiguration -TenantAlias 'oer-bl96' -BasePath $Base).TenantId | Should -BeExactly 'fabrikam.onmicrosoft.com'
+    }
+
+    # -------------------------------------------------------------------------------------------
     # Sovereign clouds (Sprint 1.5, issue #81, Task 5): optional -Environment on the Tenant Profile.
     # -------------------------------------------------------------------------------------------
     Context '-Environment' {

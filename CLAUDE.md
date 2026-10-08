@@ -690,10 +690,15 @@ or `$null` is refused the same way, in `process` after the marker is set, with `
 declares `-TenantId` carries `[ValidateNotNullOrEmpty()]` on it, so an empty value stops that
 command at parameter binding and it sends nothing, instead of acting on the current session's tenant
 as no tenant named. `tests/Unit/Public/TenantIdNotEmpty.Cohort.Tests.ps1` holds both halves, with
-`Connect-OER` the one named exception; a new public `-TenantId` takes the attribute. An internal call
-passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty value -- except
-`Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither `-TenantId` nor
-`-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
+`Connect-OER` the one named exception; a new public `-TenantId` takes the attribute.
+`New-OERConfiguration` and `Set-OERConfiguration`, whose `-TenantId` is stored rather than signed in
+to, also refuse a value of white space only at binding, with a `[ValidateScript()]` declared above
+that attribute (BL-96); a stored blank `TenantId` is still read as it is, and an update that names
+no `-TenantId` keeps it. The `(BL-96)` Contexts of
+`tests/Unit/Public/New-OERConfiguration.Tests.ps1` and `Set-OERConfiguration.Tests.ps1` hold it. An
+internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }`), never an empty
+value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither
+`-TenantId` nor `-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
 
 | Parameter set | Key parameters | Use case |
@@ -711,8 +716,10 @@ auth identity in the `$script:_OERAuthState` cache key, so naming a different cl
 re-authenticates rather than reusing a token minted at the previous cloud's authority. **Microsoft
 365 GCC runs on the commercial (`Global`) endpoints and needs no `-Environment` at all** -- only GCC
 High (`USGov`), DoD (`USGovDoD`) and a 21Vianet tenant (`China`) are separate cloud boundaries.
-`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph`. It deliberately does
-NOT call `Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the
+`Disconnect-OER` clears `$script:_OERAuthState` and calls `Disconnect-MgGraph` only when
+`Get-OERGraphSessionState` reports `Own` (A4, BL-67): a session the module did not connect, or has no
+record of connecting, is left, with a warning written before its `ShouldProcess`. It deliberately
+does NOT call `Disconnect-AzAccount`: the module establishes no Az context, so any Az session on the
 machine is the operator's own (Philip's decision, 2026-09-21).
 `Why: docs/development/rationale.md#sovereign-clouds`
 
@@ -1126,7 +1133,11 @@ wrapper sends it directly, materializing the plaintext only at the request bound
 in a `finally`. The ARM host is read from the session's cloud (`Get-OERCloudEndpoint`'s `ArmResource`
 field via `-Environment`), not hardcoded to public-cloud ARM; `Invoke-OERArmRequest` keeps
 `https://management.azure.com` as a documented fallback for a call made before any auth state exists,
-so it fails on the missing token rather than on a null host -- do not delete that fallback.
+so it fails on the missing token rather than on a null host -- do not delete that fallback. Since
+Sprint 10 step 3 (BL-65, BL-96) a state without `ArmResourceUrl` takes its cloud's ARM host from
+`Get-OERCloudEndpoint`, and the wrapper never sends a request without an ARM token: it refuses it
+after its two gates, before the send, with the existing `ArmTokenAcquisitionFailed` -- the no-state
+fallback is therefore refused too.
 
 A 429, and a 503 carrying `Retry-After`, are retried with a bounded backoff whose constants mirror
 the Graph wrapper's name for name (`ThrottleWaitBudgetSeconds` 300 per request/page,

@@ -66,9 +66,17 @@ Describe 'New-OERSignInRefusedError' {
         It 'carries the exact session-uncertain message, naming no tenant' {
             $script:UncertainRecord.Exception | Should -BeOfType ([System.Exception])
             $script:UncertainRecord.Exception.Message | Should -BeExactly (
-                "An earlier sign-in in this PowerShell session failed or was refused, so the module's session may still belong " +
-                'to the tenant before it, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request ' +
+                "An earlier sign-in in this PowerShell session failed or was refused, so the module's session may not be the one " +
+                'that sign-in asked for, and Omnicit.EntraRBAC sends nothing for a command that names no tenant: this request ' +
                 'was not sent. Name the tenant with -TenantId, or run Connect-OER or Disconnect-OER, to send requests again.')
+        }
+
+        It 'does not say the session belongs to the tenant before it (BL-93)' {
+            # The marker holds no cause: a failed renewal of the session's own token, an ARM step that failed
+            # after the Graph half connected and a changed Graph SDK session all set it, and in the first
+            # the sign-in asked for the very tenant the session already holds.
+            $script:UncertainRecord.Exception.Message | Should -Not -Match 'tenant before'
+            $script:UncertainRecord.Exception.Message | Should -Not -Match 'belong'
         }
 
         It 'keeps the default message without the switch' {
