@@ -280,8 +280,8 @@ any of them as an orphan when auditing the one-test-file-per-function invariant:
 
 # Full test suite -- the authoritative CI gate.
 # QA tests + Unit Pester + PSScriptAnalyzer + 80% code coverage enforcement
-# (measured 91.97% over 13,757 commands on a clean tree -- identical locally and on all three
-#  CI runners)
+# (measured 2026-10-08: 94.89% over 18,579 commands, locally on Windows and on all three CI
+#  runners of PR #34; macOS measured 94.88% on main's run of bfe1b1a, whose source is the same)
 ./build.ps1 -Tasks test
 
 # Import from source for quick local development
