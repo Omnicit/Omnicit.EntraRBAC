@@ -183,7 +183,21 @@ function Sync-OERStructureGroup {
        listing. A budget spent with no readable policy (the cmdlet then not called), or with the
        request still answered Failed, reports Failed with a GroupNotOnboarded error record -- the id
        Add-OERGroupEligibility publishes for the same condition -- and a replication-delay message
-       naming a re-run. A refused probe (a 403 on the listing or on the read, for example) ends the
+       naming a re-run. That message ends with one sentence group saying whether the group's policy
+       was opened for the entry, since the cmdlet opens it to allow permanent eligibility before its
+       request and has no rollback. When the cmdlet was never called, no request was sent and no
+       policy was opened. Otherwise the handler reads the policy once more after the attempts, with the
+       poll's own two calls and no wait of its own, and compares it with the policy as the poll read
+       it just before the FIRST call: one that does not allow permanent eligibility was not left open;
+       one that already allowed it before the first request was not opened for it; one that did not
+       is named as opened and still open; one whose earlier state is unknown (the poll was refused) is
+       named as open and possibly opened. The last two carry the Set-OERGroupPimPolicy command that
+       closes the policy (Get-OERGroupPimPolicyCloseAdvice, the advice Add-OERGroupEligibility gives).
+       A read after the attempts that is refused (scrubbed and logged), unlisted, answers 404 or
+       reads no permanent-eligibility setting is never taken for "not opened": the message says the
+       policy may have been opened and could not be read, and gives the same command for the case
+       that it allows permanent eligibility.
+       A refused probe (a 403 on the listing or on the read, for example) ends the
        wait at once and the cmdlet is called as for any group, and a 404 from the cmdlet itself after
        the policy was read is reported as for any group. For that one call the handler sets the
        module-scope flag $script:_OERGroupEligibilityFailedIsReplication (reset in a finally), which
@@ -1355,6 +1369,12 @@ function Sync-OERStructureGroup {
                     # the catch of its own call.
                     $PermanentApplied = $false
                     $PermanentNotReady = $false
+                    # For the GroupNotOnboarded message below: whether Add-OERGroupEligibility was called
+                    # for this entry at all, and whether the policy allowed permanent eligibility as the
+                    # poll read it just before the FIRST call -- $true or $false only when the poll read a
+                    # real boolean, $null (unknown) when the poll was refused or read none.
+                    $PermanentAttempted = $false
+                    $AllowedBefore = $null
                     $Waits = 0
                     while ($true) {
                         $PollRefused = $false
@@ -1392,6 +1412,14 @@ function Sync-OERStructureGroup {
                             break
                         }
                         $PermanentRequest = $null
+                        # The before-state is the first call's only: a later poll reads the policy the
+                        # first call may already have opened.
+                        if (-not $PermanentAttempted) {
+                            $PermanentAttempted = $true
+                            if ($null -ne $ListedPolicy -and $ListedPolicy.AllowPermanentEligibility -is [bool]) {
+                                $AllowedBefore = [bool]$ListedPolicy.AllowPermanentEligibility
+                            }
+                        }
                         try {
                             # For this one call, a Failed status is replication THIS handler owns, so the
                             # cmdlet must not report it as its EligibilityRequestFailed error: a record the
@@ -1431,6 +1459,45 @@ function Sync-OERStructureGroup {
                         # listed, listed but never readable, or the request accepted but answered Failed
                         # until the wait ran out.
                         $Message = "permanent eligibility for '$EPrinRef' ($($EChange.AccessType)) not applied: for group '$Name', created in this run, Microsoft Graph did not list a readable PIM-for-groups policy for '$($EChange.AccessType)' access, or accepted the request but answered status Failed, every time within the 30-second wait. A new group's policies can take a while to be listed and readable, and the group to be known to PIM for Groups (replication delay); re-running the same document usually applies it."
+                        # One sentence group more says whether the group's policy was opened for this
+                        # entry, since Add-OERGroupEligibility opens it to allow permanent eligibility
+                        # before its request and has no rollback. The handler decides it itself: with no
+                        # call made, nothing was sent and nothing opened. Otherwise it reads the policy
+                        # ONCE more, after the attempts, with the poll's own functions (no wait, no budget)
+                        # and compares that with $AllowedBefore. A read that is refused, unlisted, answers
+                        # 404 or reads no boolean is UNKNOWN, and an unknown is never reported as "not
+                        # opened". The close command comes from Get-OERGroupPimPolicyCloseAdvice, as in
+                        # Add-OERGroupEligibility.
+                        if (-not $PermanentAttempted) {
+                            $Message += ' No eligibility request was sent, so no PIM-for-groups policy was opened for it.'
+                        } else {
+                            $AllowedAfter = $null
+                            $AfterPolicyId = $null
+                            try {
+                                $AfterPolicyId = Get-OERPimGroupPolicyId -GroupId $Gid -AccessType $EChange.AccessType -NotFoundAsUnlisted
+                                if ($AfterPolicyId) {
+                                    $AfterPolicy = Get-OERListedGroupPimPolicy -GroupId $Gid -PolicyId $AfterPolicyId -AccessType $EChange.AccessType
+                                    if ($null -ne $AfterPolicy -and $AfterPolicy.AllowPermanentEligibility -is [bool]) {
+                                        $AllowedAfter = [bool]$AfterPolicy.AllowPermanentEligibility
+                                    }
+                                }
+                            } catch {
+                                Remove-OERErrorRecord -Record $PSItem
+                                Write-Verbose "Sync-OERStructureGroup: could not read the $($EChange.AccessType) policy of new group '$Name' after its permanent eligibility requests ($($PSItem.Exception.Message)); whether it was opened is not known."
+                            }
+                            $CloseAdvice = Get-OERGroupPimPolicyCloseAdvice -GroupId $Gid -AccessType $EChange.AccessType
+                            if ($null -eq $AllowedAfter) {
+                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access may have been opened to allow permanent eligibility before the request was sent, and it could not be read afterwards. If it allows permanent eligibility, $CloseAdvice"
+                            } elseif (-not $AllowedAfter) {
+                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access does not allow permanent eligibility as read after the requests, so it was not left open."
+                            } elseif ($null -eq $AllowedBefore) {
+                                $Message += " PIM-for-groups policy '$AfterPolicyId' allows permanent eligibility after the requests and may have been opened for them, since whether it allowed it before the first request is not known. The policy is open; $CloseAdvice"
+                            } elseif ($AllowedBefore) {
+                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access already allowed permanent eligibility before the first request, so it was not opened for it."
+                            } else {
+                                $Message += " PIM-for-groups policy '$AfterPolicyId' had been opened to allow permanent eligibility before the request was sent. The policy is still open; $CloseAdvice"
+                            }
+                        }
                         $ErrRec = [System.Management.Automation.ErrorRecord]::new(
                             [System.Exception]::new($Message),
                             'GroupNotOnboarded',

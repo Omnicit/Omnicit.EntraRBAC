@@ -288,8 +288,10 @@ function Add-OERGroupEligibility {
         $Body = New-OERGroupEligibilityBody @BodyParams
 
         # The one place the advice for a policy this invocation left open is written: the two
-        # messages below (PolicyOpenedButGrantFailed and EligibilityRequestFailed) both give it.
-        $PolicyStillOpenAdvice = "The policy is still open; close it with 'Set-OERGroupPimPolicy -Group ''$GroupId'' -AccessType $AccessType -ActivationMaxHours <n>' (without -AllowPermanentEligibility) if you do not intend to retry."
+        # messages below (PolicyOpenedButGrantFailed and EligibilityRequestFailed) both give it. The
+        # close command itself comes from Get-OERGroupPimPolicyCloseAdvice, which the apply engine's
+        # GroupNotOnboarded record asks too.
+        $PolicyStillOpenAdvice = "The policy is still open; $(Get-OERGroupPimPolicyCloseAdvice -GroupId $GroupId -AccessType $AccessType)"
 
         if ($Proceed) {
             try {

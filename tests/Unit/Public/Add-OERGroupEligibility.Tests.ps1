@@ -290,8 +290,8 @@ Describe 'Add-OERGroupEligibility' {
             $script:GrantRefusedMessage = 'Request_BadRequest: Graph rejected the eligibility request.'
             $script:OpenedButFailedText = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-1' had been opened " +
                 'to allow permanent eligibility. The policy is still open; close it with ' +
-                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
-                '-AllowPermanentEligibility) if you do not intend to retry. The request failed with: ' + $script:GrantRefusedMessage
+                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -AllowPermanentEligibility:`$false' " +
+                'if you do not intend to retry. The request failed with: ' + $script:GrantRefusedMessage
         }
 
         It 'makes NO policy change when the operator genuinely declines the confirmation prompt' {
@@ -733,8 +733,8 @@ Describe 'Add-OERGroupEligibility' {
             $Err[0].FullyQualifiedErrorId | Should -BeExactly 'EligibilityRequestFailed,Add-OERGroupEligibility'
             $Err[0].Exception.Message | Should -BeExactly ($script:FailedMessage + " PIM-for-groups policy 'pol-1' had been opened " +
                 'to allow permanent eligibility before the request was sent. The policy is still open; close it with ' +
-                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
-                '-AllowPermanentEligibility) if you do not intend to retry.')
+                "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -AllowPermanentEligibility:`$false' " +
+                'if you do not intend to retry.')
         }
 
         It 'does not name a policy when this invocation did not open one' {
@@ -902,8 +902,8 @@ $Result = Add-OERGroupEligibility -Group 'gid-1' -PrincipalId '11111111-1111-111
         }
         $script:NoTryAdviceText = "The PIM member eligibility grant failed after PIM-for-groups policy 'pol-1' had been opened " +
             'to allow permanent eligibility. The policy is still open; close it with ' +
-            "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -ActivationMaxHours <n>' (without " +
-            '-AllowPermanentEligibility) if you do not intend to retry. The request failed with: Graph rejected the request'
+            "'Set-OERGroupPimPolicy -Group ''gid-1'' -AccessType member -AllowPermanentEligibility:`$false' " +
+            'if you do not intend to retry. The request failed with: Graph rejected the request'
         function Get-TestLoggedLine ([string]$Log) {
             if (Test-Path -LiteralPath $Log) { @(Get-Content -LiteralPath $Log) } else { @() }
         }
