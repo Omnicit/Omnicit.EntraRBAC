@@ -895,6 +895,60 @@ Behaviour that follows from this design:
   is a controller ruling, not an oversight, and is exempted by name (not deleted) from the gate-7
   hardcoded-host-literal check in [#static-source-gates](#static-source-gates). See
   [#sovereign-clouds](#sovereign-clouds) for the sovereign-cloud design and its evidence.
+  **Since Sprint 10 step 3 (BL-65) the host is chosen in three steps:** the state's `ArmResourceUrl`
+  when it has one; otherwise, for a state that has none, the `ArmResource` host of the state's
+  `Environment` (`Global` when the key is missing, empty or null), read from `Get-OERCloudEndpoint`;
+  and the literal only when there is no state at all. Before that, a state without `ArmResourceUrl` --
+  the state `Initialize-OERAuth` leaves after it drops the ARM token for a refused request -- sent to
+  the public cloud whatever cloud the session was in. The literal now names only the host of a
+  request that is refused for its missing token (next bullet), so no request goes to it. An
+  `Environment` the cloud table does not know throws from `Get-OERCloudEndpoint`, which never falls
+  back to the public row; `Initialize-OERAuth` validates the name, so a real state cannot hold one,
+  and the unit suite pins that no request is sent for it.
+- **A request is never sent without an ARM token (BL-65, BL-96; decision A8).** A session with no
+  ARM token -- no state at all, no `ArmToken` key, a null token, an empty `SecureString` or a blank
+  one -- used to send `Authorization: Bearer ` with nothing after it: to the public cloud when there
+  was no state, and for the state `Initialize-OERAuth` leaves after it drops the token. ARM answered
+  it 401. `Invoke-ArmCall` now refuses it directly after the `$Plain = ...` materialization and
+  before the request is built: `[string]::IsNullOrWhiteSpace($Plain)` throws the **existing**
+  `ArmTokenAcquisitionFailed` (category `AuthenticationError`, target the request path), whose
+  message says no request was sent and names `Connect-OER -IncludeARM`, with the app-only route
+  spelled out. The id is reused on purpose (A8: no new ErrorId, no new public value) -- it already
+  means "the session holds no ARM token it can use".
+  **The check reads `$Plain`, not the state, and that is what keeps gate 10 green.** The gate counts
+  exactly two bearer markers in `Invoke-ArmCall` -- the `$Plain = ...` assignment and the one
+  `.ArmToken` read -- and requires both after the supersession gate. An empty plaintext is exactly
+  "no token" for all the shapes (measured: `[System.Net.NetworkCredential]::new('', $null).Password`
+  and an empty `SecureString` both give an empty string without an error, and a blank one gives the
+  blanks back), so the test needs no second `.ArmToken` read, and `$Plain = $null` is not a marker
+  since the gate excludes a `$null` right-hand side. The refusal therefore stands after both gates: a
+  latched command still reads `SignInRefused` and a superseded one `SignInSuperseded`, never the
+  token refusal. The `return` after the `throw` is load-bearing like the one after each gate: under
+  `-ErrorAction SilentlyContinue`, with no `try` up the call stack, a function carries on past its
+  own `throw`, to the request. The `$Plain = $null` inside the block clears the plaintext of a blank
+  token before the throw; no test can observe it, since the variable is local, and it is kept by
+  review.
+  **Proofs** (`tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1`): the Describe "sends nothing
+  without an ARM token (BL-65, BL-96)" drives the five shapes, the two order tests, the 401 retry
+  after a refresh that leaves no token (one request, never the retry) and a control that sends with a
+  token; "takes its host from the session's cloud (BL-65)" drives the host; and "... outside any try
+  (BL-65, BL-96)" runs the wrapper under `-ErrorAction SilentlyContinue` in a runspace with no `try`
+  (`Invoke-OERWithConfirmAnswer`) for a state without the key, a blank token and no state, with
+  `ARM CALLS: 0` and `ArmTokenAcquisitionFailed` the only record. **Mutations**, each run on a copy
+  of `source/`: deleting the whole block turned the five shapes, the 401 test and the three
+  no-`try` tests red (9); deleting only the `return` turned the three no-`try` tests red and nothing
+  else, which is the proof that Pester's own `try` hides it; `IsNullOrEmpty` for `IsNullOrWhiteSpace`
+  turned the blank shape and its no-`try` twin red; deleting the `elseif` host branch turned the
+  USGov, China, USGovDoD, dropped-url and unknown-cloud tests red; passing `Environment` on without
+  the `Global` default turned the three missing-or-empty-`Environment` tests red; making the session's
+  own `ArmResourceUrl` lose to the cloud table turned the precedence test red; and moving the block
+  with the materialization above the supersession gate turned the supersession order test and B6 red,
+  and above both gates also the latch order test and A6 -- and, against a scratch project root (the
+  gate reads `source/` from its own checkout), gate 10's "materializes the bearer token after both"
+  test in both cases. One mutation is equivalent and stays: dropping the `$script:_OERAuthState`
+  condition of the `elseif` changes nothing, since no state reads `Global`, whose ARM host is the same
+  string as the `else` literal; the literal stays all the same, as the documented fallback and
+  gate 7's exemption by shape.
 
 Verified 2026-08-25 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*' source/`, 43 hits):
 managementGroups 5 real call sites, the Azure PIM surface 13, roleDefinitions/roleAssignments 10,
@@ -2381,8 +2435,12 @@ The ARM token drop predates the latch and stays as a second guard that does not 
 refused request that names another tenant, identity or cloud -- the `$ArmIdentityUnchanged` rule the
 state rebuild already applies -- drops that token first (`ArmToken`, `ArmTokenExpiry`,
 `ArmResourceUrl` and `ArmTokenTenantId`), since `Invoke-OERArmRequest` compares nothing and sends
-whatever token the state holds: a request that reached the send would carry an empty bearer, ARM
-would refuse it with 401, and the 401 path raises, since its forced refresh is refused as well.
+whatever token the state holds. A request that reached the send after the drop used to carry an
+empty bearer, to the public cloud's host whatever cloud the session was in, and ARM answered it with
+401; since Sprint 10 step 3 (BL-65, BL-96) the wrapper refuses it with `ArmTokenAcquisitionFailed`
+before it is sent, instead of sending it
+([#arm-transport](#arm-transport) holds the refusal and its proofs). The same change makes a state
+without `ArmResourceUrl` take its cloud's ARM host from its `Environment`, not the public cloud's.
 Before the drop existed, the final review of A18 MEASURED `Get-OERSubscription -TenantId` naming a
 second tenant, in a runspace with no `try`, being refused and then listing the first tenant's
 subscriptions with the first tenant's token. G10 in

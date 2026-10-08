@@ -1128,7 +1128,11 @@ wrapper sends it directly, materializing the plaintext only at the request bound
 in a `finally`. The ARM host is read from the session's cloud (`Get-OERCloudEndpoint`'s `ArmResource`
 field via `-Environment`), not hardcoded to public-cloud ARM; `Invoke-OERArmRequest` keeps
 `https://management.azure.com` as a documented fallback for a call made before any auth state exists,
-so it fails on the missing token rather than on a null host -- do not delete that fallback.
+so it fails on the missing token rather than on a null host -- do not delete that fallback. Since
+Sprint 10 step 3 (BL-65, BL-96) a state without `ArmResourceUrl` takes its cloud's ARM host from
+`Get-OERCloudEndpoint`, and the wrapper never sends a request without an ARM token: it refuses it
+after its two gates, before the send, with the existing `ArmTokenAcquisitionFailed` -- the no-state
+fallback is therefore refused too.
 
 A 429, and a 503 carrying `Retry-After`, are retried with a bounded backoff whose constants mirror
 the Graph wrapper's name for name (`ThrottleWaitBudgetSeconds` 300 per request/page,
