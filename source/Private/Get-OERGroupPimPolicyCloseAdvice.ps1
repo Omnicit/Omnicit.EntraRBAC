@@ -19,9 +19,12 @@ function Get-OERGroupPimPolicyCloseAdvice {
     rule only when -EligibleDuration or -AllowPermanentEligibility is BOUND. -AllowPermanentEligibility:$false
     binds the switch with the value false, so the cmdlet reads the live rule's maximumDuration, carries
     it forward unchanged and sends the rule with isExpirationRequired true: permanent eligibility is no
-    longer allowed, and the maximum for a time-bound grant stays what it was. -ActivationMaxHours alone,
-    the advice this module gave before, patches only the activation rule (Expiration_EndUser_Assignment)
-    and never touches the eligibility-expiration rule, so it left the policy open.
+    longer allowed, and the maximum for a time-bound grant stays what it was. That holds only when the
+    live read of the rule succeeds and returns a maximumDuration: if the read fails the cmdlet warns and
+    sends the -EligibleDuration default (365 days) instead, and a rule without a value falls back to
+    the default without a warning. -ActivationMaxHours alone, the advice this module gave before,
+    patches only the activation rule (Expiration_EndUser_Assignment) and never touches the
+    eligibility-expiration rule, so it left the policy open.
 
     .PARAMETER GroupId
     The object id of the group whose policy was opened, as the caller resolved it (a GUID).

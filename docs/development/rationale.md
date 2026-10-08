@@ -5666,7 +5666,11 @@ policy that call opened and how to close it. A later call's `PolicyOpenFailed` g
 like any other error, so one message can name the command that opens a policy and, when the read
 finds it open, the one that closes it. Known limit: an id from an anonymous script block that
 itself ends with a comma loses that comma, since PowerShell's format cannot tell it from the
-suffix.
+suffix. An EMPTY caught error id would derive as the writing command's name, since PowerShell then
+reads the `FullyQualifiedErrorId` as the bare command name (measured in plain PowerShell: an empty
+id written by a function reads `Write-T`, which the strip cannot tell from a suffix), so such a
+record would be published as `<command>,<caller>`. That is unreachable today, since every
+`Write-CmdletError` call passes an id and Graph records always carry a code.
 
 ## warning-before-confirmation
 

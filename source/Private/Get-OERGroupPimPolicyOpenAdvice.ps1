@@ -20,7 +20,10 @@ function Get-OERGroupPimPolicyOpenAdvice {
     rule when -EligibleDuration or -AllowPermanentEligibility is BOUND. -AllowPermanentEligibility binds
     the switch with the value true, so the cmdlet reads the live rule's maximumDuration, carries it
     forward unchanged and sends the rule with isExpirationRequired false: permanent eligibility is
-    allowed, and the maximum for a time-bound grant stays what it was.
+    allowed, and the maximum for a time-bound grant stays what it was. That holds only when the live
+    read of the rule succeeds and returns a maximumDuration: if the read fails the cmdlet warns and
+    sends the -EligibleDuration default (365 days) instead, and a rule without a value falls back to
+    the default without a warning.
 
     Why -ActivationMaxHours is not in it: the open does not need it. -ActivationMaxHours patches only the
     activation rule (Expiration_EndUser_Assignment), so naming it would ask the operator to rewrite a
