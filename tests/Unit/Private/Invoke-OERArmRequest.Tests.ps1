@@ -1923,9 +1923,11 @@ Describe 'Invoke-OERArmRequest sends nothing without an ARM token (BL-65, BL-96)
 }
 
 Describe 'Invoke-OERArmRequest takes its host from the session''s cloud (BL-65)' {
-    # A state that holds no ArmResourceUrl -- Initialize-OERAuth clears it with the ARM token when a
-    # refused request named another tenant, identity or cloud -- used to send to the public cloud,
-    # whatever cloud the session was in. The host now comes from the state's Environment.
+    # A state that records no ArmResourceUrl used to send to the public cloud, whatever cloud the
+    # session was in. The host now comes from the state's Environment. This is defence in depth: no
+    # state the module builds holds a token without a url (Initialize-OERAuth clears ArmToken and
+    # ArmResourceUrl together, and a state without a token is refused before the host matters), so
+    # every state here is hand-built, with a token and without a recorded host.
     BeforeAll {
         function script:New-HostTestState {
             param([hashtable]$Extra = @{})
@@ -1990,7 +1992,7 @@ Describe 'Invoke-OERArmRequest takes its host from the session''s cloud (BL-65)'
         Should -Invoke -ModuleName Omnicit.EntraRBAC Invoke-WebRequest -Times 1 -Exactly
     }
 
-    It 'uses the cloud''s host for the state Initialize-OERAuth leaves after it drops the ARM token (ArmResourceUrl present and null)' {
+    It 'uses the cloud''s host for a state with a token and an ArmResourceUrl key holding null (no recorded host)' {
         $Sent = Get-SentArmUri -State (New-HostTestState -Extra @{ Environment = 'USGov'; ArmResourceUrl = $null })
         $Sent | Should -BeExactly 'https://management.usgovcloudapi.net/subscriptions?api-version=2022-12-01'
     }

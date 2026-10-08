@@ -24,11 +24,13 @@ function Get-OERCloudEndpoint {
       - ArmHost           the bare ARM host for the cloud, with NO trailing slash. No call site
                           reads this field today: Invoke-OERArmRequest builds its request path from
                           the ARM resource url cached on the auth state and derives the identical
-                          string by trimming that value's trailing slash, so it never consults this
-                          table at request time. The field is kept because it states the cloud's ARM
-                          host plainly beside the rest of the row -- do not rewire the ARM transport
-                          to consume it without a reason of its own, and do not assume a reader
-                          exists just because the row names one.
+                          string by trimming that value's trailing slash. A state that holds no
+                          such url takes its cloud's ARM host from this table at request time, but
+                          through ArmResource, trimmed the same way, and not through this field.
+                          The field is kept because it states the cloud's ARM host plainly beside
+                          the rest of the row -- do not rewire the ARM transport to consume it
+                          without a reason of its own, and do not assume a reader exists just
+                          because the row names one.
       - AuthorityHost     the Microsoft Entra ID authority (STS) host for the cloud.
 
     GraphResource and GraphServiceRoot are deliberately SEPARATE properties and are not

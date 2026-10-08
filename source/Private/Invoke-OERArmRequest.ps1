@@ -87,11 +87,12 @@ function Invoke-OERArmRequest {
     # Suppress the Invoke-WebRequest progress bar for the lifetime of this call.
     $ProgressPreference = 'SilentlyContinue'
 
-    # ARM host. The session's own resource url when it has one. A state without one -- after the ARM
-    # token was dropped, for example -- takes the host of the session's cloud (BL-65), never the public
-    # cloud for a sovereign session. With no state at all the documented public-cloud fallback stays,
-    # so the request is refused for its missing token below rather than failing on a null host
-    # (docs/development/rationale.md#arm-transport). The else literal is gate 7's exemption by shape.
+    # ARM host. The session's own resource url when it has one. A state without one takes the host of
+    # the session's cloud (BL-65), never the public cloud for a sovereign session; defence in depth,
+    # since no state the module builds holds a token without a url. With no state at all the
+    # documented public-cloud fallback stays, so the request is refused for its missing token below
+    # rather than failing on a null host (docs/development/rationale.md#arm-transport). The else
+    # literal is gate 7's exemption by shape.
     $ArmBaseUrl = if ($script:_OERAuthState -and $script:_OERAuthState.ArmResourceUrl) {
         ([string]$script:_OERAuthState.ArmResourceUrl).TrimEnd('/')
     } elseif ($script:_OERAuthState) {

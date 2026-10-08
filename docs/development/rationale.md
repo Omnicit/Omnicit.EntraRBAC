@@ -831,9 +831,10 @@ chokes on a stale `DefaultSubscriptionForLogin`.
 
 Instead, `Initialize-OERAuth -IncludeARM` caches the ARM bearer token (SecureString) in
 `$script:_OERAuthState.ArmToken`, and `Invoke-OERArmRequest` sends it directly via
-`Invoke-WebRequest -SkipHttpErrorCheck` against `$script:_OERAuthState.ArmResourceUrl` (default
-`https://management.azure.com`) with an `Authorization: Bearer` header. The token plaintext is
-materialized only at the request boundary and cleared in a `finally`; the transport `catch` scrubs
+`Invoke-WebRequest -SkipHttpErrorCheck` against the host of the session -- the state's
+`ArmResourceUrl`, else the ARM host of the state's cloud, else, with no state at all,
+`https://management.azure.com` (the `ArmResourceUrl` bullet below) -- with an
+`Authorization: Bearer` header. The token plaintext is materialized only at the request boundary and cleared in a `finally`; the transport `catch` scrubs
 first, because the failed request carries the bearer header.
 
 Behaviour that follows from this design:
@@ -898,9 +899,13 @@ Behaviour that follows from this design:
   **Since Sprint 10 step 3 (BL-65) the host is chosen in three steps:** the state's `ArmResourceUrl`
   when it has one; otherwise, for a state that has none, the `ArmResource` host of the state's
   `Environment` (`Global` when the key is missing, empty or null), read from `Get-OERCloudEndpoint`;
-  and the literal only when there is no state at all. Before that, a state without `ArmResourceUrl` --
-  the state `Initialize-OERAuth` leaves after it drops the ARM token for a refused request -- sent to
-  the public cloud whatever cloud the session was in. The literal now names only the host of a
+  and the literal only when there is no state at all. Before that, a state without `ArmResourceUrl`
+  sent to the public cloud whatever cloud the session was in. The cloud-host branch is defence in
+  depth: no state the module builds holds a token without a url -- `Initialize-OERAuth` sets and
+  clears `ArmToken` and `ArmResourceUrl` together, in the drop under
+  [The Graph SDK session](#the-graph-sdk-session) as in the state rebuild -- and a state without a
+  token is refused before the host matters, so only a hand-built state reaches the branch with a
+  request to send, as the unit suite's states do. The literal now names only the host of a
   request that is refused for its missing token (next bullet), so no request goes to it. An
   `Environment` the cloud table does not know throws from `Get-OERCloudEndpoint`, which never falls
   back to the public row; `Initialize-OERAuth` validates the name, so a real state cannot hold one,
@@ -908,8 +913,8 @@ Behaviour that follows from this design:
 - **A request is never sent without an ARM token (BL-65, BL-96; decision A8).** A session with no
   ARM token -- no state at all, no `ArmToken` key, a null token, an empty `SecureString` or a blank
   one -- used to send `Authorization: Bearer ` with nothing after it: to the public cloud when there
-  was no state, and for the state `Initialize-OERAuth` leaves after it drops the token. ARM answered
-  it 401. `Invoke-ArmCall` now refuses it directly after the `$Plain = ...` materialization and
+  was no state, and for the state `Initialize-OERAuth` leaves after it drops the token. ARM would have
+  answered it 401 (never measured). `Invoke-ArmCall` now refuses it directly after the `$Plain = ...` materialization and
   before the request is built: `[string]::IsNullOrWhiteSpace($Plain)` throws the **existing**
   `ArmTokenAcquisitionFailed` (category `AuthenticationError`, target the request path), whose
   message says no request was sent and names `Connect-OER -IncludeARM`, with the app-only route
@@ -2441,11 +2446,12 @@ refused request that names another tenant, identity or cloud -- the `$ArmIdentit
 state rebuild already applies -- drops that token first (`ArmToken`, `ArmTokenExpiry`,
 `ArmResourceUrl` and `ArmTokenTenantId`), since `Invoke-OERArmRequest` compares nothing and sends
 whatever token the state holds. A request that reached the send after the drop used to carry an
-empty bearer, to the public cloud's host whatever cloud the session was in, and ARM answered it with
-401; since Sprint 10 step 3 (BL-65, BL-96) the wrapper refuses it with `ArmTokenAcquisitionFailed`
-before it is sent, instead of sending it
+empty bearer, to the public cloud's host whatever cloud the session was in, and ARM would have
+answered it with 401 (never measured); since Sprint 10 step 3 (BL-65, BL-96) the wrapper refuses it
+with `ArmTokenAcquisitionFailed` before it is sent, instead of sending it
 ([#arm-transport](#arm-transport) holds the refusal and its proofs). The same change makes a state
-without `ArmResourceUrl` take its cloud's ARM host from its `Environment`, not the public cloud's.
+without `ArmResourceUrl` take its cloud's ARM host from its `Environment`, not the public cloud's --
+which no state the module builds needs, since the drop clears the token and the url together.
 Before the drop existed, the final review of A18 MEASURED `Get-OERSubscription -TenantId` naming a
 second tenant, in a runspace with no `try`, being refused and then listing the first tenant's
 subscriptions with the first tenant's token. G10 in

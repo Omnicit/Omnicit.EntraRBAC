@@ -578,10 +578,10 @@ function Initialize-OERAuth {
     # subscriptions with the first tenant's token. A request naming another tenant, identity or cloud
     # must not leave a token minted for the old one behind: the rule the state rebuild below already
     # applies on $ArmIdentityUnchanged, applied here because the refusal never reaches the rebuild.
-    # With no token, a request that reached the send would carry an empty bearer, ARM would answer 401,
-    # and the 401 path raises instead of re-acquiring (its forced refresh is refused here as well, and
-    # an app-only session never re-acquires), so no request carries a credential for the wrong tenant.
-    # ONLY then: a refused request for the module's own tenant, identity and cloud keeps its token,
+    # With no token, a request never reaches the send: Invoke-OERArmRequest refuses a request without an
+    # ARM token with ArmTokenAcquisitionFailed (BL-65, BL-96), after its latch and supersession gates
+    # and before anything is sent. That refusal acquires nothing, so no request carries a credential
+    # for the wrong tenant. ONLY then: a refused request for the module's own tenant, identity and cloud keeps its token,
     # since that token is for the tenant the request meant. The cost: once Connect-OER has taken the
     # session back, an app-only session needs Connect-OER -IncludeARM again before an Azure cmdlet,
     # since the module never keeps the certificate or the client secret; a delegated or managed
