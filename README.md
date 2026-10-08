@@ -290,8 +290,8 @@ same way and sent once more. A rejection of a token that is still valid -- revok
 still forces a new sign-in, as before, and a Conditional Access claims challenge is handled as
 before.
 
-Whether a renewal needs you depends on AzAuth, not on the module (AzAuth 2.10.0, read from its
-code):
+Whether a renewal needs you depends on AzAuth, not on the module (AzAuth 2.10.0, read from its code
+and not yet observed in a live sign-in):
 
 - A managed identity renews with no prompt.
 - A device code session renews without a new code while AzAuth still holds the credential the
@@ -309,10 +309,10 @@ module never keeps the secret or certificate. Once its token expires, a request 
 `AppOnlyTokenRefreshUnsatisfiable`, and the next command's sign-in reports
 `AppOnlySessionCredentialUnavailable` until you run `Connect-OER` with the secret or certificate.
 
-A renewal that fails sends nothing: that request is not sent, and the command reports the failure --
-the renewal's own error, `SignInRefused`, or both. The session is then left uncertain, as after any
-sign-in that fails (above): a later command that names no tenant is refused with `SignInRefused`
-until a command that names its tenant signs in, `Connect-OER` succeeds, or `Disconnect-OER` is run.
+A renewal that fails sends nothing, and the command reports the failure -- the renewal's own error,
+`SignInRefused`, or both. The session is then left uncertain, as after any sign-in that fails
+(above): a later command that names no tenant is refused with `SignInRefused` until a command that
+names its tenant signs in, `Connect-OER` succeeds, or `Disconnect-OER` is run.
 
 ### Switching tenants
 

@@ -4031,8 +4031,10 @@ forced. Each part stands where it does for a reason.
   is not a term -- so every command on the call stack still remembers what the state carries, and
   nothing is refused with `SignInSuperseded`. A renewal whose token comes back for another identity
   -- an interactive session that named no tenant (`organizations`), renewed with another tenant's
-  account at the account picker -- is refused by the supersession gate straight after it, since the
-  command still remembers the identity from before (read in the code, not tested).
+  account at the account picker -- is refused by the supersession gate, since the command still
+  remembers the identity from before. The request meets that gate last after the renewal: on Graph
+  the session gate and the latch gate stand between them, on ARM the latch gate (read in the code,
+  not tested).
 - **The 401 split.** A 401 is not always an expiry. On the Graph token-rejected path and the ARM 401
   path, after the app-only refusal, which stays first, a token the state records as expired, or as
   expiring within the window, is renewed the way a due token is before a request -- `-Renewal`,
@@ -4045,28 +4047,34 @@ forced. Each part stands where it does for a reason.
 
 **What AzAuth does with a renewal (Ruling R1).** DECOMPILED, AzAuth 2.10.0: IL read offline from
 `AzAuth.Core.dll`, `AzAuth.PS.dll` and the Azure.Identity code in `Azure.Core.dll` under
-`output/RequiredModules`. None of it is measured. The decision's premise was that without `-Force`
-AzAuth renews silently from its cache. That holds for a managed identity, holds in part for a device
-code session, and does not hold for an interactive one:
+`output/RequiredModules`. None of it has been observed live; what it leans on that was measured, and
+only offline, is under [Switching tenants in one process](#switching-tenants-in-one-process), above
+all further finding 2. The decision's premise was that without `-Force` AzAuth renews silently from
+its cache. That holds for a managed identity, holds in part for a device code session, and does not
+hold for an interactive one:
 
-- **Interactive.** `Get-AzToken -Interactive` goes to `TokenManager.GetTokenInteractive`, which with
-  no `-TokenCache` -- the module never passes one (gate 7) -- builds a NEW
-  `InteractiveBrowserCredential` on every call, with only `ClientId` set and no reuse test. A new
-  instance has no `AuthenticationRecord`, so Azure.Identity skips its silent attempt and opens the
-  browser with `Prompt.SelectAccount` and no login hint, which the operator has to answer. `-Force`
-  only clears the stored credential first, so a renewal opens the account picker with or without it.
-  For an interactive session A11 moves the prompt from after a 401 to the first request inside the
-  window; it does not remove it.
-- **DeviceCode.** AzAuth reuses the credential it stores only when it is a `DeviceCodeCredential`
-  with the same client id as this call (`previousClientId`). The module requests its Graph token
-  under the Microsoft Graph Command Line Tools client, or the session's own `-ClientId`, and its ARM
-  token under AzAuth's default client (MEASURED, further finding 2 under
-  [Switching tenants in one process](#switching-tenants-in-one-process)). So a renewal reuses the
-  credential AzAuth holds when that credential was built for the same resource's client, and a
-  renewal made after a token was acquired for the other resource builds a new credential and shows
-  a new device code.
-- **ManagedIdentity.** The stored credential is reused for the same client id, and a managed
-  identity never prompts.
+- **Interactive.** DECOMPILED, and not yet observed live: `Get-AzToken -Interactive` goes to
+  `TokenManager.GetTokenInteractive`, which with no `-TokenCache` -- the module never passes one
+  (gate 7) -- builds a NEW `InteractiveBrowserCredential` on every call, with only `ClientId` set and
+  no reuse test. A new instance has no `AuthenticationRecord`, so Azure.Identity skips its silent
+  attempt and opens the browser with `Prompt.SelectAccount` and no login hint, which the operator
+  has to answer. `-Force` only clears the stored credential first, so a renewal opens the account
+  picker with or without it. For an interactive session A11 moves the prompt from after a 401 to the
+  first request inside the window; it does not remove it.
+- **DeviceCode.** DECOMPILED: AzAuth reuses the credential it stores only when it is a
+  `DeviceCodeCredential` with the same client id as this call (`previousClientId`). The module
+  requests its Graph token under the Microsoft Graph Command Line Tools client, or the session's own
+  `-ClientId`, and its ARM token with no client id, so Azure.Identity's built-in default public
+  client answers it. MEASURED, offline, in the module's own call shape (Graph, then ARM, then
+  Graph): every call built a new credential instance (further finding 2, as above). So a renewal
+  reuses the credential AzAuth holds when that credential was built for the same client, and a
+  renewal made after a token was acquired for the other resource builds a new credential. INFERRED
+  from the decompiled Azure.Identity, and not yet observed live: that the operator is then shown
+  another device code -- the new instance holds neither the earlier sign-in's authentication record
+  nor its in-memory token cache, so it cannot complete silently. The comment above
+  `Invoke-AzTokenCall` in `Initialize-OERAuth.ps1` states the same limit for the ARM call.
+- **ManagedIdentity.** DECOMPILED: the stored credential is reused for the same client id, and a
+  managed identity never prompts.
 
 The user-facing texts say exactly that, in the operator's terms, and never call an interactive
 renewal silent. Cost if this is wrong: a live renewal of an interactive session shows no prompt, and

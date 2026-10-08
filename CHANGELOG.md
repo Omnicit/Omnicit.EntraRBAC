@@ -22,11 +22,11 @@ not sent. `New-`/`Set-OERConfiguration` refuse a white-space `-TenantId`. `SignI
 its actual cause, and the `SignInRefused` after a failed sign-in no longer says the session may be
 the previous tenant's.
 
-A long-running command now renews its Microsoft Graph or Azure Resource Manager token before it
-expires, and when it is rejected as expired, without forcing a new sign-in. A managed identity then
-renews with no prompt, a device code session without a new code unless the other service's token
-was acquired in between, and an interactive one still opens the browser. App-only sessions are not
-renewed.
+A long-running command now renews its Graph or Azure Resource Manager token before it expires, and
+again when a request is rejected as expired, without forcing a new sign-in. A managed identity
+renews with no prompt, a device code session without a new code unless a token for the other of the
+two services was acquired in between, and an interactive one still opens the browser. App-only
+sessions are not renewed.
 
 ## [1.1.3] - 2026-10-07
 

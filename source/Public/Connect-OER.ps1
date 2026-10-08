@@ -46,13 +46,14 @@ function Connect-OER {
     credential it holds. A request rejected because its token has expired is renewed the same way
     and sent once more; one rejected for a token that is still valid -- revoked, for example --
     forces a new sign-in, as before. Whether a renewal needs you depends on AzAuth, not on the
-    module: a managed identity renews with no prompt; a device code session renews without a new
-    code while AzAuth still holds the credential it signed in with, but the module requests its
-    Microsoft Graph and Azure Resource Manager tokens under different applications, so in a session
-    that uses both, a renewal made after a token was acquired for the other one makes AzAuth build a
-    new credential and shows a new code; and an interactive session's renewal opens the browser to
-    choose the account again, since AzAuth builds a new browser credential for every interactive
-    token. An app-only session (client secret or certificate) is not renewed within a command, since
+    module (AzAuth 2.10.0, read from its code and not yet observed in a live sign-in): a managed
+    identity renews with no prompt; a device code session renews without a new code while AzAuth
+    still holds the credential it signed in with, but the module requests its Microsoft Graph and
+    Azure Resource Manager tokens under different applications, so in a session that uses both, a
+    renewal made after a token was acquired for the other one makes AzAuth build a new credential
+    and shows a new code; and an interactive session's renewal opens the browser to choose the
+    account again, since AzAuth builds a new browser credential for every interactive token. An
+    app-only session (client secret or certificate) is not renewed within a command, since
     the module never keeps the secret or certificate: once its token expires, a request is rejected
     with an AppOnlyTokenRefreshUnsatisfiable error, and the next command's sign-in reports
     AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret or certificate. A
