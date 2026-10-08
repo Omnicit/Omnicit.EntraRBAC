@@ -5537,10 +5537,21 @@ allowed, and send the grant afterwards. A request answered Failed grants nothing
 refused already rolls the policy back (`New-OERActiveRoleAssignment` gained that rollback in the same
 step, see below). Leaving the policy open on a Failed answer would be the very weakening that
 rollback exists to undo, so a Failed answer rolls it back too. The one record,
-`EligibilityRequestFailed` or `AssignmentRequestFailed`, carries the rollback text: whether the
-rollback succeeded and, when it did not, the `Set-OERRoleManagementPolicy` command that closes the
-policy by hand. It is one record and not a `PolicyOpenedButGrantFailed` as well, since the request
-was accepted, not refused. The rollback runs BEFORE the object is emitted, not only before the error:
+`EligibilityRequestFailed` or `AssignmentRequestFailed`, carries the rollback text: how the rollback
+went and, when it failed, the `Set-OERRoleManagementPolicy` command that closes the policy by hand.
+It is one record and not a `PolicyOpenedButGrantFailed` as well, since the request was accepted, not
+refused. The rollback text has three outcomes. A rollback answered `NoChange` --
+`Set-OERRoleManagementPolicy` writes it when no rule differs, so the policy already disallowed
+permanent assignments again when the rollback read it -- used to read as "The rollback ALSO failed,
+so the policy is still open", which sent the operator to close a policy that was already closed. It
+now says that the policy was already closed and the rollback changed nothing (Sprint 10 step 2,
+BL-99), in the refused grant's `PolicyOpenedButGrantFailed` and in the Failed answer's record alike,
+since both come from the one rollback block. The block decides on the error id, never on the
+message: the first comma-separated segment of the caught record's `FullyQualifiedErrorId`, compared
+ordinally, must be `NoChange` (the real cmdlet's record reads `NoChange,Set-OERRoleManagementPolicy`
+under `-ErrorAction Stop`, measured against a mocked transport). Another failure can carry the words
+"No applicable policy rule changed.", and a reworded message must not turn a failed rollback into a
+closed policy. The rollback runs BEFORE the object is emitted, not only before the error:
 a consumer that stops the pipeline at the object, `Select-Object -First 1` for example, would
 otherwise skip it exactly as `-ErrorAction Stop` skips what follows the error, and the policy would
 stay open. The object is still emitted before the error. `Add-OERGroupEligibility` has no rollback to
