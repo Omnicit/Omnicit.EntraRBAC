@@ -278,6 +278,42 @@ it signs in, with no token request; otherwise, once it has signed in, it compare
 the tenant the session's tokens were issued for. To apply an export in another tenant -- as a
 template, like the copy above -- change its `tenantId` to that tenant's ID or remove the key first.
 
+### Token renewal during a long run
+
+A command that runs long -- an export or an apply over a large tenant -- can outlive the token it
+signed in with. Before every request it sends, each page of a long listing included, the module
+renews a Microsoft Graph or Azure Resource Manager token that expires within five minutes, on an
+interactive, device code or managed identity session. It asks AzAuth, which acquires every token,
+for the new one without `-Force`, which would make AzAuth discard the credential it holds. A request
+that Microsoft Graph or Azure Resource Manager rejects because its token has expired is renewed the
+same way and sent once more. A rejection of a token that is still valid -- revoked, for example --
+still forces a new sign-in, as before, and a Conditional Access claims challenge is handled as
+before.
+
+Whether a renewal needs you depends on AzAuth, not on the module (AzAuth 2.10.0, read from its
+code):
+
+- A managed identity renews with no prompt.
+- A device code session renews without a new code while AzAuth still holds the credential the
+  session signed in with. AzAuth keeps one credential for the whole process and builds a new one
+  when a token is requested under another application, and the module requests its Microsoft Graph
+  and Azure Resource Manager tokens under different applications. So in a session that uses both
+  -- `-IncludeARM`, or any Azure cmdlet -- a renewal made after a token was acquired for the other
+  one shows a new device code.
+- An interactive session's renewal opens the browser to choose the account again, since AzAuth
+  builds a new browser credential for every interactive token. A long interactive run still needs
+  someone at the keyboard when its token is renewed.
+
+An app-only session (client secret or certificate) is not renewed within a command, since the
+module never keeps the secret or certificate. Once its token expires, a request is rejected with
+`AppOnlyTokenRefreshUnsatisfiable`, and the next command's sign-in reports
+`AppOnlySessionCredentialUnavailable` until you run `Connect-OER` with the secret or certificate.
+
+A renewal that fails sends nothing: that request is not sent, and the command reports the failure --
+the renewal's own error, `SignInRefused`, or both. The session is then left uncertain, as after any
+sign-in that fails (above): a later command that names no tenant is refused with `SignInRefused`
+until a command that names its tenant signs in, `Connect-OER` succeeds, or `Disconnect-OER` is run.
+
 ### Switching tenants
 
 One PowerShell session works in one tenant at a time. Whether a later `Connect-OER` call naming a

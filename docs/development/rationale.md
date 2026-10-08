@@ -617,7 +617,8 @@ so a matcher that stopped matching cannot pass by finding nothing to complain ab
 
 **10. Transport gate hygiene** (Sprint 8 step 4b, A18, A19 and A20; two owner lists widened in
 Sprint 9 step 2; the tenant lookup, the session-uncertain marker and the session reclaim added in
-Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b). The
+Sprint 9 step 3; the document tenant comparison added in Sprint 9 step 6b; the token renewal window
+added in Sprint 10 step 4). The
 gates that stand in front of every request -- the Graph SDK session gate in the Graph transport, and
 the sign-in latch gate and the sign-in supersession gate in both transports, all described under
 [#auth-state](#auth-state) -- are only as good as the claim that no request can go around them, and
@@ -631,14 +632,20 @@ wrappers and in `Initialize-OERAuth`; `Get-OERSignInSupersession` only in the tw
 only in the ARM wrapper; `Invoke-RestMethod` only in `Resolve-OERTenantDomain`, and
 `Resolve-OERTenantDomain` only in `Initialize-OERAuth`; `Set-OERSessionUncertain` only in
 `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`; `Get-OERDocumentTenantMismatch` only in
-`Invoke-OERStructure` -- and every listed owner must really call its command, so a rule cannot hold
+`Invoke-OERStructure`; `Get-OERTokenRenewalThreshold` only in `Initialize-OERAuth` and the two
+wrappers -- and every listed owner must really call its command, so a rule cannot hold
 over nothing and a stale owner is a failure. Two of those lists were widened by one owner each in
 Sprint 9 step 2, each widening justified in the gate's own text. Each row of the owner table is
 enforced only by its own `It`, which asserts that the command has no caller outside its owners and
 that its owners really call it: no assertion reads the table as a whole, so a row without an `It`
 asserts nothing. MEASURED in Sprint 9 step 6b: the `Get-OERDocumentTenantMismatch` row alone, with
 its owner list emptied, left the gate green, so it got its own `It`, and the gate's comment now
-says that a new row needs one.
+says that a new row needs one. The token renewal window (Sprint 10 step 4, A11, BL-105) is held
+tighter than its owner row, which has its own `It`: none of the three owner files -- the window's
+callers, `Initialize-OERAuth` and the two wrappers -- calls a member named `AddMinutes`,
+`AddSeconds` or `AddHours`, read from the AST, so a second window literal cannot stand beside the
+owner; the three files must be among the parsed units, so the rule cannot hold over nothing. See
+[A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires).
 `Initialize-OERAuth` reads the latch once, before `Lock-OERSignIn`, to refuse a SIGN-IN under a
 latched outer command (BL-74); it refuses no request, and the transports' latch gates, which this
 gate places, still do, so the reason a reader elsewhere is refused -- a gate no static check places
@@ -679,7 +686,9 @@ holds exactly one call path (in each of the three Graph statements, in `Invoke-G
 `Invoke-MgGraphRequest` and one `Invoke-GraphAttempt`; in ARM one `Invoke-WebRequest`, in
 `Invoke-ArmCall`), and that try is preceded, in the very block that holds it and in this order, by
 its session gate (Graph only), its latch gate and its supersession gate, each a throw followed by a
-return, with no `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request, and
+return, with no `Initialize-OERAuth` or `Start-Sleep` between the earliest gate and any request (the
+renewal before a request, since Sprint 10 step 4, stands above the earliest gate -- in ARM, in the
+function that calls the one holding the gates -- and so outside that span), and
 the ARM bearer token materialized only after the last gate -- every `$Plain =` assignment,
 `.ArmToken` read and `['ArmToken']` or `["ArmToken"]` index read in `Invoke-ArmCall` starts after
 it. A gate in an enclosing block does not count, and a gate out of order is a violation of its own.
@@ -694,7 +703,8 @@ And one call-site rule, read from the `Initialize-OERAuth` call nodes the shared
 (final review of round 1, F1): the latch is set on the frame that calls `Initialize-OERAuth`, so the
 nearest enclosing function of every call under `source/` must be the file's own top-level function
 -- in the Graph wrapper `Invoke-GraphSingle` and in the ARM wrapper `Invoke-ArmCallWithRefresh`, the
-two transport refreshes -- with no script block expression between the call and it. A `foreach`,
+two transport refreshes and, since Sprint 10 step 4, the two renewals before a request -- with no
+script block expression between the call and it. A `foreach`,
 `if` or `try` block is part of the function; a `{ ... }` handed to `&`, `.`, `ForEach-Object`,
 `Invoke-Command` or anything else is not, which is stricter than the engine on purpose (a
 `ForEach-Object` block inside a function was measured to carry the function's own invocation). Its
@@ -746,18 +756,28 @@ on an API version because of it.
 
 ## graph-wrapper
 
-`Invoke-OERGraphRequest` exists to provide four things no call site should re-implement:
+`Invoke-OERGraphRequest` exists to provide six things no call site should re-implement:
 
 1. **Bearer-token security** -- the scrub in every catch. See [#bearer-scrub](#bearer-scrub).
 2. **ACRS claims-challenge retry** -- decodes `claims=` from a 401 `WWW-Authenticate` header or a
    PIM 400 body, calls `Initialize-OERAuth -ClaimsChallenge`, retries once.
-3. **Token-rejected retry** -- a 401 with no claims challenge forces `Initialize-OERAuth
-   -ForceRefresh` and retries once.
+3. **Token-rejected retry** -- a 401 with no claims challenge calls `Initialize-OERAuth` and
+   retries once. Until Sprint 10 step 4 it always passed `-ForceRefresh`. Since then (A11, BL-105)
+   a token the state records as expired, or as expiring within the renewal window, is renewed with
+   `-Renewal` and without `-ForceRefresh`, so AzAuth may answer with the credential it holds; only a
+   token the state records as still valid -- revoked, a Continuous Access Evaluation event, a token
+   from another tenant -- or one whose expiry it does not record is forced. An app-only session is
+   refused with `AppOnlyTokenRefreshUnsatisfiable` before either.
 4. **Structured error conversion** -- non-recoverable failures go through
    `Convert-GraphHttpException`, producing typed `ErrorRecord` objects.
 5. **Retry-After throttle backoff** (added by PR #77) -- a 429, or a 503 carrying a `Retry-After`,
    is retried until a wait budget is spent: 300 s per request, 900 s per call however many pages it
    fetches.
+6. **Token renewal before expiry** (Sprint 10 step 4, A11, BL-105) -- before every attempt, and so
+   before each throttled retry and each page, a delegated or managed identity session's token that
+   expires within the renewal window is renewed through `Initialize-OERAuth -Renewal`, above the
+   session gate. See
+   [A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires).
 
 **The header read behind item 5 is shape-tolerant, and that is load-bearing.** Two collection types
 reach it and the obvious code for one is silently wrong on the other. Kiota's
@@ -841,8 +861,18 @@ Behaviour that follows from this design:
 
 - `Invoke-WebRequest -SkipHttpErrorCheck` does not throw on 4xx/5xx. The wrapper inspects
   `StatusCode`/`Content`; non-2xx responses convert through `Convert-ArmHttpException`.
-- 401s force `Initialize-OERAuth -IncludeARM -ForceRefresh` and retry once. App-only sessions get a
-  clear error instead.
+- 401s call `Initialize-OERAuth -IncludeARM` and retry once. App-only sessions get a clear error
+  (`AppOnlyTokenRefreshUnsatisfiable`) instead. Until Sprint 10 step 4 the refresh always passed
+  `-ForceRefresh`; since then (A11, BL-105) a token the state records as expired, or as expiring
+  within the renewal window, is renewed with `-Renewal` and without `-ForceRefresh`, and only a token
+  it records as still valid, or one whose expiry it does not record, is forced -- the Graph wrapper's
+  split, mirrored.
+- **Token renewal before expiry** (Sprint 10 step 4, A11, BL-105). The first statement of
+  `Invoke-ArmCallWithRefresh`, which every request passes through -- the first, each throttled retry
+  and each page -- renews a delegated or managed identity session's ARM token that expires within
+  the renewal window through `Initialize-OERAuth -IncludeARM -Renewal`, before `Invoke-ArmCall` and
+  its gates, and without spending the 401 refresh budget. See
+  [A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires).
 - **Throttling (issue #57).** A 429, and a 503 that carries `Retry-After`, are retried with a
   bounded backoff. This was absent entirely until Sprint 3, for a mechanical reason rather than an
   oversight: the wrapper normalized every response to `{ StatusCode; Content }` and destroyed the
@@ -1538,10 +1568,12 @@ credential types. There is no MSAL reflection or hand-rolled token acquisition -
 NOT use the approach from Omnicit.PIM.
 
 1. **Idempotency** -- if `$script:_OERAuthState` already holds a Graph token for the same tenant
-   *and* auth identity (AuthMethod + ClientId) with at least 5 minutes remaining, and, when
-   `-IncludeARM` is set, a valid cached ARM token, and the process still holds the Graph SDK
-   session it connected (see [The Graph SDK session](#the-graph-sdk-session) below), it returns
-   immediately with no network call and no prompt.
+   *and* auth identity (AuthMethod + ClientId) that expires after the renewal window, and, when
+   `-IncludeARM` is set, a cached ARM token that does too, and the process still holds the Graph
+   SDK session it connected (see [The Graph SDK session](#the-graph-sdk-session) below), it returns
+   immediately with no network call and no prompt. The window is five minutes from now, and since
+   Sprint 10 step 4 its single owner is `Get-OERTokenRenewalThreshold`, which the two transports
+   read too (item 10).
 2. **Graph token** -- `Get-AzToken -Resource 'https://graph.microsoft.com/'`, wired into
    `Connect-MgGraph -AccessToken` as a SecureString.
 3. **ARM token (optional)** -- with `-IncludeARM`, a second `Get-AzToken` acquires
@@ -1576,6 +1608,12 @@ NOT use the approach from Omnicit.PIM.
    `DocumentTenantMismatch` (BL-88, A14). It never signs in to the document's tenant. See
    [A document names the tenant it was exported from](#a-document-names-the-tenant-it-was-exported-from)
    below.
+10. **Token renewal** -- before every request, the two transports renew a delegated or managed
+    identity session's token that expires within the window of item 1, through this function with
+    `-Renewal` and without `-ForceRefresh`, and a 401 for a token that has expired is renewed the
+    same way (A11, BL-105). See
+    [A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires)
+    below.
 
 The tenant *and identity* part of step 1 is load-bearing: PR #36 closed the audit's only Critical
 finding, which was an ARM token surviving a tenant switch. PR #37 then removed the
@@ -1963,7 +2001,11 @@ nothing else. Two internal paths put `Force` on the call as well. One is the aut
 one it attempted. The other is the refresh retry after a rejected token: `Invoke-OERGraphRequest`
 and `Invoke-OERArmRequest` call `Initialize-OERAuth -ForceRefresh`, for a session that is not
 app-only -- a client secret or certificate session raises `AppOnlyTokenRefreshUnsatisfiable` there
-instead of refreshing.
+instead of refreshing. Since Sprint 10 step 4 (A11, BL-105) that retry forces only a token the state
+records as still valid, or whose expiry it does not record: a rejected token that has expired, or
+expires within the renewal window, is renewed with `-Renewal` and without `-ForceRefresh`, and so
+is a token due before a request, so AzAuth may answer with the credential it holds -- see
+[A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires).
 
 **What does NOT clear AzAuth's credential.** MEASURED: `Clear-AzTokenCache`, with or without
 `-Force`, leaves the credential instance unchanged in every case tried. DECOMPILED: it has zero
@@ -2690,11 +2732,12 @@ request that has no token to send; that refusal neither latches nor marks, since
 - A refresh inside a transport (step 4b round 1, Ruling R5). The claims-challenge step-up and the
   token-rejected retry of `Invoke-OERGraphRequest` call `Initialize-OERAuth` from its nested
   `Invoke-GraphSingle`, and the 401 retry of `Invoke-OERArmRequest` from its nested
-  `Invoke-ArmCallWithRefresh`. A sign-in refused there latches that nested function, so
-  `SignInRefused`'s target names an internal function, only that one retry is refused, and the
-  command's next request is a new transport call, which the latch does not refuse. The session is
-  the same tenant's, and the session gate covers a changed one. The message's "this command" then
-  means that internal function, which only the target shows.
+  `Invoke-ArmCallWithRefresh` -- and since Sprint 10 step 4 so does each transport's renewal of a
+  token due before a request (A11, BL-105). A sign-in refused there latches that nested function, so
+  `SignInRefused`'s target names an internal function, only that one retry (or that one request) is
+  refused, and the command's next request is a new transport call, which the latch does not refuse.
+  The session is the same tenant's, and the session gate covers a changed one. The message's "this
+  command" then means that internal function, which only the target shows.
 - Three private helpers call `Initialize-OERAuth` themselves: `Resolve-OERInventoryScopeTree`,
   `Resolve-OERReviewerScope` and `Resolve-OERTargetList`, each forwarding the `-TenantId` its caller
   passed it. A refusal there latches the helper, and refuses only the requests made inside it. A
@@ -2704,9 +2747,13 @@ request that has no token to send; that refusal neither latches nor marks, since
   `Export-OERInventory -TenantId B` whose own sign-in to B was refused no longer has
   `Resolve-OERInventoryScopeTree` try B's sign-in again. The helper is not latched by that refusal;
   the cmdlet's latch covers its requests. Read in the code, not measured.
-- A transport's refresh is not reached by BL-74 in practice (read in the code): it follows a
-  request that went out, and the latch gate in front of that request found no latched frame on the
-  call stack the refresh shares.
+- A transport's refresh after a 401 is not reached by BL-74 in practice (read in the code): it
+  follows a request that went out, and the latch gate in front of that request found no latched
+  frame on the call stack the refresh shares. The renewal before a request is reached by it: it
+  stands before the latch gate, so for a latched command whose token is due BL-74 refuses the
+  renewal, with no token call, and outside any `try` the latch gate then refuses the request too --
+  two `SignInRefused` records for one request (Ruling R6 of Sprint 10 step 4, under
+  [A long run renews its token before it expires](#a-long-run-renews-its-token-before-it-expires)).
 
 **The proof.** Pester runs every test inside a `try`, where the refusal propagates, so the carrying
 on is proved in a runspace with no `try`, as for the session gate. H1 in
@@ -2861,7 +2908,10 @@ materialized. The session gate comes first, so a changed session is still report
 reported as `SignInRefused`. All three stand outside the attempt's `try`, whose `catch` would turn a
 refusal into a Graph failure. At the two Graph retry sites, and on the ARM 401 retry, the
 supersession gate also refuses a step-up or a refresh whose sign-in changed the state's identity: a
-command on the call stack still remembers the identity from before it.
+command on the call stack still remembers the identity from before it. Since Sprint 10 step 4 the
+same holds for a renewal before a request (A11, BL-105), which stands before all three gates: a
+renewal that keeps the identity changes nothing any frame remembers, and one that changes it is
+refused by the supersession gate straight after it (read in the code).
 
 **What it costs.** A pipeline that deliberately spans tenants or identities is refused, and more of
 it than the command whose sign-in was replaced. MEASURED on 2026-10-05, in plain PowerShell and in
@@ -3705,11 +3755,14 @@ a mutation proof.
 **Why a transport's refresh does not clear it.** The claims-challenge step-up and the token-rejected
 retry of `Invoke-OERGraphRequest`, and the 401 retry of `Invoke-OERArmRequest`, call
 `Initialize-OERAuth` with the session's own `TenantId` and `-ClaimsChallenge` or `-ForceRefresh`, on
-behalf of a command that has already signed in. That is not the operator naming a tenant, so the
+behalf of a command that has already signed in. Since Sprint 10 step 4 (A11, BL-105) the two
+transports also renew a token due before a request, and the 401 retry renews a token that has
+expired, with `-Renewal` instead of `-ForceRefresh`; `-Renewal` stands in `$ClearsUncertainty` beside
+the other two for this reason. That is not the operator naming a tenant, so the
 refresh puts back the value it found: a sign-in that failed in the meantime -- a pipeline neighbour's,
 for example -- is not forgotten because a token was renewed. Read in the code: a refresh for a session
 that itself named no tenant (`organizations`) names none either, and while the marker is set it is
-refused like any other such call.
+refused like any other such call; so is a renewal.
 
 **Every refusal marks.** `Initialize-OERAuth`'s `ArmTokenAcquisitionFailed` marks although the Graph
 half of that sign-in connected, and `GraphSessionChanged` marks although no sign-in was attempted:
@@ -3906,6 +3959,215 @@ attribute test for it red; the cohort's run-time row for it stays green, since t
 `Set-OERConfiguration` only, inverting the script's test turns its control red. One mutant is
 equivalent, run in `New-OERConfiguration` only: `Trim()` for `IsNullOrWhiteSpace`, which trims every
 Unicode white space as the .NET method does.
+
+### A long run renews its token before it expires
+
+**The finding (BL-105).** A token was renewed only when a command signed in: `Initialize-OERAuth`'s
+cached return needs a token that outlives the five-minute window, so a command that began with less
+signed in again first. A command that runs longer than its token -- an inventory export of a large
+tenant, the apply of a large document -- never passed that check again. Its transports refreshed the
+token only after Microsoft Graph or Azure Resource Manager answered 401, and the token-rejected retry
+always passed `-ForceRefresh`, which puts `Force` on `Get-AzToken`; `Force` makes AzAuth discard the
+credential it holds and build a new one (see "Why `Connect-OER -Force` exists" under
+[Switching tenants in one process](#switching-tenants-in-one-process)). So a forced refresh of a
+device code session needed the operator again, even where AzAuth's credential could have renewed
+the token on its own, and an interactive one needs the operator either way (below). A customer
+export went PARTIAL with `Login timed out after 120 seconds` -- AzAuth's message for a
+sign-in not completed within its `-TimeoutSeconds`, which the module never passes, so 120 is AzAuth's
+default -- and the session-uncertain marker refused the rest, as A10 decides for a sign-in that did
+not succeed.
+
+**The design (decision A11 of Sprint 10, built in step 4).** The transports renew a token before it
+expires, without `-Force`, so that AzAuth can answer with the credential it holds; a 401 for a token
+that has expired is renewed the same way first, and only a 401 for a token that is still valid is
+forced. Each part stands where it does for a reason.
+
+- **One window, one owner (Ruling R4).** `Get-OERTokenRenewalThreshold` returns
+  `[DateTime]::UtcNow.AddMinutes(5)`: the instant at or before which a token is due. It replaces the
+  one window literal `Initialize-OERAuth` held. Its two cache predicates keep `-gt` the threshold, and
+  the transports renew on `-le` it, its exact complement, so a token a transport finds due is never
+  answered from the cache, and no token the cache would answer is renewed. Five minutes is the window
+  the cached return always used, and it equals MSAL's own access-token expiry buffer (INFERRED from
+  MSAL.NET documentation, not measured), so a renewal does not get the same token back from AzAuth's
+  cache. Cost if that is wrong: a renewal returns a token still inside the window, and the next
+  request renews again. Gate 10 holds the owner to its three callers and refuses a second window
+  literal in them (see [#static-source-gates](#static-source-gates)).
+- **Before every request, above the gates.** `Invoke-GraphSingle` renews as the first statement of
+  its `while ($true)` loop, before the session gate, so before the first attempt, each throttled
+  retry and each page of an `-All` read. `Invoke-ArmCallWithRefresh` renews as its first statement,
+  before `Invoke-ArmCall`, which holds the ARM wrapper's latch and supersession gates; every ARM
+  request -- the first, each throttled retry and each page -- passes through
+  `Invoke-ArmCallWithRefresh`. Neither renewal stands between the
+  earliest gate and the request, where gate 10 allows no `Initialize-OERAuth` call: a sign-in there
+  would send under a state no gate had looked at. Both stand directly in the two functions the
+  call-site rule already allows for the transports' refreshes, so a renewal that fails latches that
+  function, and outside any `try` the latch gate after it refuses the request with `SignInRefused`;
+  inside one, the renewal's own terminating error propagates and is the call's error. On ARM,
+  `Initialize-OERAuth`'s `ArmTokenAcquisitionFailed` is not terminating, so its record and the
+  gate's `SignInRefused` both appear. The two blocks mirror each other on purpose (Ruling R8;
+  CLAUDE.md, ARM Requests), and the ARM renewal does not spend the 401 refresh budget.
+- **Who is renewed.** The state's `AuthMethod` is `Interactive`, `DeviceCode` or `ManagedIdentity`,
+  the state records the token's expiry, and that expiry is at or before the threshold -- each term
+  on its own line. An app-only session (`ClientSecret`, `ClientCertificate`) is not renewed within a
+  command, since the module never keeps the secret or certificate and has nothing to sign in with.
+  That is the decision's known limit, stated in every text: once such a token expires, a request is
+  rejected with `AppOnlyTokenRefreshUnsatisfiable`, and the next command's sign-in reports
+  `AppOnlySessionCredentialUnavailable` until `Connect-OER` is run with the secret or certificate.
+- **How.** `Initialize-OERAuth` with the state's `TenantId`, `AuthMethod` and, when the state has
+  one, `ClientId` -- with `-IncludeARM` on ARM -- and `-Renewal`, never `-ForceRefresh`. So
+  `Get-AzToken` is called without `Force`, and AzAuth may answer with the credential it holds.
+- **`-Renewal` and the marker (Ruling R3).** A renewal names the state's tenant on the command's
+  behalf. Without a switch of its own, a success would count as a sign-in that named its tenant and
+  clear the session-uncertain marker, which a transport's sign-in must never do -- see "Why a
+  transport's refresh does not clear it" under
+  [A refused sign-in leaves the session uncertain](#a-refused-sign-in-leaves-the-session-uncertain).
+  The private switch `-Renewal` joins `-ForceRefresh` and `-ClaimsChallenge` in `$ClearsUncertainty`,
+  so a successful renewal puts back the marker it found. It changes nothing else: which token is
+  requested follows from the absence of `-ForceRefresh`. A8 forbids a new public parameter, not a
+  private one, and a caller that passed it from elsewhere could only keep the marker set, the safe
+  direction, so no name gate holds it.
+- **No supersession.** A successful renewal for the same tenant and identity rebuilds the state with
+  the same identity -- the granted tenant, the method, the client and the cloud; the token's expiry
+  is not a term -- so every command on the call stack still remembers what the state carries, and
+  nothing is refused with `SignInSuperseded`. A renewal whose token comes back for another identity
+  -- an interactive session that named no tenant (`organizations`), renewed with another tenant's
+  account at the account picker -- is refused by the supersession gate straight after it, since the
+  command still remembers the identity from before (read in the code, not tested).
+- **The 401 split.** A 401 is not always an expiry. On the Graph token-rejected path and the ARM 401
+  path, after the app-only refusal, which stays first, a token the state records as expired, or as
+  expiring within the window, is renewed the way a due token is before a request -- `-Renewal`,
+  without `-ForceRefresh` -- and the request is retried once. A 401 for a token the state records as
+  still valid -- revoked, a Continuous Access Evaluation event, a token from another tenant -- is
+  forced as before: without `-ForceRefresh` the cached return would hand back the token that was just
+  rejected, and only `Force` makes AzAuth drop the credential that minted it (the same reason
+  `$ArmCached` carries its `-not $ForceRefresh` term). So is a 401 for a token whose expiry the state
+  does not record (Ruling R2). The claims-challenge step-up does not change.
+
+**What AzAuth does with a renewal (Ruling R1).** DECOMPILED, AzAuth 2.10.0: IL read offline from
+`AzAuth.Core.dll`, `AzAuth.PS.dll` and the Azure.Identity code in `Azure.Core.dll` under
+`output/RequiredModules`. None of it is measured. The decision's premise was that without `-Force`
+AzAuth renews silently from its cache. That holds for a managed identity, holds in part for a device
+code session, and does not hold for an interactive one:
+
+- **Interactive.** `Get-AzToken -Interactive` goes to `TokenManager.GetTokenInteractive`, which with
+  no `-TokenCache` -- the module never passes one (gate 7) -- builds a NEW
+  `InteractiveBrowserCredential` on every call, with only `ClientId` set and no reuse test. A new
+  instance has no `AuthenticationRecord`, so Azure.Identity skips its silent attempt and opens the
+  browser with `Prompt.SelectAccount` and no login hint, which the operator has to answer. `-Force`
+  only clears the stored credential first, so a renewal opens the account picker with or without it.
+  For an interactive session A11 moves the prompt from after a 401 to the first request inside the
+  window; it does not remove it.
+- **DeviceCode.** AzAuth reuses the credential it stores only when it is a `DeviceCodeCredential`
+  with the same client id as this call (`previousClientId`). The module requests its Graph token
+  under the Microsoft Graph Command Line Tools client, or the session's own `-ClientId`, and its ARM
+  token under AzAuth's default client (MEASURED, further finding 2 under
+  [Switching tenants in one process](#switching-tenants-in-one-process)). So a renewal reuses the
+  credential AzAuth holds when that credential was built for the same resource's client, and a
+  renewal made after a token was acquired for the other resource builds a new credential and shows
+  a new device code.
+- **ManagedIdentity.** The stored credential is reused for the same client id, and a managed
+  identity never prompts.
+
+The user-facing texts say exactly that, in the operator's terms, and never call an interactive
+renewal silent. Cost if this is wrong: a live renewal of an interactive session shows no prompt, and
+the texts understate the change.
+
+INFERRED, and NOT measured: what a reused device-code credential does when its silent renewal fails
+-- a refresh token revoked, or a policy that wants interaction. DECOMPILED, it attempts a silent
+acquisition first; the different-tenant switch measured under further finding 1 of
+[Switching tenants in one process](#switching-tenants-in-one-process) never returned at all, so a
+hang is possible here too, and nothing has measured it.
+
+**Known limits.**
+
+- A token whose expiry the state does not record is not renewed before a request, and its 401 is
+  forced as before (Ruling R2). Every state the module builds records the expiry; only the unit
+  suites' hand-built states lack it.
+- A request of a LATCHED command whose token is due reports `SignInRefused` twice outside any `try`
+  (Ruling R6): the renewal stands before the latch gate, so its `Initialize-OERAuth` call meets the
+  BL-74 check, which refuses it before any token call and latches nothing of its own, and the latch
+  gate then refuses the request. No token call and no request either way. H3 and H5, the end-to-end
+  tests that give a latched command a due token, run into the renewal's refusal before the latch
+  gate's; no token call and no request is added there. The bullet on BL-74 under
+  "Where the key is not the public cmdlet", in
+  [A command whose sign-in is refused sends nothing](#a-command-whose-sign-in-is-refused-sends-nothing),
+  says the same.
+- A superseded command whose state's token is due renews the STATE's token before its supersession
+  gate refuses the request (Ruling R7). Practically unreachable -- the downstream sign-in that
+  superseded it has just left a fresh token -- so it is recorded, not guarded. Cost if wrong: an
+  interactive prompt for a request that is then refused.
+- A renewal that fails latches only the transport function that called it, as a transport's refresh
+  always has: that request is refused, and the command's next request is a new transport call that
+  tries the renewal again -- on an interactive session, another browser -- unless the marker the
+  failure set refuses it first, which happens only for a session that named no tenant
+  (`organizations`). Read in the code, not tested.
+- An app-only session is not renewed within a command (above).
+
+**The user-facing texts.** README's `### Token renewal during a long run`, between the
+`### Disconnect` material and `### Switching tenants`, and the about topic's `TOKEN RENEWAL`, after
+`GRAPH SDK SESSION`, say the same thing in their own medium's voice: before every request the module
+renews a Microsoft Graph or Azure Resource Manager token that expires within five minutes, on an
+interactive, device code or managed identity session, without `-Force`; a request rejected for an
+expired token is renewed the same way, one rejected for a valid token is forced as before, and a
+claims challenge is handled as before; whether a renewal needs the operator is AzAuth's, per sign-in
+type as above; an app-only session is not renewed within a command, with the two error ids; and a
+renewal that fails sends nothing and leaves the session uncertain. Neither section is one
+`docsync.tests.ps1` binds. `Connect-OER`'s `.DESCRIPTION` carries the same in one paragraph after its
+idempotence paragraph, and the release note in one paragraph.
+
+**The proof.** `tests/Unit/Private/Get-OERTokenRenewalThreshold.Tests.ps1` pins the owner: a
+`DateTime` of kind `Utc`, five minutes after the moment of the call. In
+`tests/Unit/Private/Initialize-OERAuth.Tests.ps1`, the Describe
+`Initialize-OERAuth renewal window and -Renewal (A11, BL-105)`: I1, the cached return reads its window
+from the owner; I2 and I3, a successful `-Renewal` sign-in leaves a set marker set and the same
+sign-in without `-Renewal` clears it; I4, a `-Renewal` sign-in calls `Get-AzToken` without `Force`.
+In `tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1`, the Describe
+`Invoke-OERGraphRequest renews an expiring token before the request (A11, BL-105)`: R1 and R2, the
+renewal for each renewable sign-in type, before the request, with the state's tenant, method and
+client id, `-Renewal` and no `-ForceRefresh`; R3, no renewal for either app-only type, and the
+request sent with the token it holds; R4 and R5, none for a token outside the window or for a state
+that records no expiry; R6, the window's edge, renewed at it and not one tick after it; R7, one
+renewal between a throttled request and its retry; R8, one renewal between two pages of an `-All`
+read that crosses the expiry, every page read; R9, a renewal that fails sends no request and its
+error is the call's. `tests/Unit/Private/Invoke-OERArmRequest.Tests.ps1` mirrors them in
+`Invoke-OERArmRequest renews an expiring token before the request (A11, BL-105)`, RA1 to RA9, where
+RA8 holds that a renewal does not spend the 401 refresh budget. The 401 split is pinned by
+`Invoke-OERGraphRequest renews a rejected token that has expired without -ForceRefresh (A11, BL-105)`
+-- T1 and T2, an expired token and one within the window renewed without `-ForceRefresh`; T3 and T4,
+a valid token and an unrecorded expiry forced as before; T5, the app-only refusal first; T6, the
+claims step-up unchanged; T7, a later page's 401, the walk resuming from that page; T8, the window's
+edge -- and by its ARM mirror,
+`Invoke-OERArmRequest renews a rejected token that has expired without -ForceRefresh (A11, BL-105)`,
+TA1 to TA5, TA7 and TA8 (ARM has no claims path). End to end, the Describe
+`A long run renews its token with the credential AzAuth holds (A11, BL-105)` in
+`tests/Unit/Private/Invoke-OERGraphRequest.Tests.ps1` runs the real `Initialize-OERAuth` in a
+runspace with no `try`, over module-scope stubs of `Get-AzToken`, `Connect-MgGraph`, `Get-MgContext`,
+`Invoke-MgGraphRequest` and `Invoke-WebRequest`, moving the expiry into the window after the command
+signed in, so it is the transport's renewal that runs: E1, an interactive command renews its Graph
+token with `Get-AzToken` without `-Force`, sends, and is not superseded; E2, an `-All` read that
+crosses the expiry renews once between the pages and reads every page; E3, the ARM token renewed
+with `-IncludeARM`, without `-Force`; E4 and E5, a failed Graph and a failed ARM renewal send nothing,
+are refused with `SignInRefused` and leave the session uncertain; E6, an app-only session within
+the window makes no token call and sends with the token it holds; E7 and E9, a Graph and an ARM 401
+for an expired token renewed without `-Force`, the retry sent; E8 and E10, a Graph and an ARM 401 for
+a valid token forced with `-Force`, as before. Gate 10's `It`
+`reads the token renewal window with Get-OERTokenRenewalThreshold only in Initialize-OERAuth and the two transport wrappers`
+holds the owner, and the window literal rule stands with it.
+
+Mutation-proved on copies of `source/` (the gate from a scratch project root), one exact edit per
+mutant. Deleting the Graph renewal block (M1) turns R1, R2, R7, R8, E1 and E2 red. Dropping its
+sign-in-type term (M2) turns R3 and E6 red, dropping its `$null -ne` term (M3) turns R5 red, and
+`-lt` for `-le` (M4) turns R6 red. Adding `ForceRefresh = $true` to its splat (M5) turns R1 and E1
+red, dropping `Renewal = $true` (M6) turns R1 red, and dropping the client id forwarding (M7) turns
+R2's ManagedIdentity case red. The same seven edits to the ARM renewal (M8 to M14) turn their ARM
+counterparts among RA1 to RA7, and E3, red. Dropping `-not $Renewal` from `$ClearsUncertainty` (M15)
+turns I2 red. Putting the `AddMinutes(5)` literal back in `Initialize-OERAuth` (M16) turns I1 and the
+gate's window literal rule red. A call of `Get-OERTokenRenewalThreshold` from a fourth file (M17)
+turns the gate's owner `It` red. Moving the Graph renewal block below the latch gate (M18) turns the
+gate's placement rule red. On the 401 path, always `-ForceRefresh` on Graph (N1) turns T1, T2, T7 and
+E7 red, always `-Renewal` (N2) turns T3 and E8 red, dropping the `$null -ne` term (N3) turns T4 red,
+and `-lt` for `-le` (N4) turns T8 red. The same four edits on ARM (N5 to N8) turn their ARM
+counterparts among TA1 to TA8, and E9 and E10, red.
 
 ## profile-path
 

@@ -673,10 +673,10 @@ refusal and before the cached return and every token call, a call that names no 
 `-TenantId`, or `-TenantId organizations` -- while the marker it found was set, unless the call is
 `Connect-OER`'s (`-ReclaimGraphSession`). The caller stays latched, so it sends nothing. At each
 success end, directly after `Register-OERSignInIdentity`, it clears the marker when the call named
-its tenant and is not a transport's own refresh (`-ForceRefresh` or `-ClaimsChallenge`), or is
-`Connect-OER`'s, and otherwise puts back the value it found. `Connect-OER` sets the marker first
-thing in `process`, so its own refusals before any sign-in count; `Disconnect-OER` clears it inside
-its `ShouldProcess`.
+its tenant and is not a transport's own refresh (`-ForceRefresh`, `-ClaimsChallenge` or
+`-Renewal`), or is `Connect-OER`'s, and otherwise puts back the value it found. `Connect-OER` sets
+the marker first thing in `process`, so its own refusals before any sign-in count; `Disconnect-OER`
+clears it inside its `ShouldProcess`.
 `Set-OERSessionUncertain` is the single owner of `$script:_OERSessionUncertain`: never read or write
 the variable anywhere else, never call the helper outside `Initialize-OERAuth`, `Connect-OER` and
 `Disconnect-OER`, never let a transport's refresh clear the marker, and never count `organizations`
@@ -700,6 +700,35 @@ internal call passes `-TenantId` on only when it is set (`if ($TenantId) { ... }
 value -- except `Connect-OER`'s own call of `Initialize-OERAuth`, which passes `''` when neither
 `-TenantId` nor `-TenantAlias` is bound, and which `Initialize-OERAuth` reads as no tenant named.
 `Why: docs/development/rationale.md#a-refused-sign-in-leaves-the-session-uncertain`
+
+**A long run renews its token before it expires (A11, BL-105).** A token used to be renewed only
+when a command signed in, so a long command ran into its token's expiry and refreshed only after a
+401, with `-ForceRefresh` -- and `Force` makes AzAuth discard its credential, so a delegated session
+needed the operator again. So the transports renew a token that expires within the renewal window
+before every request: `Invoke-GraphSingle` as the first statement of its attempt loop, above the
+session gate (so before the first attempt, each throttled retry and each page), and
+`Invoke-ArmCallWithRefresh` as its first statement, before `Invoke-ArmCall` and its gates --
+directly in those two functions, the call-site exception the latch already makes for the
+transports' refreshes, and never between the earliest gate and a request (gate 10). Only an
+`Interactive`, `DeviceCode` or `ManagedIdentity` session whose state records the expiry is renewed.
+The renewal calls `Initialize-OERAuth` with the state's tenant, method and client id (ARM adds
+`-IncludeARM`) and the private `-Renewal`, never `-ForceRefresh`, so `Get-AzToken` is called without
+`Force`. `-Renewal` keeps a success from clearing the session-uncertain marker, as above; a
+same-tenant, same-identity success changes nothing `Register-OERSignInIdentity` remembers. After a
+401, a token the state records as expired, or within the window, is renewed the same way
+(`-Renewal`); only a 401 for a token still valid -- revoked, CAE, another tenant's -- or one whose
+expiry is not recorded is forced. The app-only refusal stays first on both 401 paths, and the claims
+challenge is unchanged. An app-only session (`ClientSecret`, `ClientCertificate`) is never renewed
+within a command, since the module keeps no key material -- a known limit, stated in the texts. A
+renewal that fails latches the transport function that called it, so that request is refused and
+the session left uncertain. Whether a renewal prompts is AzAuth's (decompiled, not measured): a
+managed identity never, a device code session when a token for the other resource was acquired in
+between (the module requests Graph and ARM tokens under different client ids, and AzAuth reuses its
+credential only for the same one), and an interactive session always, since AzAuth builds a new
+browser credential for every interactive token -- so never call a renewal silent for an interactive
+session. Never add `-ForceRefresh` to a renewal, never renew an app-only session, and never compute
+the window outside its owner (below).
+`Why: docs/development/rationale.md#a-long-run-renews-its-token-before-it-expires`
 
 | Parameter set | Key parameters | Use case |
 |---|---|---|
@@ -1038,6 +1067,14 @@ mirrored verbatim in the dev-mode psm1. `Why: docs/development/rationale.md#comp
   never read a missing or non-GUID token tenant as a match. Gate 10 holds the comparison to
   `Invoke-OERStructure`, in a row with an `It` of its own; nothing machine-checks who calls
   `Get-OERInventoryTenantId`. `Why: docs/development/rationale.md#a-document-names-the-tenant-it-was-exported-from`
+- **`Get-OERTokenRenewalThreshold` is the single owner of the token renewal window** -- five
+  minutes from now, in UTC: a token that expires at or before it is due. `Initialize-OERAuth`'s
+  cached return keeps a token that expires after it, and the two transports renew one that expires
+  at or before it (A11, BL-105). Only `Initialize-OERAuth`, `Invoke-OERGraphRequest` and
+  `Invoke-OERArmRequest` call it, and none of those three files calls `AddMinutes`, `AddSeconds` or
+  `AddHours`: never write a second window literal. Gate 10 of `tests/QA/sourcehygiene.tests.ps1`
+  holds both.
+  `Why: docs/development/rationale.md#a-long-run-renews-its-token-before-it-expires`
 
 ---
 
@@ -1268,9 +1305,12 @@ bug.
   `Checkpoint-OERSignIn`, `Invoke-MgGraphRequest` only in the Graph wrapper,
   `Invoke-WebRequest` only in the ARM wrapper, `Invoke-RestMethod` only in
   `Resolve-OERTenantDomain` and `Resolve-OERTenantDomain` only in `Initialize-OERAuth`,
-  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`, and
-  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, every listed owner really calling
-  it; the tenant lookup's one `Invoke-RestMethod` call carrying only
+  `Set-OERSessionUncertain` only in `Initialize-OERAuth`, `Connect-OER` and `Disconnect-OER`,
+  `Get-OERDocumentTenantMismatch` only in `Invoke-OERStructure`, and `Get-OERTokenRenewalThreshold`
+  only in `Initialize-OERAuth` and the two transport wrappers, every listed owner really calling
+  it; none of `Initialize-OERAuth` and the two transport wrappers calling `AddMinutes`, `AddSeconds`
+  or `AddHours`, so the renewal window has no second literal; the tenant lookup's one
+  `Invoke-RestMethod` call carrying only
   `-Uri`, `-Method`, `-TimeoutSec` and `-ErrorAction`, with no splat; `$script:_OERSessionUncertain`
   read and written only in `Set-OERSessionUncertain`, and in `Initialize-OERAuth` exactly three
   `Set-OERSessionUncertain` calls -- the statement directly after the `Lock-OERSignIn` assignment and

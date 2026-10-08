@@ -39,6 +39,26 @@ function Connect-OER {
     process, and Disconnect-OER clears this module's session and the Graph SDK session the module
     connected, not that credential.
 
+    During a long run the module renews the session's token by itself. Before every request it
+    sends, it renews a Microsoft Graph or Azure Resource Manager token that expires within five
+    minutes, on an interactive, device code or managed identity session, and it asks AzAuth, which
+    acquires the tokens, for the new one without Force, which would make AzAuth discard the
+    credential it holds. A request rejected because its token has expired is renewed the same way
+    and sent once more; one rejected for a token that is still valid -- revoked, for example --
+    forces a new sign-in, as before. Whether a renewal needs you depends on AzAuth, not on the
+    module: a managed identity renews with no prompt; a device code session renews without a new
+    code while AzAuth still holds the credential it signed in with, but the module requests its
+    Microsoft Graph and Azure Resource Manager tokens under different applications, so in a session
+    that uses both, a renewal made after a token was acquired for the other one makes AzAuth build a
+    new credential and shows a new code; and an interactive session's renewal opens the browser to
+    choose the account again, since AzAuth builds a new browser credential for every interactive
+    token. An app-only session (client secret or certificate) is not renewed within a command, since
+    the module never keeps the secret or certificate: once its token expires, a request is rejected
+    with an AppOnlyTokenRefreshUnsatisfiable error, and the next command's sign-in reports
+    AppOnlySessionCredentialUnavailable until Connect-OER is run with the secret or certificate. A
+    renewal that fails sends nothing for that request and counts as a sign-in that failed, with the
+    consequence described below for a later command that names no tenant.
+
     Connect-OER also sets up a Microsoft Graph PowerShell SDK session in the current process: it
     calls Connect-MgGraph with the module's token, and so does the automatic sign-in of any other
     OER cmdlet. Disconnect-OER closes that session, and leaves one another Connect-MgGraph started,
