@@ -188,11 +188,15 @@ function Sync-OERStructureGroup {
        request and has no rollback. When the cmdlet was never called, no request was sent and no
        policy was opened. Otherwise the handler reads the policy once more after the attempts, with the
        poll's own two calls and no wait of its own, and compares it with the policy as the poll read
-       it just before the FIRST call: one that does not allow permanent eligibility was not left open;
-       one that already allowed it before the first request was not opened for it; one that did not
-       is named as opened and still open; one whose earlier state is unknown (the poll was refused, or
-       its read carried no permanent-eligibility setting) is named as open and possibly opened. The
-       last two carry the Set-OERGroupPimPolicy command that closes the policy
+       it just before the FIRST call: one that does not allow permanent eligibility was not left open,
+       unless the poll read it closed just before the first request -- that request would then have
+       opened it, and a read made seconds later can come from a replica that has not seen the open, so
+       the message says the read may be out of date; one that already allowed it before the first
+       request was not opened for it; one that did not is named as opened and still open; one whose
+       earlier state is unknown (the poll was refused, or its read carried no permanent-eligibility
+       setting) is named as open and possibly opened. With the cmdlet never called (above) and a read
+       that fails (below), that makes seven outcomes. The possibly out-of-date read and the last two
+       carry the Set-OERGroupPimPolicy command that closes the policy
        (Get-OERGroupPimPolicyCloseAdvice, the advice Add-OERGroupEligibility gives).
        A read after the attempts that is refused (scrubbed and logged), unlisted, answers 404 or
        reads no permanent-eligibility setting is never taken for "not opened": the message says the
@@ -1467,7 +1471,12 @@ function Sync-OERStructureGroup {
                         # ONCE more, after the attempts, with the poll's own functions (no wait, no budget)
                         # and compares that with $AllowedBefore. A read that is refused, unlisted, answers
                         # 404 or reads no boolean is UNKNOWN, and an unknown is never reported as "not
-                        # opened". The close command comes from Get-OERGroupPimPolicyCloseAdvice, as in
+                        # opened". Seven outcomes, decided in this order: no call made; after-read
+                        # unknown; after-read closed, either "not left open" or -- when the poll read it
+                        # closed just before the first request, which would then have opened it -- a read
+                        # that may be out of date, since it can come from a replica that has not seen the
+                        # open; before-state unknown; already open before; opened and still open. The
+                        # close command comes from Get-OERGroupPimPolicyCloseAdvice, as in
                         # Add-OERGroupEligibility.
                         if (-not $PermanentAttempted) {
                             $Message += ' No eligibility request was sent, so no PIM-for-groups policy was opened for it.'
@@ -1490,7 +1499,14 @@ function Sync-OERStructureGroup {
                             if ($null -eq $AllowedAfter) {
                                 $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access may have been opened to allow permanent eligibility before the request was sent, and it could not be read afterwards. If it allows permanent eligibility, $CloseAdvice"
                             } elseif (-not $AllowedAfter) {
-                                $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access does not allow permanent eligibility as read after the requests, so it was not left open."
+                                if ($false -eq $AllowedBefore) {
+                                    # Closed before the first request, which would have opened it, and
+                                    # closed again a few seconds later: that read may come from a replica
+                                    # that has not seen the open, so it is never taken for "not left open".
+                                    $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access reads as not allowing permanent eligibility after the requests, but the first request would have opened it, so that read may be out of date. If it allows permanent eligibility, $CloseAdvice"
+                                } else {
+                                    $Message += " Its PIM-for-groups policy for '$($EChange.AccessType)' access does not allow permanent eligibility as read after the requests, so it was not left open."
+                                }
                             } elseif ($null -eq $AllowedBefore) {
                                 $Message += " PIM-for-groups policy '$AfterPolicyId' allows permanent eligibility after the requests and may have been opened for them, since whether it allowed it before the first request is not known. The policy is open; $CloseAdvice"
                             } elseif ($AllowedBefore) {

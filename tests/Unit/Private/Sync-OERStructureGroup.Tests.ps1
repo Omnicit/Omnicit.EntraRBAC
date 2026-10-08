@@ -5276,9 +5276,16 @@ Describe 'Sync-OERStructureGroup' {
             }
         }
 
-        It 'case 2: says the policy was not left open when the read after the requests finds it does not allow permanent eligibility' {
-            InModuleScope $script:moduleName {
-                $script:ReadPlan = @('closed')
+        It 'case 2: says the policy was not left open when the read after the requests finds it does not allow permanent eligibility and the poll read it <Before> before the first call' -ForEach @(
+            # Open before every call, closed after them: the before-state is $true.
+            @{ Before = 'open'; ReadPlan = @('open', 'open', 'open', 'open', 'open', 'closed') }
+            # No Expiration_Admin_Eligibility rule before the first call, closed on every read after
+            # it: the before-state is unknown, never $false.
+            @{ Before = 'with no boolean setting'; ReadPlan = @('none', 'closed') }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ ReadPlan = $ReadPlan } {
+                param($ReadPlan)
+                $script:ReadPlan = $ReadPlan
                 $Item = [PSCustomObject]@{ displayName = 'role_sec_x'; eligibility = @([PSCustomObject]@{ principal = 'person16@example.com' }) }
                 $Err = $null
                 $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
@@ -5296,6 +5303,40 @@ Describe 'Sync-OERStructureGroup' {
                 Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType 'member') +
                     " Its PIM-for-groups policy for 'member' access does not allow permanent eligibility as read after the requests, so it was not left open.")
                 @($Err).Count | Should -Be 1
+            }
+        }
+
+        It 'case 2b: never says the <AccessType> policy was not left open when the poll read it closed before the FIRST call and the read after the requests reads it closed too' -ForEach @(
+            @{ AccessType = 'member' }
+            @{ AccessType = 'owner' }
+        ) {
+            InModuleScope $script:moduleName -Parameters @{ AccessType = $AccessType } {
+                param($AccessType)
+                # Closed on every read, the one after the requests included. The first call would have
+                # opened a policy the poll read closed just before it, so a closed read seconds later
+                # may come from a replica that has not seen the open: it is never "not left open".
+                $script:ReadPlan = @('closed')
+                $Item = [PSCustomObject]@{
+                    displayName = 'role_sec_x'
+                    eligibility = @([PSCustomObject]@{ principal = 'person16@example.com'; accessType = $AccessType })
+                }
+                $Err = $null
+                $r = @(Invoke-SyncGroupBL51ViaCaller -Item $Item -ErrorAction SilentlyContinue -ErrorVariable Err)
+                @($script:Calls) | Should -Be @('list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add', 'list', 'read', 'add',
+                    'list', 'read', 'add', 'list', 'read')
+                @($script:Slept) | Should -Be @(2, 4, 8, 16)
+                Should -Invoke Add-OERGroupEligibility -Times 5 -Exactly
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicyAssignments*' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Should -Invoke Invoke-OERGraphRequest -Times 6 -Exactly -ParameterFilter {
+                    $Uri -like '*roleManagementPolicies/pol-*/rules' -and @($ExpectedErrorCode) -contains 'ResourceNotFound'
+                }
+                Assert-BL51GroupNotOnboarded -Rows $r -Expected ((Get-BL51Base -AccessType $AccessType) +
+                    " Its PIM-for-groups policy for '$AccessType' access reads as not allowing permanent eligibility after the requests, " +
+                    'but the first request would have opened it, so that read may be out of date. If it allows permanent eligibility, ' +
+                    (Get-BL51Advice -AccessType $AccessType))
+                @(Get-BL51ErrorId -Records $Err) | Should -Be @('GroupNotOnboarded,Invoke-SyncGroupBL51ViaCaller')
             }
         }
 
