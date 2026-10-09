@@ -17,7 +17,11 @@ function Get-OERGroup {
     exist produces a non-terminating GroupNotFound error. For each of those three collections, the
     property is attached only when its read succeeds (for members and owners, when both requests
     succeed); a failed read omits the property entirely and raises a non-terminating error instead,
-    so an empty array in the result always means the group genuinely has none.
+    so an empty array in the result always means the group genuinely has none. Every group carries
+    OnPremisesSyncEnabled, Microsoft Graph's own value: True for a group synchronized from
+    on-premises Active Directory, which is managed there and read-only in the cloud
+    (Invoke-OERStructure writes nothing to it), False for a group that was synchronized and no longer
+    is, and empty for a group that never was. Nothing is filtered out on it.
 
     .PARAMETER Group
     The group to act on, given as either its object id (GUID) or its display name -- the same
@@ -77,6 +81,10 @@ function Get-OERGroup {
     .EXAMPLE
     Get-OERGroup -All
     Returns every group in the tenant, of every group type, with no filter applied.
+
+    .EXAMPLE
+    Get-OERGroup -All | Where-Object OnPremisesSyncEnabled
+    Returns every group synchronized from on-premises Active Directory.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'All',
         Justification = 'Switch is a parameter-set discriminator; ParameterSetName is used instead.')]
