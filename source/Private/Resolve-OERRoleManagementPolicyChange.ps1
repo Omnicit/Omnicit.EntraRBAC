@@ -9,14 +9,14 @@ function Resolve-OERRoleManagementPolicyChange {
     declared roleManagementPolicies[] entry against the current Get-OERRoleManagementPolicy object and
     returns a tagged result with a Changed flag, a SetParams hashtable ready to splat into
     Set-OERRoleManagementPolicy (only the fields that differ, never the scope or role targeting
-    parameters), and a human-readable Changes list, and an ApproverRequired flag. Presence semantics
+    parameters), a human-readable Changes list and an ApproverRequired flag. Presence semantics
     apply: a field the document does not declare is never compared and never sent, so an omitted
     field means "leave the live setting untouched", not "set it to false". A field present with an
     explicit JSON null counts as UNDECLARED for exactly the same reason -- it matches the offline
     validator Test-OERStructureSchema, and it is what stops "authenticationContextId": null from
-    disabling a live authentication context
-    or "requireMfaOnActivation": null from disabling MFA. An empty string is still a declared value:
-    authenticationContextId "" remains the documented "disable the authentication context" request.
+    disabling a live authentication context or "requireMfaOnActivation": null from disabling MFA.
+    An empty string is still a declared value: authenticationContextId "" remains the documented
+    "disable the authentication context" request.
     A document that explicitly declares requireApproval = false suppresses the approver parameters
     entirely: approvers only apply while approval is required (Resolve-OERPolicyRulePatch forces
     isApprovalRequired = true whenever approvers are sent), and Set-OERRoleManagementPolicy refuses

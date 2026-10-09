@@ -18,8 +18,10 @@ function Test-OERGuid {
     exactly that on purpose, and must not be migrated to this predicate.
 
     The pattern ends in \z, not $: in a .NET regular expression $ also matches before a final line
-    feed, so 'id' followed by a line break would pass, while the JSON Schema pattern of the
-    structure document (ECMA-262, where $ ends the input) refuses it (BL-101).
+    feed. With $, a GUID followed by one line feed passed (a carriage return and line feed already
+    failed), while an ECMA-262 validator of the structure document's JSON Schema pattern refuses it.
+    PowerShell's own Test-Json, whose regular expressions are .NET's, accepts it, as the old
+    predicate did (BL-101).
 
     .PARAMETER Value
     The string value to test for canonical GUID format.

@@ -24,8 +24,8 @@ the previous tenant's.
 
 `Invoke-OERStructure -WhatIf` now plans what the run does when an Azure role policy entry's
 approvers would name nobody: both report it `Failed` with `ApproverRequired` and change nothing.
-`Test-OERStructure` refuses a `tenantId` that is not a string or ends in a line break, as the
-schema does. The `NotDirectAssignment` example now runs for a role name with an apostrophe.
+`Test-OERStructure` refuses a `tenantId` that is not a string, as the schema does, or that ends in a
+line break. The `NotDirectAssignment` example now parses for a role name with a curly apostrophe.
 
 ## [1.1.3] - 2026-10-07
 

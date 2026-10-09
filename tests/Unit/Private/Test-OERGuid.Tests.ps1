@@ -115,10 +115,11 @@ Describe 'Test-OERGuid is the single GUID predicate' {
     # that the other does not follow turns this red.
     #
     # A trailing line feed is deliberately NOT in the set. Test-OERGuid now ends its pattern in \z
-    # and refuses a trailing line feed, as the ECMA-262 dollar of a JSON Schema validator does
-    # (BL-101). The value stays out of this parity set because [regex]::IsMatch is .NET, whose
-    # dollar accepts it, so it cannot stand in for an ECMA-262 validator on that one value -- the
-    # first Describe asserts Test-OERGuid's verdict for it directly.
+    # and refuses a trailing line feed, as an ECMA-262 validator of the schema's pattern does
+    # (BL-101); PowerShell's own Test-Json, whose regular expressions are .NET's, accepts it, like
+    # the old predicate did. The value stays out of this parity set because [regex]::IsMatch is
+    # .NET too, whose dollar accepts it, so it cannot stand in for an ECMA-262 validator on that
+    # one value -- the first Describe asserts Test-OERGuid's verdict for it directly.
     It 'keeps the tenantId schema pattern in step with Test-OERGuid: <Name>' -ForEach @(
         @{ Name = 'canonical lower-case GUID'; Value = 'aaaa0000-0000-0000-0000-000000000001' }
         @{ Name = 'canonical upper-case GUID'; Value = 'AAAA0000-0000-0000-0000-00000000000A' }

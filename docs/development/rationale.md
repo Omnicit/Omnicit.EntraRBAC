@@ -1257,8 +1257,15 @@ composed from friendly parts, which is the job the friendly properties already d
 `^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\z` regex inline.
 
 Since Sprint 10 step 5 (BL-101) the predicate ends in `\z`. With `$`, a value followed by one line
-feed passed, while the schema's ECMA-262 pattern refused it, so the offline validator and the schema
-disagreed on a `tenantId` read from a file or a here-string with a stray line break.
+feed passed (a carriage return and line feed already failed), while an ECMA-262 validator of the
+schema's pattern refused it, so the offline validator and such a validator disagreed on a `tenantId`
+read from a file or a here-string with a stray line break. PowerShell's own `Test-Json`, whose
+regular expressions are .NET's, accepts that value like the old predicate did; only a strictly
+ECMA-262 validator refuses it.
+
+What changes module-wide: every caller asks `Test-OERGuid` whether a value is an object id, so a
+value followed by a line feed now takes each caller's name path instead -- a lookup by name, or a
+refusal such as `InvalidPrincipalId` for `-PrincipalId`; a `-TenantId` goes to the tenant lookup.
 
 The deliberate exception is the wider `-as [guid]` cast in `Get-OERInventory` and `New-OERGroup`,
 which intentionally also accepts braced, parenthesised and dash-less forms that `Test-OERGuid`
@@ -3340,12 +3347,14 @@ value is an Error (Ruling R3), which `Invoke-OERStructure` reports as `Structure
 before either comparison. A `null` is refused rather than read as no key, since an LLM that wrote one
 would otherwise drop the check silently; a document meant to carry no check omits the key. If wrong:
 treat an explicit `null` as absent, one condition. Until Sprint 10 step 5 (BL-101) the validator
-accepted two shapes the schema refused: a GUID followed by a line feed, through the predicate's `$`,
-and a one-GUID array, through Rule 1b's string cast, which reads a one-element array as its element.
-Both are now refused, the first by the predicate's `\z` and the second by Rule 1b's own check that
-the value is a string, as the schema's `type: string` does. A document without the key is valid as
-before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to invent,
-change or remove one.
+accepted two shapes the schema is written to refuse: a GUID followed by a line feed, through the
+predicate's `$` (only a strictly ECMA-262 validator refuses it; PowerShell's own `Test-Json`, whose
+regular expressions are .NET's, accepts it like the old predicate did), and a one-GUID array, through
+Rule 1b's string cast, which reads a one-element array as its element (`Test-Json` refuses that one
+too). Both are now refused, the first by the predicate's `\z` and the second by Rule 1b's own check
+that the value is a string, as the schema's `type: string` does. A document without the key is valid
+as before. The prompt template tells an LLM to keep `tenantId` exactly as exported and never to
+invent, change or remove one.
 
 **The two comparisons, and their order.** `Get-OERDocumentTenantMismatch` is the single owner of
 the comparison and of the `DocumentTenantMismatch` id and message. It returns nothing for a document
@@ -5722,8 +5731,8 @@ in its `ApproverRequired` property (the Azure shape only, never with `-SendDecla
 where the directory-role cmdlet carries the undeclared side from the live rule), and
 `Sync-OERStructureRoleManagementPolicy` reports the entry `Failed` with that same ErrorId before its
 `ShouldProcess` gate: the plan and the run report the same row, and nothing is sent, the other
-declared fields of the entry included. The condition is exactly the cmdlet's own (ruling R1): an
-approver parameter is bound and the non-blank values of both name nobody. A document that turns
+declared fields of the entry included. The condition is exactly the cmdlet's own (Sprint 10 step 5,
+ruling R1): an approver parameter is bound and the non-blank values of both name nobody. A document that turns
 approval on over an empty live approver list sends no approver parameter, so it is not flagged:
 nothing refuses it before Azure Resource Manager, and the plan and the run already agree. The
 cmdlet's own refusal stays in place as the backstop.
