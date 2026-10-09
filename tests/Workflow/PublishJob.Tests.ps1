@@ -50,6 +50,12 @@ BeforeAll {
                                with exit 1; matching-refs still answers (standing)
           save-fails           every Save-PSResource fails with a 503 (standing)
           save-nothing         every Save-PSResource returns without saving anything (standing)
+
+        Save-PSResource answers as PSGallery did under PSResourceGet 1.2.0 when measured on
+        2026-10-09: the exact prerelease version given in range brackets, '[1.1.4-preview0006]',
+        was not installed, while the same version given bare was read as exactly that version and
+        saved. A version that is not there failed with the same message as the brackets did. The
+        stand-in refuses every bracketed prerelease that way.
     #>
     $StandIns = @'
 function Find-PSResource
@@ -129,16 +135,35 @@ function Save-PSResource
         throw "Cannot find path '$Path' because it does not exist."
     }
 
+    $NotInstalled = "Package(s) '$Name' could not be installed from repository '$Repository'."
+
+    # A bracketed STABLE version was not measured, so it is still read as the version inside. A
+    # regex, not -like, whose [ ] would be a character class (rationale.md#bearer-scrub-tests).
+    if ($Version -match '^\[.+-.+\]$')
+    {
+        Write-Error -Message $NotInstalled
+        return
+    }
+
     $Source = Join-Path -Path $env:OER_FAKE_ROOT -ChildPath ('gallery/' + $Version.Trim('[', ']'))
 
     if (-not (Test-Path -LiteralPath $Source))
     {
-        Write-Error -Message "Package(s) '$Name' could not be installed as it was not found in any registered repositories."
+        Write-Error -Message $NotInstalled
         return
     }
 
-    $Data = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $Source -ChildPath 'Omnicit.EntraRBAC.psd1')
-    $Target = Join-Path -Path $Path -ChildPath ('{0}/{1}' -f $Name, $Data.ModuleVersion)
+    # The folder is named after the package's ModuleVersion, or after the version asked for when the
+    # package holds no manifest to read it from.
+    $Folder = ($Version.Trim('[', ']') -split '-', 2)[0]
+    $ManifestPath = Join-Path -Path $Source -ChildPath 'Omnicit.EntraRBAC.psd1'
+
+    if (Test-Path -LiteralPath $ManifestPath)
+    {
+        $Folder = (Import-PowerShellDataFile -LiteralPath $ManifestPath).ModuleVersion
+    }
+
+    $Target = Join-Path -Path $Path -ChildPath ('{0}/{1}' -f $Name, $Folder)
     $null = New-Item -ItemType Directory -Path $Target -Force
     Copy-Item -Path (Join-Path -Path $Source -ChildPath '*') -Destination $Target -Recurse
 }
@@ -431,11 +456,18 @@ function gh
 
     function Publish-ToFakeGallery
     {
-        # Puts a build's version folder on the fake Gallery under its composed version.
-        param ([Parameter(Mandatory = $true)] [string] $Build, [Parameter(Mandatory = $true)] [string] $World)
+        # Puts a build's version folder on the fake Gallery under its composed version, or under
+        # -Under: a read of that version then saves a package whose manifest carries another one.
+        param ([Parameter(Mandatory = $true)] [string] $Build, [Parameter(Mandatory = $true)] [string] $World, [string] $Under)
 
         $Meta = Get-Content -LiteralPath (Join-Path -Path $Build -ChildPath 'publish-meta.json') -Raw | ConvertFrom-Json
-        $Target = Join-Path -Path $World -ChildPath ('gallery/{0}' -f $Meta.ComposedVersion)
+
+        if ([string]::IsNullOrEmpty($Under))
+        {
+            $Under = $Meta.ComposedVersion
+        }
+
+        $Target = Join-Path -Path $World -ChildPath ('gallery/{0}' -f $Under)
         $null = New-Item -ItemType Directory -Path $Target -Force
         Copy-Item -Path (Join-Path -Path (Get-TestVersionFolder -Build $Build) -ChildPath '*') -Destination $Target -Recurse
         $Target
@@ -671,6 +703,44 @@ Describe 'PublishArtefact.ps1 -Verify, with the comparison in Compare-FileHashSe
     }
 }
 
+Describe 'The Save-PSResource stand-in, which answers as PSGallery did under PSResourceGet 1.2.0' {
+    BeforeEach {
+        $script:World = New-FakeWorld
+        $env:OER_FAKE_ROOT = $script:World
+        $null = Publish-ToFakeGallery -Build (New-TestBuild -Sha $script:ShaA -Version '1.1.4-preview0006' -Body 'A') -World $script:World
+    }
+
+    AfterEach {
+        Remove-Item -Path 'Env:OER_FAKE_ROOT' -ErrorAction 'SilentlyContinue'
+    }
+
+    It 'refuses an exact prerelease version given in range brackets, as PSGallery refused 1.1.4-preview0006' {
+        $Target = New-TestRoot -Name 'save'
+
+        { Save-PSResource -Name 'Omnicit.EntraRBAC' -Version '[1.1.4-preview0006]' -Prerelease -Repository 'PSGallery' -Path $Target -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop' } | Should -Throw -ExpectedMessage "Package(s) 'Omnicit.EntraRBAC' could not be installed from repository 'PSGallery'."
+        @(Get-ChildItem -LiteralPath $Target -Recurse -File).Count | Should -Be 0
+    }
+
+    It 'saves the same version given bare, as exactly that version' {
+        # A later preview on the Gallery too: "at least this one" would save it instead.
+        $null = Publish-ToFakeGallery -Build (New-TestBuild -Sha $script:ShaB -Version '1.1.4-preview0007' -Body 'B') -World $script:World
+        $Target = New-TestRoot -Name 'save'
+
+        Save-PSResource -Name 'Omnicit.EntraRBAC' -Version '1.1.4-preview0006' -Prerelease -Repository 'PSGallery' -Path $Target -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop'
+
+        $Manifest = Import-PowerShellDataFile -LiteralPath (Join-Path -Path $Target -ChildPath 'Omnicit.EntraRBAC/1.1.4/Omnicit.EntraRBAC.psd1')
+        $Manifest.ModuleVersion | Should -BeExactly '1.1.4'
+        $Manifest.PrivateData.PSData.Prerelease | Should -BeExactly 'preview0006'
+        @(Get-ChildItem -LiteralPath $Target -Recurse -File).Count | Should -Be 3
+    }
+
+    It 'fails a bare version that is not there with the same message as the brackets' {
+        $Target = New-TestRoot -Name 'save'
+
+        { Save-PSResource -Name 'Omnicit.EntraRBAC' -Version '1.1.4-preview0000' -Prerelease -Repository 'PSGallery' -Path $Target -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop' } | Should -Throw -ExpectedMessage "Package(s) 'Omnicit.EntraRBAC' could not be installed from repository 'PSGallery'."
+    }
+}
+
 Describe 'PublishArtefact.ps1 -Compare' {
     BeforeAll {
         $script:Version = '1.1.4-preview0003'
@@ -711,7 +781,7 @@ Describe 'PublishArtefact.ps1 -Compare' {
         $Calls = @(Get-FakeLog -World $script:World -Name 'save' | ForEach-Object -Process { $_ | ConvertFrom-Json })
         $Calls.Count | Should -Be 1 -Because 'the package is read back exactly once'
         $Calls[0].Name | Should -BeExactly 'Omnicit.EntraRBAC'
-        $Calls[0].Version | Should -BeExactly '[1.1.4-preview0003]' -Because 'the brackets make the NuGet range an exact version'
+        $Calls[0].Version | Should -BeExactly '1.1.4-preview0003' -Because 'PSResourceGet read a bare version as exactly that version, and PSGallery did not install the bracketed 1.1.4-preview0006 under PSResourceGet 1.2.0 (both measured on 2026-10-09)'
         $Calls[0].Repository | Should -BeExactly 'PSGallery'
         $Calls[0].Prerelease | Should -BeTrue -Because 'a preview is never found without -Prerelease'
         $Calls[0].SkipDependencyCheck | Should -BeTrue
@@ -748,6 +818,21 @@ Describe 'PublishArtefact.ps1 -Compare' {
         { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage '*: it lacks 1 file(s) the tested build holds: en-US/about_Omnicit.EntraRBAC.help.txt.*'
     }
 
+    It 'refuses a package that lacks its manifest, and names the missing file as before' {
+        $Folder = Publish-ToFakeGallery -Build $script:BuildA -World $script:World
+        Remove-Item -LiteralPath (Join-Path -Path $Folder -ChildPath 'Omnicit.EntraRBAC.psd1')
+
+        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage '*: it lacks 1 file(s) the tested build holds: Omnicit.EntraRBAC.psd1.*'
+    }
+
+    It 'passes a stable build, whose manifest carries no prerelease label on either side' {
+        $Stable = New-TestBuild -Sha $script:ShaA -Version '1.1.4' -Body 'A'
+        $null = Publish-ToFakeGallery -Build $Stable -World $script:World
+
+        { Invoke-Compare -Build $Stable -Sha $script:ShaA } | Should -Not -Throw
+        (Get-FakeLog -World $script:World -Name 'save' | ConvertFrom-Json).Version | Should -BeExactly '1.1.4'
+    }
+
     It 'refuses when the read fails, and says what failed' {
         $null = Publish-ToFakeGallery -Build $script:BuildA -World $script:World
         $null = New-Item -ItemType File -Path (Join-Path -Path $script:World -ChildPath 'save-fails')
@@ -762,7 +847,25 @@ Describe 'PublishArtefact.ps1 -Compare' {
     }
 
     It 'refuses when the version is not on the repository' {
-        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage "*and could not (Package(s) 'Omnicit.EntraRBAC' could not be installed as it was not found in any registered repositories.)*"
+        { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -ExpectedMessage "*and could not (Package(s) 'Omnicit.EntraRBAC' could not be installed from repository 'PSGallery'.)*"
+    }
+
+    It 'refuses a package whose manifest carries another version than the one asked for: <Case>' -ForEach @(
+        @{ Case = 'another prerelease label'; Served = '1.1.4-preview0004'; Carries = "ModuleVersion '1.1.4' and prerelease 'preview0004'" }
+        @{ Case = 'another ModuleVersion'; Served = '1.1.5-preview0003'; Carries = "ModuleVersion '1.1.5' and prerelease 'preview0003'" }
+        @{ Case = 'no prerelease label'; Served = '1.1.4'; Carries = "ModuleVersion '1.1.4' and prerelease ''" }
+        @{ Case = 'the prerelease label in another case'; Served = '1.1.4-Preview0003'; Carries = "ModuleVersion '1.1.4' and prerelease 'Preview0003'" }
+    ) {
+        # The same root module and help file as A; only the manifest's version differs.
+        $Other = New-TestBuild -Sha $script:ShaA -Version $Served -Body 'A'
+        $null = Publish-ToFakeGallery -Build $Other -World $script:World -Under $script:Version
+
+        $Thrown = { Invoke-Compare -Build $script:BuildA -Sha $script:ShaA } | Should -Throw -PassThru
+        $Message = $Thrown.Exception.Message
+
+        $Message | Should -BeLike "REFUSING TO TAG. Asked PSGallery for Omnicit.EntraRBAC 1.1.4-preview0003, and the package it saved carries $Carries, not ModuleVersion '1.1.4' and prerelease 'preview0003'.*" -Because 'the version check refuses before the file comparison does'
+        $Message | Should -BeLike '*NOTHING has been tagged and no release was created.*'
+        @(Get-FakeLog -World $script:World -Name 'save').Count | Should -Be 1 -Because 'the refusal comes after the read'
     }
 
     It 'refuses when the read returns without saving anything' {

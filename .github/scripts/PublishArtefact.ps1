@@ -22,14 +22,15 @@
 
         -Compare runs in the publish job's tag step, on every run but a v-tag run. It does
         everything -Verify does, then reads the package the repository serves under the recorded
-        version back with Save-PSResource, the way a consumer gets it, and compares it with the
-        verified artefact file by file and SHA-256 by SHA-256, in both directions. It returns
-        nothing when they are the same build. It throws when they differ, and when the package
-        cannot be read, so the tag step never tags a commit whose tested build is not the published
-        package. That is not hypothetical: when the tag step fails after a publish, no tag moves
-        GitVersion's base, the next merge to main computes the same version, finds it published and
-        skips the publish, and before this comparison existed the tag step then tagged THAT merge's
-        commit with the previous commit's package. See docs/development/rationale.md#publish-on-merge.
+        version back with Save-PSResource, the way a consumer gets it, refuses it unless its
+        manifest carries exactly that version, and compares it with the verified artefact file by
+        file and SHA-256 by SHA-256, in both directions. It returns nothing when they are the same
+        build. It throws when they differ, and when the package cannot be read, so the tag step
+        never tags a commit whose tested build is not the published package. That is not
+        hypothetical: when the tag step fails after a publish, no tag moves GitVersion's base, the
+        next merge to main computes the same version, finds it published and skips the publish,
+        and before this comparison existed the tag step then tagged THAT merge's commit with the
+        previous commit's package. See docs/development/rationale.md#publish-on-merge.
 
         -Path is, in every mode, the directory that CONTAINS module/<name>/<version>. That is
         output/ in the build job and the download directory downstream, because
@@ -419,7 +420,8 @@ if (-not $Compare)
     1.2.0, publishing a build into a local repository and saving it back gave the four recorded
     files and nothing else, every SHA-256 equal. So the whole version folder is compared, both
     directions, with no exemption list. The manifest is one of those files, so a package of
-    another version cannot match either.
+    another version cannot match either, and the version is checked on its own first so that such
+    a read is named for what it is.
 #>
 $Version = $Meta.ComposedVersion
 $Refusal = 'REFUSING TO TAG.'
@@ -432,6 +434,7 @@ if ((Test-Path -LiteralPath $DownloadPath) -and @(Get-ChildItem -LiteralPath $Do
 
 $SaveRoot = Join-Path -Path $DownloadPath -ChildPath 'module'
 $ReadFailure = $null
+$PublishedFact = $null
 
 try
 {
@@ -439,12 +442,16 @@ try
     $null = New-Item -ItemType Directory -Path $SaveRoot -Force
 
     <#
-        [x] is an exact version in NuGet range syntax. -Prerelease, or a preview is never found;
-        -TrustRepository, or the untrusted PSGallery asks for confirmation and a
-        non-interactive run fails; -SkipDependencyCheck, since the dependencies are not what is
-        being compared.
+        The version BARE, never in range brackets. PSResourceGet read a bare version as exactly
+        that version, and PSResourceGet 1.2.0 -- the one PowerShell 7.6 carries, which the
+        runner's tests ran on -- did not install '[1.1.4-preview0006]' from PSGallery: it failed
+        with "could not be installed from repository 'PSGallery'", while '1.1.4-preview0006'
+        saved the package (both measured on 2026-10-09). The manifest check below still refuses a
+        package of any other version. -Prerelease, or a preview is never found; -TrustRepository, or the
+        untrusted PSGallery asks for confirmation and a non-interactive run fails;
+        -SkipDependencyCheck, since the dependencies are not what is being compared.
     #>
-    Save-PSResource -Name $ModuleName -Version ('[{0}]' -f $Version) -Prerelease -Repository $Repository -Path $SaveRoot -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop'
+    Save-PSResource -Name $ModuleName -Version $Version -Prerelease -Repository $Repository -Path $SaveRoot -SkipDependencyCheck -TrustRepository -ErrorAction 'Stop'
 
     if (-not (Test-Path -LiteralPath (Join-Path -Path $SaveRoot -ChildPath $ModuleName)))
     {
@@ -453,15 +460,40 @@ try
 
     $PublishedFolder = Get-VersionFolder -Root $DownloadPath
     $PublishedHash = @(Get-ArtefactFileHash -VersionFolder $PublishedFolder.FullName)
+
+    # A package without a manifest is left to the file comparison, which names the missing file.
+    if (Test-Path -LiteralPath (Join-Path -Path $PublishedFolder.FullName -ChildPath ('{0}.psd1' -f $ModuleName)))
+    {
+        $PublishedFact = Get-ManifestFact -VersionFolder $PublishedFolder.FullName
+    }
 }
 catch
 {
     $ReadFailure = $_.Exception.Message
 }
 
+# Which PSResourceGet answered, in this run's log. The cmdlet call above loaded it.
+$ReadWith = @(Get-Module -Name 'Microsoft.PowerShell.PSResourceGet')
+
+if ($ReadWith.Count -gt 0)
+{
+    Write-Host -Object ('Read back with PSResourceGet {0}.' -f (($ReadWith | ForEach-Object -Process { [string]$_.Version }) -join ', '))
+}
+
 if ($null -ne $ReadFailure)
 {
     throw ("{0} Expected to read {1} {2} back from {3} and compare it with the build this run tested for {4}, and could not ({5}). A package that cannot be read cannot be shown to be this commit's build. {6} If the failure was transient, re-run this job: it reads the package again, and tags {4} only if it is this build." -f $Refusal, $ModuleName, $Version, $Repository, $Sha, $ReadFailure, $Nothing)
+}
+
+<#
+    The package that was read must BE the version asked for, before anything is compared: exactly,
+    case included, as the tested artefact's own manifest carries it. The file comparison below
+    would refuse another version too, since the manifest is one of the files, but it would name a
+    changed file and send the reader looking for another build. This names the read.
+#>
+if ($null -ne $PublishedFact -and ($PublishedFact.ManifestModuleVersion -cne $ManifestFact.ManifestModuleVersion -or $PublishedFact.ManifestPrerelease -cne $ManifestFact.ManifestPrerelease))
+{
+    throw ("{0} Asked {1} for {2} {3}, and the package it saved carries ModuleVersion '{4}' and prerelease '{5}', not ModuleVersion '{6}' and prerelease '{7}'. A package of another version says nothing about whether {3} is the build this run tested for {8}. {9} Before re-running, look at how this script names the version, at the PSResourceGet this run read with (logged above), and at the package {1} serves as {3}: see docs/development/rationale.md#publish-on-merge." -f $Refusal, $Repository, $ModuleName, $Version, $PublishedFact.ManifestModuleVersion, $PublishedFact.ManifestPrerelease, $ManifestFact.ManifestModuleVersion, $ManifestFact.ManifestPrerelease, $Sha, $Nothing)
 }
 
 $Published = Compare-FileHashSet -Expected $FileHash -Actual $PublishedHash
