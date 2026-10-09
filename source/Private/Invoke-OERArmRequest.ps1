@@ -31,9 +31,11 @@ function Invoke-OERArmRequest {
     for any other non-2xx status. The same detect/refresh/retry-once logic covers every page fetch
     under -All, not just the first request, but the refresh budget is shared across the whole call:
     a token that expires mid-pagination gets exactly one forced refresh for the entire walk, not
-    one per page. With -All, GET results are aggregated across pages following either the nextLink
+    one per page. With -All, list results are aggregated across pages following either the nextLink
     or the @nextLink property (management group lists use @nextLink); absolute next-page URLs are
-    converted back to paths via Uri.PathAndQuery.
+    converted back to paths via Uri.PathAndQuery. Every page is requested with the call's own
+    method and body, so a POST that returns a list, such as Entities - List (getEntities), is paged
+    the same way as a GET list.
 
     A 429, and a 503 that carries a Retry-After header, are retried with a bounded backoff: the
     Retry-After value is honoured in either RFC 9110 form (delta-seconds or an HTTP-date), with an
@@ -61,8 +63,9 @@ function Invoke-OERArmRequest {
     with content type application/json.
 
     .PARAMETER All
-    Follow nextLink/@nextLink paging on GET list responses and return a single object whose value
-    property contains all aggregated items.
+    Follow nextLink/@nextLink paging on list responses and return a single object whose value
+    property contains all aggregated items. Every page is requested with the call's own -Method and
+    -Body, so a POST list (Entities - List) is paged as well as a GET list.
 
     .EXAMPLE
     $Subs = (Invoke-OERArmRequest -Path '/subscriptions?api-version=2022-12-01' -All).value

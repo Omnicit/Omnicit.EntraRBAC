@@ -13,6 +13,24 @@ function Get-OERManagementGroup {
     they pipe into Get-OERSubscription and the RBAC cmdlets. Requires an ARM token; authentication
     is ensured at entry via Initialize-OERAuth -IncludeARM.
 
+    Every listed management group carries its parent in ParentId, ParentName and ParentDisplayName.
+    The management-group list itself carries no parent, so the parents are read with at most one
+    further call per list -- Entities - List (POST getEntities, api-version 2020-05-01) -- not one
+    read per group; none is sent when the list holds no group but the tenant root group, or when
+    the list itself fails. Only the tenant root group has no parent: its three parent properties
+    are empty and no error is written for it. A parent that cannot be read, because the
+    Entities - List call failed or its answer has no usable parent for that group, leaves that
+    group's three parent properties empty; after every group has been written, the command writes
+    ONE non-terminating error, ManagementGroupParentReadFailed (category ReadError), whose target
+    object is the names of those groups and whose message names them and says why. So an empty
+    parent means "no parent" only for the tenant root group. Every group is written to the
+    pipeline before that error, so a command that consumes the pipeline, such as ForEach-Object,
+    sees every group; under -ErrorAction Stop, or $ErrorActionPreference set to Stop, an
+    assignment of the whole result, such as $Groups = Get-OERManagementGroup, receives none, since
+    the error ends the statement. A caller that can read no management group at all is refused by
+    the list itself (AuthorizationFailed), not answered with an empty list, and no parent is read
+    then. A group read by -Name takes its parent from that read's own answer.
+
     A management group created in the last few minutes can be missing from the management-group
     list, although a -Name read already finds it, and an Export-OERInventory run in that window does
     not walk it, because it cannot know it exists. Measured live: sending 'Cache-Control: no-cache'
@@ -21,14 +39,24 @@ function Get-OERManagementGroup {
     .PARAMETER Name
     The management group name (its id segment, not the display name). Also bindable as
     -ManagementGroup, the name every RBAC and PIM cmdlet uses for the same scope target, or as
-    -ManagementGroupName. Binds from the pipeline by property name. When omitted, all management
-    groups are listed.
+    -ManagementGroupName. Positional (the first position), and binds from the pipeline by property
+    name. When omitted, all management groups are listed. -Expand and -Recurse require it. An empty
+    name, given or piped, is refused at parameter binding instead of being read as a request for
+    the list.
 
     .PARAMETER Expand
     Include the direct children (child management groups and subscriptions) in the response.
+    Requires -Name. Where the host cannot prompt (pwsh -NonInteractive, redirected input, a thread
+    job), a call without it fails at parameter binding with MissingMandatoryParameter; where it
+    can, PowerShell asks for -Name instead (an interactive console prompts, and a Start-Job job is
+    blocked waiting for input). That refusal comes before anything is signed in or sent for a call
+    with no pipeline input; in a pipeline -Name binds per object, so the command signs in first and
+    an object without a name fails with InputObjectNotBound.
 
     .PARAMETER Recurse
-    Include the entire hierarchy below the management group. Implies -Expand.
+    Include the entire hierarchy below the management group. Implies -Expand. Requires -Name,
+    exactly as -Expand does: without it the call fails at parameter binding, or PowerShell asks for
+    -Name where the host can prompt.
 
     .PARAMETER TenantId
     Optional tenant id or domain to authenticate against, forwarded to Initialize-OERAuth.
@@ -38,18 +66,27 @@ function Get-OERManagementGroup {
     Lists all management groups visible to the caller.
 
     .EXAMPLE
+    Get-OERManagementGroup | Format-Table ManagementGroupName, DisplayName, ParentName
+    Lists every management group with its parent.
+
+    .EXAMPLE
     Get-OERManagementGroup -Name 'mg-platform' -Recurse
     Gets the mg-platform management group with its full child hierarchy.
     #>
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'List')]
     [OutputType([PSCustomObject])]
     param(
-        [Parameter(ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'ByName', Mandatory, Position = 0, ValueFromPipelineByPropertyName)]
         [Alias('ManagementGroupName', 'ManagementGroup')]
         [string]$Name,
 
+        [Parameter(ParameterSetName = 'ByName')]
         [switch]$Expand,
+
+        [Parameter(ParameterSetName = 'ByName')]
         [switch]$Recurse,
+
+        [Parameter(Position = 1)]
         [ValidateNotNullOrEmpty()]
         [string]$TenantId
     )
@@ -59,7 +96,7 @@ function Get-OERManagementGroup {
         Initialize-OERAuth @AuthParams -IncludeARM
     }
     process {
-        if ($Name) {
+        if ($PSCmdlet.ParameterSetName -eq 'ByName') {
             $Path = "/providers/Microsoft.Management/managementGroups/$([uri]::EscapeDataString($Name))?api-version=2020-05-01"
             if ($Expand -or $Recurse) { $Path += '&$expand=children' }
             if ($Recurse) { $Path += '&$recurse=true' }
@@ -85,14 +122,71 @@ function Get-OERManagementGroup {
         }
 
         try {
-            $Response = Invoke-OERArmRequest -Path '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -All
+            $Items = @(Get-OERManagementGroupList)
         } catch {
             Remove-OERErrorRecord -Record $PSItem
             $PSCmdlet.WriteError($PSItem)
             return
         }
-        foreach ($Item in @($Response.value)) {
-            ConvertTo-OERManagementGroup -InputObject $Item
+
+        # The tenant root group's name is its tenant id. It has no parent, so it is never looked up
+        # and is never reported as unread.
+        $IsRoot = @(foreach ($Item in $Items) {
+                $ItemName = [string]$Item.name
+                $ItemName -ne '' -and $ItemName -eq [string]$Item.properties.tenantId
+            })
+
+        # The Management Groups - List answer carries no parent (Microsoft Learn: a listed item has
+        # only id, name, type, displayName and tenantId), so the parents are read separately: ONE
+        # Entities - List call per list, not one GET per group. A group whose parent could not be read
+        # keeps its three parent properties empty and is named in the error below, so they are not
+        # left silently empty: an empty ParentId otherwise reads as "this group has no parent".
+        $ParentByName = @{}
+        $ParentReadError = $null
+        if ($IsRoot -contains $false) {
+            try {
+                $ParentByName = Get-OERManagementGroupParent
+            } catch {
+                Remove-OERErrorRecord -Record $PSItem
+                $ParentReadError = $PSItem
+            }
+        }
+
+        # Every group is written to the pipeline, in list order, before the error below is written,
+        # so a caller that consumes the pipeline sees every group. Under -ErrorAction Stop (or a
+        # global Stop preference) an assignment of the whole result receives none, since the error
+        # ends the statement.
+        $Unread = [System.Collections.Generic.List[string]]::new()
+        for ($Index = 0; $Index -lt $Items.Count; $Index++) {
+            $Item = $Items[$Index]
+            $ItemName = [string]$Item.name
+            if ($IsRoot[$Index]) {
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $null
+            } elseif ($ParentByName.ContainsKey($ItemName)) {
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $ParentByName[$ItemName]
+            } else {
+                $Unread.Add($ItemName)
+                ConvertTo-OERManagementGroup -InputObject $Item -Parent $null
+            }
+        }
+
+        if ($Unread.Count -gt 0) {
+            $Names = @($Unread | ForEach-Object { "'$_'" }) -join ', '
+            $Reason = if ($ParentReadError) {
+                # An ARM message ends with a full stop, and the sentence below adds its own.
+                "the entity listing failed: $($ParentReadError.Exception.Message.TrimEnd('.'))"
+            } else {
+                'the entity listing (Entities - List) returned no parent for them'
+            }
+            $ErrorParams = @{
+                Message      = [System.Exception]::new("Could not read the parent of $($Unread.Count) management group(s): $Names -- $Reason. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.")
+                ErrorId      = 'ManagementGroupParentReadFailed'
+                Category     = 'ReadError'
+                TargetObject = [string[]]$Unread.ToArray()
+                Cmdlet       = $PSCmdlet
+            }
+            if ($ParentReadError) { $ErrorParams.InnerException = $ParentReadError.Exception }
+            Write-CmdletError @ErrorParams
         }
     }
 }

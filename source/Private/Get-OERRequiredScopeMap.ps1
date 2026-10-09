@@ -208,6 +208,7 @@ function Get-OERRequiredScopeMap {
         @{
             Cmdlet = 'Get-OERManagementGroup'; Transport = 'Arm'
             AzureRole = 'Reader'
+            Note = 'Listing needs Microsoft.Management/managementGroups/read (Reader) on each group it returns; a caller that can read none is refused. The parent of each listed group comes from Entities - List (getEntities), which needs no role of its own: it answers only with the groups the caller can reach.'
         }
         @{
             Cmdlet = 'Get-OERRequiredScope'; Transport = 'None'

@@ -38,6 +38,12 @@ exports as `SemiAnnually` without a warning and applies as `Unchanged`; older ex
 it as `Monthly`, so applying one skips the recurrence with a warning and leaves the review
 semi-annual.
 
+`Get-OERManagementGroup` now shows the parent of every listed group (the tenant root group has
+none); a parent that cannot be read is reported as `ManagementGroupParentReadFailed`, not left
+silently empty. A script that passes `-Expand` or `-Recurse` without `-Name` now fails at parameter
+binding, or is asked for `-Name` where the host can prompt. An empty `-Name` is refused instead of
+listing every group.
+
 ## [1.1.3] - 2026-10-07
 
 `Invoke-OERStructure` without `-TenantId`, and the builders that look up a name

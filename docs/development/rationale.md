@@ -883,10 +883,15 @@ Behaviour that follows from this design:
   the false "never binds" comment demonstrated: a wrong line copied into the second file is now
   wrong in two places, so a correction to one is a correction to both.
 - `-All` follows `nextLink`/`@nextLink` paging, converting absolute next-page URLs back to paths via
-  `Uri.PathAndQuery`.
+  `Uri.PathAndQuery`. Every page is requested with the call's own method and body, so the
+  Entities - List POST pages as a GET list does. That is read from the code (the paging loop passes
+  `$Method` and `$Body` on to every page): no unit test sends a POST across pages, and no live
+  Entities - List answer has had a second page.
 - Pinned api-versions: managementGroups `2020-05-01` (its list paging property is `@nextLink`, not
-  `nextLink`), subscriptions `2022-12-01`, roleDefinitions and roleAssignments `2022-04-01`, the
-  whole Azure PIM surface `2020-10-01`, and resources/resourceGroups `2025-04-01`.
+  `nextLink`), Entities - List `2020-05-01` (a POST to `/providers/Microsoft.Management/getEntities`
+  with `$view=GroupsOnly`, see [#management-group-parents](#management-group-parents)),
+  subscriptions `2022-12-01`, roleDefinitions and roleAssignments `2022-04-01`, the whole Azure PIM
+  surface `2020-10-01`, and resources/resourceGroups `2025-04-01`.
 - `roleDefinitionId` in a role assignment body is always the FULL ARM resource id, never a bare GUID.
 - `ArmResourceUrl` IS configurable, as of Task 6's sprint (issue #81): `Initialize-OERAuth -Environment`
   sets it from `Get-OERCloudEndpoint`'s `ArmResource` field instead of the module hardcoding
@@ -955,12 +960,185 @@ Behaviour that follows from this design:
   string as the `else` literal; the literal stays all the same, as the documented fallback and
   gate 7's exemption by shape.
 
-Verified 2026-08-25 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*' source/`, 43 hits):
-managementGroups 5 real call sites, the Azure PIM surface 13, roleDefinitions/roleAssignments 10,
-subscriptions 3, resources/resourceGroups 9 -- 40 real request-path sites in total, plus 3 more that
-appear only inside `Invoke-OERArmRequest`'s own comment-based help (`.PARAMETER Path`/`.EXAMPLE`
-strings, not live call sites). Regenerate this table with the same grep whenever a new ARM endpoint
-is pinned or an existing api-version is bumped -- do not hand-edit the counts without re-running it.
+Verified 2026-10-09 by grepping the whole tree (`grep -rno 'api-version=[0-9-]*' source/`, 44 hits):
+managementGroups 5 real call sites, Entities - List (getEntities) 1, the Azure PIM surface 13,
+roleDefinitions/roleAssignments 10, subscriptions 3, resources/resourceGroups 9 -- 41 real
+request-path sites in total, plus 3 more that appear only inside `Invoke-OERArmRequest`'s own
+comment-based help (`.PARAMETER Path`/`.EXAMPLE` strings, not live call sites). Regenerate this
+table with the same grep whenever a new ARM endpoint is pinned or an existing api-version is
+bumped -- do not hand-edit the counts without re-running it.
+
+## management-group-parents
+
+Sprint 10 step 7 (2026-10-09) made `Get-OERManagementGroup` show the parent of every LISTED
+management group, and made `-Expand` and `-Recurse` need `-Name`. In 1.1.3 a listed group's
+`ParentId`, `ParentName` and `ParentDisplayName` came out empty, since the list answer carries no
+parent (Learn: a Management Groups - List item has `id`, `name`, `type`, `properties.displayName`
+and `properties.tenantId` only), so an empty parent could not be told apart from "this group has no
+parent". And `-Expand` or `-Recurse` without `-Name` was silently ignored: the command listed the
+groups, without children.
+
+**The measurement (2026-10-09, reads only; counts and True/False only).** Two app-only identities
+in the test tenant: the live-verification identity (Owner on one subscription, no role on any
+management group) and a second identity with no Azure role at all.
+
+- MEASURED, the live-verification identity: Management Groups - List, at api-version `2020-05-01`
+  and at `2023-04-01`, answers `403 AuthorizationFailed` (action
+  `Microsoft.Management/managementGroups/read` over `/providers/Microsoft.Management`). A caller
+  that can read no group is refused, not answered with an empty list.
+- MEASURED, the same identity: Entities - List
+  (`POST /providers/Microsoft.Management/getEntities?api-version=2020-05-01`, no body, sent through
+  the module's own `Invoke-OERArmRequest`) answers `200` with 3 entities: 1 subscription and 2
+  management groups (the tenant root group and one more), both groups with `permissions`
+  `noaccess`. The non-root group carries `parent.id`, `parentNameChain` and
+  `parentDisplayNameChain`: True. The last element of `parentNameChain` equals the last segment of
+  `parent.id`: True (1 of 1). The root group, whose `name` equals the tenant id, has no parent:
+  True. The subscription carries `parent.id`: True. With `&$view=GroupsOnly` the answer holds 2
+  entities, the groups only.
+- MEASURED, the same identity: on the tenant root group, a plain GET, a GET with
+  `$expand=children&$recurse=true` and a `/descendants` read each answer `403 AuthorizationFailed`.
+  A GET of either management group (plain, `$expand=children`, `$expand=path`) answers `403`; both
+  are `noaccess`.
+- MEASURED, the identity with no Azure role: the list answers `403`, Entities - List answers `200`
+  with 0 entities, and the root group's reads answer `403`.
+- Learn ("Azure permissions for Management and governance"): the list and a group read need
+  `Microsoft.Management/managementGroups/read`, `/descendants` needs
+  `Microsoft.Management/managementGroups/descendants/read`, and Entities - List is the action
+  `Microsoft.Management/getEntities/action` -- which, by the role-less identity's `200`, needs no
+  role assignment of its own. Learn (Entities - List): `parentNameChain` and
+  `parentDisplayNameChain` run from the root group to the immediate parent. Learn (Management
+  Groups - Get): a group read carries `properties.details.parent` (`id`, `name`, `displayName`),
+  which the `-Name` path reads through `ConvertTo-OERManagementGroup`. Learn (management groups
+  overview): the root management group's id is the tenant id.
+
+**What the measurement does not show.** The live-verification identity's list was refused, so the
+parent read was never measured on a LISTED group, and no answer held a group more than one level
+below the root. That the answer is mapped to the right parent on several levels (three, in mocked
+answers) is proved by unit tests (`tests/Unit/Private/Get-OERManagementGroupParent.Tests.ps1` and
+the Context `the parent of every listed group (A10)` in
+`tests/Unit/Public/Get-OERManagementGroup.Tests.ps1`) and is left for the operator to confirm in a
+tenant where the groups can be listed. Not verified
+live either: an Entities - List answer of more than one page (the test tenant's is one page; see
+the paging bullet under [#arm-transport](#arm-transport)), and anything about caching or delay in
+Entities - List. The list's own delay for a new group stays as
+[#inventory-azure-eligibility](#inventory-azure-eligibility) records it.
+
+**Why Entities - List, once per list.** It gives the parent of every group the caller can reach in
+one call, and needs no role of its own. The alternatives:
+
+- The root group with `$expand=children&$recurse=true`, or the root's `/descendants`, would walk
+  the tree in one call as well, but both need read on the ROOT group -- measured `403` without it --
+  so a caller with Reader on a subtree only would lose every parent. The same measurement
+  confirms, for an identity without read on the root, the reason given under
+  [#inventory-azure-eligibility](#inventory-azure-eligibility) for not enumerating from the root.
+- A GET per listed group reads `properties.details.parent`, as `-Name` does, but costs one call per
+  group.
+
+If a tenant ever shows Entities - List missing or mis-stating a group that the list returns, the
+fallback is that GET per group; until then, such a group keeps an empty parent and is reported
+(below), so it is not left silently empty.
+
+**How the answer is read.** `Get-OERManagementGroupParent`, the single owner of the call, keys its
+map on the entity's `name` (case-insensitive) and takes an entity only when its `type` is
+`Microsoft.Management/managementGroups`, its `parent.id` is a string that is not blank and whose
+last segment is not blank, its `parentNameChain` has at least one element and ends in that same last
+segment (compared case-insensitively), and its `parentDisplayNameChain` ends in an element that is
+not blank. `ParentId` is `parent.id`, `ParentName` the last segment of `parent.id`, and
+`ParentDisplayName` the last element of `parentDisplayNameChain`. The `parentNameChain` condition is
+there because the display name comes from a chain and not from `parent.id`: an answer whose chains
+end in another group than the one `parent.id` names would otherwise put that other group's display
+name beside the right `ParentId` and `ParentName`. Learn's own Entities - List sample is such an
+answer -- its `parent.id` names the tenant root group while both chains end in another group -- and
+the measured equality above is 1 of 1, for a group directly under the root. The condition compares
+the name chain only, so a `parentDisplayNameChain` that disagrees with its own `parentNameChain` is
+not caught. Any other entity is left out, so a group the answer misses or mis-states is reported as
+unread. `Get-OERManagementGroup` sends the call only when the list holds a group other than the
+tenant root group, and only after the list itself succeeded.
+
+**A parent that cannot be read is reported, not left silently empty.** An empty `ParentId` reads as
+"this group has no parent". So a listed group whose parent was not read -- the Entities - List call
+failed, or its answer has no usable parent for that group -- is still written, with its three parent
+properties empty, and after EVERY group has been written the command writes ONE non-terminating
+error for the whole list: `ManagementGroupParentReadFailed`, category `ReadError`, its target object
+the unread groups' names as a `[string[]]`. Its message, when the answer had no parent for two
+groups:
+
+```text
+Could not read the parent of 2 management group(s): 'mg-a', 'mg-b' -- the entity listing (Entities - List) returned no parent for them. Their ParentId, ParentName and ParentDisplayName are empty, which here does not mean that they have no parent.
+```
+
+When the call itself failed, the reason reads `the entity listing failed: ` followed by that call's
+own message with its trailing full stops trimmed (the sentence adds its own), and the failed call's
+exception is the record's `InnerException`. Every group is written to the pipeline before the
+error, so a caller that consumes the pipeline (`| ForEach-Object { ... }`) sees every group. Under
+`-ErrorAction Stop`, or a global `$ErrorActionPreference = 'Stop'`, an assignment of the whole
+result (`$Groups = Get-OERManagementGroup`, with or without `@(...)`) receives none, since the
+error ends the statement. That is measured on a plain stand-in function that writes three objects
+and then one non-terminating error through `$PSCmdlet.WriteError`, as `Write-CmdletError` does
+(2026-10-09): each of the three assignments leaves the variable as it was, and a `ForEach-Object`
+consumer sees all three objects, under `-ErrorAction Stop` and under the global preference alike.
+It follows the rule behind `Get-OERGroup`'s `GroupMemberReadFailed` (see
+[#typed-group-member-read](#typed-group-member-read)): a value that could not be read is reported
+as unread, not left silently empty. `Get-OERGroup` omits the property; here the three parent
+properties stay on the object, empty, and the error says that they are. A failed LIST is reported
+as before, as its own error (`AuthorizationFailed` for a caller that can read no group), and no
+parent read follows.
+
+**The tenant root group is recognised, not looked up.** A listed item whose `name` equals its
+`properties.tenantId` -- compared case-insensitively, and never for a blank name -- is the tenant
+root group (Learn: its id is the tenant id; measured: the root entity's name equals the tenant id
+and it has no parent). Its parent properties stay empty with no error, and when it is the only group
+listed, no Entities - List call is sent. A root that came back under another name, or without a
+`tenantId`, would be named in `ManagementGroupParentReadFailed` -- visible, never silent.
+
+**The export never reads the parents.** `Resolve-OERInventoryScopeTree` lists the full tree through
+the private `Get-OERManagementGroupList` -- the list call `Get-OERManagementGroup` makes -- and
+converts the items itself with `ConvertTo-OERManagementGroup`; it never calls
+`Get-OERManagementGroup` without `-Name`. A failed or refused Entities - List call therefore cannot
+make an export partial or add to its `SkippedScopes`, and the bundle needs no parent: the
+`scopeHierarchy.json` management group nodes carry `name`, `displayName` and `id` only. Its
+`-ManagementGroup` branch still calls `Get-OERManagementGroup -Name ... -ErrorAction Stop`, which
+reads one group by name and sends no Entities - List call.
+
+**`Get-OERManagementGroupList` is not the single owner of the list call.** `Resolve-OERScope`'s
+display-name fallback, which the RBAC and PIM cmdlets reach through `-ManagementGroup`, still sends
+its own Management Groups - List call; moving it was outside this step. So the CLAUDE.md rule names
+an owner only for the Entities - List call, and says only that the inventory walk lists through
+`Get-OERManagementGroupList`. Nothing holds the two list calls together beyond the api-version
+documentation gate in `tests/QA/sourcehygiene.tests.ps1`, which checks that each version is
+documented, not that the two calls agree.
+
+**`-Expand` and `-Recurse` need `-Name`, refused at binding.** The parameters sit in two parameter
+sets: `List`, the default, and `ByName`, to which `-Expand` and `-Recurse` belong and in which
+`-Name` is mandatory at position 0; `-TenantId` is at position 1 in every set and keeps
+`[ValidateNotNullOrEmpty()]`. A call with `-Expand` or `-Recurse` and no `-Name` can bind only
+`ByName`, whose mandatory `-Name` is missing. What happens then depends on whether the host can
+prompt. MEASURED on a plain stand-in function with the same param block (2026-10-09): where it
+cannot -- a host-less runspace, `pwsh -NonInteractive`, `pwsh -File` with stdin redirected from an
+empty file, and a `Start-ThreadJob` job -- the call fails with `MissingMandatoryParameter`; where it
+can, PowerShell asks for `-Name` instead: an interactive console prompts, and a `Start-Job` job is
+blocked, waiting for input. A real CI runner was not measured. The refusal comes before `begin`
+runs, so nothing is signed in or sent, for a call with no pipeline input; in a pipeline `-Name`
+binds per object, so `begin` signs in first and an object without a name fails
+`InputObjectNotBound`, as in 1.1.3.
+
+Also measured on that stand-in: parameter sets drop PowerShell's automatic positions -- `X mg1`
+failed with `PositionalParameterNotFound` -- so `Position = 0` and `Position = 1` are declared
+explicitly, which restores 1.1.3's positional binding exactly (`X mg1`, `X mg1 t1`); `-Recurse`,
+`-Expand`, `-Expand -Recurse` and `-TenantId t -Recurse` without `-Name` fail with
+`MissingMandatoryParameter` in a host-less runspace; and piped objects carrying
+`ManagementGroupName`, `ManagementGroup` or `Name` bind `-Name` as before, while an object with
+none of them fails `InputObjectNotBound`, as before. The unit tests prove the refusals in a fresh
+host-less runspace (the Context `parameter sets (A10)` in
+`tests/Unit/Public/Get-OERManagementGroup.Tests.ps1`), never in the Pester host itself, where a
+missing mandatory parameter can prompt.
+
+**An empty name is refused, not read as the list.** A mandatory `[string]` parameter refuses an
+empty string at binding, so `-Name ''` and a piped empty `ManagementGroupName` now fail with
+`ParameterArgumentValidationErrorEmptyStringNotAllowed`. In 1.1.3 both fell through `if ($Name)` to
+the list branch and listed every group. An empty name was never a request for the list, so the
+refusal stays. Do not add `[AllowEmptyString()]` to bring the old behaviour back: the process block
+now branches on the parameter set, not on `$Name`, so an empty name would be sent as a name.
 
 ## sovereign-clouds
 

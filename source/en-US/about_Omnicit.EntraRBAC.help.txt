@@ -548,6 +548,15 @@ AZURE RESOURCE TARGETING
         Get-OERResource -Subscription Prod -ResourceGroup rg-app -Name stgfoo |
             New-OERRoleAssignment -Role Reader -Group role_sec_readers
 
+    Get-OERManagementGroup lists the management groups the caller can read, each with its parent
+    (ParentId, ParentName, ParentDisplayName), read with at most one further call per list. Only
+    the tenant root group has none. A parent that cannot be read is reported, after the groups,
+    as one non-terminating ManagementGroupParentReadFailed error naming those groups, rather than
+    left silently empty. A caller that can read no management group is refused by the list
+    (AuthorizationFailed), not given an empty list. -Expand (the direct children) and -Recurse
+    (the whole hierarchy) read below ONE group, so they need -Name: without it the call fails
+    at parameter binding, or PowerShell asks for -Name where the host can prompt.
+
 ARM OBJECT IDS
 
     Get-OERResource, Get-OERResourceGroup, Get-OERSubscription and Get-OERManagementGroup expose

@@ -1195,6 +1195,16 @@ Pinned api-versions, paging behaviour and retry semantics:
 `Why: docs/development/rationale.md#arm-transport`. Sovereign-cloud ARM endpoints and the spike
 evidence behind the whole design: `Why: docs/development/rationale.md#sovereign-clouds`
 
+**`Get-OERManagementGroupParent` is the single owner of the Entities - List call**
+(`POST /providers/Microsoft.Management/getEntities`, api-version `2020-05-01`, `$view=GroupsOnly`,
+`-All`), which `Get-OERManagementGroup` sends at most once per list to fill the parent of every
+listed group, since the Management Groups - List answer carries none. The inventory walk
+(`Resolve-OERInventoryScopeTree`) lists management groups through `Get-OERManagementGroupList`,
+converts them itself and never calls `Get-OERManagementGroup` without `-Name`, so the parent read
+can never add a failure mode to an export. `Get-OERManagementGroupList` is NOT the single owner of
+the list call -- `Resolve-OERScope` still sends its own -- so never describe it as one.
+`Why: docs/development/rationale.md#management-group-parents`
+
 ---
 
 ## PSScriptAnalyzer

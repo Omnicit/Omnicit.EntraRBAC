@@ -17,10 +17,13 @@ Describe 'Resolve-OERInventoryScopeTree' {
     }
 
     It 'returns every management group and subscription as scopes plus a hierarchy' {
-        Mock -ModuleName $script:moduleName Get-OERManagementGroup {
-            [PSCustomObject]@{ Name = 'Root'; DisplayName = 'Tenant Root'; ResourceId = '/providers/Microsoft.Management/managementGroups/Root' }
-            [PSCustomObject]@{ Name = 'Platform'; DisplayName = 'Platform'; ResourceId = '/providers/Microsoft.Management/managementGroups/Platform' }
+        # The full tree lists through Get-OERManagementGroupList (raw ARM items) and converts them
+        # itself; it never reads the parents (A10).
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList {
+            [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/Root'; name = 'Root'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'Tenant Root' } }
+            [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/Platform'; name = 'Platform'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'Platform' } }
         }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroup { }
         Mock -ModuleName $script:moduleName Get-OERSubscription {
             [PSCustomObject]@{ SubscriptionId = '1111'; DisplayName = 'Prod'; ResourceId = '/subscriptions/1111'; State = 'Enabled' }
         }
@@ -34,6 +37,48 @@ Describe 'Resolve-OERInventoryScopeTree' {
             $Tree.Hierarchy.subscriptions[0].displayName | Should -Be 'Prod'
             $Tree.Hierarchy.subscriptions[0].id | Should -Be '/subscriptions/1111'
             $Tree.Hierarchy.managementGroups[0].id | Should -Be '/providers/Microsoft.Management/managementGroups/Root'
+            @($Tree.Hierarchy.managementGroups.name) | Should -Be @('Root', 'Platform')
+            @($Tree.Hierarchy.managementGroups.displayName) | Should -Be @('Tenant Root', 'Platform')
+        }
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 1 -Exactly
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroup -Times 0
+    }
+
+    It 'walks every listed group without reading a parent, so a failing Entities - List adds no failure mode' {
+        # The real Get-OERManagementGroupList and converter run; only the transport is mocked, and
+        # the Entities - List path throws. The export must not reach it at all.
+        $ArmErr = InModuleScope $script:moduleName {
+            Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"denied"}}' })
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest -ParameterFilter {
+            $Path -like '*/managementGroups?api-version=*'
+        } {
+            [PSCustomObject]@{ value = @(
+                    [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/t'; name = 't'; type = 'Microsoft.Management/managementGroups'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'Tenant Root Group' } }
+                    [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-a'; name = 'mg-a'; type = 'Microsoft.Management/managementGroups'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG A' } }
+                    [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-b'; name = 'mg-b'; type = 'Microsoft.Management/managementGroups'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG B' } }
+                ) }
+        }
+        Mock -ModuleName $script:moduleName Invoke-OERArmRequest -ParameterFilter {
+            $Path -like '*/getEntities?*'
+        } { [CmdletBinding()] param($Path, $Method, $Body, [switch]$All) throw $ArmErr }
+        Mock -ModuleName $script:moduleName Get-OERSubscription { }
+
+        $Tree = InModuleScope $script:moduleName { Resolve-OERInventoryScopeTree 3>&1 }
+        $Warnings = @($Tree | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+        $Tree = @($Tree | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })[0]
+
+        $Warnings.Count | Should -Be 0
+        @($Tree.SkippedScopes).Count | Should -Be 0
+        @($Tree.Scopes) | Should -Be @(
+            '/providers/Microsoft.Management/managementGroups/t'
+            '/providers/Microsoft.Management/managementGroups/mg-a'
+            '/providers/Microsoft.Management/managementGroups/mg-b'
+        )
+        @($Tree.Hierarchy.managementGroups.name) | Should -Be @('t', 'mg-a', 'mg-b')
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 0 -ParameterFilter { $Path -like '*/getEntities?*' }
+        Should -Invoke -ModuleName $script:moduleName Invoke-OERArmRequest -Times 1 -Exactly -ParameterFilter {
+            $Path -ceq '/providers/Microsoft.Management/managementGroups?api-version=2020-05-01' -and $All
         }
     }
 
@@ -42,6 +87,7 @@ Describe 'Resolve-OERInventoryScopeTree' {
             param($Name)
             [PSCustomObject]@{ Name = 'Platform'; DisplayName = 'Platform'; ResourceId = '/providers/Microsoft.Management/managementGroups/Platform' }
         }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
         Mock -ModuleName $script:moduleName Get-OERSubscription {
             [PSCustomObject]@{ SubscriptionId = '2222'; DisplayName = 'Plat-Sub'; ResourceId = '/subscriptions/2222'; State = 'Enabled' }
         }
@@ -51,33 +97,35 @@ Describe 'Resolve-OERInventoryScopeTree' {
             $Tree.Scopes | Should -Contain '/subscriptions/2222'
         }
         Should -Invoke -ModuleName $script:moduleName Get-OERSubscription -Times 1 -ParameterFilter { $ManagementGroup -eq 'Platform' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroup -Times 1 -Exactly -ParameterFilter { $Name -eq 'Platform' }
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 0
     }
 
     It 'returns exactly the supplied raw scope when -Scope is given' {
         Mock -ModuleName $script:moduleName Get-OERManagementGroup { }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList { }
         InModuleScope $script:moduleName {
             $Tree = Resolve-OERInventoryScopeTree -Scope '/subscriptions/abc'
             @($Tree.Scopes).Count | Should -Be 1
             $Tree.Scopes[0] | Should -Be '/subscriptions/abc'
         }
         Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroup -Times 0
+        Should -Invoke -ModuleName $script:moduleName Get-OERManagementGroupList -Times 0
     }
 
     It 'reads Name off a REAL ConvertTo-OERManagementGroup object via its Task 8a AliasProperty (positive half of the type-tag hazard)' {
-        # Line 60 of the source reads [string]$Mg.Name -- Name is no longer a stored NoteProperty on
+        # The source reads [string]$Mg.Name -- Name is no longer a stored NoteProperty on
         # Omnicit.EntraRBAC.ManagementGroup, it is an AliasProperty of ManagementGroupName (Task 8a).
         # An AliasProperty resolves through the TYPE, not the object instance, so this only works while
-        # the tag Omnicit.EntraRBAC.ManagementGroup survives on the piped object. Every other test in
-        # this file hands Resolve-OERInventoryScopeTree a hand-built fixture with Name as a literal
-        # NoteProperty, which would pass identically whether or not the real alias resolves -- this
-        # test is the one that actually exercises the real converter's registration.
-        Mock -ModuleName $script:moduleName Get-OERManagementGroup {
-            InModuleScope $script:moduleName {
-                ConvertTo-OERManagementGroup -InputObject @{
-                    id         = '/providers/Microsoft.Management/managementGroups/mg-real'
-                    name       = 'mg-real'
-                    properties = @{ tenantId = 't'; displayName = 'Real MG' }
-                }
+        # the tag Omnicit.EntraRBAC.ManagementGroup survives on the piped object. Here the listing
+        # helper hands back a raw ARM item and the REAL converter, called by
+        # Resolve-OERInventoryScopeTree itself, builds the object -- so this test exercises the real
+        # converter's registration, not a fixture shaped like its output.
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList {
+            [PSCustomObject]@{
+                id         = '/providers/Microsoft.Management/managementGroups/mg-real'
+                name       = 'mg-real'
+                properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'Real MG' }
             }
         }
         Mock -ModuleName $script:moduleName Get-OERSubscription { }
@@ -103,19 +151,29 @@ Describe 'Resolve-OERInventoryScopeTree' {
             documented-as-fragile behavior so a future change that starts relying on Name surviving a
             type-stripped object is caught here instead of failing silently downstream in the inventory
             hierarchy JSON.
+
+            The stripped object is injected at the converter, the step where Resolve-OERInventoryScopeTree
+            builds it: a REAL converter object is built first, its tag cleared, and the mocked
+            ConvertTo-OERManagementGroup hands that object back for the raw item the listing returns.
         #>
-        Mock -ModuleName $script:moduleName Get-OERManagementGroup {
-            InModuleScope $script:moduleName {
-                $Real = ConvertTo-OERManagementGroup -InputObject @{
-                    id         = '/providers/Microsoft.Management/managementGroups/mg-stripped'
-                    name       = 'mg-stripped'
-                    properties = @{ tenantId = 't'; displayName = 'Stripped MG' }
-                }
-                $Real.PSObject.TypeNames.Clear()
-                $Real.PSObject.TypeNames.Add('System.Management.Automation.PSCustomObject')
-                $Real
+        $Stripped = InModuleScope $script:moduleName {
+            $Real = ConvertTo-OERManagementGroup -InputObject @{
+                id         = '/providers/Microsoft.Management/managementGroups/mg-stripped'
+                name       = 'mg-stripped'
+                properties = @{ tenantId = 't'; displayName = 'Stripped MG' }
+            }
+            $Real.PSObject.TypeNames.Clear()
+            $Real.PSObject.TypeNames.Add('System.Management.Automation.PSCustomObject')
+            $Real
+        }
+        Mock -ModuleName $script:moduleName Get-OERManagementGroupList {
+            [PSCustomObject]@{
+                id         = '/providers/Microsoft.Management/managementGroups/mg-stripped'
+                name       = 'mg-stripped'
+                properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'Stripped MG' }
             }
         }
+        Mock -ModuleName $script:moduleName ConvertTo-OERManagementGroup { $Stripped }
         Mock -ModuleName $script:moduleName Get-OERSubscription { }
         InModuleScope $script:moduleName {
             $Tree = Resolve-OERInventoryScopeTree
@@ -126,6 +184,9 @@ Describe 'Resolve-OERInventoryScopeTree' {
             # right there on the object under a different name the whole time.
             $Tree.Hierarchy.managementGroups[0].id | Should -Be '/providers/Microsoft.Management/managementGroups/mg-stripped'
         }
+        Should -Invoke -ModuleName $script:moduleName ConvertTo-OERManagementGroup -Times 1 -Exactly -ParameterFilter {
+            $InputObject.name -eq 'mg-stripped'
+        }
     }
 
     # A listing that fails is never read as an empty level (measured live 2026-09-30: app-only, the
@@ -133,22 +194,25 @@ Describe 'Resolve-OERInventoryScopeTree' {
     Context 'a level that cannot be listed' {
         It 'names a failed management-group listing in SkippedScopes, warns, and still enumerates the subscriptions' {
             InModuleScope $script:moduleName {
-                # Non-terminating, as the real cmdlet reports a refused read: only -ErrorAction Stop at
-                # the call site makes it reach the catch.
-                Mock Get-OERManagementGroup { Write-Error -Message 'AuthorizationFailed: no Microsoft.Management/managementGroups/read' -ErrorId 'AuthorizationFailed' }
+                # Get-OERManagementGroupList catches nothing: a refused listing throws to this caller,
+                # as the transport's AuthorizationFailed record.
+                $ArmErr = Convert-ArmHttpException -Response ([PSCustomObject]@{ StatusCode = 403; Content = '{"error":{"code":"AuthorizationFailed","message":"no Microsoft.Management/managementGroups/read"}}' })
+                Mock Get-OERManagementGroupList { [CmdletBinding()] param() throw $ArmErr }
+                Mock Get-OERManagementGroup { }
                 Mock Get-OERSubscription { [PSCustomObject]@{ SubscriptionId = 's1'; DisplayName = 'Sub 1'; ResourceId = '/subscriptions/s1'; State = 'Enabled' } }
                 $T = Resolve-OERInventoryScopeTree -WarningAction SilentlyContinue -WarningVariable W
                 @($T.SkippedScopes) | Should -Be @('<management groups: the listing failed>')
                 @($T.Scopes) | Should -Be @('/subscriptions/s1')
                 @($T.Hierarchy.managementGroups).Count | Should -Be 0
                 @($W | Where-Object { [string]$_ -like 'Could not list the management groups*AuthorizationFailed*' }).Count | Should -Be 1
-                Should -Invoke Get-OERManagementGroup -Exactly -Times 1
+                Should -Invoke Get-OERManagementGroupList -Exactly -Times 1
+                Should -Invoke Get-OERManagementGroup -Times 0
             }
         }
 
         It 'names a failed subscription listing in SkippedScopes and still enumerates the management groups' {
             InModuleScope $script:moduleName {
-                Mock Get-OERManagementGroup { [PSCustomObject]@{ Name = 'mg-1'; DisplayName = 'MG 1'; ResourceId = '/providers/Microsoft.Management/managementGroups/mg-1' } }
+                Mock Get-OERManagementGroupList { [PSCustomObject]@{ id = '/providers/Microsoft.Management/managementGroups/mg-1'; name = 'mg-1'; properties = [PSCustomObject]@{ tenantId = 't'; displayName = 'MG 1' } } }
                 Mock Get-OERSubscription { Write-Error -Message 'AuthorizationFailed: subscriptions' -ErrorId 'AuthorizationFailed' }
                 $T = Resolve-OERInventoryScopeTree -WarningAction SilentlyContinue
                 @($T.SkippedScopes) | Should -Be @('<subscriptions: the listing failed>')
@@ -158,7 +222,7 @@ Describe 'Resolve-OERInventoryScopeTree' {
 
         It 'reports no skipped level when both listings succeed' {
             InModuleScope $script:moduleName {
-                Mock Get-OERManagementGroup { @() }
+                Mock Get-OERManagementGroupList { }
                 Mock Get-OERSubscription { @() }
                 @((Resolve-OERInventoryScopeTree).SkippedScopes).Count | Should -Be 0
             }
